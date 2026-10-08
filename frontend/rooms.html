@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rooms &amp; Suites | J-ONE Hotel &amp; Lodge</title>
+<meta name="description" content="Explore rooms and suites at J-ONE Hotel &amp; Lodge. Check availability, compare prices and book directly online.">
+<meta name="theme-color" content="#373435">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Rooms &amp; Suites | J-ONE Hotel &amp; Lodge">
+<link rel="icon" href="favicon/favicon-32.png" sizes="32x32">
+<link rel="icon" href="favicon/favicon-96.png" sizes="96x96">
+<link rel="apple-touch-icon" href="favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="css/main.css?v=1.1.6">
+<script>(function(){var t;try{t=JSON.parse(localStorage.getItem("jone.theme"))}catch(e){}if(t!=="dark"&&t!=="light"){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"}document.documentElement.setAttribute("data-theme",t);})();</script>
+
+
+
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="container header-inner">
+    <a href="index.html" class="brand" aria-label="J-ONE Hotel &amp; Lodge — home">
+      <span class="brand-mark-badge">
+        <img src="assets/icons/logo-official.png" alt="" class="brand-mark">
+      </span>
+      <span>
+        <span class="brand-word">J-ONE</span>
+        <span class="brand-sub">Hotel &amp; Lodge</span>
+      </span>
+    </a>
+
+    <nav class="header-nav" aria-label="Primary">
+      <a class="nav-link" data-nav="index.html" href="index.html">Home</a>
+      <a class="nav-link" data-nav="rooms.html" href="rooms.html">Rooms</a>
+      <a class="nav-link" data-nav="facilities.html" href="facilities.html">Facilities</a>
+      <a class="nav-link" data-nav="gallery.html" href="gallery.html">Gallery</a>
+      <a class="nav-link" data-nav="offers.html" href="offers.html">Offers</a>
+      <a class="nav-link" data-nav="about.html" href="about.html">About</a>
+      <a class="nav-link" data-nav="contact.html" href="contact.html">Contact</a>
+    </nav>
+
+    <div class="header-actions">
+      <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+        <span class="icon-moon" data-icon="moon" data-size="20"></span>
+        <span class="icon-sun" data-icon="sun" data-size="20"></span>
+      </button>
+      <a class="btn btn-sm btn-outline btn-review-cta" href="review.html">Leave a Review</a>
+      <a class="btn btn-sm btn-accent btn-book" href="booking.html">Book</a>
+      <button class="btn-icon btn-outline menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" data-icon="menu" data-size="22"></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <section class="page-hero">
+    <div class="container">
+      <span class="eyebrow">Stay with us</span>
+      <h1>Rooms &amp; suites</h1>
+      <p>Simple, spotless and comfortable — choose the space that fits your stay. Prices are shown per night.</p>
+    </div>
+  </section>
+
+  <!-- Availability mini-search -->
+  <section style="padding:0;">
+    <div class="container">
+      <form class="search-panel" data-availability-form novalidate>
+        <div class="search-grid">
+          <div class="field"><label class="field-label" for="r-in">Check-in</label><input class="input" type="date" id="r-in" name="check_in" required></div>
+          <div class="field"><label class="field-label" for="r-out">Check-out</label><input class="input" type="date" id="r-out" name="check_out" required></div>
+          <div class="field"><label class="field-label" for="r-adults">Adults</label><select class="select" id="r-adults" name="adults"><option>1</option><option selected>2</option><option>3</option><option>4</option></select></div>
+          <div class="field"><label class="field-label" for="r-children">Children</label><select class="select" id="r-children" name="children"><option selected>0</option><option>1</option><option>2</option></select></div>
+          <div class="search-cta"><button class="btn btn-primary" type="submit">Check Availability</button></div>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <!-- Filters -->
+      <div class="section-head" style="margin-bottom:1.5rem;">
+        <span class="eyebrow">Our rooms</span>
+        <h2>Choose your space</h2>
+      </div>
+      <div class="filter-bar" style="border-radius:var(--radius-lg);margin-bottom:2rem;">
+        <div class="field"><label class="field-label" for="f-type">Room type</label><select class="select" id="f-type" data-filter="room_type"><option value="">All</option></select></div>
+        <div class="field"><label class="field-label" for="f-budget">Max price / night</label><select class="select" id="f-budget" data-filter="max_price"><option value="">Any</option><option value="50000">Up to ₦50,000</option><option value="75000">Up to ₦75,000</option><option value="100000">Up to ₦100,000</option></select></div>
+        <div class="field"><label class="field-label" for="f-guests">Capacity</label><select class="select" id="f-guests" data-filter="capacity"><option value="">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option></select></div>
+        <div class="field"><label class="field-label" for="f-sort">Sort</label><select class="select" id="f-sort" data-filter="sort"><option value="price_asc">Price: low → high</option><option value="price_desc">Price: high → low</option><option value="name">Name</option></select></div>
+      </div>
+
+      <!-- Results -->
+      <div class="room-grid" id="rooms-results" aria-live="polite">
+        <div class="skeleton skeleton-card" style="grid-column:span 1;"></div>
+        <div class="skeleton skeleton-card"></div>
+        <div class="skeleton skeleton-card"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-subtle">
+    <div class="container center">
+      <span class="eyebrow eyebrow-center">Ready when you are</span>
+      <h2 style="margin:1rem 0;">Book your stay</h2>
+      <p class="lede" style="max-width:52ch;margin:0 auto 2rem;">Check live availability and confirm your room in a few simple steps.</p>
+      <a class="btn btn-accent " href="booking.html">Book Your Stay</a>
+    </div>
+  </section>
+</main>
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <a href="index.html" class="brand">
+          <img src="assets/icons/logo-official.svg" alt="" class="brand-mark" width="21" height="30">
+          <span>
+            <span class="brand-word">J-ONE</span>
+            <span class="brand-sub">Hotel &amp; Lodge</span>
+          </span>
+        </a>
+        <p data-hotel-name="J-ONE HOTEL &amp; LODGE">A quiet, contemporary address for rest and gathering &mdash; private, comfortable and close to everything you need.</p>
+      </div>
+
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <a href="index.html#rooms">Rooms &amp; Suites</a>
+        <a href="facilities.html">Facilities</a>
+        <a href="gallery.html">Gallery</a>
+        <a href="offers.html">Offers</a>
+        <a href="about.html">About</a>
+        <a href="contact.html">Contact</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Booking</h5>
+        <a href="booking.html">Book Your Stay</a>
+        <a href="my-bookings.html">Your stays</a>
+        <a href="portal/login.html">Guest portal</a>
+        <a href="review.html">Leave a Review</a>
+        <a href="policies.html">Hotel Policies</a>
+        <a href="cancellation-policy.html">Cancellation</a>
+        <a href="refund-policy.html">Refunds</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Contact</h5>
+        <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
+        <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
+        <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
+        <a class="footer-line" data-google-maps href="https://www.google.com/maps" target="_blank" rel="noopener"><span data-icon="mapPin" data-size="16"></span>View on Google Maps</a>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>&copy; <span data-year="2026"></span> J-ONE HOTEL &amp; LODGE. All rights reserved.</span>
+      <span>
+        <a href="privacy.html">Privacy</a> &middot;
+        <a href="policies.html">Policies</a> &middot;
+        <a href="terms.html">Terms</a> &middot;
+        <a href="login.html">Staff</a>
+      </span>
+    </div>
+  </div>
+</footer>
+
+<div class="mobile-drawer-backdrop" aria-hidden="true"></div>
+<div class="mobile-drawer" role="dialog" aria-modal="true" aria-label="Menu" aria-hidden="true">
+  <div class="mobile-drawer-head">
+    <span class="brand-word">J-ONE</span>
+    <button class="btn-icon btn-ghost" type="button" aria-label="Close menu" data-drawer-close data-icon="x" data-size="20"></button>
+  </div>
+  <div class="mobile-drawer-body">
+    <nav class="mobile-nav" aria-label="Mobile">
+      <a data-nav="index.html" href="index.html">Home <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="rooms.html" href="rooms.html">Rooms <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="facilities.html" href="facilities.html">Facilities <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="gallery.html" href="gallery.html">Gallery <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="offers.html" href="offers.html">Offers <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="about.html" href="about.html">About <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="contact.html" href="contact.html">Contact <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="review.html" href="review.html">Leave a Review <span data-icon="star" data-size="18"></span></a>
+      <a data-nav="policies.html" href="policies.html">Policies <span data-icon="chevronRight" data-size="18"></span></a>
+    </nav>
+    <div class="mobile-footer-row">
+      <a class="btn btn-accent" href="booking.html">Book Your Stay</a>
+      <a class="btn btn-outline" href="tel:+2348032112874"><span data-icon="phone" data-size="18"></span> Call the hotel</a>
+    </div>
+  </div>
+</div>
+
+<script src="js/runtime-config.js?v=1.1.6"></script>
+<script src="js/config.js?v=1.1.6"></script>
+<script src="js/utils.js?v=1.1.6"></script>
+<script src="js/icons.js?v=1.1.6"></script>
+<script src="js/api.js?v=1.1.6"></script>
+<script src="js/theme.js?v=1.1.6"></script>
+<script src="js/ui.js?v=1.1.6"></script>
+<script src="js/hotel-data.js?v=1.1.6"></script>
+<script src="js/contact.js?v=1.1.6"></script>
+<script src="js/navigation.js?v=1.1.6"></script>
+<script>JONE.ui.initChrome(); JONE.nav.init();</script>
+<script src="js/site.js?v=1.1.6"></script>
+<script>
+(function () {
+  "use strict";
+
+  let rooms = [];        // real rooms from the API
+  let loaded = false;    // whether a real fetch was attempted
+
+  const holder = document.getElementById("rooms-results");
+  const filterType = null; // no type taxonomy in the verified /api/rooms/ contract
+  var fTypeEl = document.getElementById("f-type"); if (fTypeEl) fTypeEl.closest(".field").style.display = "none";
+  const capEl = document.getElementById("f-guests");
+  const budgetEl = document.getElementById("f-budget");
+  const sortEl = document.getElementById("f-sort");
+
+  /* Verified /api/rooms/ row: { id, name, slug, short_description,
+     base_price "25000.00" (string), max_guests, bed_type, bed_count,
+     room_size, view, is_featured, primary_image_url,
+     amenities: [{ name, icon }] }. Money is a STRING — display only. */
+  function render(list) {
+    if (!holder) return;
+    const cap = parseInt(capEl ? capEl.value : "0", 10);
+    const maxPrice = parseInt(budgetEl ? budgetEl.value : "0", 10);
+    const sort = sortEl ? sortEl.value : "";
+    let out = list.filter(r =>
+      (!maxPrice || Number(r.base_price) <= maxPrice) &&
+      (!cap || (r.max_guests || 0) >= cap));
+    if (sort === "price_asc") out.sort((a, b) => Number(a.base_price) - Number(b.base_price));
+    else if (sort === "price_desc") out.sort((a, b) => Number(b.base_price) - Number(a.base_price));
+    else out.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+    if (!out.length) {
+      holder.innerHTML = '<div class="empty-state" style="grid-column:1/-1;"><span data-icon="search" data-size="42"></span><h3>No rooms match your filters</h3><p>Try adjusting your price or capacity filters.</p></div>';
+      JONE.icons.inject(holder);
+      return;
+    }
+    holder.innerHTML = out.map(function (r, ri) {
+      const name = r.name || "Room";
+      const img = r.primary_image_url
+        ? '<button type="button" class="media" data-room-img="' + ri + '" aria-label="View photo of ' + JONE.esc(name) + '"><img src="' + JONE.esc(r.primary_image_url) + '" alt="' + JONE.esc(name) + '" loading="lazy"></button>'
+        : '<div class="media placeholder"><div class="placeholder-placeholder"><span data-icon="bed" data-size="32"></span></div></div>';
+      const amenities = (r.amenities || []).map(function (a) { return a && (a.name || a); }).filter(Boolean).slice(0, 4).join(" · ");
+      return '<article class="card card-hover room-card">' + img +
+        '<div class="room-card-body">' +
+          (r.is_featured ? '<div><span class="badge">Featured</span></div>' : '') +
+          '<h3>' + JONE.esc(name) + '</h3>' +
+          (r.short_description ? '<p class="caption">' + JONE.esc(r.short_description) + '</p>' : '') +
+          '<div class="room-facts"><span><span data-icon="users" data-size="15"></span>' + (r.max_guests || "—") + ' guests</span>' + (r.room_size ? '<span><span data-icon="maximize" data-size="15"></span>' + JONE.esc(r.room_size) + '</span>' : '') + (r.bed_type ? '<span><span data-icon="bed" data-size="15"></span>' + JONE.esc(r.bed_type) + '</span>' : '') + '</div>' +
+          (amenities ? '<div class="room-facts"><span>' + JONE.esc(amenities) + '</span></div>' : '') +
+          '<div class="room-card-foot">' +
+            '<div class="room-price"><div class="price">' + JONE.formatNaira(r.base_price) + '<small> / night</small></div></div>' +
+            '<a class="btn btn-sm btn-outline" href="room-details.html?room=' + JONE.esc(r.slug || r.id || name) + '">Details</a>' +
+            '<a class="btn btn-sm btn-accent" href="booking.html?room=' + JONE.esc(r.slug || r.id || name) + '">Book</a>' +
+          '</div>' +
+        '</div></article>';
+    }).join("");
+    // Room photos open in the shared image-preview modal.
+    holder.querySelectorAll("[data-room-img]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const r = out[Number(btn.getAttribute("data-room-img"))];
+        if (!r || !r.primary_image_url) return;
+        JONE.ui.lightbox.open(
+          [{ src: r.primary_image_url, caption: r.name || "Room" }], 0);
+      });
+    });
+    JONE.icons.inject(holder);
+  }
+
+  function showLoading() {
+    if (holder) holder.innerHTML = '<div class="loading-block" style="grid-column:1/-1;"><div class="spinner" role="status"></div><p class="muted">Loading rooms&hellip;</p></div>';
+  }
+  function showEmpty() {
+    if (holder) { holder.innerHTML = '<div class="empty-state" style="grid-column:1/-1;"><span data-icon="bed" data-size="42"></span><h3>No rooms available</h3><p>We are not taking room bookings right now. Please contact the hotel.</p></div>'; JONE.icons.inject(holder); }
+  }
+  function showError() {
+    if (holder) { holder.innerHTML = '<div class="empty-state" style="grid-column:1/-1;"><span data-icon="alertTriangle" data-size="42"></span><h3>Rooms couldn\'t be loaded</h3><p>Please try again in a moment. If this persists, contact the hotel.</p></div>'; JONE.icons.inject(holder); }
+  }
+
+  const reloadFromApi = () => render(rooms);
+
+  ["f-type", "f-budget", "f-guests", "f-sort"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("change", () => { if (loaded) reloadFromApi(); });
+  });
+
+  async function load() {
+    showLoading();
+    try {
+      const res = await window.API.getRooms();
+      const list = window.API.normalizeList ? window.API.normalizeList(res.data) : ((res.data && res.data.results) || res.data || []);
+      rooms = (list && list.items) || list || [];
+      loaded = true;
+      if (rooms.length) { render(rooms); return; }
+      showEmpty();
+    } catch (err) {
+      loaded = true;
+      showError();
+    }
+  }
+  load();
+})();
+</script>
+<script src="js/pwa.js?v=1.1.6"></script>
+<script src="js/version.js?v=1.1.6"></script>
+<script src="js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+# Optional Render blueprint for the J-ONE HOTEL & LODGE backend. The Django
+# app itself is provider-neutral; create a managed MySQL 8+ database and Redis
+# service (or point DATABASE_URL/REDIS_URL at external equivalents), then fill
+# the environment values from .env.example.
+#
+# EMAIL: transactional email is delivered SYNCHRONOUSLY by the WEB service.
+# No worker, queue or Redis is involved. EMAIL_PROVIDER picks the transport;
+# HTTPS API delivery works on hosts that restrict SMTP egress. Any supported
+# vendor can be swapped in by changing EMAIL_PROVIDER + EMAIL_API_KEY alone.
+#
+# The Celery worker + beat services below run scheduled booking operations
+# (pending expiry, automatic checkout, checkout warnings) and nightly
+# accommodation recognition. If you cannot run them (e.g. on the free plan),
+# email still works; only those scheduled operational jobs pause.
+#
+# The shared configuration lives in an env var group so every service inherits
+# an identical environment.
+
+envVarGroups:
+  - name: jone-shared
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_ALLOWED_HOSTS
+        sync: false          # e.g. api.example.com
+      - key: DATABASE_URL
+        sync: false          # mysql://...
+      - key: REDIS_URL
+        sync: false          # Redis URL — cache, Celery broker + result backend
+      - key: FRONTEND_URL
+        sync: false          # e.g. https://hotel.example.com
+      - key: PORTAL_FRONTEND_URL
+        sync: false          # optional; defaults to FRONTEND_URL, e.g. https://guest.example.com
+      - key: PAYMENT_CALLBACK_URL
+        sync: false          # optional; defaults to FRONTEND_URL/payment-verify.html
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false          # exact origins, e.g. public/manage/guest hosts
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      # --- Media (Backblaze B2) --------------------------------------------
+      - key: BACKBLAZE_KEY_ID
+        sync: false
+      - key: BACKBLAZE_APPLICATION_KEY
+        sync: false
+      - key: BACKBLAZE_BUCKET_NAME
+        sync: false
+      - key: BACKBLAZE_ENDPOINT
+        sync: false          # e.g. https://s3.us-west-004.backblazeb2.com
+      - key: BACKBLAZE_REGION
+        sync: false          # optional; parsed from the endpoint when omitted
+      - key: MEDIA_CUSTOM_DOMAIN
+        sync: false          # optional B2 friendly-URL / CDN host
+      # --- Email (HTTPS API provider — synchronous, no worker involved) ----
+      # EMAIL_PROVIDER: brevo | sendgrid | mailgun | postmark | resend.
+      # EMAIL_API_KEY: created in that vendor's dashboard.
+      # DEFAULT_FROM_EMAIL: MUST be a sender VERIFIED with that vendor, with
+      # no surrounding quotes, e.g.  J-one hotel & lodge <agbo33010@gmail.com>
+      # EMAIL_LOGO_URL: absolute HTTPS logo; required for Brevo and Resend,
+      # whose APIs cannot deliver inline cid: images.
+      # Verify anytime: python manage.py email_check --send you@example.com
+      - key: EMAIL_PROVIDER
+        value: brevo
+      - key: EMAIL_API_KEY
+        sync: false
+      - key: EMAIL_API_DOMAIN
+        sync: false          # Mailgun only: verified sending domain
+      - key: DEFAULT_FROM_EMAIL
+        sync: false
+      - key: EMAIL_LOGO_URL
+        sync: false
+      - key: HOTEL_NOTIFICATION_EMAILS
+        sync: false          # optional; staff inbox(es) for enquiry/cancellation alerts
+
+services:
+  # --- Web API --------------------------------------------------------------
+  - type: web
+    name: jone-hotel-api
+    runtime: python
+    plan: starter
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 3 --timeout 60"
+    healthCheckPath: /api/health/ready/
+    envVars:
+      - fromGroup: jone-shared
+
+  # --- Celery worker: scheduled operations ONLY (no email) ------------------
+  # Runs booking lifecycle tasks and nightly accommodation recognition.
+  # Email is delivered synchronously by the web service and never touches
+  # this worker.
+  - type: worker
+    name: jone-hotel-worker
+    runtime: python
+    plan: starter
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "celery -A config worker -l info --concurrency=2"
+    envVars:
+      - fromGroup: jone-shared
+
+  # --- Celery beat: schedules periodic booking/finance tasks -----------------
+  # Beat only *schedules* work; the worker executes it. They are separate
+  # processes on purpose — never fold beat into the worker or the web service.
+  - type: worker
+    name: jone-hotel-beat
+    runtime: python
+    plan: starter
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "celery -A config beat -l info"
+    envVars:
+      - fromGroup: jone-shared

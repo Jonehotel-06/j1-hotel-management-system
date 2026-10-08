@@ -1,0 +1,18 @@
+/* css/audit-fixes.css */
+/* Production audit fixes: narrowly scoped responsive receipt/modal/table rules. */
+.receipt-modal-content{display:grid;gap:.75rem;max-width:100%;overflow:hidden}.receipt-modal-content .receipt-sheet{width:min(100%,720px);margin:auto}.receipt-modal-actions{display:flex;gap:.5rem;justify-content:flex-end;flex-wrap:wrap;position:sticky;bottom:0;background:var(--color-surface,#fff);padding:.625rem 0}.modal-panel.modal-lg{width:min(760px,calc(100vw - 2rem));max-height:calc(100dvh - 2rem)}
+@media(max-width:600px){.modal-panel.modal-lg{width:calc(100vw - 1rem);max-height:calc(100dvh - 1rem)}.receipt-modal-actions{justify-content:stretch}.receipt-modal-actions .btn{flex:1 1 10rem;min-height:44px}.table tbody tr{max-width:100%}}
+
+/* Wide tabular data scrolls inside its own viewport; it must never widen the
+   dashboard/page itself. Keep this after responsive rules so card conversions
+   can still opt out by removing their table wrapper. */
+.table-wrap{display:block;width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;overscroll-behavior-inline:contain}
+/* No page-level overflow hack here on purpose: wide children are fixed at the
+   source (.table-wrap and .table-scroll-x scroll locally, operational tables
+   restack as cards below 720px). `max-width` only bounds the root boxes — it
+   creates no scroll container, so the sticky .site-header keeps sticking. */
+html,body{max-width:100%}
+/* Short/loading public pages keep the footer at the viewport bottom without
+   fixing or overlaying it; longer pages continue in normal document flow. */
+html{min-height:100%}body{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column}.site-footer{margin-top:auto;flex-shrink:0}body>main{flex:1 0 auto}
+

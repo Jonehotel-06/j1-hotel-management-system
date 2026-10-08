@@ -1,0 +1,712 @@
+/* css/booking.css */
+/* ==========================================================================
+   Booking flow.
+   ========================================================================== */
+
+.booking-shell { padding: clamp(2rem, 5vw, 4rem) 0 var(--section-gap); }
+
+/* ==========================================================================
+   Stepper (reusable component — see js/booking-stepper.js)
+   Desktop: polished horizontal progress with number/checkmark, label,
+   connector lines and three states. Mobile: compact "step X of N" + bar.
+   ========================================================================== */
+.bk-stepper-shell { margin-bottom: clamp(1.75rem, 5vw, 3.25rem); }
+
+.bk-stepper {
+  display: flex; align-items: center; justify-content: center;
+  gap: 0; width: 100%;
+}
+.bk-step { display: flex; }
+.bk-step-btn {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 0.55rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-faint);
+  transition: color var(--speed-2) var(--ease);
+}
+.bk-step-btn:disabled { cursor: default; }
+.bk-step.is-done .bk-step-btn:not(:disabled) { cursor: pointer; }
+.bk-step.is-done .bk-step-btn:not(:disabled):hover { color: var(--color-heading); }
+.bk-step.is-done .bk-step-btn:not(:disabled):hover .bk-step-marker {
+  border-color: var(--color-success);
+  box-shadow: var(--shadow-focus);
+}
+
+.bk-step-marker {
+  position: relative;
+  width: 40px; height: 40px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-border-strong);
+  background: var(--color-surface);
+  font-weight: 600; font-size: var(--fs-sm);
+  transition: background var(--speed-2) var(--ease), border-color var(--speed-2) var(--ease),
+    color var(--speed-2) var(--ease), box-shadow var(--speed-2) var(--ease), transform var(--speed-2) var(--ease);
+}
+.bk-step-num, .bk-step-check {
+  position: absolute; inset: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: opacity var(--speed-2) var(--ease), transform var(--speed-2) var(--ease);
+}
+.bk-step-check { opacity: 0; transform: scale(0.5); }
+.bk-step-check svg { width: 18px; height: 18px; }
+
+.bk-step-label {
+  font-size: var(--fs-xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+/* Upcoming (default) — muted, low emphasis */
+.bk-step.is-upcoming .bk-step-marker { background: var(--color-surface); color: var(--color-text-faint); }
+
+/* Active — strong emphasis, primary marker, subtle elevation */
+.bk-step.is-active .bk-step-btn { color: var(--color-heading); }
+.bk-step.is-active .bk-step-marker {
+  background: var(--color-primary);
+  color: var(--color-primary-ink);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus);
+  transform: scale(1.06);
+}
+.bk-step.is-active .bk-step-label { font-weight: 600; color: var(--color-heading); }
+
+/* Completed — success styling with check icon */
+.bk-step.is-done .bk-step-btn { color: var(--color-success); }
+.bk-step.is-done .bk-step-marker {
+  background: var(--color-success-bg);
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+.bk-step.is-done .bk-step-num { opacity: 0; transform: scale(0.5); }
+.bk-step.is-done .bk-step-check { opacity: 1; transform: scale(1); }
+
+/* Connector line */
+.bk-stepline {
+  flex: 1 1 auto;
+  min-width: 12px;
+  height: 2px;
+  margin: 0 0.35rem;
+  margin-bottom: calc(var(--fs-xs) + 0.55rem + 6px);   /* align with markers, above labels */
+  align-self: center;
+  background: var(--color-border-strong);
+  border-radius: 2px;
+  position: relative; overflow: hidden;
+}
+.bk-stepline::after {
+  content: ""; position: absolute; inset: 0;
+  background: var(--color-success);
+  transform: scaleX(0); transform-origin: left;
+  transition: transform var(--speed-3) var(--ease);
+}
+.bk-stepline.is-done::after { transform: scaleX(1); }
+
+/* Compact mobile progress */
+.bk-progress { display: none; }
+.bk-progress-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: 0.6rem; }
+.bk-progress-count {
+  font-size: var(--fs-xs); letter-spacing: var(--tracking-widest);
+  text-transform: uppercase; font-weight: 600; color: var(--color-text-muted);
+}
+.bk-progress-dots { font-size: var(--fs-sm); letter-spacing: 0.18em; color: var(--color-text-faint); }
+.bk-progress-track {
+  height: 6px; border-radius: var(--radius-pill);
+  background: var(--color-surface-deep); overflow: hidden;
+}
+.bk-progress-fill {
+  display: block; height: 100%; width: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+  transition: width var(--speed-3) var(--ease);
+}
+.bk-progress-title { margin-top: 0.6rem; font-weight: 600; color: var(--color-heading); font-size: var(--fs-md); }
+
+@media (max-width: 860px) {
+  .bk-stepper { display: none; }
+  .bk-progress { display: block; }
+}
+
+/* Legacy stepper (kept for any page not yet migrated) */
+.step-mobile { display: none; text-align: center; color: var(--color-text-muted); margin-bottom: var(--sp-5); font-size: var(--fs-sm); }
+
+/* ==========================================================================
+   Animated step transitions (respecting reduced-motion below).
+   Panels are absolutely simple: fade + small slide on enter, driven by JS
+   toggling .is-entering / direction classes.
+   ========================================================================== */
+.bk-panel { display: none; }
+.bk-panel.is-current { display: block; }
+.bk-panel.anim-in-forward { animation: bkInForward var(--speed-3) var(--ease); }
+.bk-panel.anim-in-back { animation: bkInBack var(--speed-3) var(--ease); }
+@keyframes bkInForward {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes bkInBack {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Responsive button bar for step navigation */
+.bk-actions {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3); margin-top: var(--sp-6);
+}
+.bk-actions .bk-actions-primary { margin-left: auto; }
+@media (max-width: 560px) {
+  .bk-actions { flex-direction: column-reverse; align-items: stretch; }
+  .bk-actions .btn { width: 100%; }
+  .bk-actions .bk-actions-primary { margin-left: 0; }
+
+  /* The steps use the full viewport width on a phone: the page gutter alone
+     was eating ~15% of a 320px screen, squeezing inputs and the calendar.
+     Step structure and behaviour are unchanged — only the spacing. */
+  .booking-shell { padding: 1.25rem 0 var(--section-gap); }
+  .booking-shell > .container { padding-left: 0.875rem; padding-right: 0.875rem; }
+  .booking-layout { gap: 1.5rem; }
+  .bk-panel { padding: 0; }
+  .bk-panel .field { margin-bottom: 1rem; }
+  .bk-panel .input,
+  .bk-panel .select { width: 100%; min-height: 46px; }
+  .bk-actions .btn { min-height: 48px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bk-panel.anim-in-forward, .bk-panel.anim-in-back { animation: none; }
+  .bk-step-marker, .bk-step-num, .bk-step-check, .bk-stepline::after, .bk-progress-fill { transition: none; }
+}
+
+/* Booking layout: content + sticky summary */
+.booking-layout {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: clamp(2rem, 4vw, 3.5rem);
+  align-items: start;
+}
+@media (max-width: 980px) { .booking-layout { grid-template-columns: 1fr; } }
+
+.booking-summary {
+  position: sticky;
+  top: calc(var(--header-h) + 16px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.booking-summary-head {
+  padding: var(--sp-5);
+  background: var(--brand-charcoal);
+  color: #fff;
+}
+.booking-summary-head h3 { color: #fff; font-size: var(--fs-lg); }
+.booking-summary-body { padding: var(--sp-5); display: grid; gap: var(--sp-4); }
+.summary-row {
+  display: flex; justify-content: space-between; gap: var(--sp-4);
+  font-size: var(--fs-sm);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--color-border);
+}
+.summary-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.summary-row .label { color: var(--color-text-muted); }
+.summary-row .value { text-align: right; font-weight: 500; }
+.summary-row.total { font-size: var(--fs-md); font-weight: 600; color: var(--color-heading); }
+.summary-row.total .value { font-weight: 600; letter-spacing: -0.01em; font-size: var(--fs-xl); }
+
+/* Available room option rows — a premium hotel-reservation card, not a
+   generic product tile. Elegant selected state with a check badge. */
+#room-results { display: grid; gap: var(--sp-4); }
+.room-option {
+  position: relative;
+  display: grid;
+  grid-template-columns: 190px 1fr auto;
+  gap: var(--sp-5);
+  padding: var(--sp-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--speed-2) var(--ease), box-shadow var(--speed-2) var(--ease), transform var(--speed-2) var(--ease);
+  cursor: pointer;
+  background: var(--color-surface);
+}
+.room-option:hover { border-color: var(--color-border-strong); box-shadow: var(--shadow-sm); transform: translateY(-2px); }
+.room-option.is-disabled,
+.room-option.is-disabled:hover { opacity: 0.55; cursor: not-allowed; border-color: var(--color-border); transform: none; box-shadow: none; }
+.room-option.is-selected {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus);
+}
+.room-option.is-selected,
+.room-option.is-selected h4,
+.room-option.is-selected .price { color: var(--color-text); }
+.room-option .media { aspect-ratio: 4 / 3; border-radius: var(--radius); overflow: hidden; }
+.room-option .placeholder-placeholder {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  background: var(--color-surface-deep); color: var(--color-text-faint); border-radius: var(--radius);
+}
+.room-option-info { display: flex; flex-direction: column; gap: 0.5rem; color: var(--color-text); justify-content: center; }
+.room-option-info h4 { letter-spacing: 0; color: var(--color-heading); font-size: var(--fs-md); }
+.room-option-desc { color: var(--color-text-muted); font-size: var(--fs-sm); line-height: 1.5; margin: 0; }
+.room-option-price .price { color: var(--color-heading); font-size: var(--fs-lg); font-weight: 600; letter-spacing: -0.01em; }
+.room-option-price .price small { font-size: var(--fs-xs); font-weight: 400; color: var(--color-text-muted); }
+.room-option-specs { color: var(--color-text-muted); font-size: var(--fs-sm); display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
+.room-option-specs span { display: inline-flex; align-items: center; gap: 0.35em; }
+.room-option-specs svg { width: 14px; height: 14px; opacity: 0.7; }
+.room-option-price {
+  text-align: right;
+  display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 0.35rem;
+}
+
+/* -------- Quantity picker (multi-room bookings) ---------------------------
+   One control per room option; buttons enforce [1, available_rooms] client-
+   side only as a courtesy — the backend availability service is authoritative
+   and re-validates at quote + creation. */
+.room-option-avail { font-size: var(--fs-sm); margin: 0.25rem 0 0; }
+.room-option-avail.is-low { color: var(--color-warning); font-weight: 500; }
+.room-option-avail.is-soldout { color: var(--color-danger); font-weight: 500; }
+.room-qty {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  margin-top: 0.45rem;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 0.15rem 0.2rem;
+}
+.room-option.is-selected .room-qty { background: var(--color-surface); }
+.room-qty-btn {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--radius-pill);
+  background: transparent; color: var(--color-text);
+  cursor: pointer; flex-shrink: 0;
+}
+.room-qty-btn:hover:not(:disabled) { background: var(--color-surface); }
+.room-option.is-selected .room-qty-btn:hover:not(:disabled) { background: var(--color-surface-alt); }
+.room-qty-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.room-qty-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.room-qty-btn svg { width: 15px; height: 15px; }
+.room-qty-value {
+  min-width: 52px; text-align: center;
+  font-size: var(--fs-sm); font-weight: 600; color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+.room-option-select {
+  display: inline-flex; align-items: center; gap: 0.4em;
+  font-size: var(--fs-xs); font-weight: 600; letter-spacing: var(--tracking-wide); text-transform: uppercase;
+  color: var(--color-text-faint);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  padding: 0.3em 0.85em;
+  transition: all var(--speed-2) var(--ease);
+}
+.room-option-select svg { width: 14px; height: 14px; }
+.room-option:hover .room-option-select { border-color: var(--color-primary); color: var(--color-text); }
+.room-option.is-selected .room-option-select {
+  background: var(--color-primary); border-color: var(--color-primary); color: var(--color-primary-ink);
+}
+.room-option .room-option-select .sel-idle { display: inline-flex; align-items: center; gap: 0.4em; }
+.room-option .room-option-select .sel-done { display: none; }
+.room-option.is-selected .room-option-select .sel-idle { display: none; }
+.room-option.is-selected .room-option-select .sel-done { display: inline-flex; align-items: center; gap: 0.4em; }
+@media (max-width: 640px) {
+  /* `1fr` is `minmax(auto, 1fr)`: the track floor is the content's MIN-CONTENT
+     width, so the widest child (the price/actions row, whose quantity picker
+     and Select pill cannot wrap) pushed the card past the viewport. A
+     `minmax(0, 1fr)` track plus `min-width: 0` on the flex/grid children lets
+     them shrink to the available width instead. */
+  .room-option { grid-template-columns: minmax(0, 1fr); gap: var(--sp-4); }
+  .room-option .media { aspect-ratio: 16 / 9; }
+  .room-option-info { min-width: 0; overflow-wrap: anywhere; }
+  .room-option-price {
+    text-align: left; align-items: flex-start; flex-direction: row; justify-content: space-between; width: 100%;
+    min-width: 0; flex-wrap: wrap; gap: 0.5rem 0.75rem;
+  }
+}
+
+/* Booking review card */
+.review-card { padding: var(--sp-6); }
+.review-section { padding-bottom: var(--sp-5); margin-bottom: var(--sp-5); border-bottom: 1px solid var(--color-border); }
+.review-section:last-of-type { border-bottom: 0; margin-bottom: 0; }
+.review-section h4 {
+  letter-spacing: var(--tracking-wider); text-transform: uppercase;
+  font-size: var(--fs-xs); color: var(--color-text-muted);
+  margin-bottom: var(--sp-4);
+}
+
+/* ==========================================================================
+   Review checkpoint (step 4) — grouped summary blocks with per-section Edit.
+   ========================================================================== */
+.review-group {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  margin-bottom: var(--sp-4);
+  overflow: hidden;
+}
+.review-group-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--color-surface-alt);
+  border-bottom: 1px solid var(--color-border);
+}
+.review-group-head h4 {
+  letter-spacing: var(--tracking-wider); text-transform: uppercase;
+  font-size: var(--fs-xs); color: var(--color-text-muted); margin: 0;
+}
+.review-edit {
+  display: inline-flex; align-items: center; gap: 0.4em;
+  font-size: var(--fs-sm); font-weight: 500; color: var(--color-accent);
+  padding: 0.25em 0.6em; border-radius: var(--radius-sm);
+  transition: background var(--speed-2) var(--ease), color var(--speed-2) var(--ease);
+}
+.review-edit svg { width: 14px; height: 14px; }
+.review-edit:hover { background: var(--color-accent-soft); color: var(--color-accent-hover); }
+.review-group-body { padding: var(--sp-4) var(--sp-5); display: grid; gap: var(--sp-3); }
+.review-group-body .summary-row { border-bottom: 1px dashed var(--color-border); }
+.review-group-body .summary-row:last-child { border-bottom: 0; }
+.review-total-note {
+  color: var(--color-text-muted); font-size: var(--fs-sm);
+  margin: 0.5rem 0 0; line-height: 1.5;
+}
+
+/* Secure payment screen polish */
+.pay-shell { max-width: 560px; margin: 0 auto; }
+.pay-secure-badge {
+  display: inline-flex; align-items: center; gap: 0.45em;
+  font-size: var(--fs-sm); color: var(--color-text-muted);
+  margin-top: var(--sp-4);
+}
+.pay-secure-badge svg { width: 16px; height: 16px; color: var(--color-success); }
+
+/* Mobile: collapsible booking summary so it never eats the screen */
+.summary-toggle { display: none; }
+@media (max-width: 980px) {
+  .booking-summary { position: static; }
+  .summary-toggle {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+    width: 100%; padding: var(--sp-4) var(--sp-5);
+    background: var(--brand-charcoal); color: #fff; cursor: pointer;
+    font-size: var(--fs-sm); font-weight: 500;
+  }
+  .summary-toggle .summary-toggle-total { font-weight: 600; }
+  .summary-toggle svg { width: 18px; height: 18px; transition: transform var(--speed-2) var(--ease); }
+  .booking-summary[data-collapsed="true"] .summary-toggle svg { transform: rotate(180deg); }
+  .booking-summary[data-collapsed="true"] .booking-summary-head,
+  .booking-summary[data-collapsed="true"] .booking-summary-body { display: none; }
+}
+
+/* Availability result states */
+.availability-badge { display: inline-flex; align-items: center; gap: 0.4em; }
+
+/* Confirmation */
+.confirm-hero { text-align: center; padding: clamp(2rem, 5vw, 4rem) 0; }
+.confirm-icon-circle {
+  width: 90px; height: 90px; margin: 0 auto var(--sp-5);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+  background: var(--color-success);
+  box-shadow: var(--shadow-md);
+  position: relative;
+  animation: confirmPop var(--speed-3) var(--ease) both;
+}
+/* Restrained confirmation confetti. The fixed, pointer-transparent layer is
+   removed after its short animation and never affects scrolling or controls. */
+.bk-confetti {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+}
+.bk-confetti-piece {
+  position: absolute;
+  top: -1rem;
+  left: var(--confetti-x);
+  width: 7px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--confetti-color);
+  opacity: .9;
+  transform: rotate(var(--confetti-rotate));
+  animation: bk-confetti-fall var(--confetti-duration) cubic-bezier(.2,.7,.35,1) var(--confetti-delay) forwards;
+}
+@keyframes bk-confetti-fall {
+  to { transform: translate3d(var(--confetti-drift), 105vh, 0) rotate(540deg); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bk-confetti { display: none !important; }
+}
+
+/* Elegant expanding ring — premium, not playful. */
+.confirm-icon-circle::after {
+  content: ""; position: absolute; inset: -6px;
+  border-radius: 50%;
+  border: 2px solid var(--color-success);
+  opacity: 0;
+  animation: confirmRing 900ms var(--ease) 150ms both;
+}
+@keyframes confirmPop { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
+@keyframes confirmRing { 0% { opacity: 0.5; transform: scale(0.85); } 100% { opacity: 0; transform: scale(1.25); } }
+@media (prefers-reduced-motion: reduce) {
+  .confirm-icon-circle { animation: none; }
+  .confirm-icon-circle::after { animation: none; display: none; }
+}
+
+/* Verification / receipt detail list (payment-verify page) */
+.detail-list { display: grid; gap: 0.5rem; }
+.detail-list > div {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-4);
+  padding-bottom: 0.5rem; border-bottom: 1px dashed var(--color-border);
+  font-size: var(--fs-sm);
+}
+.detail-list > div:last-child { border-bottom: 0; padding-bottom: 0; }
+.detail-list dt { color: var(--color-text-muted); }
+.detail-list dd { margin: 0; font-weight: 500; text-align: right; word-break: break-word; }
+.confirm-hero h1 { font-size: clamp(2rem, 5vw, 3rem); }
+.confirm-hero p { color: var(--color-text-muted); max-width: 52ch; margin: var(--sp-4) auto 0; line-height: 1.6; }
+.confirm-reference {
+  display: inline-block;
+  margin-top: var(--sp-5);
+  padding: 0.6em 1.2em;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  font-weight: 500;
+  font-size: var(--fs-sm);
+  color: var(--color-heading);
+}
+.confirm-actions { display: flex; gap: var(--sp-3); justify-content: center; flex-wrap: wrap; margin-top: var(--sp-6); }
+
+/* Receipt */
+/* Official J-ONE receipt watermark: a real image layer prints reliably and never captures pointer events. */
+.receipt-sheet { position: relative; isolation: isolate; overflow: hidden; }
+.receipt-watermark { position: absolute; z-index: 0; inset: 50% auto auto 50%; width: min(72%, 360px); height: auto; transform: translate(-50%, -50%); opacity: .075; pointer-events: none; user-select: none; }
+.receipt-content, .receipt-sheet > *:not(.receipt-watermark) { position: relative; z-index: 1; }
+@media print { .receipt-watermark { display: block !important; opacity: .075; } .receipt-sheet { overflow: visible; } }
+
+.receipt-sheet {
+  max-width: 640px; margin: 0 auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: clamp(1.5rem, 4vw, 2.5rem);
+}
+.receipt-brand { text-align: center; margin-bottom: var(--sp-5); }
+.receipt-brand svg { margin: 0 auto var(--sp-3); height: 40px; }
+.receipt-table { font-size: var(--fs-sm); }
+.receipt-table td { padding: 0.55rem 0; border-bottom: 1px dashed var(--color-border); vertical-align: top; }
+.receipt-table td:last-child { text-align: right; font-weight: 500; }
+.receipt-table tr.total td { font-weight: 700; font-size: var(--fs-md); color: var(--color-heading); border-bottom: 0; }
+.receipt-foot { text-align: center; color: var(--color-text-muted); font-size: var(--fs-sm); margin-top: var(--sp-5); }
+
+/* ==========================================================================
+   Stay calendar (js/booking-calendar.js) — room-type-aware date picker.
+   Calm, premium, token-driven. Unavailable dates are muted AND struck
+   through (never colour-only) and carry aria-disabled in the grid.
+   ========================================================================== */
+.cal-root {
+  position: relative;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+.cal-body { position: relative; }
+
+.cal-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+}
+.cal-title {
+  font-size: var(--fs-xs); font-weight: 600;
+  letter-spacing: var(--tracking-widest); text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+.cal-nav { display: flex; gap: 0.35rem; }
+.cal-nav-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: border-color var(--speed-2) var(--ease), color var(--speed-2) var(--ease),
+    background var(--speed-2) var(--ease);
+}
+.cal-nav-btn:hover:not(:disabled) { border-color: var(--color-accent); color: var(--color-accent); }
+.cal-nav-btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.cal-nav-btn:disabled { opacity: 0.4; cursor: default; }
+
+.cal-months {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-5);
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
+}
+@media (max-width: 760px) {
+  .cal-months { grid-template-columns: 1fr; gap: var(--sp-4); padding: var(--sp-3); }
+}
+
+.cal-month table {
+  width: 100%; border-collapse: separate; border-spacing: 3px; table-layout: fixed;
+}
+.cal-month th {
+  font-size: var(--fs-xs); font-weight: 600;
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-text-faint);
+  text-align: center; padding: 0.15rem 0 0.45rem;
+}
+.cal-pad span { display: block; }
+
+.cal-day {
+  position: relative;
+  display: block; width: 100%;
+  height: clamp(38px, 9vw, 44px);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--fs-sm); font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--speed-1) var(--ease), border-color var(--speed-1) var(--ease),
+    color var(--speed-1) var(--ease);
+}
+.cal-day:hover:not(.is-disabled) { background: var(--color-surface-deep); }
+.cal-day:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+
+/* Today — a quiet marker dot, no colour shouting */
+.cal-day.is-today { font-weight: 700; color: var(--color-heading); }
+.cal-day.is-today::after {
+  content: ""; position: absolute; left: 50%; bottom: 4px;
+  width: 4px; height: 4px; margin-left: -2px; border-radius: 50%;
+  background: var(--color-accent);
+}
+
+/* Sold-out / past dates: muted, struck through, not clickable.
+   (Never colour-only: the strike + legend + aria-disabled carry the state.) */
+.cal-day.is-disabled {
+  color: var(--color-text-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  cursor: not-allowed;
+  background: var(--color-surface-alt);
+}
+.cal-day.is-disabled:hover { background: var(--color-surface-alt); }
+
+/* Selected stay */
+.cal-day.is-in-range {
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-sm);
+}
+.cal-day.is-checkin,
+.cal-day.is-checkout {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-primary-ink);
+  font-weight: 600;
+}
+.cal-day.is-checkin { border-radius: var(--radius-sm) var(--radius-pill) var(--radius-pill) var(--radius-sm); }
+.cal-day.is-checkout { border-radius: var(--radius-pill) var(--radius-sm) var(--radius-sm) var(--radius-pill); }
+.cal-day.is-checkin.is-today::after,
+.cal-day.is-checkout.is-today::after { background: var(--color-primary-ink); }
+
+/* Hint row + clear */
+.cal-hint {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4) 0;
+}
+.cal-hint-text {
+  margin: 0;
+  font-size: var(--fs-sm); color: var(--color-text-muted);
+}
+.cal-clear {
+  border: none; background: none; padding: 0.2em 0;
+  font-size: var(--fs-sm); color: var(--color-accent);
+  cursor: pointer; white-space: nowrap;
+}
+.cal-clear:hover { color: var(--color-accent-hover); text-decoration: underline; }
+.cal-clear:focus-visible { outline: none; box-shadow: var(--shadow-focus); border-radius: var(--radius-sm); }
+
+/* Legend */
+.cal-legend {
+  display: flex; flex-wrap: wrap; gap: 0.5rem 1.1rem;
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+}
+.cal-legend-item {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  font-size: var(--fs-xs); color: var(--color-text-muted);
+}
+.cal-swatch {
+  width: 16px; height: 16px; flex-shrink: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-surface);
+}
+.cal-sw-sold { background: var(--color-surface-alt); position: relative; }
+.cal-sw-sold::after {
+  content: ""; position: absolute; left: 3px; right: 3px; top: 50%;
+  height: 1px; background: var(--color-text-faint); transform: rotate(-45deg);
+}
+.cal-sw-in, .cal-sw-out { background: var(--color-primary); border-color: var(--color-primary); }
+.cal-sw-range { background: var(--color-accent-soft); border-color: var(--color-accent-soft); }
+
+/* Busy / error overlays */
+.cal-overlay {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  text-align: center;
+  background: color-mix(in srgb, var(--color-surface) 88%, transparent);
+  backdrop-filter: blur(2px);
+}
+@supports not (background: color-mix(in srgb, red 50%, blue)) {
+  .cal-overlay { background: rgba(248, 249, 250, 0.94); }
+}
+[data-theme="dark"] .cal-overlay { background: rgba(23, 26, 31, 0.92); }
+.cal-overlay p { margin: 0; font-size: var(--fs-sm); color: var(--color-text-muted); max-width: 38ch; }
+
+/* Display fields that mirror the calendar selection (check-in / check-out) */
+.cal-display {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-2);
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-weight: 500;
+}
+.cal-display .cal-display-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-display svg { width: 18px; height: 18px; color: var(--color-text-faint); flex-shrink: 0; }
+.cal-display.is-empty .cal-display-value { color: var(--color-text-faint); font-weight: 400; }
+.cal-display:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+
+@media (prefers-reduced-motion: reduce) {
+  .cal-day, .cal-nav-btn { transition: none; }
+}
+
+/* Status line under the calendar (live-availability note + info link) */
+.cal-statusline {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--sp-3); flex-wrap: wrap;
+  margin: 0.6rem 0 0;
+}
+.cal-statusline .caption { margin: 0; }
+.cal-about-link {
+  border: none; background: none; padding: 0;
+  font-size: var(--fs-xs); color: var(--color-accent);
+  cursor: pointer; white-space: nowrap;
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.cal-about-link:hover { color: var(--color-accent-hover); }
+.cal-about-link:focus-visible { outline: none; box-shadow: var(--shadow-focus); border-radius: var(--radius-sm); }
+
+/* Availability explainer modal content */
+.cal-about-list { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.7rem; font-size: var(--fs-sm); line-height: 1.6; color: var(--color-text-muted); }
+.cal-about-list strong { color: var(--color-heading); font-weight: 600; }

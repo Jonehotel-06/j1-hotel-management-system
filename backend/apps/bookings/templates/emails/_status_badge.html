@@ -1,0 +1,6 @@
+{% autoescape on %}{% comment %}
+Accessible payment-status badge. Status is conveyed THREE ways so it never
+depends on colour alone: a glyph, the uppercase word, and a bordered chip.
+Tones map to the hotel's restrained semantic palette with sufficiently
+contrasting fills.
+{% endcomment %}{% spaceless %}<span style="display:inline-block; font-family:'Helvetica Neue',Arial,sans-serif; font-size:12px; font-weight:700; letter-spacing:0.6px; padding:8px 14px; border-radius:6px; white-space:nowrap;{% if status_tone == 'paid' %} background:#e6f2ec; color:#155c3b; border:1px solid #bfe0cf;{% elif status_tone == 'partial' %} background:#f7efdc; color:#7a4f08; border:1px solid #e9d5a8;{% elif status_tone == 'pending' %} background:#e8f0f5; color:#28506e; border:1px solid #c9dbe8;{% elif status_tone == 'refunded' %} background:#eef0f2; color:#4a525c; border:1px solid #d5dbe1;{% elif status_tone == 'failed' or status_tone == 'cancelled' %} background:#fbeae7; color:#9a2c22; border:1px solid #f0c6bf;{% else %} background:#eef0f2; color:#4a525c; border:1px solid #d5dbe1;{% endif %}"><span aria-hidden="true">{{ status_glyph }}</span> {{ status_badge }}</span>{% endspaceless %}{% endautoescape %}

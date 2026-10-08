@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Guests | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Guests</h1>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+<section class="panel">
+  <div class="filter-bar">
+    <div class="field"><label class="field-label" for="g-q">Search</label><input class="input" id="g-q" placeholder="Name, phone, email"></div>
+    <div class="filter-actions"><a class="btn btn-sm btn-outline" href="bookings.html" title="Create a booking — the guest profile is created with it"><span data-icon="plus" data-size="14"></span> New booking</a></div>
+  </div>
+  <div class="panel-body no-pad">
+    <div class="table-wrap"><table class="table table-guests">
+      <thead><tr><th>Guest</th><th>Contact</th><th class="num">Bookings</th><th>Last stay</th><th></th></tr></thead>
+      <tbody data-tbody="guests"></tbody>
+    </table></div>
+    <div class="pagination" data-pagination></div>
+  </div>
+</section>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/hotel-data.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("receptionist");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  var DATA = JONE.dashboard.DATA;
+  var tbody=document.querySelector("[data-tbody=guests]");
+  /* Individual guest discounts: managers and administrators may create and
+     withdraw them; receptionists can see them on the profile but not change
+     them. The backend enforces the same rule (IsStaffReadOnlyManagerWrite) —
+     this only decides whether the control is worth showing. */
+  var canManageDiscounts = JONE.dashboard.hasRole("manager");
+
+  /* Verified /api/admin/guests/ row:
+     { id, first_name, last_name, full_name, email, phone, city, state,
+       country, bookings_count, last_booking_at, created_at } — ?search= supported. */
+  function render(list){
+    if(!list.length){ tbody.innerHTML='<tr><td colspan="5"><div class="empty-state"><span data-icon="users"></span><h3>No guests found</h3><p>Guest profiles appear after their first booking.</p></div></td></tr>'; JONE.icons.inject(tbody); return; }
+    tbody.innerHTML=list.map(function(g){
+      var nm = g.full_name || [g.first_name,g.last_name].filter(Boolean).join(" ") || g.email || "—";
+      var loc=[g.city,g.state,g.country].filter(Boolean).join(", ");
+      /* bookings_count comes from the backend and already excludes cancelled
+         and expired bookings, so it is a count of REAL stays. It is appended
+         to the email — "ada@mail.com (7)" — which is what the hotel reads at
+         a glance, and it is no longer hidden on small screens. */
+      var count = g.bookings_count != null ? Number(g.bookings_count) : 0;
+      var emailCell = g.email
+        ? JONE.esc(g.email) + ' <span class="guest-count" title="' + count + ' booking(s) excluding cancelled and expired">(' + count + ')</span>'
+        : '<span class="guest-count">(' + count + ')</span>';
+      return '<tr>' +
+        '<td data-label="Guest" class="cell-guest">' +
+          '<strong class="cell-guest-name">' + JONE.esc(nm) + '</strong>' +
+          '<div class="caption cell-guest-contact">' + emailCell + '</div>' +
+        '</td>' +
+        '<td data-label="Contact">' + JONE.esc(g.phone || "—") +
+          (loc ? '<div class="caption">' + JONE.esc(loc) + '</div>' : '') +
+        '</td>' +
+        '<td data-label="Bookings" class="num">' + count + '</td>' +
+        '<td data-label="Last stay">' + JONE.esc(g.last_booking_at ? JONE.formatDate(g.last_booking_at,"mid") : "—") + '</td>' +
+        '<td data-label="Actions" class="cell-nowrap">' +
+          '<div class="row-actions row-actions-end">' +
+            '<button class="btn btn-sm btn-outline" type="button" data-guest-open="' + g.id + '">' +
+              '<span data-icon="eye" data-size="13"></span> <span class="btn-label">Profile</span></button>' +
+            '<button class="btn btn-sm btn-ghost" type="button" data-guest-edit="' + g.id + '" title="Edit">' +
+              '<span data-icon="edit" data-size="13"></span> <span class="btn-label">Edit</span></button>' +
+            '<a class="btn btn-sm btn-ghost" href="bookings.html?search=' + encodeURIComponent(nm) + '" title="Booking history">' +
+              '<span data-icon="search" data-size="13"></span> <span class="btn-label">Bookings</span></a>' +
+            (canManageDiscounts
+              ? '<button class="btn btn-sm btn-ghost" type="button" data-guest-discount="' + g.id + '" title="Discounts">' +
+                '<span data-icon="tag" data-size="13"></span> <span class="btn-label">Discount</span></button>'
+              : "") +
+          '</div>' +
+        '</td></tr>';
+    }).join("");
+    bindGuestRows();
+    JONE.icons.inject(tbody);
+  }
+
+  /* Server-driven paging: the search text is re-read on every request, so
+     page changes preserve it; a new search restarts at page 1. */
+  var state = { page: 1 };
+  var pager = document.querySelector("[data-pagination]");
+  function renderPager(meta){ JONE.dashboard.renderPagination(pager, meta, { onPage: load }); }
+
+  async function load(page){
+    if (page != null) state.page = Math.max(1, page);
+    DATA.loading(tbody);
+    try{
+      var params = { page: state.page, page_size: JONE.dashboard.pageSize() };
+      var q = document.getElementById("g-q");
+      if (q && q.value.trim()) params.search = q.value.trim();
+      var res = await window.API.list("guests", params);
+      var list = window.API.normalizeList(res.data, res.pagination).items;
+      if(!(list||[]).length){ DATA.empty(tbody, "users", "No guests yet", "Guest profiles will appear here after bookings.", 5); renderPager(null); return; }
+      render(list);
+      renderPager(res.pagination);
+    }catch(err){
+      DATA.error(tbody, "Guests couldn't be loaded", (err && err.message) || "Please try again in a moment.", 5);
+    }
+  }
+  load(1);
+
+  var q=document.getElementById("g-q");
+  if(q) q.addEventListener("input", JONE.debounce(function(){ load(1); },300));
+
+  /* -------- Guest profile ------------------------------------------------
+     VIEW uses the shared, complete profile card (all stored fields + the
+     full booking/stay history with room numbers and money).
+     EDIT reuses formModal so validation and backend field errors behave
+     like everywhere else in the console.
+
+     Verified: GET /api/admin/guests/{id}/ adds address, identification_type,
+     identification_number, special_requests, bookings[] (last 15, each with
+     room_numbers), user_id — sensitive ID numbers are masked by the backend
+     for receptionists. PATCH /{id}/ (AdminGuestUpdateSerializer): first_name,
+     last_name, email, phone, address, city, state, country,
+     identification_type, identification_number, special_requests. */
+  var ID_TYPES = ["", "PASSPORT", "DRIVERS_LICENSE", "NATIONAL_ID", "VOTERS_CARD"];
+
+  function bindGuestRows(){
+    tbody.querySelectorAll("[data-guest-open]").forEach(function(b){
+      b.addEventListener("click", function(){
+        JONE.dashboard.guestProfileModal(b.getAttribute("data-guest-open"));
+      });
+    });
+    tbody.querySelectorAll("[data-guest-edit]").forEach(function(b){
+      b.addEventListener("click", function(){ editGuest(b.getAttribute("data-guest-edit")); });
+    });
+    tbody.querySelectorAll("[data-guest-discount]").forEach(function(b){
+      b.addEventListener("click", function(){ manageDiscounts(b.getAttribute("data-guest-discount")); });
+    });
+  }
+
+  /* -------- Individual guest discounts -----------------------------------
+     Verified /api/admin/guest-discounts/ row: { id, guest, guest_name,
+     guest_email, discount_type: PERCENTAGE|FIXED_AMOUNT, discount_value,
+     start_date, end_date, is_active, reason, notes, created_by_email,
+     is_currently_valid, times_used, created_at, updated_at }.
+
+     The DISCOUNT AMOUNT is never calculated here. The backend decides which
+     discount applies to a stay (the larger of the public offer and the
+     guest's personal discount — never both) and snapshots what was applied to
+     each booking, so amounts on past bookings never move. DELETE deactivates
+     a discount instead of erasing it, keeping the history intact. */
+  async function manageDiscounts(guestId){
+    var guest = null, discounts = [];
+    try {
+      var gRes = await window.API.getOne("guests", guestId);
+      guest = (gRes && gRes.data) || {};
+      var dRes = await window.API.listGuestDiscounts({ guest: guestId, page_size: 50 });
+      discounts = window.API.normalizeList(dRes.data, dRes.pagination).items || [];
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "Discounts couldn't be loaded.", "error");
+      return;
+    }
+    var name = guest.full_name || guest.email || "Guest";
+
+    function amountLabel(d){
+      return d.discount_type === "PERCENTAGE"
+        ? Number(d.discount_value) + "%"
+        : JONE.formatNaira(d.discount_value);
+    }
+
+    var rows = discounts.map(function(d){
+      return "<tr>" +
+        "<td><strong>" + JONE.esc(amountLabel(d)) + "</strong>" +
+          (d.reason ? '<div class="caption">' + JONE.esc(d.reason) + "</div>" : "") + "</td>" +
+        '<td class="cell-nowrap">' + JONE.esc(JONE.offerPeriod(d, "mid") || "—") + "</td>" +
+        '<td class="num">' + JONE.esc(d.times_used != null ? d.times_used : 0) + "</td>" +
+        "<td>" + JONE.dashboard.statusPill(
+          d.is_active === false ? "inactive" : (d.is_currently_valid ? "active" : "pending"),
+          d.is_active === false ? "WITHDRAWN" : (d.is_currently_valid ? "IN EFFECT" : "SCHEDULED")
+        ) + "</td>" +
+        '<td class="cell-nowrap">' +
+          (canManageDiscounts && d.is_active !== false
+            ? '<button class="btn btn-sm btn-ghost" type="button" data-gd-off="' + d.id + '">Withdraw</button>'
+            : "") + "</td>" +
+      "</tr>";
+    }).join("");
+
+    var body =
+      "<p>A personal discount applies to this guest's own bookings. It is compared with any " +
+      "public offer and the <strong>larger</strong> of the two is applied — the two are never " +
+      "added together. Bookings already made keep the amount that was applied at the time.</p>" +
+      (discounts.length
+        ? '<div class="table-wrap"><table class="table"><thead><tr>' +
+          "<th>Discount</th><th>Valid</th><th>Used</th><th>Status</th><th></th>" +
+          "</tr></thead><tbody>" + rows + "</tbody></table></div>"
+        : '<div class="empty-state"><span data-icon="tag"></span><h3>No personal discount</h3>' +
+          "<p>This guest pays the public rate, or the best public offer.</p></div>");
+
+    JONE.dashboard.openPanel("Discounts — " + name, body,
+      '<button class="btn btn-sm btn-ghost" data-gd-close>Close</button>' +
+      (canManageDiscounts ? ' <button class="btn btn-sm btn-accent" data-gd-add>Add discount</button>' : ""),
+      "modal-lg");
+
+    var closeBtn = document.querySelector("[data-gd-close]");
+    if (closeBtn) closeBtn.addEventListener("click", JONE.dashboard.closePanel);
+
+    var addBtn = document.querySelector("[data-gd-add]");
+    if (addBtn) addBtn.addEventListener("click", function(){
+      JONE.dashboard.closePanel();
+      JONE.dashboard.formModal({
+        title: "New discount — " + name,
+        submitText: "Save discount",
+        fields: [
+          { name:"discount_type", label:"Discount type", type:"select", required:true,
+            value:"PERCENTAGE", options:[
+              { value:"PERCENTAGE", label:"Percentage" },
+              { value:"FIXED_AMOUNT", label:"Fixed amount (NGN)" },
+            ] },
+          { name:"discount_value", label:"Value", type:"number", required:true,
+            step:"0.01", min:"0.01",
+            help:"A percentage (max 100) or a naira amount, depending on the type above." },
+          { name:"start_date", label:"Start date", type:"date", required:true,
+            value: JONE.hotelTodayISO(0) },
+          { name:"end_date", label:"End date (optional)", type:"date",
+            help:"Leave empty for a discount with no end date." },
+          { name:"reason", label:"Reason", required:true,
+            placeholder:"e.g. corporate rate, long-stay guest" },
+          { name:"notes", label:"Internal notes", type:"textarea", rows:2 },
+        ],
+        onSubmit: async function(values){
+          var payload = { guest: Number(guestId) };
+          Object.keys(values).forEach(function(k){
+            if (values[k] !== "" && values[k] != null) payload[k] = values[k];
+          });
+          await window.API.createGuestDiscount(payload);
+          JONE.ui.toast("Discount saved.", "success");
+        },
+      }).then(function(saved){ if (saved) manageDiscounts(guestId); });
+    });
+
+    document.querySelectorAll("[data-gd-off]").forEach(function(btn){
+      btn.addEventListener("click", async function(){
+        if (!window.confirm("Withdraw this discount? Bookings already made keep the amount they were given.")) return;
+        try {
+          btn.disabled = true;
+          await window.API.deactivateGuestDiscount(btn.getAttribute("data-gd-off"));
+          JONE.ui.toast("Discount withdrawn.", "success");
+          JONE.dashboard.closePanel();
+          manageDiscounts(guestId);
+        } catch (err) {
+          btn.disabled = false;
+          JONE.ui.toast((err && err.message) || "The discount couldn't be withdrawn.", "error");
+        }
+      });
+    });
+  }
+
+  async function editGuest(id){
+    var g;
+    try {
+      var res = await window.API.getOne("guests", id);
+      g = res.data;
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "Couldn't load the guest profile.", "error");
+      return;
+    }
+    var saved = await JONE.dashboard.formModal({
+      title: "Edit guest — " + (g.full_name || g.email),
+      submitText: "Save changes",
+      wide: true,
+      values: g,
+      fields: [
+        { name:"first_name", label:"First name", required:true },
+        { name:"last_name", label:"Last name", required:true },
+        { name:"email", label:"Email", type:"email", required:true },
+        { name:"phone", label:"Phone", required:true },
+        { name:"address", label:"Address" },
+        { name:"city", label:"City" },
+        { name:"state", label:"State" },
+        { name:"country", label:"Country" },
+        { name:"identification_type", label:"ID type", type:"select",
+          options:ID_TYPES.map(function(t){ return { value:t, label:t?t.replace(/_/g," "):"—" }; }) },
+        { name:"identification_number", label:"ID number" },
+        { name:"special_requests", label:"Special requests / notes", type:"textarea", rows:2 }
+      ],
+      onSubmit: function(v){
+        Object.keys(v).forEach(function(k){ if(v[k]==="") delete v[k]; });
+        return window.API.update("guests", g.id, v).then(function(){
+          JONE.ui.toast("Guest profile saved.", "success");
+        });
+      }
+    });
+    if (saved) load();
+  }
+
+  /* Note: the backend intentionally exposes guests as list/detail/update only.
+     Guest profiles are created through bookings — see the "New booking" action
+     on the bookings page. No fake "add guest" is offered here. */
+})();
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

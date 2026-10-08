@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Booking | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Booking</h1>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+<div class="panel-grid">
+    <section class="panel">
+      <div class="panel-head">
+        <h2 data-bd-ref>Booking</h2>
+        <div class="panel-actions">
+          <button class="btn btn-sm btn-outline" data-bd-checkin>Check-in</button>
+          <button class="btn btn-sm btn-outline" data-bd-record hidden><span data-icon="wallet" data-size="16"></span> Record payment</button>
+          <button class="btn btn-sm btn-danger" data-bd-cancel>Cancel</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="review-section"><h4>Guest</h4><p data-bd-guest>--</p><p class="caption" data-bd-contact>--</p></div>
+        <div class="review-section"><h4>Stay</h4>
+          <div class="flex-between"><span class="muted">Room</span><span data-bd-room>--</span></div>
+          <div class="flex-between"><span class="muted">Check-in</span><span data-bd-ci>--</span></div>
+          <div class="flex-between"><span class="muted">Check-out</span><span data-bd-co>--</span></div>
+          <div class="flex-between"><span class="muted">Nights</span><span data-bd-nights>--</span></div>
+        </div>
+        <div class="review-section"><h4>Payment</h4>
+          <div class="flex-between"><span class="muted">Total</span><span data-bd-total>--</span></div>
+          <div class="flex-between"><span class="muted">Paid</span><span data-bd-paid>--</span></div>
+          <div class="flex-between"><span class="muted">Balance</span><span data-bd-balance>--</span></div>
+          <div class="flex-between"><span class="muted">Status</span><span data-bd-status>--</span></div>
+        </div>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-top:1rem;">
+          <a class="btn btn-sm btn-outline" href="receipt-details.html" data-receipt-link><span data-icon="receipt" data-size="16"></span> Receipt</a>
+          <button class="btn btn-sm btn-outline" id="print-booking" type="button"><span data-icon="printer" data-size="16"></span> Print</button>
+        </div>
+      </div>
+    </section>
+
+    <div style="display:grid;gap:1.5rem;">
+      <section class="panel">
+        <div class="panel-head"><h2>Payment history</h2></div>
+        <div class="panel-body no-pad">
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>Reference</th><th>Method</th><th class="hide-sm">Date</th><th>Amount</th><th>Status</th></tr></thead>
+            <tbody data-tbody="bd-payments"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Booking history</h2></div>
+        <div class="panel-body"><div class="activity-list" data-bd-activity></div></div>
+      </section>
+    </div>
+  </div>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/hotel-data.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("receptionist");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  var params=new URLSearchParams(location.search);
+  var ref=params.get("ref");
+  var receiptLink=document.querySelector("[data-receipt-link]"); if(receiptLink&&ref) receiptLink.href="receipt-details.html?ref="+encodeURIComponent(ref);
+  var book=null;
+
+  /* Verified: GET /api/admin/bookings/{id|ref}/ returns the full detail
+     (guest, room_assignments, price breakdown, lifecycle timestamps);
+     GET /api/bookings/{ref}/receipt/ (staff allowed) adds the payments list. */
+  function set(k,v){var n=document.querySelector("[data-bd-"+k+"]"); if(n&&v!=null) n.textContent=v;}
+  function guestName(){ return (book.guest&&(book.guest.full_name)) || book.guest_name || "—"; }
+  function contact(){ return (book.guest&&(book.guest.phone||book.guest.email)) || book.guest_phone || book.guest_email || "—"; }
+  function roomLabel(){
+    if(book.room_assignments && book.room_assignments.length) return book.room_assignments.map(function(a){return a.room_number;}).join(", ");
+    return book.room_type_name || "—";
+  }
+
+  function renderBookings(){
+    var b=book.booking_reference||ref||"—";
+    set("ref",b); set("guest",guestName()); set("contact",contact()); set("room",roomLabel());
+    set("ci",JONE.formatDate(book.check_in)); set("co",JONE.formatDate(book.check_out));
+    set("nights", (book.nights!=null?book.nights:JONE.nightsBetween(book.check_in,book.check_out))+" nights");
+    set("total",JONE.formatNaira(book.total_amount));
+    set("paid",JONE.formatNaira(book.amount_paid!=null?book.amount_paid:0));
+    set("balance",JONE.formatNaira(book.amount_due!=null?book.amount_due:0));
+    set("status", String(book.status||"").toUpperCase()+" · "+String(book.payment_status||"").toLowerCase().replace(/_/g," "));
+
+    /* "Record payment" is only offered while money is actually outstanding on
+       a booking that can still accept it — a confirmed/settled payment has
+       nothing to record and the backend would refuse the request. */
+    var recordBtn=document.querySelector("[data-bd-record]");
+    if(recordBtn){
+      var payable=JONE.dashboard.canRecordPayment(book);
+      recordBtn.hidden=!payable;
+      recordBtn.disabled=!payable;
+    }
+
+    // Lifecycle timeline — the booking's OWN backend timestamps (never invented).
+    var act=document.querySelector("[data-bd-activity]");
+    if(act){
+      var events=[];
+      if(book.created_at) events.push(["Booking created",book.created_at]);
+      if(book.checked_in_at) events.push(["Checked in",book.checked_in_at]);
+      if(book.checked_out_at) events.push(["Checked out",book.checked_out_at]);
+      if(book.cancelled_at) events.push(["Cancelled",book.cancelled_at]);
+      act.innerHTML = events.length ? events.map(function(h){
+        return '<div class="activity-item"><span class="activity-icon"><span data-icon="checkCircle" data-size="18"></span></span><div><p>'+JONE.esc(h[0])+'</p><div class="activity-time">'+JONE.esc(JONE.formatDateTime(h[1]))+'</div></div></div>';
+      }).join("") : '<div class="empty-state" style="margin:1rem;"><span data-icon="fileText"></span><h3>No lifecycle events yet</h3></div>';
+      JONE.icons.inject(act);
+    }
+    syncActions();
+  }
+
+  function renderPayments(payments){
+    var tbody=document.querySelector("[data-tbody=bd-payments]");
+    if(!tbody) return;
+    tbody.innerHTML = (payments||[]).length ? payments.map(function(p){
+      return '<tr><td>'+JONE.esc(p.reference||"—")+'</td><td>'+JONE.esc(String(p.provider||"online").toLowerCase())+'</td><td class="hide-sm">'+JONE.esc(p.paid_at?JONE.formatDate(p.paid_at,"mid"):"—")+'</td><td class="num">'+JONE.esc(JONE.formatNaira(p.amount))+'</td><td>'+JONE.dashboard.statusPill(p.status)+
+        (String(p.status).toUpperCase()==="SUCCESS"?'<div style="margin-top:0.3rem;"><a class="btn btn-sm btn-ghost" href="receipt-details.html?ref='+encodeURIComponent(book.booking_reference||ref||"")+'"><span data-icon="receipt" data-size="13"></span> Receipt</a></div>':"")+
+        '</td></tr>';
+    }).join("") : '<tr><td colspan="5"><div class="empty-state"><span data-icon="wallet"></span><h3>No payments recorded</h3></div></td></tr>';
+    JONE.icons.inject(tbody);
+  }
+
+  function syncActions(){
+    var st=String(book.status||"").toUpperCase();
+    var checkin=document.querySelector("[data-bd-checkin]");
+    var cancel=document.querySelector("[data-bd-cancel]");
+    if(checkin){
+      if(st==="CONFIRMED"){
+        checkin.style.display=""; checkin.textContent="Check in";
+        /* The backend decides: today must be inside the booked range (late
+           arrivals allowed, early ones only when the hotel permits them).
+           Disable with the real reason rather than letting staff click into
+           a 409. */
+        var blocked = book.can_check_in === false;
+        checkin.disabled = blocked;
+        if(blocked) checkin.title = book.check_in_blocked_reason || "Check-in is not available yet.";
+        else checkin.removeAttribute("title");
+      }
+      else if(st==="CHECKED_IN"){
+        checkin.style.display=""; checkin.textContent="Check out";
+        checkin.disabled=false; checkin.removeAttribute("title");
+      }
+      else checkin.style.display="none";
+    }
+    if(cancel) cancel.style.display = (st==="CANCELLED"||st==="CHECKED_OUT"||st==="EXPIRED"||st==="NO_SHOW") ? "none" : "";
+  }
+
+  function showError(msg){
+    var hold=document.querySelector("[data-bd-ref]");
+    if(hold) hold.textContent="Booking unavailable";
+    JONE.ui.toast(msg||"We couldn't load this booking. Please try again.","error");
+  }
+
+  async function load(){
+    if(!ref){ showError("No booking reference was provided."); return; }
+    try{
+      var res=await window.API.getOne("booking", ref);
+      book=res.data||{};
+      renderBookings();
+    }catch(err){ showError(err&&err.status===0?err.message:""); return; }
+    // Payments come from the receipt endpoint (verified, staff allowed).
+    try{
+      var rc=await window.API.getBookingReceipt(ref);
+      renderPayments(rc.data&&rc.data.payments);
+    }catch(_){ renderPayments([]); }
+  }
+  load();
+
+  var printBtn=document.getElementById("print-booking");
+  if(printBtn) printBtn.addEventListener("click",function(){ window.print(); });
+
+  var cancel=document.querySelector("[data-bd-cancel]");
+  if(cancel) cancel.addEventListener("click", async function(){
+    var ok=await JONE.ui.confirm({title:"Cancel this booking?",message:"The guest will be notified. This cannot be undone.",confirmText:"Cancel booking",danger:true});
+    if(!ok) return;
+    if(!JONE.guardSubmit(cancel)) return;
+    try{
+      await window.API.staffCancelBooking(ref);
+      JONE.ui.toast("Booking cancelled.","success"); load();
+    }catch(err){ JONE.releaseGuard(cancel); JONE.ui.toast(err.message||"Couldn't cancel this booking.","error"); }
+  });
+
+  /* Record payment opens the focused payment modal right here — no navigation,
+     no full page reload. It posts to /api/admin/payments/record/ and refreshes
+     this page from the authoritative booking snapshot in the response. */
+  var record=document.querySelector("[data-bd-record]");
+  if(record) record.addEventListener("click", function(){
+    if(!book){ JONE.ui.toast("This booking hasn't loaded yet.","warning"); return; }
+    if(!JONE.dashboard.canRecordPayment(book)){
+      JONE.ui.toast("This booking has no outstanding balance to record.","info");
+      return;
+    }
+    JONE.dashboard.paymentModal(book, {
+      onRecorded: function(fresh){
+        if(fresh) book=Object.assign({}, book, fresh);
+        renderBookings();
+        if(JONE.dashboard.notifBadge) JONE.dashboard.notifBadge.refresh();
+      }
+    });
+  });
+
+  var checkin=document.querySelector("[data-bd-checkin]");
+  if(checkin) checkin.addEventListener("click", async function(){
+    if(!JONE.guardSubmit(checkin)) return;
+    var st=String((book&&book.status)||"").toUpperCase();
+    try{
+      checkin.disabled=true;
+      if(st==="CHECKED_IN"){
+        var due=Number(book.amount_due||0);
+        var allow=due>0 ? window.confirm("This booking still has a balance of "+JONE.formatNaira(due)+". Check out anyway?") : true;
+        if(!allow){ checkin.disabled=false; JONE.releaseGuard(checkin); return; }
+        await window.API.checkOutBooking(ref, due>0?{allow_balance_due:true}:{});
+        JONE.ui.toast("Guest checked out.","success");
+      } else {
+        await window.API.checkInBooking(ref);
+        JONE.ui.toast("Guest checked in.","success");
+      }
+      load();
+    }catch(err){ checkin.disabled=false; JONE.releaseGuard(checkin); JONE.ui.toast(err.message||"Action failed. Please try again.","error"); }
+  });
+})();
+
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

@@ -1,0 +1,163 @@
+{% autoescape on %}<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>{{ title }} — {{ hotel_name }}</title>
+<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->
+<style>
+  /* Progressive enhancement only — every critical style is also inlined so
+     clients that strip <style> still render correctly. */
+  body { margin:0 !important; padding:0 !important; width:100% !important; }
+  table { border-collapse:collapse !important; }
+  img { border:0; line-height:100%; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
+  a { color:#33526E; }
+  .j1-wrap { width:100%; background:#eceef1; }
+  .j1-container { width:600px; max-width:600px; }
+  .j1-button:hover { background:#29445c !important; }
+  @media only screen and (max-width:620px) {
+    .j1-container { width:100% !important; }
+    .j1-px { padding-left:22px !important; padding-right:22px !important; }
+    .j1-title { font-size:24px !important; }
+    .j1-button { display:block !important; box-sizing:border-box !important; width:100% !important; }
+  }
+  @media (prefers-color-scheme: dark) {
+    .j1-wrap, body { background:#14171b !important; }
+    .j1-card { background:#1f242b !important; }
+    .j1-body-text, .j1-strong { color:#e8eaed !important; }
+    .j1-muted { color:#a6adb6 !important; }
+    .j1-soft { background:#262c34 !important; }
+    .j1-border { border-color:#39414b !important; }
+    .j1-footer { background:#14171b !important; }
+    .j1-link { color:#9bb7d0 !important; }
+  }
+</style>
+</head>
+<body style="margin:0; padding:0; background:#eceef1; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%;">
+<div style="display:none; max-height:0; overflow:hidden; opacity:0; mso-hide:all;">{{ preheader }}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;</div>
+
+<table role="presentation" class="j1-wrap" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eceef1;">
+<tr>
+<td align="center" style="padding:24px 12px;">
+  <table role="presentation" class="j1-container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px;">
+
+    <!-- Header / brand -->
+    <tr>
+      <td class="j1-px" style="background:#22262C; border-radius:10px 10px 0 0; padding:26px 34px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td valign="middle" width="52" style="width:52px;">
+              <img src="{{ logo_src }}" width="{{ logo_width }}" height="{{ logo_height }}" alt="{{ hotel_name }}" style="display:block; width:{{ logo_width }}px; height:{{ logo_height }}px; border:0; outline:none; text-decoration:none;">
+            </td>
+            <td valign="middle" style="padding-left:14px;">
+              <div style="font-family:'Helvetica Neue',Arial,sans-serif; font-size:16px; font-weight:700; letter-spacing:1px; color:#ffffff; line-height:1.2;">{{ hotel_name }}</div>
+              <div style="font-family:'Helvetica Neue',Arial,sans-serif; font-size:11px; letter-spacing:2px; text-transform:uppercase; color:#b7c0cb; padding-top:3px;">{{ category }}</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Message body -->
+    <tr>
+      <td class="j1-card" style="background:#ffffff;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td class="j1-px" style="padding:34px 34px 0 34px; font-family:'Helvetica Neue',Arial,sans-serif;">
+              <h1 class="j1-title j1-strong" style="margin:0; font-family:'Helvetica Neue',Arial,sans-serif; font-size:26px; line-height:1.3; font-weight:700; color:#22262C;">{{ title }}</h1>
+            </td>
+          </tr>
+          {% if greeting %}
+          <tr>
+            <td class="j1-px j1-body-text" style="padding:22px 34px 0 34px; font-family:'Helvetica Neue',Arial,sans-serif; font-size:15px; line-height:1.7; color:#3a4048;">
+              {{ greeting }}
+            </td>
+          </tr>
+          {% endif %}
+          {% for paragraph in paragraphs %}
+          <tr>
+            <td class="j1-px j1-body-text" style="padding:12px 34px 0 34px; font-family:'Helvetica Neue',Arial,sans-serif; font-size:15px; line-height:1.7; color:#3a4048;">
+              {{ paragraph }}
+            </td>
+          </tr>
+          {% endfor %}
+
+          {% if details %}
+          <!-- Details card -->
+          <tr>
+            <td class="j1-px" style="padding:24px 34px 0 34px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="j1-soft j1-border" style="background:#f6f8fa; border:1px solid #e3e8ed; border-radius:8px;">
+                {% for row in details %}
+                <tr>
+                  <td class="j1-border" valign="top" width="42%" style="width:42%; padding:12px 18px; font-family:'Helvetica Neue',Arial,sans-serif; {% if not forloop.first %}border-top:1px solid #e3e8ed;{% endif %}">
+                    <div class="j1-muted" style="font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#7b858f; padding-top:2px;">{{ row.label }}</div>
+                  </td>
+                  <td class="j1-border" valign="top" style="padding:12px 18px 12px 0; font-family:'Helvetica Neue',Arial,sans-serif; {% if not forloop.first %}border-top:1px solid #e3e8ed;{% endif %}">
+                    <div class="j1-body-text" style="font-size:14px; color:#2b3037; font-weight:600; line-height:1.5;">{{ row.value }}</div>
+                  </td>
+                </tr>
+                {% endfor %}
+              </table>
+            </td>
+          </tr>
+          {% endif %}
+
+          {% if cta_url %}
+          <!-- CTA -->
+          <tr>
+            <td class="j1-px" align="center" style="padding:28px 34px 0 34px;">
+              <!--[if mso]>
+              <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{ cta_url }}" style="height:48px;v-text-anchor:middle;width:240px;" arcsize="10%" stroke="f" fillcolor="#33526E">
+                <w:anchorlock/>
+                <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">{{ cta_label }}</center>
+              </v:roundrect>
+              <![endif]-->
+              <!--[if !mso]><!--><a class="j1-button" href="{{ cta_url }}" target="_blank" style="display:inline-block; min-width:240px; background:#33526E; border-radius:5px; color:#ffffff; font-family:'Helvetica Neue',Arial,sans-serif; font-size:15px; font-weight:700; line-height:48px; text-align:center; text-decoration:none; -webkit-text-size-adjust:none;">{{ cta_label }}</a><!--<![endif]-->
+            </td>
+          </tr>
+          <tr>
+            <td class="j1-px j1-muted" style="padding:16px 34px 0 34px; font-family:'Helvetica Neue',Arial,sans-serif; font-size:11px; line-height:1.6; color:#7b858f; text-align:center;">
+              If the button does not work, copy and paste this link into your browser:<br>
+              <a class="j1-link" href="{{ cta_url }}" style="color:#33526E; text-decoration:underline; word-break:break-all;">{{ cta_url }}</a>
+            </td>
+          </tr>
+          {% endif %}
+
+          {% if footnote %}
+          <tr>
+            <td class="j1-px j1-muted" style="padding:22px 34px 0 34px; font-family:'Helvetica Neue',Arial,sans-serif; font-size:12px; line-height:1.6; color:#7b858f;">
+              {{ footnote }}
+            </td>
+          </tr>
+          {% endif %}
+
+          <tr>
+            <td class="j1-px j1-body-text" style="padding:26px 34px 30px 34px; font-family:'Helvetica Neue',Arial,sans-serif; font-size:14px; line-height:1.7; color:#3a4048;">
+              Warm regards,<br><strong>{{ hotel_name }}</strong>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Footer -->
+    <tr>
+      <td class="j1-px j1-footer" style="background:#eceef1; border-radius:0 0 10px 10px; padding:22px 34px; text-align:center; font-family:'Helvetica Neue',Arial,sans-serif;">
+        <div class="j1-strong" style="font-size:12px; font-weight:700; letter-spacing:1px; color:#22262C;">{{ hotel_name }}</div>
+        {% if hotel_location %}<div class="j1-muted" style="font-size:11px; color:#7b858f; padding-top:6px; line-height:1.5;">{{ hotel_location }}</div>{% endif %}
+        <div class="j1-muted" style="font-size:11px; color:#7b858f; padding-top:6px; line-height:1.5;">
+          {% if hotel_phone %}{{ hotel_phone }}{% endif %}{% if hotel_phone and hotel_email %} &middot; {% endif %}{% if hotel_email %}<a class="j1-link" href="mailto:{{ hotel_email }}" style="color:#33526E; text-decoration:none;">{{ hotel_email }}</a>{% endif %}
+        </div>
+        <div class="j1-muted" style="font-size:10px; color:#9aa3ad; padding-top:12px; line-height:1.5;">This is a transactional message from {{ hotel_name }}.</div>
+      </td>
+    </tr>
+
+  </table>
+</td>
+</tr>
+</table>
+</body>
+</html>{% endautoescape %}

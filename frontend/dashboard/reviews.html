@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Reviews | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title><h1>Reviews</h1></div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false"><span class="icon-moon" data-icon="moon" data-size="18"></span><span class="icon-sun" data-icon="sun" data-size="18"></span></button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+      <!-- Statistics — real database aggregates only; never fabricated. -->
+      <section class="kpi-grid" data-review-stats hidden>
+        <div class="kpi"><div class="kpi-label">Total reviews</div><div class="kpi-value" data-stat="total">--</div><div class="kpi-sub">all time</div></div>
+        <div class="kpi"><div class="kpi-label">Average rating</div><div class="kpi-value" data-stat="average">--</div><div class="kpi-sub">out of 5</div></div>
+        <div class="kpi"><div class="kpi-label">New feedback</div><div class="kpi-value" data-stat="new">--</div><div class="kpi-sub">awaiting review</div></div>
+        <div class="kpi"><div class="kpi-label">Rating breakdown</div><div class="kpi-value" style="font-size:var(--fs-sm);font-weight:500;line-height:1.7;" data-stat="breakdown">--</div></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Customer reviews</h2>
+          <div class="panel-actions" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <input class="input" id="rv-search" type="search" placeholder="Search guest, reference, text&hellip;" style="min-width:210px;font-size:var(--fs-sm);padding:0.5em 0.8em;" aria-label="Search reviews">
+            <select class="select" id="rv-rating" style="min-width:120px;font-size:var(--fs-sm);padding:0.5em 0.8em;" aria-label="Filter by rating">
+              <option value="">All ratings</option>
+              <option value="5">5 stars</option><option value="4">4 stars</option>
+              <option value="3">3 stars</option><option value="2">2 stars</option><option value="1">1 star</option>
+            </select>
+            <select class="select" id="rv-status" style="min-width:130px;font-size:var(--fs-sm);padding:0.5em 0.8em;" aria-label="Filter by status">
+              <option value="">All statuses</option>
+              <option value="NEW">New</option><option value="REVIEWED">Reviewed</option>
+            </select>
+            <select class="select" id="rv-ordering" style="min-width:140px;font-size:var(--fs-sm);padding:0.5em 0.8em;" aria-label="Sort reviews">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="highest">Highest rating</option>
+              <option value="lowest">Lowest rating</option>
+            </select>
+          </div>
+        </div>
+        <div class="panel-body no-pad">
+          <div class="table-wrap"><table class="table table-reviews">
+            <thead><tr>
+              <th>Rating</th><th>Guest</th><th class="hide-sm">Booking</th><th class="hide-sm">Stay</th>
+              <th>Review</th><th class="hide-sm">Submitted</th><th>Status</th><th></th>
+            </tr></thead>
+            <tbody data-tbody="reviews"></tbody>
+          </table></div>
+          <div class="pagination" data-rv-pagination style="padding:0.9rem;"></div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("admin");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  "use strict";
+  /* Contract: /api/admin/reviews/ is administrator-only. The boot("admin")
+     guard above is UX-only; the backend rejects every other role with 403. */
+
+  var DATA = JONE.dashboard.DATA;
+  var tbody = document.querySelector("[data-tbody=reviews]");
+  var pager = document.querySelector("[data-rv-pagination]");
+  var page = 1;
+  var rowIndex = {};
+  var openId = new URLSearchParams(location.search || "").get("id");
+
+  function starsHTML(rating, size){
+    var out = '<span class="rv-stars" role="img" aria-label="' + rating + ' out of 5 stars" style="display:inline-flex;gap:2px;color:var(--color-accent);">';
+    for (var i = 1; i <= 5; i++) {
+      out += '<svg xmlns="http://www.w3.org/2000/svg" width="' + (size||14) + '" height="' + (size||14) + '" viewBox="0 0 24 24" fill="' + (i <= rating ? "currentColor" : "none") + '" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+    }
+    return out + "</span>";
+  }
+  function preview(text, n){
+    var t = String(text || "");
+    return t.length > n ? t.slice(0, n - 1) + "\u2026" : t;
+  }
+  function stayLabel(r){
+    if (!r.check_in || !r.check_out) return "\u2014";
+    return JONE.formatDate(r.check_in, "mid") + " \u2192 " + JONE.formatDate(r.check_out, "mid");
+  }
+
+  /* ------------------------------ Statistics ------------------------------ */
+  async function loadStats(){
+    var host = document.querySelector("[data-review-stats]");
+    try {
+      var res = await window.API.getReviewStats();
+      var s = (res && res.data) || {};
+      host.hidden = false;
+      var set = function(k, v){ var n = host.querySelector('[data-stat="' + k + '"]'); if (n) n.textContent = v; };
+      set("total", s.total != null ? String(s.total) : "--");
+      // Honest empty state: no fake 0.0/5 when nobody has rated yet.
+      set("average", s.average_rating != null ? s.average_rating.toFixed(1) : "\u2014");
+      set("new", s.new_count != null ? String(s.new_count) : "--");
+      var br = s.by_rating || {};
+      var n = host.querySelector('[data-stat="breakdown"]');
+      if (n) n.innerHTML = [5,4,3,2,1].map(function(star){
+        return '<span style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:0.7rem;white-space:nowrap;">' +
+          star + '\u2605 <strong>' + JONE.esc(String(br[String(star)] || 0)) + "</strong></span>";
+      }).join("");
+    } catch (_) { host.hidden = true; /* stats are optional chrome */ }
+  }
+
+  /* -------------------------------- List ---------------------------------- */
+  function params(){
+    var p = { page: page, page_size: JONE.dashboard.pageSize() };
+    var s = document.getElementById("rv-search").value.trim();
+    var r = document.getElementById("rv-rating").value;
+    var st = document.getElementById("rv-status").value;
+    var o = document.getElementById("rv-ordering").value;
+    if (s) p.search = s;
+    if (r) p.rating = r;
+    if (st) p.status = st;
+    if (o) p.ordering = o;
+    return p;
+  }
+
+  function rowHTML(r){
+    return '<tr>' +
+      '<td data-label="Rating">' + starsHTML(r.rating) + '</td>' +
+      '<td data-label="Guest"><strong>' + JONE.esc(r.guest_name || "\u2014") + '</strong>' +
+        '<div class="caption hide-md">' + JONE.esc(r.booking_reference || "") + '</div></td>' +
+      '<td class="hide-sm" data-label="Booking">' + JONE.esc(r.booking_reference || "\u2014") +
+        '<div class="caption">' + JONE.esc(r.room_type_name || "") + '</div></td>' +
+      '<td class="hide-sm" data-label="Stay">' + JONE.esc(stayLabel(r)) + '</td>' +
+      '<td data-label="Review">' + JONE.esc(preview(r.comment, 70)) + '</td>' +
+      '<td class="hide-sm" data-label="Submitted">' + JONE.esc(r.created_at ? JONE.formatDate(r.created_at, "mid") : "\u2014") + '</td>' +
+      '<td data-label="Status">' + JONE.dashboard.statusPill(r.status) + '</td>' +
+      '<td data-label=""><button class="btn btn-sm btn-outline" data-rv-id="' + encodeURIComponent(r.id) + '">View</button></td>' +
+    '</tr>';
+  }
+
+  // Same shared control as every other dashboard list (components/dashboard.js).
+  function renderPager(pg){ JONE.dashboard.renderPagination(pager, pg, { onPage: load }); }
+
+  async function load(toPage){
+    if (toPage != null) page = Math.max(1, toPage);
+    DATA.loading(tbody);
+    try {
+      var res = await window.API.list("reviews", params());
+      var norm = window.API.normalizeList(res.data, res.pagination);
+      rowIndex = {};
+      (norm.items || []).forEach(function(r){ rowIndex[String(r.id)] = r; });
+      if (!(norm.items || []).length) {
+        var filtered = !!(params().search || params().rating || params().status);
+        DATA.empty(tbody, "star",
+          filtered ? "No reviews match" : "No customer reviews yet",
+          filtered ? "Adjust your search or filters." : "Customer feedback submitted through the website will appear here.", 8);
+        renderPager(null);
+        return;
+      }
+      tbody.innerHTML = norm.items.map(rowHTML).join("");
+      renderPager(res.pagination);
+      if (openId) { var id = openId; openId = null; openReview(id); }
+    } catch (err) {
+      if (err && err.status === 403) { location.replace("403.html"); return; }
+      DATA.error(tbody, "Reviews couldn't be loaded", (err && err.message) || "Please try again in a moment.", 8);
+    }
+  }
+
+  /* ----------------------------- Detail modal ----------------------------- */
+  function detailBody(r){
+    return '<div class="rv-detail">' +
+      '<div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1rem;flex-wrap:wrap;">' +
+        starsHTML(r.rating, 20) +
+        JONE.dashboard.statusPill(r.status) +
+      '</div>' +
+      '<dl class="pay-modal-facts" style="margin-bottom:1.1rem;">' +
+        fact("Guest", r.guest_name) +
+        fact("Email", r.guest_email) +
+        fact("Phone", r.guest_phone) +
+        fact("Booking", r.booking_reference) +
+        fact("Room type", r.room_type_name) +
+        fact("Stay", stayLabel(r)) +
+        fact("Submitted", r.created_at ? JONE.formatDateTime(r.created_at) : "\u2014") +
+        (r.reviewed_by_name ? fact("Handled by", r.reviewed_by_name) : "") +
+      "</dl>" +
+      '<strong style="display:block;margin-bottom:0.35rem;">Review</strong>' +
+      // Customer-generated content — ALWAYS escaped, never injected as HTML.
+      '<p style="white-space:pre-wrap;background:var(--color-surface-alt);border:1px solid var(--color-border);border-radius:var(--radius);padding:0.85rem 1rem;">' + JONE.esc(r.comment || "\u2014") + "</p>" +
+      '<div class="field" style="margin-top:1rem;margin-bottom:0.75rem;">' +
+        '<label class="field-label" for="rv-notes">Internal notes</label>' +
+        '<textarea class="textarea" id="rv-notes" rows="3" placeholder="Notes for management (never visible to the guest)"></textarea>' +
+      "</div>" +
+      '<div class="field-error" data-rv-modal-error style="display:none;"></div>' +
+    "</div>";
+  }
+  function fact(label, value){
+    return '<div class="pay-modal-fact"><dt>' + JONE.esc(label) + "</dt><dd>" +
+      JONE.esc(value == null || value === "" ? "\u2014" : String(value)) + "</dd></div>";
+  }
+
+  async function openReview(id){
+    var r = rowIndex[String(id)];
+    if (!r) {
+      try { var res = await window.API.getOne("reviews", id); r = (res && res.data) || null; }
+      catch (err) { JONE.ui.toast((err && err.message) || "This review couldn't be opened.", "error"); return; }
+    }
+    if (!r) return;
+
+    var isNew = String(r.status || "").toUpperCase() === "NEW";
+    var actions =
+      '<button class="btn btn-sm btn-danger" data-rv-delete>Delete</button>' +
+      '<button class="btn btn-sm btn-outline" data-rv-save-notes>Save notes</button>' +
+      (isNew
+        ? '<button class="btn btn-sm btn-accent" data-rv-mark>Mark as reviewed</button>'
+        : '<button class="btn btn-sm btn-outline" data-rv-unmark>Mark as new</button>') +
+      '<button class="btn btn-sm btn-ghost" data-rv-close>Close</button>';
+
+    JONE.dashboard.openPanel("Review \u2014 " + (r.guest_name || "Guest"), detailBody(r), actions, "modal-lg");
+    var panel = document.querySelector(".modal-panel");
+    if (!panel) return;
+    var notes = panel.querySelector("#rv-notes");
+    if (notes) notes.value = r.internal_notes || "";
+
+    function modalError(msg){
+      var el = panel.querySelector("[data-rv-modal-error]");
+      if (el) { el.textContent = msg; el.style.display = "block"; }
+      JONE.ui.toast(msg, "error");
+    }
+    async function patchReview(payload, successMsg){
+      try {
+        await window.API.update("reviews", r.id, payload);
+        JONE.ui.toast(successMsg, "success");
+        JONE.dashboard.closePanel();
+        loadStats(); load();
+      } catch (err) { modalError((err && err.message) || "The review couldn't be updated."); }
+    }
+
+    var closeBtn = panel.querySelector("[data-rv-close]");
+    if (closeBtn) closeBtn.addEventListener("click", function(){ JONE.dashboard.closePanel(); });
+    var saveBtn = panel.querySelector("[data-rv-save-notes]");
+    if (saveBtn) saveBtn.addEventListener("click", function(){
+      patchReview({ internal_notes: notes ? notes.value : "" }, "Notes saved.");
+    });
+    var markBtn = panel.querySelector("[data-rv-mark]");
+    if (markBtn) markBtn.addEventListener("click", function(){
+      patchReview({ status: "REVIEWED", internal_notes: notes ? notes.value : "" }, "Marked as reviewed.");
+    });
+    var unmarkBtn = panel.querySelector("[data-rv-unmark]");
+    if (unmarkBtn) unmarkBtn.addEventListener("click", function(){
+      patchReview({ status: "NEW", internal_notes: notes ? notes.value : "" }, "Marked as new.");
+    });
+    var delBtn = panel.querySelector("[data-rv-delete]");
+    if (delBtn) delBtn.addEventListener("click", async function(){
+      var yes = await JONE.ui.confirm({
+        title: "Delete this review?",
+        message: "The review from " + (r.guest_name || "this guest") + " will be permanently removed. This action is recorded in the audit log.",
+        confirmText: "Delete review", danger: true,
+      });
+      if (!yes) return;
+      try {
+        await window.API.remove("reviews", r.id);
+        JONE.ui.toast("Review deleted.", "success");
+        JONE.dashboard.closePanel();
+        loadStats(); load();
+      } catch (err) { modalError((err && err.message) || "The review couldn't be deleted."); }
+    });
+  }
+
+  tbody.addEventListener("click", function(e){
+    var b = e.target.closest("[data-rv-id]");
+    if (b) openReview(decodeURIComponent(b.getAttribute("data-rv-id")));
+  });
+
+  /* Filters: server-side search/filter/sort — never client-side over a full
+     download. Search is debounced to avoid request storms while typing. */
+  // A new search/filter/sort restarts at page 1 (server-side, debounced).
+  var debouncedSearch = JONE.debounce(function(){ load(1); }, 350);
+  document.getElementById("rv-search").addEventListener("input", debouncedSearch);
+  ["rv-rating", "rv-status", "rv-ordering"].forEach(function(id){
+    document.getElementById(id).addEventListener("change", function(){ load(1); });
+  });
+
+  loadStats();
+  load(1);
+})();
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

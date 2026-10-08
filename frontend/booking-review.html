@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Review Your Booking | J-ONE Hotel &amp; Lodge</title>
+<meta name="description" content="Review your booking details and proceed to secure payment at J-ONE Hotel &amp; Lodge.">
+<meta name="robots" content="noindex, follow">
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="css/main.css?v=1.1.6">
+<script>(function(){var t;try{t=JSON.parse(localStorage.getItem("jone.theme"))}catch(e){}if(t!=="dark"&&t!=="light"){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"}document.documentElement.setAttribute("data-theme",t);})();</script>
+
+
+
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="container header-inner">
+    <a href="index.html" class="brand" aria-label="J-ONE Hotel &amp; Lodge — home">
+      <span class="brand-mark-badge">
+        <img src="assets/icons/logo-official.png" alt="" class="brand-mark">
+      </span>
+      <span>
+        <span class="brand-word">J-ONE</span>
+        <span class="brand-sub">Hotel &amp; Lodge</span>
+      </span>
+    </a>
+
+    <nav class="header-nav" aria-label="Primary">
+      <a class="nav-link" data-nav="index.html" href="index.html">Home</a>
+      <a class="nav-link" data-nav="rooms.html" href="rooms.html">Rooms</a>
+      <a class="nav-link" data-nav="facilities.html" href="facilities.html">Facilities</a>
+      <a class="nav-link" data-nav="gallery.html" href="gallery.html">Gallery</a>
+      <a class="nav-link" data-nav="offers.html" href="offers.html">Offers</a>
+      <a class="nav-link" data-nav="about.html" href="about.html">About</a>
+      <a class="nav-link" data-nav="contact.html" href="contact.html">Contact</a>
+    </nav>
+
+    <div class="header-actions">
+      <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+        <span class="icon-moon" data-icon="moon" data-size="20"></span>
+        <span class="icon-sun" data-icon="sun" data-size="20"></span>
+      </button>
+      <a class="btn btn-sm btn-outline btn-review-cta" href="review.html">Leave a Review</a>
+      <a class="btn btn-sm btn-accent btn-book" href="booking.html">Book</a>
+      <button class="btn-icon btn-outline menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" data-icon="menu" data-size="22"></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <div class="container booking-shell">
+    <!-- STEPPER (rendered by js/booking-stepper.js) -->
+    <nav id="booking-stepper" aria-label="Booking progress"></nav>
+
+    <div class="booking-layout">
+      <div>
+        <!-- STEP 3: GUEST INFORMATION -->
+        <section id="panel-guest" class="bk-panel is-current">
+          <form id="guest-form" class="card card-pad" novalidate>
+            <h2 style="font-size:var(--fs-xl);margin-bottom:0.35rem;">Guest information</h2>
+            <p class="muted" style="margin-bottom:1.5rem;font-size:var(--fs-sm);">Who should we prepare the reservation for?</p>
+            <div class="form-grid fg-2">
+              <div class="field">
+                <label class="field-label" for="g-first">First name</label>
+                <input class="input" id="g-first" name="first_name" required autocomplete="given-name">
+                <div class="field-error">Please enter your first name.</div>
+              </div>
+              <div class="field">
+                <label class="field-label" for="g-last">Last name</label>
+                <input class="input" id="g-last" name="last_name" required autocomplete="family-name">
+                <div class="field-error">Please enter your last name.</div>
+              </div>
+            </div>
+            <div class="field">
+              <label class="field-label" for="g-phone">Phone</label>
+              <input class="input" id="g-phone" name="phone" type="tel" required autocomplete="tel" inputmode="tel" pattern="[0-9+\(\)\s\-]{7,}">
+              <div class="field-error">Please enter a valid phone number.</div>
+            </div>
+            <div class="field">
+              <label class="field-label" for="g-email">Email</label>
+              <input class="input" id="g-email" name="email" type="email" required autocomplete="email">
+              <div class="field-error">Please enter a valid email address.</div>
+            </div>
+            <div class="field">
+              <label class="field-label" for="g-offer">Offer code <span class="muted">(optional)</span></label>
+              <input class="input" id="g-offer" name="offer_code" placeholder="e.g. SAVE10" autocomplete="off">
+              <div class="field-error">This offer code couldn't be applied.</div>
+            </div>
+
+            <div class="notice info" style="margin-bottom:0.5rem;">
+              <span data-icon="shield" data-size="18"></span>
+              <span>We only collect the information needed to confirm your stay. Your details are never shared.</span>
+            </div>
+
+            <div class="bk-actions">
+              <a class="btn btn-outline" id="back-to-room" href="booking.html"><span data-icon="arrowLeft" data-size="16"></span> Back</a>
+              <button class="btn btn-accent btn-lg bk-actions-primary" type="submit">Review booking <span data-icon="arrowRight" data-size="16"></span></button>
+            </div>
+          </form>
+        </section>
+
+        <!-- STEP 4: REVIEW -->
+        <section id="panel-review" class="bk-panel">
+          <div class="card card-pad">
+            <h2 style="font-size:var(--fs-xl);margin-bottom:0.35rem;">Review your booking</h2>
+            <p class="muted" style="margin-bottom:1.5rem;font-size:var(--fs-sm);">Please check everything is correct before you pay. You can edit any section.</p>
+
+            <div class="review-group">
+              <div class="review-group-head">
+                <h4>Stay</h4>
+                <button class="review-edit" type="button" data-edit="stay"><span data-icon="edit" data-size="14"></span> Edit</button>
+              </div>
+              <div class="review-group-body">
+                <div class="summary-row"><span class="label">Check-in</span><span class="value" data-r-ci>--</span></div>
+                <div class="summary-row"><span class="label">Check-out</span><span class="value" data-r-co>--</span></div>
+                <div class="summary-row"><span class="label">Nights</span><span class="value" data-r-nights>--</span></div>
+                <div class="summary-row"><span class="label">Rooms</span><span class="value" data-r-rooms>--</span></div>
+                <div class="summary-row"><span class="label">Guests</span><span class="value" data-r-guests>--</span></div>
+              </div>
+            </div>
+
+            <div class="review-group">
+              <div class="review-group-head">
+                <h4>Room</h4>
+                <button class="review-edit" type="button" data-edit="room"><span data-icon="edit" data-size="14"></span> Edit</button>
+              </div>
+              <div class="review-group-body">
+                <div class="summary-row"><span class="label">Room</span><span class="value" data-r-room>--</span></div>
+                <div class="summary-row"><span class="label">Room rate (est.)</span><span class="value" data-r-rate>--</span></div>
+              </div>
+            </div>
+
+            <div class="review-group">
+              <div class="review-group-head">
+                <h4>Guest</h4>
+                <button class="review-edit" type="button" data-edit="guest"><span data-icon="edit" data-size="14"></span> Edit</button>
+              </div>
+              <div class="review-group-body">
+                <div class="summary-row"><span class="label">Name</span><span class="value" data-r-guest-name>--</span></div>
+                <div class="summary-row"><span class="label">Phone</span><span class="value" data-r-guest-phone>--</span></div>
+                <div class="summary-row"><span class="label">Email</span><span class="value" data-r-guest-email>--</span></div>
+              </div>
+            </div>
+
+            <div class="review-group">
+              <div class="review-group-head"><h4>Price</h4></div>
+              <div class="review-group-body">
+                <div class="summary-row"><span class="label">Room subtotal</span><span class="value" data-r-subtotal>--</span></div>
+                <div class="summary-row"><span class="label">Discount</span><span class="value" data-r-discount>--</span></div>
+                <div class="summary-row total"><span class="label">Estimated total</span><span class="value" data-r-total>--</span></div>
+              </div>
+            </div>
+            <p class="review-total-note summary-note">Estimated total, computed by our booking system. The final total is fixed when your booking is created.</p>
+
+            <details style="margin-top:1.25rem;">
+              <summary style="cursor:pointer;font-weight:500;color:var(--color-text);">Booking policies</summary>
+              <ul style="list-style:disc;padding-left:1.2rem;color:var(--color-text-muted);font-size:var(--fs-sm);line-height:1.7;margin-top:0.75rem;">
+                <li>Check-in from 2:00 PM · Check-out by 12:00 PM.</li>
+                <li>Free cancellation up to 24 hours before check-in.</li>
+                <li>Valid identification required at check-in.</li>
+                <li>A deposit may be required at the hotel for incidentals.</li>
+              </ul>
+            </details>
+
+            <div class="bk-actions">
+              <button class="btn btn-outline" id="back-to-guest" type="button"><span data-icon="arrowLeft" data-size="16"></span> Back</button>
+              <button class="btn btn-accent btn-lg bk-actions-primary" id="to-payment" type="button">Continue to payment <span data-icon="arrowRight" data-size="16"></span></button>
+            </div>
+            <p class="caption center" style="margin-top:1rem;"><span data-icon="lock" data-size="14"></span> Secure checkout through Paystack. You'll confirm on the next screen.</p>
+          </div>
+        </section>
+      </div>
+
+      <aside class="booking-summary no-print" data-collapsed="true">
+        <button class="summary-toggle" type="button" aria-expanded="false" aria-controls="rv-summary-body">
+          <span>Your stay <span class="summary-toggle-total" data-sc-total-mobile>—</span></span>
+          <span data-icon="chevronUp" data-size="18"></span>
+        </button>
+        <div class="booking-summary-head"><h3>Your stay</h3></div>
+        <div class="booking-summary-body" id="rv-summary-body">
+          <div class="summary-row"><span class="label">Check-in</span><span class="value" data-sc-ci>--</span></div>
+          <div class="summary-row"><span class="label">Check-out</span><span class="value" data-sc-co>--</span></div>
+          <div class="summary-row"><span class="label">Room</span><span class="value" data-sc-room>--</span></div>
+          <div class="summary-row"><span class="label">Guests</span><span class="value" data-sc-guests>--</span></div>
+          <div class="summary-row total"><span class="label">Total</span><span class="value" data-sc-total>--</span></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</main>
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <a href="index.html" class="brand">
+          <img src="assets/icons/logo-official.svg" alt="" class="brand-mark" width="21" height="30">
+          <span>
+            <span class="brand-word">J-ONE</span>
+            <span class="brand-sub">Hotel &amp; Lodge</span>
+          </span>
+        </a>
+        <p data-hotel-name="J-ONE HOTEL &amp; LODGE">A quiet, contemporary address for rest and gathering &mdash; private, comfortable and close to everything you need.</p>
+      </div>
+
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <a href="index.html#rooms">Rooms &amp; Suites</a>
+        <a href="facilities.html">Facilities</a>
+        <a href="gallery.html">Gallery</a>
+        <a href="offers.html">Offers</a>
+        <a href="about.html">About</a>
+        <a href="contact.html">Contact</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Booking</h5>
+        <a href="booking.html">Book Your Stay</a>
+        <a href="my-bookings.html">Your stays</a>
+        <a href="portal/login.html">Guest portal</a>
+        <a href="review.html">Leave a Review</a>
+        <a href="policies.html">Hotel Policies</a>
+        <a href="cancellation-policy.html">Cancellation</a>
+        <a href="refund-policy.html">Refunds</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Contact</h5>
+        <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
+        <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
+        <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
+        <a class="footer-line" data-google-maps href="https://www.google.com/maps" target="_blank" rel="noopener"><span data-icon="mapPin" data-size="16"></span>View on Google Maps</a>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>&copy; <span data-year="2026"></span> J-ONE HOTEL &amp; LODGE. All rights reserved.</span>
+      <span>
+        <a href="privacy.html">Privacy</a> &middot;
+        <a href="policies.html">Policies</a> &middot;
+        <a href="terms.html">Terms</a> &middot;
+        <a href="login.html">Staff</a>
+      </span>
+    </div>
+  </div>
+</footer>
+
+<div class="mobile-drawer-backdrop" aria-hidden="true"></div>
+<div class="mobile-drawer" role="dialog" aria-modal="true" aria-label="Menu" aria-hidden="true">
+  <div class="mobile-drawer-head">
+    <span class="brand-word">J-ONE</span>
+    <button class="btn-icon btn-ghost" type="button" aria-label="Close menu" data-drawer-close data-icon="x" data-size="20"></button>
+  </div>
+  <div class="mobile-drawer-body">
+    <nav class="mobile-nav" aria-label="Mobile">
+      <a data-nav="index.html" href="index.html">Home <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="rooms.html" href="rooms.html">Rooms <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="facilities.html" href="facilities.html">Facilities <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="gallery.html" href="gallery.html">Gallery <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="offers.html" href="offers.html">Offers <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="about.html" href="about.html">About <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="contact.html" href="contact.html">Contact <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="review.html" href="review.html">Leave a Review <span data-icon="star" data-size="18"></span></a>
+      <a data-nav="policies.html" href="policies.html">Policies <span data-icon="chevronRight" data-size="18"></span></a>
+    </nav>
+    <div class="mobile-footer-row">
+      <a class="btn btn-accent" href="booking.html">Book Your Stay</a>
+      <a class="btn btn-outline" href="tel:+2348032112874"><span data-icon="phone" data-size="18"></span> Call the hotel</a>
+    </div>
+  </div>
+</div>
+
+<script src="js/runtime-config.js?v=1.1.6"></script>
+<script src="js/config.js?v=1.1.6"></script>
+<script src="js/utils.js?v=1.1.6"></script>
+<script src="js/icons.js?v=1.1.6"></script>
+<script src="js/api.js?v=1.1.6"></script>
+<script src="js/theme.js?v=1.1.6"></script>
+<script src="js/ui.js?v=1.1.6"></script>
+<script src="js/hotel-data.js?v=1.1.6"></script>
+<script src="js/contact.js?v=1.1.6"></script>
+<script src="js/navigation.js?v=1.1.6"></script>
+<script>JONE.ui.initChrome(); JONE.nav.init();</script>
+<script src="js/site.js?v=1.1.6"></script>
+<script src="js/booking-stepper.js?v=1.1.6"></script>
+<script>
+(function () {
+  "use strict";
+  var p = new URLSearchParams(location.search);
+  var S = JONE.APP_CONFIG.STORAGE.BOOKING;
+  var savedDraft = JONE.storage.get(S, {}) || {};
+
+  var data = {
+    check_in: p.get("check_in") || savedDraft.check_in,
+    check_out: p.get("check_out") || savedDraft.check_out,
+    adults: p.get("adults") || savedDraft.adults || 1,
+    children: p.get("children") || savedDraft.children || 0,
+    room: p.get("room") || savedDraft.room_type,
+    room_name: p.get("room_name") || savedDraft.room_name,
+    // Number of rooms of this type (multi-room bookings).
+    rooms: p.get("rooms") || savedDraft.rooms || 1,
+    // Exact physical room carried over from "Book this room — Room 203".
+    room_id: p.get("room_id") || savedDraft.room_id || "",
+    room_no: p.get("room_no") || savedDraft.room_number || ""
+  };
+  // A chosen PHYSICAL room is always exactly one room — exact-room flows
+  // never behave like multi-room stays.
+  if (data.room_id) data.rooms = 1;
+  data.rooms = Math.max(1, Number(data.rooms) || 1);
+  function roomLine(){
+    var line = (data.room_name || data.room) + (data.room_no ? " \u00B7 Room " + data.room_no : "");
+    return data.rooms > 1 ? data.rooms + " \u00D7 " + line : line;
+  }
+
+  if (!data.check_in || !data.room) {
+    // Incomplete entry — restart the flow rather than inventing details.
+    location.replace("booking.html");
+    return;
+  }
+
+  // Pre-fill an offer code handed over from booking/offers pages.
+  /* Per-visit only: a code kept in the draft re-applies itself to dates it
+     was never valid for. The URL (from an offer card) is the only carry-over. */
+  var offerParam = p.get("offer") || "";
+  var offerInput = document.getElementById("g-offer");
+  if (offerParam && offerInput && !offerInput.value) offerInput.value = offerParam;
+
+  // Restore any previously entered guest details (Back navigation / refresh).
+  if (savedDraft.guest) {
+    var g = savedDraft.guest;
+    if (g.first_name) document.getElementById("g-first").value = g.first_name;
+    if (g.last_name) document.getElementById("g-last").value = g.last_name;
+    if (g.phone) document.getElementById("g-phone").value = g.phone;
+    if (g.email) document.getElementById("g-email").value = g.email;
+  }
+
+  var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var panelGuest = document.getElementById("panel-guest");
+  var panelReview = document.getElementById("panel-review");
+
+  /* ------------------------------ Stepper -------------------------------- */
+  var criteria = {
+    check_in: data.check_in, check_out: data.check_out,
+    adults: data.adults, children: data.children,
+    rooms: data.rooms,
+    room: data.room, room_name: data.room_name, offer: offerParam || ""
+  };
+  var startStep = p.get("step") === "review" ? 4 : 3;
+  var stepper = JONE.stepper.mount(document.getElementById("booking-stepper"), {
+    current: startStep,
+    criteria: criteria,
+    onNavigate: function (step, index) {
+      if (index === 3) { showPanel("guest", "back"); stepper.update(3); return true; }
+      // Steps 1 & 2 are on booking.html — let default cross-page nav run.
+      return false;
+    }
+  });
+
+  function showPanel(which, dir) {
+    var a = which === "guest" ? panelReview : panelGuest;
+    var b = which === "guest" ? panelGuest : panelReview;
+    a.classList.remove("is-current", "anim-in-forward", "anim-in-back");
+    b.classList.add("is-current");
+    if (!reduceMotion) {
+      b.classList.remove("anim-in-forward", "anim-in-back");
+      void b.offsetWidth;
+      b.classList.add(dir === "back" ? "anim-in-back" : "anim-in-forward");
+    }
+    window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+  }
+
+  function setColl(sel, val) { var n = document.querySelector(sel); if (n) n.textContent = val; }
+  var cd = function (v) { return JONE.formatDate(v, "mid"); };
+  function guestsLabel() {
+    var a = Number(data.adults) || 0, c = Number(data.children) || 0;
+    return a + " adult" + (a === 1 ? "" : "s") + (c ? ", " + c + " child" + (c === 1 ? "" : "ren") : "");
+  }
+
+  // Static stay/room facts
+  setColl("[data-r-ci]", cd(data.check_in) || "--");
+  setColl("[data-r-co]", cd(data.check_out) || "--");
+  setColl("[data-r-guests]", guestsLabel());
+  setColl("[data-r-rooms]", data.rooms + (data.rooms === 1 ? " room" : " rooms"));
+  setColl("[data-r-room]", roomLine());
+  setColl("[data-sc-ci]", cd(data.check_in));
+  setColl("[data-sc-co]", cd(data.check_out));
+  setColl("[data-sc-room]", roomLine());
+  setColl("[data-sc-guests]", guestsLabel());
+
+  /* -------------------- Mobile collapsible summary ----------------------- */
+  (function () {
+    var aside = document.querySelector(".booking-summary");
+    var toggle = aside && aside.querySelector(".summary-toggle");
+    if (!toggle) return;
+    toggle.addEventListener("click", function () {
+      var collapsed = aside.getAttribute("data-collapsed") === "true";
+      aside.setAttribute("data-collapsed", collapsed ? "false" : "true");
+      toggle.setAttribute("aria-expanded", collapsed ? "true" : "false");
+    });
+  })();
+
+  /* ---------------- Authoritative quote from the backend ----------------
+     The backend prices the stay (nights, discounts, fees, taxes). The page
+     only DISPLAYS the numbers it returns — nothing is computed locally. */
+  var quote = null;
+
+  function renderQuote() {
+    if (!quote) return;
+    setColl("[data-r-nights]", quote.nights + (quote.nights === 1 ? " night" : " nights"));
+    if (quote.rooms != null) setColl("[data-r-rooms]", quote.rooms + (quote.rooms === 1 ? " room" : " rooms"));
+    setColl("[data-r-rate]", JONE.formatNaira(quote.price_per_night) + " / night");
+    if (quote.subtotal != null) setColl("[data-r-subtotal]", JONE.formatNaira(quote.subtotal));
+    else setColl("[data-r-subtotal]", JONE.formatNaira(quote.price_per_night * quote.nights));
+    var offerLabel = quote.offer
+      ? (quote.offer.code ? quote.offer.code + " \u2014 " : "") + JONE.formatNaira(quote.discount || 0) + " off"
+      : "\u2014";
+    setColl("[data-r-discount]", offerLabel);
+    setColl("[data-r-total]", JONE.formatNaira(quote.total));
+    setColl("[data-sc-total]", JONE.formatNaira(quote.total));
+    var mob = document.querySelector("[data-sc-total-mobile]"); if (mob) mob.textContent = JONE.formatNaira(quote.total);
+  }
+
+  function quoteError(err) {
+    var msg = (err && err.status === 0)
+      ? "We couldn't reach the booking service. Please check your connection."
+      : ((err && err.message) || "We couldn't price this stay right now.");
+    ["[data-r-rate]", "[data-r-subtotal]", "[data-r-discount]", "[data-r-total]", "[data-sc-total]"].forEach(function (s) { setColl(s, "\u2014"); });
+    setColl("[data-r-nights]", "unavailable");
+    var note = document.querySelector(".review-total-note");
+    if (note) {
+      note.textContent = "Pricing is currently unavailable (" + msg + ") \u2014 you can retry, or continue and the hotel will confirm the total.";
+      note.style.color = "var(--color-danger)";
+    }
+  }
+
+  async function loadQuote() {
+    setColl("[data-r-nights]", "loading\u2026");
+    try {
+      var offerCode = offerInput ? offerInput.value.trim() : "";
+      var res = await window.API.quoteBooking({
+        room_type: data.room,
+        check_in: data.check_in, check_out: data.check_out,
+        rooms: Number(data.rooms) || 1, adults: Number(data.adults) || 1, children: Number(data.children) || 0,
+        offer_code: offerCode || undefined
+      });
+      quote = res.data || null;
+      setOfferError("");
+      renderQuote();
+    } catch (err) {
+      if (String(err && err.code || "").indexOf("OFFER_") === 0 && offerCode) {
+        /* The offer is OPTIONAL: show the specific reason on the field, clear
+           the code and re-price the stay. The quote itself must never fail
+           because of it. */
+        setOfferError(err.message || "This offer code couldn't be applied.");
+        if (offerInput) offerInput.value = "";
+        return loadQuote();
+      }
+      quoteError(err);
+    }
+  }
+
+  /* Field-level offer feedback; "" clears it. */
+  function setOfferError(message) {
+    if (!offerInput) return;
+    var field = offerInput.closest(".field");
+    if (!field) return;
+    var slot = field.querySelector(".field-error");
+    if (slot && message) slot.textContent = message;
+    field.classList.toggle("has-error", !!message);
+  }
+
+  loadQuote();
+
+  /* ------------------------- Guest field validation ---------------------- */
+  function setError(id, on) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var field = el.closest(".field");
+    if (field) field.classList.toggle("has-error", on);
+  }
+  ["g-first", "g-last", "g-phone", "g-email"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", function () { if (el.closest(".field").classList.contains("has-error")) setError(id, !el.checkValidity()); });
+    el.addEventListener("blur", function () { setError(id, !el.checkValidity()); });
+  });
+
+  function persistGuest() {
+    var draft = JONE.storage.get(S, {}) || {};
+    draft.check_in = data.check_in; draft.check_out = data.check_out;
+    draft.adults = Number(data.adults) || 1; draft.children = Number(data.children) || 0;
+    draft.room_type = data.room; draft.room_name = data.room_name;
+    draft.room_id = data.room_id || ""; draft.room_number = data.room_no || "";
+    draft.rooms = Number(data.rooms) || 1;
+    draft.guest = {
+      first_name: document.getElementById("g-first").value.trim(),
+      last_name: document.getElementById("g-last").value.trim(),
+      phone: document.getElementById("g-phone").value.trim(),
+      email: document.getElementById("g-email").value.trim()
+    };
+    JONE.storage.set(S, draft);
+    return draft;
+  }
+
+  function fillReviewGuest(draft) {
+    var g = draft.guest || {};
+    setColl("[data-r-guest-name]", ((g.first_name || "") + " " + (g.last_name || "")).trim() || "--");
+    setColl("[data-r-guest-phone]", g.phone || "--");
+    setColl("[data-r-guest-email]", g.email || "--");
+  }
+
+  /* --------------------------- Guest -> Review --------------------------- */
+  var guestForm = document.getElementById("guest-form");
+  guestForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var valid = guestForm.checkValidity();
+    if (!valid) {
+      ["g-first", "g-last", "g-phone", "g-email"].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) setError(id, !el.checkValidity());
+      });
+      var firstBad = guestForm.querySelector(".field.has-error .input");
+      if (firstBad) firstBad.focus();
+      JONE.ui.toast("Please complete the highlighted fields before continuing.", "warning");
+      return;
+    }
+    var draft = persistGuest();
+    fillReviewGuest(draft);
+    // Re-quote if the offer code changed since first load.
+    loadQuote();
+    stepper.update(4);
+    showPanel("review", "forward");
+  });
+
+  document.getElementById("back-to-guest").addEventListener("click", function () {
+    stepper.update(3);
+    showPanel("guest", "back");
+  });
+
+  /* ------------- Per-section Edit actions on the Review panel ------------- */
+  document.querySelectorAll("[data-edit]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var what = btn.getAttribute("data-edit");
+      if (what === "guest") {
+        stepper.update(3);
+        showPanel("guest", "back");
+      } else if (what === "stay" || what === "room") {
+        // Return to booking.html at the right step, preserving all criteria.
+        // Guest details are already saved to the draft and will be restored.
+        persistGuest();
+        var q = new URLSearchParams({
+          check_in: data.check_in, check_out: data.check_out,
+          adults: data.adults, children: data.children
+        });
+        if (criteria.offer) q.set("offer", criteria.offer);
+        if (data.rooms > 1) q.set("rooms", data.rooms);
+        if (what === "room") {
+          q.set("room", data.room); q.set("room_name", data.room_name || ""); q.set("step", "room");
+          if (data.room_id) { q.set("room_id", data.room_id); if (data.room_no) q.set("room_no", data.room_no); }
+        }
+        location.href = "booking.html?" + q.toString();
+      }
+    });
+  });
+
+  /* --------------------------- Review -> Payment ------------------------- */
+  document.getElementById("to-payment").addEventListener("click", function () {
+    var btn = this;
+    if (!JONE.guardSubmit(btn)) return;
+    persistGuest();
+    var q = new URLSearchParams({
+      step: "payment",
+      check_in: data.check_in, check_out: data.check_out,
+      adults: data.adults, children: data.children,
+      rooms: data.rooms,
+      room: data.room, room_name: data.room_name || "",
+      room_id: data.room_id || "", room_no: data.room_no || ""
+    }).toString();
+    location.href = "booking-confirmation.html?" + q;
+  });
+
+  // Enter directly on the Review step (e.g. via stepper Back from payment).
+  if (startStep === 4) {
+    fillReviewGuest(savedDraft);
+    panelGuest.classList.remove("is-current");
+    panelReview.classList.add("is-current");
+  }
+})();
+</script>
+<script src="js/pwa.js?v=1.1.6"></script>
+<script src="js/version.js?v=1.1.6"></script>
+<script src="js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

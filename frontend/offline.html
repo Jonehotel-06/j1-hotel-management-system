@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>You're offline | J-ONE Hotel &amp; Lodge</title>
+<meta name="description" content="J-ONE Hotel &amp; Lodge is temporarily unavailable because there is no internet connection.">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="/favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/css/main.css?v=1.1.6">
+
+</head>
+<body>
+<main id="main">
+  <section style="min-height:80vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:4rem 1rem;">
+    <div style="max-width:52ch;">
+      <img src="/assets/icons/logo-official.svg" alt="" width="42" height="60" style="margin-bottom:1.5rem;">
+      <h1 style="margin:0 0 0.75rem;">You're offline</h1>
+      <p class="lede" style="margin:0 auto 1.25rem;">
+        <strong>J-ONE HOTEL &amp; LODGE</strong> is temporarily unavailable because there is
+        no internet connection. Pages you have already visited may still open, but live
+        information cannot be loaded right now.
+      </p>
+      <p style="color:var(--color-text-muted);margin:0 auto 2rem;">
+        Room availability, bookings and payments are confirmed by our servers, so they need an
+        active connection. Nothing has been submitted &mdash; please reconnect and try again.
+      </p>
+      <div style="display:flex;gap:0.75rem;justify-content:center;flex-wrap:wrap;">
+        <button class="btn btn-accent" type="button" id="retry-btn">
+          <span data-icon="refresh" data-size="18"></span> Try again
+        </button>
+        <a class="btn btn-outline" href="/index.html">Return home</a>
+        <a class="btn btn-outline" href="tel:+2348032112874">
+          <span data-icon="phone" data-size="18"></span> Call the hotel
+        </a>
+      </div>
+      <p id="conn-status" role="status" aria-live="polite" style="margin-top:1.5rem;font-size:var(--fs-sm);color:var(--color-text-muted);"></p>
+    </div>
+  </section>
+</main>
+
+<script src="/js/icons.js?v=1.1.6"></script>
+<script>
+(function () {
+  "use strict";
+  if (window.JONE && window.JONE.icons) window.JONE.icons.inject(document);
+
+  var status = document.getElementById("conn-status");
+  var retry = document.getElementById("retry-btn");
+
+  function render() {
+    if (!status) return;
+    status.textContent = navigator.onLine
+      ? "Your connection is back. Select \u201cTry again\u201d to continue."
+      : "Waiting for a connection\u2026";
+  }
+  render();
+  window.addEventListener("online", render);
+  window.addEventListener("offline", render);
+
+  retry && retry.addEventListener("click", function () {
+    if (!navigator.onLine) {
+      if (status) status.textContent = "Still no connection. Please check your network and try again.";
+      return;
+    }
+    // Go back to the page the visitor actually wanted, when we know it.
+    if (document.referrer && document.referrer.indexOf(location.origin) === 0) {
+      location.replace(document.referrer);
+    } else {
+      location.replace("/index.html");
+    }
+  });
+})();
+</script>
+<script src="js/pwa.js?v=1.1.6"></script>
+<script src="js/version.js?v=1.1.6"></script>
+<script src="js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

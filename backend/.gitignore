@@ -1,0 +1,53 @@
+# --- Secrets / environment -------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.envrc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# --- Django ----------------------------------------------------------------
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+logs/
+*.log
+
+# --- Build / misc ----------------------------------------------------------
+build/
+dist/
+*.egg-info/
+.pypirc
+
+# --- IDE -------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+.spyderproject
+.spyproject
+
+# --- OS --------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Hosted persistent-disk mount artifacts (never commit databases)
+jone_hotel-*
+*.sqlite3*

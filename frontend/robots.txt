@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /dashboard/
+Disallow: /login.html
+Disallow: /booking-confirmation.html
+
+Sitemap: /sitemap.xml

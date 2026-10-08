@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+# J-ONE HOTEL & LODGE — Backend dependencies
+# Every package below has a specific job in the platform (see notes inline).
+# ---------------------------------------------------------------------------
+
+# --- Framework -------------------------------------------------------------
+Django>=5.2,<5.3                     # Web framework
+djangorestframework>=3.15,<3.17      # REST API layer
+djangorestframework-simplejwt>=5.3   # JWT auth + refresh rotation + blacklist
+django-cors-headers>=4.4             # CORS for the independently hosted frontend
+drf-spectacular>=0.27                # OpenAPI 3 schema + Swagger UI docs
+
+# --- Configuration ---------------------------------------------------------
+python-decouple>=3.8                 # Environment-driven settings
+python-dotenv>=1.0                   # Preloads .env for manage.py/wsgi/celery
+dj-database-url>=2.2                 # DATABASE_URL parsing (production MySQL)
+
+# --- Database (production) -------------------------------------------------
+# MySQL 8.0+ driver. Installable on Linux with pkg-config + libmysqlclient dev
+# packages (see README "Troubleshooting"). Not required for local SQLite dev.
+mysqlclient>=2.2
+
+# --- Media / files ---------------------------------------------------------
+Pillow>=10.0                         # ImageField support + upload validation
+# Pure-Python PDF generation for server-side receipt attachments (no system
+# libraries required — runs identically on the web service and Celery worker).
+reportlab>=4.0
+# Backblaze B2 is S3-compatible; django-storages provides the storage backend.
+# The [s3] extra pulls in boto3/botocore. django-storages 1.14.4+ is required
+# for the Django 4.2+ STORAGES setting and the AWS_S3_CLIENT_CONFIG option used
+# to disable the boto3>=1.36 checksum headers that Backblaze B2 rejects.
+django-storages[s3]>=1.14.4
+boto3>=1.36                          # S3-compatible client (explicit: settings import botocore)
+
+# --- Integrations ----------------------------------------------------------
+requests>=2.31                       # HTTP client for Paystack API calls
+celery[redis]>=5.4,<6                # Background tasks (email, booking expiry)
+redis>=5                             # Redis client (Celery broker + Django cache)
+
+# --- Serving ---------------------------------------------------------------
+gunicorn>=22                         # Production WSGI server
+whitenoise>=6.7                      # Static files serving (production)

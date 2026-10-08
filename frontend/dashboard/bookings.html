@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Bookings | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Bookings</h1>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+<section class="panel">
+  <div class="filter-bar">
+    <div class="field"><label class="field-label" for="bk-q">Search</label><input class="input" id="bk-q" data-filter="q" placeholder="Ref, guest, phone, email, room no., receipt ref"></div>
+    <div class="field"><label class="field-label" for="bk-status">Status</label><select class="select" id="bk-status" data-filter="status"><option value="">All</option><option>confirmed</option><option>pending</option><option>cancelled</option><option>checked_in</option><option>checked_out</option></select></div>
+    <div class="field"><label class="field-label" for="bk-pay">Payment</label><select class="select" id="bk-pay" data-filter="payment_status"><option value="">All</option><option value="PAID">Paid</option><option value="PARTIALLY_PAID">Partially paid</option><option value="UNPAID">Unpaid</option></select></div>
+    <div class="field"><label class="field-label" for="bk-date">From</label><input class="input" type="date" id="bk-date" data-filter="from" data-allow-past></div>
+    <div class="filter-actions"><button class="btn btn-sm" data-new-booking>New booking</button></div>
+  </div>
+  <div class="panel-body no-pad">
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Reference</th><th class="hide-sm">Guest</th><th class="hide-sm">Room</th><th>Check-in</th><th class="hide-sm">Check-out</th><th>Status</th><th class="hide-sm">Payment</th><th class="hide-sm">Total</th><th></th></tr></thead>
+      <tbody data-tbody="bookings"></tbody>
+    </table></div>
+    <div class="pagination" data-pagination></div>
+  </div>
+</section>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/hotel-data.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/booking-calendar.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("receptionist");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  var DATA = JONE.dashboard.DATA;
+  var tbody = document.querySelector("[data-tbody=bookings]");
+
+  /* Verified /api/admin/bookings/ row:
+     { id, booking_reference, guest_name, guest_phone, guest_email,
+       room_type_name, room_numbers[], check_in, check_out, nights,
+       number_of_rooms, number_of_guests, total_amount, amount_paid,
+       amount_due, currency, status, payment_status, source, created_at }
+     Filters (server-side): status, payment_status, source, room_type,
+     date_from, date_to, check_in, check_out, search, ordering. */
+  function refOf(b){ return b.booking_reference || b.id || "—"; }
+  function roomLabel(b){
+    if (b.room_numbers && b.room_numbers.length) return b.room_numbers.join(", ");
+    return b.room_type_name || "—";
+  }
+
+  // Row cache so a recorded payment can refresh ONE row in place instead of
+  // re-downloading the whole bookings list.
+  var rowIndex = {};
+
+  function actionCell(b){
+    /* One shared rule (JONE.dashboard.canRecordPayment): the action is only
+       offered when the booking can still accept money AND a balance is
+       outstanding — a confirmed/settled payment shows no button. */
+    var payBtn = JONE.dashboard.canRecordPayment(b)
+      ? '<button class="btn btn-sm btn-accent" data-pay="' + JONE.esc(b.id) + '">' +
+        '<span data-icon="wallet" data-size="14"></span> Record payment</button>'
+      : "";
+    return '<div class="row-actions">' + payBtn +
+      '<a class="btn btn-sm btn-outline" href="booking-details.html?ref='+encodeURIComponent(refOf(b))+'">View</a>' +
+      '</div>';
+  }
+
+  function render(list){
+    if(!tbody) return;
+    renderRows(list || []);
+  }
+
+  /* Update a single row from the authoritative booking snapshot returned by
+     the payments endpoint — no table reload, no extra requests. */
+  function refreshRow(id, fresh){
+    var row = tbody && tbody.querySelector('[data-booking-row="'+String(id)+'"]');
+    if(!row || !fresh) return;
+    var merged = Object.assign({}, rowIndex[String(id)] || {}, fresh);
+    rowIndex[String(id)] = merged;
+    var cells = row.children;
+    if(cells[5]) cells[5].innerHTML = JONE.dashboard.statusPill(merged.status);
+    if(cells[6]) cells[6].innerHTML = JONE.dashboard.statusPill(merged.payment_status);
+    if(cells[7]) cells[7].innerHTML = JONE.esc(JONE.formatNaira(merged.total_amount)) +
+      '<div class="caption">Due '+JONE.esc(JONE.formatNaira(merged.amount_due||0))+'</div>';
+    if(cells[8]) cells[8].innerHTML = actionCell(merged);
+    JONE.icons.inject(row);
+  }
+
+  /* One delegated handler covers every row (and every future re-render). */
+  if (tbody) tbody.addEventListener("click", function(e){
+    var btn = e.target.closest && e.target.closest("[data-pay]");
+    if(!btn) return;
+    var id = btn.getAttribute("data-pay");
+    var booking = rowIndex[id];
+    if(!booking) return;
+    openPaymentFor(booking, id);
+  });
+
+  function openPaymentFor(booking, rowId){
+    JONE.dashboard.paymentModal(booking, {
+      onRecorded: function(fresh){
+        refreshRow(rowId || booking.id, fresh);
+        if (JONE.dashboard.notifBadge) JONE.dashboard.notifBadge.refresh();
+      }
+    });
+  }
+
+  /* Server-side pagination: state holds ONLY the page; every filter value is
+     read from the inputs at request time so paging always preserves the
+     active search/status/payment/date. Any filter change resets to page 1. */
+  var state = { page: 1 };
+  var pager = document.querySelector("[data-pagination]");
+  function renderPager(meta){ JONE.dashboard.renderPagination(pager, meta, { onPage: load }); }
+
+  function filters(){
+    var f = { page: state.page, page_size: JONE.dashboard.pageSize(), ordering: "-created_at" };
+    var q = document.getElementById("bk-q"); if (q && q.value.trim()) f.search = q.value.trim();
+    var st = document.getElementById("bk-status"); if (st && st.value) f.status = st.value;
+    var py = document.getElementById("bk-pay"); if (py && py.value) f.payment_status = py.value;
+    var dt = document.getElementById("bk-date"); if (dt && dt.value) f.check_in = dt.value;
+    return f;
+  }
+
+  var debouncedReload = JONE.debounce ? JONE.debounce(function(){ load(1); }, 300) : function(){ load(1); };
+  ["bk-q","bk-status","bk-pay","bk-date"].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el){ el.addEventListener(id==="bk-q" ? "input" : "change", debouncedReload); }
+  });
+
+  // Pre-fill the search from the URL (e.g. guest history handoff).
+  (function(){
+    var pre = new URLSearchParams(location.search).get("search");
+    if (pre) { var q = document.getElementById("bk-q"); if (q && !q.value) q.value = pre; }
+  })();
+
+  /* ------------------- New booking (walk-in / phone) -------------------
+     Verified POST /api/admin/bookings/ contract — AdminBookingCreateSerializer:
+     { room_type (slug), check_in, check_out, rooms, adults, children,
+       source: WALK_IN|PHONE, status: PENDING|CONFIRMED, offer_code?,
+       special_requests?, internal_notes?, guest: { first_name, last_name,
+       email, phone } } — the backend validates availability and computes
+       every amount. The response is the authoritative booking. */
+  var roomTypes = [];
+  async function loadTypes(){
+    try{
+      var res = await window.API.list("roomTypes", { page_size: 100 });
+      roomTypes = window.API.normalizeList(res.data, res.pagination).items.map(function(t){ return { value: t.slug, label: t.name + " \u2014 " + JONE.formatNaira(t.base_price) + " / night" }; });
+    }catch(_){ roomTypes = []; }
+  }
+
+  /* ---- Availability data for the New-booking calendar --------------------
+     Same authoritative source as the public booking calendar:
+     GET /api/rooms/{slug}/unavailable-dates/ (nightly_inventory service).
+     The response carries per-date `available_rooms`, so the calendar can be
+     ROOM-COUNT aware: a night is unavailable when fewer rooms remain free
+     than the staff member is trying to book. Cached briefly per room type;
+     the cache is invalidated when a booking succeeds, when the room type
+     changes (different key), and on backend ROOM_UNAVAILABLE conflicts.
+     The backend re-validates every night atomically at creation — this
+     calendar is a usability layer, never the authority. */
+  var AVAIL_TTL_MS = 60000;
+  var availCache = {};   // slug -> { at, dates: {iso:{available_rooms}}, through, total }
+
+  function fetchAvailability(slug, force){
+    var hit = availCache[slug];
+    if (hit && !force && Date.now() - hit.at < AVAIL_TTL_MS) return Promise.resolve(hit);
+    return window.API.getUnavailableDates(slug, { days: 366 }).then(function(res){
+      var data = (res && res.data) || {};
+      var entry = { at: Date.now(), dates: data.dates || {}, through: data.through || null, total: data.total_rooms };
+      availCache[slug] = entry;
+      return entry;
+    });
+  }
+
+  var newBtn = document.querySelector("[data-new-booking]");
+  if (newBtn) newBtn.addEventListener("click", async function(){
+    var created = null;
+    if (!roomTypes.length) await loadTypes();
+
+    /* State shared between the calendar custom field and the form. */
+    var cal = null;               // stayCalendar instance
+    var calSel = { checkIn: null, checkOut: null };
+    var calEntry = null;          // availability entry currently applied
+    var calSlug = "";             // room type the calendar reflects
+    var calRooms = 1;             // requested room count
+    var calStatus = null;         // status line element
+    var typeLabelOf = {};
+    roomTypes.forEach(function(t){ typeLabelOf[t.value] = t.label.split(" \u2014 ")[0]; });
+
+    function nightUnavailable(iso){
+      if (!calEntry) return false;
+      var d = calEntry.dates[iso];
+      if (!d) return false;
+      return Number(d.available_rooms || 0) < Math.max(1, calRooms);
+    }
+    function setCalStatus(msg){ if (calStatus) calStatus.textContent = msg || ""; }
+
+    function applyEntry(entry){
+      calEntry = entry;
+      if (!cal) return;
+      cal.setBusy(false);
+      cal.setError(false);
+      if (entry.through) cal.setBounds({ max: entry.through });
+      var scope = calSlug && typeLabelOf[calSlug] ? " for " + typeLabelOf[calSlug] : "";
+      cal.setUnavailable(nightUnavailable, scope);
+      if (entry.total === 0) {
+        setCalStatus((typeLabelOf[calSlug] || "This room type") + " has no bookable rooms.");
+      } else if (calRooms > 1) {
+        setCalStatus("Showing dates with at least " + calRooms + " rooms free" + scope + ".");
+      } else {
+        setCalStatus("Struck-through dates are sold out" + scope + ".");
+      }
+    }
+
+    function refreshAvailability(force){
+      if (!calSlug || !cal) return;
+      cal.setBusy(true);
+      setCalStatus("Checking live availability\u2026");
+      fetchAvailability(calSlug, force).then(applyEntry).catch(function(){
+        if (!cal) return;
+        cal.setBusy(false);
+        cal.setError(true);
+        setCalStatus("Live availability couldn't be loaded.");
+      });
+    }
+
+    var out = await JONE.dashboard.formModal({
+      title: "New booking (walk-in / phone)",
+      submitText: "Create booking",
+      wide: true,
+      fields: [
+        { name: "room_type", label: "Room type", type: "select", required: true, options: roomTypes.length ? roomTypes : [{ value: "", label: "No room types configured" }] },
+        { name: "rooms", label: "Rooms", type: "number", required: true, value: 1 },
+        {
+          name: "stay_dates", label: "Stay dates", type: "custom", required: true,
+          help: "Pick check-in, then check-out. Sold-out nights are disabled for the selected room type and room count; the server re-verifies every night before the booking is created.",
+          render: function(mount, form){
+            calStatus = document.createElement("p");
+            calStatus.className = "caption";
+            calStatus.setAttribute("aria-live", "polite");
+            calStatus.style.cssText = "margin:0 0 0.4rem;";
+            mount.appendChild(calStatus);
+            cal = JONE.stayCalendar.mount(mount, {
+              minDate: JONE.hotelTodayISO(0),
+              maxDate: JONE.hotelTodayISO(365),
+              months: (window.matchMedia && window.matchMedia("(max-width: 760px)").matches) ? 1 : 2,
+              onChange: function(sel, reason){
+                calSel = sel;
+                if (reason === "checkin-unavailable") {
+                  setCalStatus("The selected room type is sold out on that check-in date.");
+                } else if (reason === "range-unavailable") {
+                  setCalStatus("That stay crosses a sold-out night \u2014 the check-out was cleared.");
+                }
+              },
+              onRetry: function(){ refreshAvailability(true); }
+            });
+
+            var typeSel = form.elements["room_type"];
+            var roomsInput = form.elements["rooms"];
+            function syncType(){
+              var slug = typeSel ? typeSel.value : "";
+              if (slug === calSlug) return;
+              calSlug = slug;
+              calEntry = null;
+              if (slug) refreshAvailability(false);
+              else { cal.setUnavailable(null); setCalStatus(""); }
+            }
+            if (typeSel) typeSel.addEventListener("change", syncType);
+            if (roomsInput) {
+              roomsInput.min = "1";
+              roomsInput.addEventListener("input", function(){
+                var n = Math.max(1, Number(roomsInput.value || 1));
+                if (n === calRooms) return;
+                calRooms = n;
+                if (calEntry) applyEntry(calEntry);   // re-derive disabled nights
+              });
+            }
+            syncType();
+          },
+          validate: function(){
+            if (!calSel.checkIn) return "Please select a check-in date on the calendar.";
+            if (!calSel.checkOut) return "Please select a check-out date on the calendar.";
+            return "";
+          },
+          getValue: function(){
+            return { check_in: calSel.checkIn || "", check_out: calSel.checkOut || "" };
+          }
+        },
+        { name: "adults", label: "Adults", type: "number", required: true, value: 1 },
+        { name: "children", label: "Children", type: "number", value: 0 },
+        { name: "source", label: "Source", type: "select", options: [{ value: "WALK_IN", label: "Walk-in" }, { value: "PHONE", label: "Phone" }], value: "WALK_IN" },
+        { name: "status", label: "Status", type: "select", options: [{ value: "CONFIRMED", label: "Confirmed" }, { value: "PENDING", label: "Pending payment" }], value: "CONFIRMED" },
+        { name: "offer_code", label: "Discount / offer code (optional)", value: "", help: "Apply an approved offer to this guest. The server calculates the discount and final total." },
+        { name: "special_requests", label: "Special requests", type: "textarea", rows: 2, value: "" },
+        { name: "internal_notes", label: "Internal notes", type: "textarea", rows: 2, value: "" },
+        { name: "guest_first_name", label: "Guest first name", required: true },
+        { name: "guest_last_name", label: "Guest last name", required: true },
+        { name: "guest_email", label: "Guest email", type: "email", required: true },
+        { name: "guest_phone", label: "Guest phone", required: true }
+      ],
+      onSubmit: async function(v){
+        var payload = {
+          room_type: v.room_type,
+          check_in: v.check_in,
+          check_out: v.check_out,
+          rooms: Number(v.rooms || 1),
+          adults: Number(v.adults || 1),
+          children: Number(v.children || 0),
+          source: v.source,
+          status: v.status,
+          special_requests: v.special_requests || "",
+          internal_notes: v.internal_notes || "",
+          guest: { first_name: v.guest_first_name, last_name: v.guest_last_name, email: v.guest_email, phone: v.guest_phone }
+        };
+        if (v.offer_code) payload.offer_code = v.offer_code;
+        try {
+          var res = await window.API.create("bookings", payload);
+          created = (res && res.data) || null;
+          delete availCache[v.room_type];   // inventory changed — never serve stale data
+          return res;
+        } catch (err) {
+          // Race lost: another booking took the room between the calendar
+          // load and this submit. Refresh authoritative availability so the
+          // now-blocked nights become visibly disabled, then surface the
+          // backend's ROOM_UNAVAILABLE message via the modal error box.
+          if (err && err.code === "ROOM_UNAVAILABLE") refreshAvailability(true);
+          throw err;
+        }
+      }
+    });
+    cal = null; calStatus = null;  // modal closed — drop references
+
+    /* The create response IS the authoritative booking detail (guest, room
+       assignments, totals, balance) — so the new row is added immediately and
+       the payment dialog opens right away. NO page reload and NO bookings-list
+       reload happens before the payment step. */
+    if (!created) return;
+    var ref = created.booking_reference;
+    JONE.ui.toast("Booking " + (ref || "") + " created.", "success");
+    prependRow(created);
+
+    if (JONE.dashboard.canRecordPayment(created)) {
+      if (created.room_substitution) {
+        JONE.ui.toast("Room " + created.room_substitution.requested_room_number +
+          " was taken — Room " + created.room_substitution.assigned_room_number +
+          " was reserved instead.", "warning");
+      }
+      await JONE.dashboard.paymentModal(created, {
+        onRecorded: function(fresh){ refreshRow(created.id, fresh); }
+      });
+    }
+    // One authoritative refresh AFTER the payment step (the row may have
+    // changed status server-side, e.g. PENDING → CONFIRMED on full payment).
+    // Page 1 so the just-created (newest-first) booking is always visible.
+    load(1);
+  });
+
+  /* Insert a freshly created booking as the first row WITHOUT reloading the
+     table: the create response already carries every field the row renders. */
+  function prependRow(b){
+    if(!tbody || !b) return;
+    var existing = tbody.querySelector('[data-booking-row="'+String(b.id)+'"]');
+    if(existing) return;
+    rowIndex[String(b.id)] = normalizeDetail(b);
+    var empty = tbody.querySelector('[data-tbody-empty], .empty-state');
+    if(empty) tbody.innerHTML = "";
+    tbody.insertAdjacentHTML("afterbegin", rowHTML(rowIndex[String(b.id)]));
+    JONE.icons.inject(tbody.firstElementChild);
+  }
+
+  /* The create/detail response nests the guest and the room assignments; the
+     table row wants the flat list shape. Mapping happens here, never in a
+     second API call. */
+  function normalizeDetail(b){
+    var g = b.guest || {};
+    return {
+      id: b.id,
+      booking_reference: b.booking_reference,
+      guest_name: g.full_name || [g.first_name, g.last_name].filter(Boolean).join(" ") || b.guest_name || "—",
+      guest_phone: g.phone || b.guest_phone || "",
+      guest_email: g.email || b.guest_email || "",
+      room_type_name: b.room_type_name,
+      room_numbers: (b.room_assignments || []).map(function(a){ return a.room_number; }).filter(Boolean),
+      check_in: b.check_in, check_out: b.check_out,
+      status: b.status, payment_status: b.payment_status,
+      total_amount: b.total_amount, amount_paid: b.amount_paid, amount_due: b.amount_due,
+      currency: b.currency,
+    };
+  }
+
+  function rowHTML(b){
+    var ref = refOf(b);
+    return '<tr data-booking-row="'+JONE.esc(b.id)+'">'+
+      '<td class="cell-nowrap"><a class="nav-link" href="booking-details.html?ref='+encodeURIComponent(ref)+'">'+JONE.esc(ref)+'</a>'+
+        '<div class="caption hide-md">'+JONE.esc(b.guest_name||"—")+'</div></td>'+
+      '<td class="hide-sm cell-guest"><span class="cell-guest-name">'+JONE.esc(b.guest_name||"—")+'</span><div class="caption cell-guest-contact">'+JONE.esc(b.guest_phone||b.guest_email||"")+'</div></td>'+
+      '<td class="hide-sm">'+JONE.esc(roomLabel(b))+'</td>'+
+      '<td class="cell-nowrap">'+JONE.esc(b.check_in?JONE.formatDate(b.check_in,"mid"):"—")+'</td>'+
+      '<td class="hide-sm cell-nowrap">'+JONE.esc(b.check_out?JONE.formatDate(b.check_out,"mid"):"—")+'</td>'+
+      '<td class="cell-nowrap">'+JONE.dashboard.statusPill(b.status)+'</td>'+
+      '<td class="hide-sm cell-nowrap">'+JONE.dashboard.statusPill(b.payment_status)+'</td>'+
+      '<td class="hide-sm num cell-nowrap">'+JONE.esc(JONE.formatNaira(b.total_amount))+
+        '<div class="caption">Due '+JONE.esc(JONE.formatNaira(b.amount_due||0))+'</div></td>'+
+      '<td class="cell-nowrap">'+actionCell(b)+'</td>'+
+    '</tr>';
+  }
+
+  function renderRows(list){
+    rowIndex = {};
+    list.forEach(function(b){ rowIndex[String(b.id)] = b; });
+    tbody.innerHTML = list.map(rowHTML).join("");
+    JONE.icons.inject(tbody);
+  }
+
+  async function load(page){
+    if (page != null) state.page = Math.max(1, page);
+    DATA.loading(tbody);
+    try {
+      var res = await window.API.list("bookings", filters());
+      var list = window.API.normalizeList(res.data, res.pagination).items;
+      if(!(list||[]).length){
+        DATA.empty(tbody, "search", "No bookings found", "Adjust your search or filters.", 9);
+        rowIndex = {};
+        renderPager(null);
+        return;
+      }
+      renderRows(list);
+      renderPager(res.pagination);
+    } catch(err){
+      DATA.error(tbody, "Bookings couldn't be loaded", (err && err.message) || "Please try again in a moment.", 9);
+    }
+  }
+  load(1);
+})();
+
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

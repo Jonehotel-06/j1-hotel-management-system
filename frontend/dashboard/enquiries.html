@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Enquiries | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title><h1>Enquiries</h1></div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false"><span class="icon-moon" data-icon="moon" data-size="18"></span><span class="icon-sun" data-icon="sun" data-size="18"></span></button>
+      </div>
+    </div>
+    <div class="dash-content">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Enquiries</h2>
+          <div class="panel-actions" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <select class="select" id="en-type" style="min-width:170px;font-size:var(--fs-sm);padding:0.5em 0.8em;"><option value="">All types</option><option value="GENERAL">General</option><option value="CANCELLATION">Cancellation / refund</option></select>
+            <select class="select" id="en-status" style="min-width:160px;font-size:var(--fs-sm);padding:0.5em 0.8em;"><option value="">All statuses</option><option value="NEW">New</option><option value="IN_PROGRESS">In progress</option><option value="RESOLVED">Resolved</option><option value="CLOSED">Closed</option></select>
+          </div>
+        </div>
+        <div class="panel-body no-pad">
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>Name</th><th class="hide-sm">Contact</th><th>Type / reference</th><th class="hide-sm">Received</th><th>Status</th><th>Refund</th><th></th></tr></thead>
+            <tbody data-tbody="enquiries"></tbody>
+          </table></div>
+          <div class="pagination" data-pagination></div>
+        </div>
+      </section>
+
+      <div class="modal" data-enq-modal>
+        <div class="modal-backdrop" data-enq-close></div>
+        <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="enq-modal-title">
+          <div class="modal-head"><h3 id="enq-modal-title">Enquiry</h3><button class="btn-icon btn-ghost modal-close" type="button" data-enq-close aria-label="Close">&times;</button></div>
+          <div class="modal-body">
+            <div class="summary-row"><span class="label">From</span><span class="value" data-enq-name>—</span></div>
+            <div class="summary-row"><span class="label">Contact</span><span class="value" data-enq-contact>—</span></div>
+            <div class="summary-row"><span class="label">Received</span><span class="value" data-enq-date>—</span></div>
+            <div class="summary-row"><span class="label">Subject</span><span class="value" data-enq-subject>—</span></div>
+            <div class="summary-box" data-cancel-panel hidden style="margin:1rem 0;">
+              <div class="summary-row"><span class="label">Request reference</span><span class="value" data-enq-cancel-ref>—</span></div>
+              <div class="summary-row"><span class="label">Booking reference</span><span class="value" data-enq-booking-ref>—</span></div>
+              <div class="summary-row"><span class="label">Booking status</span><span class="value" data-enq-booking-status>—</span></div>
+              <div class="summary-row"><span class="label">Payment reference / tx id</span><span class="value" data-enq-payment-ref>—</span></div>
+              <div class="summary-row"><span class="label">Cancellation status</span><span class="value" data-enq-cancel-status>—</span></div>
+              <div class="summary-row"><span class="label">Policy calculation</span><span class="value" data-enq-policy>—</span></div>
+              <div class="summary-row"><span class="label">Refund status</span><span class="value" data-enq-refund>—</span></div>
+              <div class="summary-row"><span class="label">Latest Paystack refund</span><span class="value" data-enq-refund-ref>—</span></div>
+            </div>
+            <div style="margin:1rem 0;"><strong style="display:block;margin-bottom:0.35rem;">Message</strong><p data-enq-message style="white-space:pre-wrap;">—</p></div>
+            <div data-cancel-reason-block hidden style="margin:1rem 0;"><strong style="display:block;margin-bottom:0.35rem;">Cancellation reason</strong><p data-enq-cancel-reason style="white-space:pre-wrap;">—</p></div>
+            <div class="field"><label class="field-label" for="enq-status-select">Enquiry status</label><select class="select" id="enq-status-select"><option value="NEW">New</option><option value="IN_PROGRESS">In progress</option><option value="RESOLVED">Resolved</option><option value="CLOSED">Closed</option></select></div>
+            <div class="field"><label class="field-label" for="enq-notes">Internal notes</label><textarea class="textarea" id="enq-notes" rows="3" placeholder="Notes for staff (not visible to the guest)"></textarea></div>
+            <div data-refund-note-fields hidden>
+              <div class="field"><label class="field-label" for="enq-customer-note">Paystack customer note <span class="muted">(optional)</span></label><textarea class="textarea" id="enq-customer-note" rows="2" placeholder="Short note shown with the Paystack refund request"></textarea></div>
+              <div class="field"><label class="field-label" for="enq-merchant-note">Paystack merchant note <span class="muted">(optional)</span></label><textarea class="textarea" id="enq-merchant-note" rows="2" placeholder="Internal Paystack note"></textarea></div>
+            </div>
+            <div class="field-error" data-enq-error style="display:none;"></div>
+            <div data-cancel-actions style="display:flex;gap:0.6rem;justify-content:flex-end;flex-wrap:wrap;margin-top:1.25rem;"></div>
+            <div style="display:flex;gap:0.6rem;justify-content:flex-end;margin-top:0.75rem;"><button class="btn btn-outline" type="button" data-enq-close>Close</button><button class="btn btn-accent" type="button" data-enq-save>Save notes/status</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/hotel-data.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("receptionist");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  var DATA=JONE.dashboard.DATA;
+  var tbody=document.querySelector("[data-tbody=enquiries]");
+  var current=null;
+  var openId=new URLSearchParams(location.search||"").get("id");
+
+  function label(v){ return String(v||"—").replace(/_/g," ").toLowerCase().replace(/\b\w/g,function(c){return c.toUpperCase();}); }
+  function money(v){ return v ? JONE.formatNaira(v) : "—"; }
+  function pill(v){
+    var s=String(v||"").toUpperCase();
+    var cls=/PROCESSED|REFUNDED|APPROVED|CANCELLED|RESOLVED/.test(s)?"badge-success":/FAILED|REJECTED/.test(s)?"badge-danger":/PENDING|REVIEW|PROCESSING|DUE|NEW/.test(s)?"badge-warning":"badge-info";
+    return '<span class="badge '+cls+'">'+JONE.esc(label(v))+'</span>';
+  }
+  function render(list){
+    tbody.innerHTML=list.map(function(e){
+      var isCancel=String(e.enquiry_type||"").toUpperCase()==="CANCELLATION";
+      var ref=isCancel ? (e.cancellation_reference||e.booking_reference||"—") : (e.subject||"—");
+      var rowStatus=isCancel ? (e.cancellation_status||e.status) : e.status;
+      var refund=isCancel ? (e.refund_status||"NONE") : "—";
+      return '<tr><td><strong>'+JONE.esc(e.name||"—")+'</strong></td>'+
+        '<td class="hide-sm">'+JONE.esc(e.email||e.phone||"—")+'</td>'+
+        '<td><strong>'+JONE.esc(isCancel?"Cancellation / refund":"General")+'</strong><br><span class="caption">'+JONE.esc(ref)+'</span></td>'+
+        '<td class="hide-sm">'+JONE.esc(e.created_at?JONE.formatDateTime(e.created_at):"—")+'</td>'+
+        '<td>'+pill(rowStatus)+'</td><td>'+JONE.esc(label(refund))+'</td>'+
+        '<td><div style="display:flex;gap:0.4rem;"><button class="btn btn-sm btn-outline" data-en-id="'+encodeURIComponent(e.id)+'">Review</button></div></td></tr>';
+    }).join("") || '<tr><td colspan="7"><div class="empty-state"><span data-icon="inbox"></span><h3>No enquiries</h3><p>You are all caught up.</p></div></td></tr>';
+    JONE.icons.inject(tbody);
+  }
+
+  /* Server-driven paging: status/type filters are re-read on every request,
+     so paging keeps them; a filter change restarts at page 1. */
+  var state={ page:1 };
+  var pager=document.querySelector("[data-pagination]");
+  function renderPager(meta){ JONE.dashboard.renderPagination(pager, meta, { onPage: load }); }
+
+  async function load(page){
+    if(page!=null) state.page=Math.max(1,page);
+    DATA.loading(tbody);
+    try{
+      var params={ page:state.page, page_size: JONE.dashboard.pageSize() };
+      var st=document.getElementById("en-status");
+      var ty=document.getElementById("en-type");
+      if(st&&st.value) params.status=st.value;
+      if(ty&&ty.value) params.type=ty.value;
+      var res=await window.API.list("enquiries",params);
+      var list=window.API.normalizeList?window.API.normalizeList(res.data,res.pagination).items:((res.data&&res.data.results)||res.data||[]);
+      if(!(list||[]).length){ DATA.empty(tbody,"inbox","No enquiries","Enquiries and cancellation/refund requests appear here.",7); renderPager(null); return; }
+      render(list);
+      renderPager(res.pagination);
+      if(openId){ var id=openId; openId=null; openEnquiry(id); }
+    }catch(err){ DATA.error(tbody,"Enquiries couldn't be loaded",(err&&err.message)||"Please try again in a moment.",7); }
+  }
+
+  function set(k,v){ var n=document.querySelector("[data-enq-"+k+"]"); if(n) n.textContent=(v==null||v==="")?"—":String(v); }
+  function showErr(msg){ var err=document.querySelector("[data-enq-error]"); if(err){ err.textContent=msg; err.style.display="block"; } JONE.ui.toast(msg,"error"); }
+  function clearErr(){ var err=document.querySelector("[data-enq-error]"); if(err){ err.textContent=""; err.style.display="none"; } }
+  function bookingSummary(e){ var b=e.related_booking_detail; if(!b) return "No booking linked yet"; return b.booking_reference+" · "+label(b.status)+" · "+money(b.amount_paid)+" paid"; }
+  function paymentSummary(e){ var p=e.related_payment_detail; if(!p) return e.payment_reference || "No Paystack payment linked"; return p.reference+" / "+(p.transaction_id||"no tx id")+" · "+p.provider+" · "+label(p.status)+" · "+money(p.amount); }
+  function policySummary(e){ var p=e.cancellation_policy; if(!p) return "No policy calculation available"; return "Fee "+money(p.cancellation_fee)+" · refund due "+money(p.refund_amount)+" · paid "+money(p.amount_paid); }
+  function refundSummary(e){ var r=e.refund_detail; if(r) return label(r.status)+" · "+money(r.amount); return label(e.refund_status||"NONE")+" · "+money(e.calculated_refund_amount); }
+
+  function renderActionButtons(e){
+    var holder=document.querySelector("[data-cancel-actions]");
+    var noteFields=document.querySelector("[data-refund-note-fields]");
+    if(!holder) return;
+    var actions=e.actions||[];
+    if(noteFields) noteFields.hidden=actions.indexOf("process_refund")===-1;
+    if(!actions.length || String(e.enquiry_type||"").toUpperCase()!=="CANCELLATION"){ holder.innerHTML=''; return; }
+    var labels={ review:"Mark under review", approve_cancellation:"Approve + cancel booking", reject_cancellation:"Reject request", process_refund:"Process Paystack refund", close:"Close request" };
+    var classes={ approve_cancellation:"btn btn-accent", process_refund:"btn btn-accent", reject_cancellation:"btn btn-outline", review:"btn btn-outline", close:"btn btn-outline" };
+    holder.innerHTML=actions.map(function(a){ return '<button class="'+(classes[a]||"btn btn-outline")+'" type="button" data-action="'+a+'">'+JONE.esc(labels[a]||a)+'</button>'; }).join("");
+  }
+
+  var backdrop=document.querySelector("[data-enq-modal]");
+  function openModal(e){
+    current=e; clearErr();
+    var isCancel=String(e.enquiry_type||"").toUpperCase()==="CANCELLATION";
+    set("name",e.name); set("contact",(e.email||"")+(e.phone?" · "+e.phone:"")); set("date",e.created_at?JONE.formatDateTime(e.created_at):"—"); set("subject",e.subject);
+    var msg=document.querySelector("[data-enq-message]"); if(msg) msg.textContent=e.message||"—";
+    var cancelPanel=document.querySelector("[data-cancel-panel]"); if(cancelPanel) cancelPanel.hidden=!isCancel;
+    var reasonBlock=document.querySelector("[data-cancel-reason-block]"); if(reasonBlock) reasonBlock.hidden=!isCancel;
+    set("cancel-ref",e.cancellation_reference); set("booking-ref",bookingSummary(e)); set("booking-status",e.related_booking_detail?label(e.related_booking_detail.status):"Not linked"); set("payment-ref",paymentSummary(e)); set("cancel-status",label(e.cancellation_status)); set("policy",policySummary(e)); set("refund",refundSummary(e)); set("refund-ref",(e.refund_detail&&(e.refund_detail.paystack_refund_reference||e.refund_detail.paystack_refund_id))||e.paystack_refund_reference||"—");
+    var cr=document.querySelector("[data-enq-cancel-reason]"); if(cr) cr.textContent=e.cancellation_reason||"—";
+    var sel=document.getElementById("enq-status-select"); if(sel) sel.value=e.status||"NEW";
+    var notes=document.getElementById("enq-notes"); if(notes) notes.value=e.internal_notes||"";
+    var cn=document.getElementById("enq-customer-note"); if(cn) cn.value=e.related_booking_detail?('Refund for cancelled booking '+e.related_booking_detail.booking_reference):'';
+    var mn=document.getElementById("enq-merchant-note"); if(mn) mn.value=e.cancellation_reference?('Cancellation request '+e.cancellation_reference):'';
+    renderActionButtons(e);
+    if(backdrop) backdrop.classList.add("open");
+  }
+  function closeModal(){ if(backdrop) backdrop.classList.remove("open"); current=null; }
+
+  async function openEnquiry(id){ try{ var res=await window.API.getOne("enquiries", id); openModal((res&&res.data)||{ id:id }); } catch(err){ JONE.ui.toast(err.message||"Couldn't open this enquiry.","error"); } }
+  tbody.addEventListener("click",function(e){ var v=e.target.closest("[data-en-id]"); if(v) openEnquiry(v.getAttribute("data-en-id")); });
+  document.querySelectorAll("[data-enq-close]").forEach(function(b){ b.addEventListener("click",closeModal); });
+  if(backdrop) backdrop.addEventListener("click",function(e){ if(e.target===backdrop) closeModal(); });
+
+  async function action(name){
+    if(!current||!current.id) return; clearErr();
+    var notes=document.getElementById("enq-notes").value;
+    var payload={ notes:notes, resolution:notes };
+    var warning="";
+    if(name==="approve_cancellation") warning="Approve this request and cancel the linked booking? Refunds are separate and must be processed only when due.";
+    if(name==="reject_cancellation") warning="Reject this cancellation request and notify the guest?";
+    if(name==="process_refund"){ warning="Submit this refund to Paystack? Do not proceed unless the cancellation was approved and the amount due is correct."; payload.customer_note=document.getElementById("enq-customer-note").value; payload.merchant_note=document.getElementById("enq-merchant-note").value; }
+    if(warning){ var yes=await JONE.ui.confirm({ title:"Confirm action", message:warning, confirmText:name==="reject_cancellation"?"Reject":"Continue", danger:name==="reject_cancellation" }); if(!yes) return; }
+    var fn={ review:window.API.reviewCancellationRequest, approve_cancellation:window.API.approveCancellationRequest, reject_cancellation:window.API.rejectCancellationRequest, process_refund:window.API.processCancellationRefund, close:window.API.closeCancellationRequest }[name]; if(!fn) return;
+    try{ var res=await fn(current.id,payload); current=(res&&res.data&&res.data.cancellation_request)||((res&&res.data)||current); openModal(current); JONE.ui.toast("Request updated.","success"); load(); }
+    catch(er){ showErr((er&&er.message)||"Action failed."); }
+  }
+  document.querySelector("[data-cancel-actions]").addEventListener("click",function(e){ var b=e.target.closest("[data-action]"); if(b) action(b.getAttribute("data-action")); });
+
+  var save=document.querySelector("[data-enq-save]");
+  if(save) save.addEventListener("click", async function(){
+    if(!current||!current.id) return; if(!JONE.guardSubmit(save)) return; clearErr();
+    try{ await window.API.update("enquiries", current.id, { status: document.getElementById("enq-status-select").value, internal_notes: document.getElementById("enq-notes").value }); JONE.ui.toast("Enquiry updated.","success"); closeModal(); load(); }
+    catch(er){ JONE.releaseGuard(save); showErr((er&&er.message)||"Couldn't save the enquiry."); }
+  });
+
+  ["en-status","en-type"].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener("change",function(){ load(1); }); });
+  load(1);
+})();
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

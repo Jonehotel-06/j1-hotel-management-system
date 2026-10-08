@@ -1,0 +1,115 @@
+/* css/typography.css */
+/* ==========================================================================
+   Typography — J-ONE type system.
+
+   FONT SYSTEM: a fast, local system stack:
+     font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+                  "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+   No external webfonts are imported. One stack is used everywhere: headings,
+   body, buttons, navigation, forms and dashboard.
+
+   Scale follows the same system (Tailwind/shadcn units):
+     xs .75rem · sm .875rem · base 1rem · lg 1.125rem · xl 1.25rem
+     2xl 1.5rem · 3xl 1.875rem · 4xl 2.25rem
+   Weights: 500 (controls/labels) · 600 (headings). Headings use
+   tracking-tight (-0.025em), the same as GadgetHub.
+   ========================================================================== */
+
+/* ------------------------------- Headings -------------------------------- */
+.display,
+h1, .h1 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.025em;         /* GadgetHub tracking-tight */
+  color: var(--color-heading);
+  font-size: var(--fs-display);
+  text-wrap: balance;
+}
+
+h2, .h2 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: var(--color-heading);
+  font-size: var(--fs-2xl);
+  text-wrap: balance;
+  margin: 0;
+}
+
+h3, .h3 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--color-heading);
+  font-size: var(--fs-lg);
+}
+
+h4, .h4 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--color-heading);
+  font-size: var(--fs-base);
+}
+
+h5, h6 {
+  font-family: var(--font-body);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-heading);
+  font-size: var(--fs-sm);
+}
+
+/* --------------------------------- Body ---------------------------------- */
+body {
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  line-height: 1.6;
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+p { margin: 0 0 1em; }
+
+small, .small { font-size: var(--fs-xs); line-height: 1.45; }
+
+.muted  { color: var(--color-text-muted); }
+.faint  { color: var(--color-text-faint); }
+
+/* ------------------------------- Controls -------------------------------- */
+/* Buttons, nav links, labels and inputs use the same compact treatment as
+   GadgetHub: 0.875rem, weight 500, no letter-spacing. Sized in components.css */
+button, .btn,
+input, select, textarea {
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  letter-spacing: 0;
+}
+
+.nav-link, .field-label, .caption {
+  font-family: var(--font-body);
+}
+
+/* ------------------------------ Data / mono ------------------------------- */
+.mono, code, kbd, pre, .code {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+code { padding: 0.1em 0.35em; border-radius: 5px; background: var(--color-surface-alt); }
+pre  { overflow-x: auto; padding: 0.85rem 1rem; border-radius: var(--radius); background: var(--color-surface-alt); }
+kbd  { padding: 0.1em 0.4em; border: 1px solid var(--color-border); border-bottom-width: 2px; border-radius: 5px; }
+
+/* ------------------------------ Numerals --------------------------------- */
+.num, .price, .stat-num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* --------------------------- Flow helpers --------------------------------- */
+strong, b { font-weight: 600; }
+a { color: inherit; }

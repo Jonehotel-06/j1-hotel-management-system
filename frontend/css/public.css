@@ -1,0 +1,817 @@
+/* css/public.css */
+/* ==========================================================================
+   Public website — header, hero, editorial sections, footer.
+   ========================================================================== */
+
+/* ------------------------------- Header --------------------------------- */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 900;
+  background: color-mix(in srgb, var(--color-background) 88%, transparent);
+  backdrop-filter: saturate(1.3) blur(10px);
+  -webkit-backdrop-filter: saturate(1.3) blur(10px);
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--speed-3) var(--ease), box-shadow var(--speed-3) var(--ease);
+}
+.site-header.scrolled { border-bottom-color: var(--color-border); box-shadow: var(--shadow-xs); }
+
+.header-inner {
+  height: var(--header-h);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-5);
+  transition: height var(--speed-3) var(--ease);
+}
+.site-header.scrolled .header-inner { height: var(--header-h-scrolled); }
+
+.brand-mark-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-color: 3px var(--brand-charcoal-deep);
+  border-radius: 50%;          /* switch to var(--radius) for a rounded box instead */
+  background: var(--color-surface-deep);
+  flex-shrink: 0;
+  transition: background var(--speed-2);
+}
+.brand-mark-badge .brand-mark {
+  height: 22px;
+  width: auto;
+}
+
+/* Header/drawer sit on a theme-aware surface — badge inverts with the theme */
+html[data-theme="dark"] .site-header .brand-mark-badge,
+html[data-theme="dark"] .mobile-drawer .brand-mark-badge {
+  background: #F1F3F6;
+}
+
+/* Footer's surface is ALWAYS dark charcoal, in both themes — so its badge
+   is always the light variant, unconditionally (not nested under [data-theme=dark]) */
+.footer-brand .brand-mark-badge {
+  width: 34px;
+  height: 34px;
+  background: #F1F3F6;
+}
+.footer-brand .brand-mark-badge .brand-mark {
+  height: 19px;
+}
+
+.brand { display: flex; align-items: center; gap: 0.7rem; flex-shrink: 0; }
+.brand-mark { height: 34px; width: auto; }
+
+.brand > span {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+
+.brand-word {
+  font-family: var(--font-body);
+  font-size: 1.06rem;
+  letter-spacing: 0.06em;
+  font-weight: 650;
+  line-height: 1.15;
+  color: var(--color-heading);
+}
+.brand-sub {
+  font-size: 0.56rem;
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-top: 0.2rem;   /* small, controlled gap instead of default line spacing */
+}
+
+.header-nav { display: flex; align-items: center; gap: var(--sp-5); }
+.header-nav a.nav-link {
+  color: var(--color-text-muted);
+  padding: 0.45rem 0;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  letter-spacing: 0;
+  border-bottom: 1px solid transparent;
+  transition: color var(--speed-2), border-color var(--speed-2);
+}
+.header-nav a.nav-link:hover { color: var(--color-text); border-color: currentColor; }
+.header-nav a.nav-link.is-active {
+  color: var(--color-text);
+  font-weight: 600;
+  border-bottom-color: var(--color-accent);
+}
+.header-nav { gap: 1.35rem; }
+
+.header-actions { display: flex; align-items: center; gap: var(--sp-3); }
+
+.theme-toggle {
+  width: 36px; height: 36px;
+  display: inline-grid; place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  transition: color var(--speed-2), border-color var(--speed-2), background var(--speed-2);
+}
+.theme-toggle:hover { color: var(--color-text); border-color: var(--color-border-strong); }
+/* The icon spins once on every switch — a small, deliberate transition.
+   Both icons share one grid cell and cross-fade by opacity so the rotating
+   element is always rendered (display:none would kill the animation). */
+.theme-toggle .icon-moon, .theme-toggle .icon-sun { grid-area: 1 / 1; transition: transform 480ms var(--ease), opacity 140ms var(--ease); }
+.theme-toggle .icon-sun { opacity: 0; }
+.theme-toggle .icon-moon { opacity: 1; }
+html[data-theme="dark"] .theme-toggle .icon-sun { opacity: 1; }
+html[data-theme="dark"] .theme-toggle .icon-moon { opacity: 0; }
+.theme-toggle.spin .icon-moon, .theme-toggle.spin .icon-sun { transform: rotate(-360deg); }
+
+/* Mobile nav triggers */
+.menu-toggle { display: none; }
+
+/* --------------------------- Mobile navigation -------------------------- */
+.mobile-drawer {
+  position: fixed;
+  top: 0; right: 0;
+  z-index: 1000;
+  width: min(78vw, 300px);
+  height: 100vh;
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  transform: translateX(100%);
+  transition: transform var(--speed-3) var(--ease);
+  display: flex; flex-direction: column;
+}
+.mobile-drawer.open { transform: translateX(0); }
+.mobile-drawer-backdrop {
+  position: fixed; inset: 0; z-index: 999;
+  background: rgba(20, 18, 19, 0.5);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--speed-3) var(--ease);
+}
+.mobile-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+.mobile-drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.mobile-drawer-body { flex: 1; overflow-y: auto; padding: 0.75rem 1.1rem 1.25rem; }
+.mobile-nav a {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.72rem 0;
+  border-bottom: 1px solid var(--color-border);
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--color-heading);
+}
+.mobile-nav a svg { color: var(--color-text-faint); }
+.mobile-nav a.is-active {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+.mobile-nav a.is-active svg { color: var(--color-accent); }
+.mobile-footer-row { margin-top: 1.25rem; display: grid; gap: 0.6rem; }
+
+/* -------------------------------- Hero ---------------------------------- */
+.hero {
+  position: relative;
+  min-height: min(86vh, 720px);
+  display: flex; align-items: flex-end;
+  color: #fff;
+  overflow: hidden;
+  isolation: isolate;
+}
+.hero-media {
+  position: absolute; inset: 0;
+  z-index: 0;
+  background: var(--brand-charcoal-deep);
+}
+.hero-slide {
+  position: absolute; inset: 0;
+  opacity: 0;
+  transition: opacity 1100ms var(--ease);
+}
+.hero-slide.is-active { opacity: 1; }
+.hero-slide img {
+  width: 100%; height: 100%; object-fit: cover;
+  transform: scale(1.04);
+  transition: transform 7000ms linear;
+}
+.hero-slide.is-active img { transform: scale(1); }
+.hero-media::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(15,13,14,0.48) 0%, rgba(15,13,14,0.34) 42%, rgba(15,13,14,0.84) 100%);
+}
+/* Carousel controls */
+.hero-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  z-index: 4;
+  width: 44px; height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.35);
+  background: rgba(20,18,19,0.35);
+  backdrop-filter: blur(4px);
+  transition: background var(--speed-2), border-color var(--speed-2);
+}
+.hero-arrow:hover { background: rgba(20,18,19,0.6); border-color: rgba(255,255,255,0.6); }
+.hero-arrow.prev { left: 1rem; }
+.hero-arrow.next { right: 1rem; }
+.hero-dots {
+  position: absolute;
+  bottom: clamp(1rem, 3vw, 1.6rem);
+  right: clamp(1.25rem, 4vw, 2.5rem);
+  z-index: 4;
+  display: flex; gap: 0.5rem;
+}
+.hero-dots button {
+  width: 26px; height: 3px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.35);
+  transition: background var(--speed-2);
+  padding: 0;
+}
+.hero-dots button:hover { background: rgba(255,255,255,0.6); }
+.hero-dots button.is-active { background: #fff; }
+.hero-media .hero-fallback {
+  position: absolute; inset: 0;
+  display: none;
+  align-items: center; justify-content: center;
+  color: #727376;
+}
+.hero-media.has-fallback .hero-fallback { display: flex; }
+.hero-media.has-fallback img { display: none; }
+.hero-content {
+  position: relative; z-index: 2;
+  padding: clamp(2.5rem, 8vh, 5rem) 0 clamp(3rem, 10vh, 6rem);
+  width: 100%;
+}
+.hero-content > * { text-shadow: 0 2px 12px rgba(0,0,0,0.42); }
+.hero-actions, .hero-actions * { text-shadow: none; }
+.hero-kicker {
+  display: inline-flex; align-items: center; gap: 0.6rem;
+  font-size: var(--fs-sm);
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.82);
+}
+.hero-kicker::before { content: ""; width: 30px; height: 1px; background: var(--color-accent); }
+.hero h1 {
+  color: #fff;
+  font-size: var(--fs-display);
+  max-width: 24ch;
+  margin: 0.9rem 0 1.1rem;
+}
+.hero p.hero-sub {
+  font-size: var(--fs-lg);
+  color: rgba(255,255,255,0.85);
+  max-width: 44ch;
+  line-height: 1.5;
+  margin-bottom: var(--sp-5);
+}
+.hero-actions { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+.hero .btn-outline { --btn-fg: #fff; border-color: rgba(255,255,255,0.6); }
+.hero .btn-outline:hover { --btn-bg: #fff; --btn-fg: var(--brand-charcoal); border-color: #fff; }
+
+/* ------------------------- Booking / search panel ----------------------- */
+.search-panel {
+  position: relative;
+  z-index: 3;
+  /* Keep the booking form below hero actions; the previous negative offset
+     could cover the buttons on desktop when the copy wrapped to two lines. */
+  margin-top: clamp(1rem, 3vw, 2.5rem);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--sp-5);
+}
+.search-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr) auto;
+  gap: var(--sp-4);
+  align-items: end;
+}
+.search-grid .field { margin-bottom: 0; }
+.search-cta { align-self: end; }
+
+@media (max-width: 960px) {
+  .search-grid { grid-template-columns: 1fr 1fr; }
+  .search-cta { grid-column: 1 / -1; }
+}
+@media (max-width: 560px) {
+  .search-grid { grid-template-columns: 1fr; }
+}
+
+/* ------------------------- Editorial split blocks ----------------------- */
+.editorial {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(2rem, 5vw, 4.5rem);
+  align-items: center;
+}
+.editorial.rev > .editorial-media { order: 2; }
+.editorial-media .media { aspect-ratio: 4 / 5; max-height: 460px;}
+.editorial-body .eyebrow { margin-bottom: var(--sp-4); }
+.editorial-body h2 { margin-bottom: var(--sp-4); }
+.editorial-body p { color: var(--color-text-muted); line-height: var(--leading-relaxed); max-width: 52ch; }
+
+@media (max-width: 860px) {
+  .editorial { grid-template-columns: 1fr; }
+  .editorial.rev > .editorial-media { order: 0; }
+}
+
+/* Feature number row (experience / why stay) */
+.feature-list { display: grid; gap: 0; border-top: 1px solid var(--color-border); margin-top: var(--sp-6); }
+.feature-row {
+  display: grid;
+  grid-template-columns: 3rem 1fr auto;
+  gap: var(--sp-4);
+  align-items: baseline;
+  padding: var(--sp-4) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.feature-num {
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  color: var(--color-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.feature-row h4 { letter-spacing: 0; }
+.feature-row p { color: var(--color-text-muted); margin: 0.3rem 0 0; font-size: var(--fs-sm); }
+
+/* ------------------------------ Room cards ------------------------------ */
+.room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: var(--sp-6);
+}
+.room-card { display: flex; flex-direction: column; }
+.room-card h3 { color: var(--color-heading); }
+.room-card .media { aspect-ratio: 4 / 3; }
+.room-card-body { padding: var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-4); flex: 1; }
+.room-card h3 { font-size: var(--fs-lg); }
+.room-card .room-facts {
+  display: flex; flex-wrap: wrap; gap: var(--sp-3);
+  color: var(--color-text-muted); font-size: var(--fs-sm);
+}
+.room-card .room-facts span { display: inline-flex; align-items: center; gap: 0.4em; }
+.room-card .room-facts svg { width: 15px; height: 15px; opacity: 0.7; }
+.room-card-foot {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--sp-3);
+  margin-top: auto;
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--color-border);
+}
+.room-price { text-align: left; }
+
+/* ------------------------------- Facility ------------------------------- */
+.facility-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  gap: var(--sp-5);
+}
+.facility-item {
+  display: flex; gap: var(--sp-4);
+  padding: var(--sp-5);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+.facility-icon {
+  width: 40px; height: 40px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius);
+  background: var(--color-surface-deep);
+  color: var(--color-accent);
+}
+.facility-item h4 { margin-bottom: 0.35rem; }
+.facility-item p { color: var(--color-text-muted); font-size: var(--fs-sm); margin: 0; }
+
+/* ------------------------------- Gallery -------------------------------- */
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--sp-4);
+}
+.gallery-grid .media { cursor: zoom-in; }
+.gallery-grid .media.tall { aspect-ratio: 3 / 4; }
+.gallery-grid .media.wide { aspect-ratio: 16 / 9; }
+.gallery-grid .media.span-2 { grid-column: span 2; }
+
+@media (max-width: 860px) {
+  .gallery-grid { grid-template-columns: repeat(2, 1fr); }
+  .gallery-grid .media.span-2 { grid-column: span 2; }
+}
+@media (max-width: 560px) {
+  .gallery-grid { grid-template-columns: 1fr; }
+  .gallery-grid .media.span-2 { grid-column: span 1; }
+}
+
+.gallery-filters { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-6); }
+.gallery-filters button {
+  padding: 0.5em 1em;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border-strong);
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+  transition: all var(--speed-2);
+}
+.gallery-filters button:hover { border-color: var(--color-primary); color: var(--color-text); }
+.gallery-filters button.is-active { background: var(--color-primary); color: var(--color-primary-ink); border-color: var(--color-primary); }
+
+/* ------------------------------- Offer card ------------------------------ */
+/* Two zones side by side: the photo stays a photo (no full-bleed scrim over
+   it) and the copy sits on its own solid panel, so the title, badge, dates
+   and criteria are readable in both themes without fighting the image. */
+.offer-banner {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  align-items: stretch;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+.offer-banner-media { position: relative; min-height: 260px; max-height: 320px;}
+.offer-banner-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Only a light edge blend toward the copy panel — the image stays visible. */
+.offer-banner-media::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(15,13,14,0.18), rgba(15,13,14,0) 45%);
+}
+.offer-banner-body {
+  position: relative; z-index: 1;
+  padding: var(--sp-6);
+  display: flex; flex-direction: column; align-items: flex-start;
+  justify-content: center;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.offer-banner-body h3 {
+  color: var(--color-text);
+  font-size: var(--fs-2xl);
+  margin: 0.55rem 0 0;
+  overflow-wrap: anywhere;
+}
+.offer-banner-desc {
+  color: var(--color-text-muted);
+  margin: 0.5rem 0 0;
+  /* Keep the copy block predictable; the offers page carries the full text. */
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.offer-criteria {
+  list-style: none; margin: 0.75rem 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 0.3rem;
+  font-size: var(--fs-sm); color: var(--color-text-muted);
+}
+.offer-criteria li { display: flex; gap: 0.45em; align-items: flex-start; }
+.offer-criteria li::before { content: "\2713"; color: var(--color-accent-strong, var(--color-accent)); flex: 0 0 auto; }
+.offer-banner-actions {
+  display: flex; flex-wrap: wrap; gap: 0.6rem;
+  margin-top: var(--sp-5);
+}
+.offer-banner-actions .btn { min-height: 44px; }
+.offer-tag {
+  display: inline-block;
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-wider);
+  text-transform: uppercase;
+  padding: 0.3em 0.65em;
+  border-radius: var(--radius-sm);
+}
+
+/* ------------------------------ Location -------------------------------- */
+.location-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-6); align-items: stretch; }
+.location-map {
+  border-radius: var(--radius-lg); overflow: hidden; min-height: 320px;
+  background: var(--color-surface-deep);
+  border: 1px solid var(--color-border);
+}
+@media (max-width: 860px) { .location-grid { grid-template-columns: 1fr; } }
+
+/* ------------------------------- Footer ---------------------------------- */
+.site-footer {
+  background: var(--brand-charcoal-deep);
+  color: #ECEBE9;
+  padding: clamp(2.25rem, 4vw, 3.25rem) 0 1.25rem;
+  margin-top: auto;
+}
+.footer-top {
+  display: grid;
+  grid-template-columns: 1.7fr minmax(0, 1fr) minmax(0, 1fr) 1.25fr;
+  gap: var(--sp-5);
+  padding-bottom: var(--sp-5);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.footer-brand, .footer-col { min-width: 0; }
+.footer-brand .brand-mark { height: 30px; }
+.footer-brand .brand-word { color: #fff; font-size: 1.02rem; }
+.footer-brand .brand-sub { color: #9AA3AF; }
+.footer-brand p { color: #ADACAA; font-size: var(--fs-sm); max-width: 38ch; line-height: 1.55; margin: 0.9rem 0 0; overflow-wrap: anywhere; }
+.footer-col a, .footer-col h5 { overflow-wrap: anywhere; }
+.footer-col h5 { font-weight: 600; letter-spacing: var(--tracking-wider); text-transform: uppercase; font-size: var(--fs-xs); color: #8f8e8c; margin-bottom: 0.75rem; }
+.footer-col a, .footer-col .footer-line {
+  display: block; padding: 0.24rem 0; color: #CFCECC; font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.footer-col a:hover { color: #fff; }
+.footer-col .footer-line { display: flex; gap: 0.5rem; align-items: flex-start; }
+.footer-col .footer-line svg { width: 15px; height: 15px; margin-top: 3px; flex-shrink: 0; opacity: 0.65; }
+.footer-bottom {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  padding-top: var(--sp-4);
+  color: #8f8e8c; font-size: var(--fs-xs);
+}
+.footer-bottom a:hover { color: #fff; }
+
+/* ---------------- Tablet: brand full-width, two link columns beneath ---------------- */
+@media (max-width: 860px) {
+  .footer-top { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-5) var(--sp-4); }
+  .footer-brand { grid-column: 1 / -1; padding-bottom: var(--sp-4); border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .footer-brand p { max-width: 46ch; }
+}
+
+/* ---------------- Mobile: single stacked column, centered, sectioned ---------------- */
+@media (max-width: 560px) {
+  .footer-top {
+    display: none;
+  }
+
+  .site-footer {
+    padding: var(--sp-4) 0 1.25rem;
+  }
+
+  .footer-bottom {
+    flex-direction: column;
+    text-align: center;
+    gap: 0.5rem;
+    border-top: none;
+    padding-top: 0;
+  }
+}
+
+/* ---------------------------- Page hero (inner) -------------------------- */
+.page-hero {
+  background: var(--brand-charcoal);
+  color: #fff;
+  padding: clamp(3rem, 7vw, 5.5rem) 0 clamp(2.5rem, 5vw, 4rem);
+}
+.page-hero .eyebrow { color: rgba(255,255,255,0.7); }
+.page-hero .eyebrow::before { background: var(--color-accent); }
+.page-hero h1 { color: #fff; font-size: clamp(1.75rem, 3.6vw, 2.375rem); letter-spacing: -0.025em; }
+.page-hero p { color: rgba(255,255,255,0.82); max-width: 56ch; font-size: var(--fs-md); line-height: var(--leading-relaxed); margin-top: var(--sp-4); }
+
+/* ------------------------------ Stats band ------------------------------- */
+.stats-band {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--sp-5);
+  padding: var(--sp-6);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+.stat { text-align: center; }
+.stat .stat-num { font-family: var(--font-display); font-size: var(--fs-2xl); color: var(--color-heading); }
+.stat .stat-label { font-size: var(--fs-xs); letter-spacing: var(--tracking-wider); text-transform: uppercase; color: var(--color-text-muted); margin-top: 0.3rem; }
+@media (max-width: 720px) { .stats-band { grid-template-columns: 1fr 1fr; } }
+
+/* ------------------------------ Contact -------------------------------- */
+/* Dedicated contact layout: stacks on mobile/tablet, splits on large screens.
+   Avoids the generic .editorial squeeze at tablet widths. */
+.contact-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: clamp(2rem, 5vw, 4rem);
+  align-items: start;
+}
+.contact-layout .contact-info {
+  display: grid;
+  gap: var(--sp-5);
+  align-content: start;
+}
+.contact-layout .contact-info .feature-list { margin-top: 0; }
+@media (min-width: 1080px) {
+  .contact-layout {
+    grid-template-columns: 0.9fr 1.1fr;
+    align-items: start;
+  }
+}
+.contact-form-card {
+  width: 100%;
+  max-width: 100%;
+}
+/* Embedded Google Map (src built from backend settings/address at runtime) */
+.contact-map {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--color-surface-deep);
+  min-height: 300px;
+}
+.contact-map iframe {
+  display: block;
+  width: 100%;
+  height: clamp(280px, 42vh, 420px);
+  border: 0;
+}
+@media (max-width: 720px) {
+  .contact-map iframe { height: 240px; }
+}
+@media (min-width: 1080px) {
+  .contact-form-card { max-width: none; }
+}
+
+/* ------------------------------ CTA band --------------------------------- */
+.cta-band {
+  text-align: center;
+  padding: clamp(3rem, 7vw, 5rem) 0;
+}
+.cta-band h2 { max-width: 22ch; margin: 0 auto var(--sp-5); }
+.cta-band p { color: var(--color-text-muted); max-width: 46ch; margin: 0 auto var(--sp-6); }
+.cta-band .cta-actions { display: flex; gap: var(--sp-3); justify-content: center; flex-wrap: wrap; }
+
+/* ==========================================================================
+   EXACT-ROOM PICKER (public room-details.html)
+   "Book this room — Room 203": each chip carries the physical room's stable
+   id, so the guest's choice survives the whole booking flow and is re-checked
+   by the backend at creation time.
+   ========================================================================== */
+.room-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(132px, 100%), 1fr));
+  gap: 0.6rem;
+}
+.room-chip {
+  position: relative;
+  display: flex; flex-direction: column; gap: 0.15rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: border-color var(--speed-2) var(--ease), background var(--speed-2) var(--ease),
+              box-shadow var(--speed-2) var(--ease);
+}
+.room-chip:hover { border-color: var(--color-accent); }
+.room-chip.is-selected {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+.room-chip.is-disabled { opacity: 0.5; cursor: not-allowed; background: var(--color-surface-alt); }
+.room-chip:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.room-chip-no { font-size: var(--fs-md); font-weight: 700; letter-spacing: -0.01em; color: var(--color-heading); }
+.room-chip-meta { font-size: var(--fs-xs); color: var(--color-text-muted); }
+.room-chip-state { font-size: 0.68rem; letter-spacing: var(--tracking-wider); text-transform: uppercase; color: var(--color-success); }
+.room-chip.is-disabled .room-chip-state { color: var(--color-danger); }
+.room-picker-skeleton {
+  height: 74px; border-radius: var(--radius);
+  background: var(--color-surface-alt);
+  position: relative; overflow: hidden;
+}
+.room-picker-skeleton::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 1.3s infinite;
+}
+
+/* ==========================================================================
+   Guest review — "Leave a Review" CTA + review.html flow.
+   Uses only existing design tokens; works in light and dark themes.
+   ========================================================================== */
+
+/* Header CTA — quiet secondary action so the primary nav stays uncrowded.
+   Hidden below the tablet breakpoint: mobile/tablet users reach the review
+   page through the drawer item and the footer link instead. */
+@media (max-width: 960px) {
+  .header-actions .btn-review-cta { display: none; }
+}
+
+/* Homepage feedback CTA band — invitation only, never shows review data. */
+.review-invite {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-6);
+  padding: var(--sp-6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.review-invite-body h2 { font-size: var(--fs-xl); margin-bottom: 0.35rem; }
+.review-invite-body p { color: var(--color-text-muted); margin: 0; }
+.review-invite-stars { display: inline-flex; gap: 0.3rem; color: var(--color-accent); margin-bottom: 0.75rem; }
+@media (max-width: 720px) {
+  .review-invite { flex-direction: column; align-items: flex-start; }
+}
+
+/* Review flow card */
+.review-card { max-width: 640px; margin-inline: auto; }
+.review-stay-summary {
+  display: grid;
+  gap: 0.35rem;
+  padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-alt);
+  margin-bottom: var(--sp-5);
+  font-size: var(--fs-sm);
+}
+.review-stay-summary strong { color: var(--color-heading); }
+
+/* Accessible 1–5 star selector — real radio buttons under the hood, so the
+   keyboard and screen readers get standard radio-group behaviour for free. */
+.star-rating { display: flex; align-items: center; gap: 0.25rem; }
+.star-rating input[type="radio"] {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  border: 0;
+}
+.star-rating label {
+  display: inline-grid;
+  place-items: center;
+  width: 44px; height: 44px;            /* comfortable touch target */
+  border-radius: var(--radius-sm);
+  color: var(--color-border-strong);
+  cursor: pointer;
+  transition: color var(--speed-1) var(--ease), transform var(--speed-1) var(--ease);
+}
+.star-rating label svg { width: 30px; height: 30px; }
+.star-rating label:hover { transform: scale(1.06); }
+.star-rating label.is-filled { color: var(--color-accent); }
+.star-rating label.is-filled svg { fill: currentColor; }
+.star-rating input[type="radio"]:focus-visible + label {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+.star-rating-value {
+  margin-left: var(--sp-3);
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+  min-width: 5.5ch;
+}
+
+.review-char-count { font-size: var(--fs-xs); color: var(--color-text-faint); text-align: right; margin-top: 0.3rem; }
+.review-char-count.is-invalid { color: var(--color-danger); }
+
+/* Success panel */
+.review-success { text-align: center; padding: var(--sp-6) var(--sp-4); }
+.review-success .success-icon {
+  display: inline-grid; place-items: center;
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  margin-bottom: var(--sp-4);
+}
+.review-success h2 { margin-bottom: 0.5rem; }
+.review-success p { color: var(--color-text-muted); max-width: 44ch; margin-inline: auto; }
+.review-google-cta {
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-5);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Offer validity line (start + end dates). Shown on the homepage banner and
+   on every public offer card so a guest can see when an offer applies. */
+.offer-period {
+  display: inline-flex; align-items: flex-start; gap: 0.4em;
+  margin-top: 0.6rem; margin-bottom: 0;
+}
+/* Nudge the icon onto the first line's baseline when the dates wrap. */
+.offer-period [data-icon] { flex: 0 0 auto; margin-top: 0.15em; }
+.offer-note { margin-top: 0.2rem; font-weight: 600; color: var(--color-accent-strong, var(--color-accent)); }
+/* The copy panel is a normal surface now, so these inherit theme colours and
+   stay legible in dark mode instead of being pinned to white-on-image. */
+.offer-banner-body .offer-period { color: var(--color-text-muted); }
+.offer-banner-body .offer-note { color: var(--color-accent-strong, var(--color-accent)); }
+
+@media (max-width: 860px) {
+  /* Stack: image on top at a deliberate ratio, copy below — never a cramped
+     column of text over a sliver of photo. */
+  .offer-banner { grid-template-columns: 1fr; }
+  .offer-banner-media { min-height: 0; aspect-ratio: 16 / 9; }
+  .offer-banner-media::after { background: none; }
+  .offer-banner-body { padding: var(--sp-5); }
+  .offer-banner-actions .btn { flex: 1 1 12rem; justify-content: center; }
+}
+@media (max-width: 420px) {
+  .offer-banner-media { aspect-ratio: 4 / 3; }
+  .offer-banner-body { padding: var(--sp-4); }
+  .offer-banner-body h3 { font-size: var(--fs-xl); }
+  .offer-banner-actions .btn { flex: 1 1 100%; }
+}
+.offer-terms { margin-top: 0.7rem; font-style: italic; }

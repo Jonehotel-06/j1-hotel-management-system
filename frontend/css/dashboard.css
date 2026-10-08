@@ -1,0 +1,1803 @@
+/* css/dashboard.css */
+/* ==========================================================================
+   Staff dashboard — operational, dense, fast.
+   ========================================================================== */
+
+/* Application shell: the viewport never scrolls as a whole. The sidebar is
+   static, the topbar is sticky inside the main column, and ONLY the main
+   column scrolls. 100vh fallback first for older Safari, then 100dvh so the
+   iOS dynamic toolbar cannot hide content. */
+.dash {
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--color-background);
+}
+
+/* ------------------------------- Sidebar --------------------------------- */
+.dash-sidebar {
+  background: var(--brand-charcoal);
+  color: #D6D5D3;
+  display: flex; flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;               /* only the nav list inside scrolls */
+  border-right: 1px solid rgba(255,255,255,0.06);
+}
+.dash-sidebar-brand {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.dash-sidebar-brand img { height: 28px; }
+.dash-sidebar-brand .brand-word { color: #fff; font-size: 1.05rem; }
+.dash-sidebar-brand .brand-sub { color: #8f8e8c; }
+.dash-sidebar-nav {
+  flex: 1; overflow-y: auto; padding: 1rem 0.75rem;
+  /* Subtle, scoped scrollbar — the sidebar must still scroll when the nav
+     exceeds the viewport, but the indicator stays narrow and unobtrusive.
+     Scoped to this container only; global scrollbars are untouched. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.dash-sidebar-nav::-webkit-scrollbar { width: 6px; }
+.dash-sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+.dash-sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: var(--radius-pill);
+}
+.dash-sidebar-nav::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
+.dash-nav-group { margin-bottom: 1.25rem; }
+.dash-nav-label {
+  font-size: 0.65rem;
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+  color: #727376;
+  padding: 0 0.75rem 0.4rem;
+}
+.dash-nav-item {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-sm);
+  color: #B9B8B6;
+  font-size: var(--fs-sm);
+  transition: background var(--speed-2), color var(--speed-2);
+}
+.dash-nav-item svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
+.dash-nav-item:hover { background: rgba(255,255,255,0.06); color: #fff; }
+.dash-nav-item.is-active { background: rgba(255,255,255,0.1); color: #fff; font-weight: 600; box-shadow: inset 2px 0 0 var(--color-accent); }
+.dash-nav-item.is-active svg { opacity: 1; }
+.dash-nav-item .count { margin-left: auto; background: rgba(255,255,255,0.15); font-size: 0.7rem; padding: 0.1em 0.5em; border-radius: var(--radius-pill); }
+.dash-nav-item.is-active .count { background: rgba(0,0,0,0.2); }
+
+.dash-sidebar-footer { padding: 1rem 1.25rem; border-top: 1px solid rgba(255,255,255,0.1); }
+.dash-user,
+.dash-sidebar-footer [data-dash-user] {
+  display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.75rem; min-width: 0;
+}
+/* The name/role stack must be allowed to shrink so long names truncate
+   instead of shoving the avatar or overflowing the sidebar. */
+.dash-sidebar-footer [data-dash-user] > div:last-child { min-width: 0; flex: 1; }
+.dash-avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--color-accent); color: var(--color-accent-ink);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: var(--fs-sm);
+  flex-shrink: 0;
+}
+.dash-user-name {
+  font-size: var(--fs-sm); font-weight: 600; color: #fff; line-height: 1.2;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dash-user-role { font-size: 0.7rem; color: #9AA3AF; text-transform: uppercase; letter-spacing: var(--tracking-wide); }
+
+/* ------------------------------- Main area ------------------------------- */
+.dash-main {
+  min-width: 0;
+  min-height: 0;
+  display: flex; flex-direction: column;
+  height: 100%;
+  overflow-y: auto;               /* THE scroll container for page content */
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* Sticky topbar. Translucent + blurred so content reads as passing *under* it,
+   matching the public .site-header treatment. The scroll container is
+   .dash-main (not the window) — js/dashboard.js toggles .scrolled from there. */
+.dash-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-3);
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid transparent;
+  background: color-mix(in srgb, var(--color-surface) 85%, transparent);
+  backdrop-filter: saturate(1.3) blur(10px);
+  -webkit-backdrop-filter: saturate(1.3) blur(10px);
+  position: sticky; top: 0; z-index: 800;
+  flex-shrink: 0;
+  transition: border-color var(--speed-3) var(--ease),
+              box-shadow var(--speed-3) var(--ease),
+              background var(--speed-3) var(--ease);
+}
+/* Only once the page has actually moved does the bar separate from the content. */
+.dash-topbar.scrolled {
+  border-bottom-color: var(--color-border);
+  box-shadow: var(--shadow-xs);
+}
+
+/* No backdrop-filter support (older Firefox, some in-app webviews): fall back to
+   a fully opaque bar so the topbar is never unreadable over scrolling content. */
+@supports not ((backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px))) {
+  .dash-topbar { background: var(--color-surface); }
+}
+.dash-topbar-left { display: flex; align-items: center; gap: var(--sp-3); }
+.dash-title { min-width: 0; }
+.dash-title h1 {
+  font-size: var(--fs-lg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dash-title p { font-size: var(--fs-sm); color: var(--color-text-muted); }
+.dash-topbar-actions { display: flex; align-items: center; gap: var(--sp-2); }
+.dash-topbar-actions .btn { font-size: var(--fs-xs); padding: 0 0.75rem; }
+.dash-topbar-right { display: flex; align-items: center; gap: var(--sp-2); }
+.dash-topbar-right .theme-toggle { width: 38px; height: 38px; }
+
+.dash-menu-toggle { display: none; }
+.dash-content {
+  padding: 1.5rem;
+  display: grid; gap: 1.5rem;
+  align-content: start;
+  min-width: 0;
+  flex: 1 0 auto;
+}
+.dash-content > * { min-width: 0; }
+
+/* Lock background scroll while the mobile drawer is open without the
+   position:fixed body hack (which breaks scroll restoration on iOS —
+   the shell itself doesn't scroll, only .dash-main does). */
+body.drawer-open .dash-main { overflow: hidden; }
+
+@media (max-width: 1024px) {
+  .dash { grid-template-columns: minmax(0, 1fr); }
+  .dash-sidebar {
+    position: fixed; left: 0; top: 0; bottom: 0; z-index: 1000;
+    height: 100%;
+    width: min(78vw, 264px);
+    transform: translateX(-100%);
+    transition: transform var(--speed-3) var(--ease);
+    box-shadow: var(--shadow-lg);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .dash-sidebar.open { transform: translateX(0); }
+  .dash-menu-toggle { display: inline-flex; }
+  .dash-sidebar-backdrop {
+    position: fixed; inset: 0; z-index: 999;
+    background: rgba(20,18,19,0.5);
+    opacity: 0; pointer-events: none; transition: opacity var(--speed-3);
+  }
+  .dash-sidebar-backdrop.open { opacity: 1; pointer-events: auto; }
+}
+
+/* ---------- Desktop collapsible sidebar (complement of the drawer) --------
+   Desktop-only feature: everything below is gated behind min-width:1025px,
+   the exact complement of the mobile drawer breakpoint above, so the saved
+   collapse preference can never leak into the mobile hamburger flow.
+   State: body[data-sidebar="expanded"|"collapsed"] — driven once from
+   js/dashboard.js (setupSidebarCollapse). */
+.dash-sidebar-collapse {
+  display: none;                 /* desktop only (see media query below) */
+  align-items: center; justify-content: center;
+  margin-left: auto;             /* sits opposite the wordmark, top-right */
+  width: 30px; height: 30px;
+  padding: 0;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: #B9B8B6;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--speed-2), color var(--speed-2);
+}
+.dash-sidebar-collapse:hover { background: rgba(255,255,255,0.06); color: #fff; }
+.dash-sidebar-collapse:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.dash-sidebar-collapse svg { width: 18px; height: 18px; }
+
+@media (min-width: 1025px) {
+  .dash-sidebar-collapse { display: inline-flex; }
+  .dash { transition: grid-template-columns var(--speed-3) var(--ease); }
+
+  body[data-sidebar="collapsed"] .dash { grid-template-columns: 76px minmax(0, 1fr); }
+
+  /* Brand: logo stacks above the expand control, wordmark hides */
+  body[data-sidebar="collapsed"] .dash-sidebar-brand {
+    flex-direction: column; justify-content: center; gap: 0.5rem; padding: 0.9rem 0.5rem;
+  }
+  body[data-sidebar="collapsed"] .dash-sidebar-brand > span {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  body[data-sidebar="collapsed"] .dash-sidebar-collapse { margin-left: 0; }
+
+  /* Group labels: announced to screen readers, visually replaced by a
+     separator so groups stay distinguishable in icon-only mode */
+  body[data-sidebar="collapsed"] .dash-nav-group { margin-bottom: 0.9rem; }
+  body[data-sidebar="collapsed"] .dash-nav-group + .dash-nav-group {
+    border-top: 1px solid rgba(255,255,255,0.08);
+    padding-top: 0.9rem;
+  }
+  body[data-sidebar="collapsed"] .dash-nav-label {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
+  /* Nav items: icon only. The text stays in the accessibility tree
+     (font-size:0 keeps it announced); sighted users get the tooltip. */
+  body[data-sidebar="collapsed"] .dash-nav-item {
+    position: relative;
+    justify-content: center;
+    gap: 0;
+    padding: 0.55rem 0;
+    font-size: 0;
+  }
+  body[data-sidebar="collapsed"] .dash-nav-item svg { width: 20px; height: 20px; flex-shrink: 0; }
+  body[data-sidebar="collapsed"] .dash-nav-item .count {
+    position: absolute; top: 0; right: 0.55rem;
+    margin-left: 0; padding: 0 0.3em;
+    min-width: 14px; height: 14px;
+    font-size: 0.58rem; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  body[data-sidebar="collapsed"] .dash-nav-item.is-active { box-shadow: inset 2px 0 0 var(--color-accent); }
+
+  /* Lightweight tooltip — hover AND keyboard focus, no library. Fixed
+     positioning keeps it clear of the scrollable nav's overflow. */
+  body[data-sidebar="collapsed"] .dash-nav-item:hover::after,
+  body[data-sidebar="collapsed"] .dash-nav-item:focus-visible::after {
+    content: attr(data-base-label);
+    position: fixed;
+    left: calc(76px + 10px);
+    transform: translateY(-50%);
+    z-index: 1300;
+    padding: 0.4rem 0.7rem;
+    border-radius: var(--radius-sm);
+    background: var(--brand-charcoal);
+    border: 1px solid rgba(255,255,255,0.14);
+    box-shadow: var(--shadow-lg);
+    color: #fff;
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    line-height: 1.3;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  /* Footer: avatar + icon-only sign-out stay usable */
+  body[data-sidebar="collapsed"] .dash-sidebar-footer {
+    padding: 0.75rem 0.5rem;
+    display: flex; flex-direction: column; align-items: center; gap: 0.55rem;
+  }
+  body[data-sidebar="collapsed"] .dash-sidebar-footer [data-dash-user] {
+    display: flex; justify-content: center;
+  }
+  body[data-sidebar="collapsed"] .dash-sidebar-footer [data-dash-user] > div:last-child { display: none; }
+  body[data-sidebar="collapsed"] .dash-sidebar-footer [data-logout] {
+    width: auto !important;          /* the shell's inline width:100% */
+    padding: 0.4rem 0.55rem !important;
+    gap: 0;
+  }
+  body[data-sidebar="collapsed"] .dash-logout-label { display: none; }
+}
+
+/* --------------------------- Mobile bottom nav --------------------------- */
+.dash-bottom-nav {
+  display: none;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 900;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  padding: 0.3rem 0.25rem calc(0.3rem + env(safe-area-inset-bottom, 0px));
+}
+.dash-bottom-item {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 0.15rem;
+  padding: 0.3rem 0.2rem;
+  min-height: 48px;                 /* touch-friendly target */
+  color: var(--color-text-muted);
+  font-size: 0.62rem; font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+.dash-bottom-item.is-active { color: var(--color-accent); }
+.dash-bottom-icon { position: relative; display: inline-flex; }
+.dash-bottom-icon svg { width: 22px; height: 22px; }
+.dash-bottom-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+
+/* Unread notification badge (sidebar + bottom nav + topbar). */
+.notif-count {
+  background: var(--color-danger);
+  color: #fff;
+  font-size: 0.62rem; font-weight: 700; line-height: 1;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.notif-count[hidden] { display: none; }
+.dash-nav-item .notif-count { margin-left: auto; }
+.dash-bottom-icon .notif-count { position: absolute; top: -5px; right: -9px; }
+.dash-topbar-bell { position: relative; }
+.dash-topbar-bell .notif-count { position: absolute; top: 2px; right: 0; }
+
+@media (max-width: 1024px) {
+  .dash-bottom-nav { display: flex; }
+  /* Content must never hide behind the fixed bottom nav. */
+  body.has-bottom-nav .dash-content {
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* -------------------------------- KPI grid ------------------------------- */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: 1rem;
+}
+.kpi {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0.95rem 1.05rem;
+}
+.kpi-label { font-size: var(--fs-xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--color-text-muted); }
+.kpi-value { margin-top: 0.5rem; font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; }
+.kpi-sub { font-size: var(--fs-xs); color: var(--color-text-faint); margin-top: 0.35rem; display: flex; gap: 0.4rem; align-items: center; }
+.kpi-sub .up { color: var(--color-success); }
+.kpi-sub .down { color: var(--color-danger); }
+
+/* The dashboard's first paint has card-shaped placeholders, not misleading
+   zeroes or a blocking spinner. applyStats() removes this state atomically. */
+.kpi-grid.is-loading .kpi-label,
+.kpi-grid.is-loading .kpi-value,
+.kpi-grid.is-loading .kpi-sub {
+  position: relative;
+  overflow: hidden;
+  color: transparent;
+  background: var(--color-surface-deep);
+  border-radius: var(--radius-sm);
+}
+.kpi-grid.is-loading .kpi-label { display: block; width: 68%; min-height: 0.8rem; }
+.kpi-grid.is-loading .kpi-value { width: 46%; min-height: 2rem; }
+.kpi-grid.is-loading .kpi-sub { width: 80%; min-height: 0.75rem; }
+.kpi-grid.is-loading .kpi-label::after,
+.kpi-grid.is-loading .kpi-value::after,
+.kpi-grid.is-loading .kpi-sub::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 1.3s infinite;
+}
+.kpi-grid.has-error .kpi { opacity: 0.35; }
+.dashboard-kpi-error {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+}
+.dashboard-kpi-error strong { color: var(--color-heading); }
+.dashboard-kpi-error .btn { margin-left: auto; }
+@media (max-width: 560px) {
+  .dashboard-kpi-error .btn { margin-left: 0; }
+}
+
+/* ------------------------------ Panel cards ------------------------------ */
+.panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3);
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.panel-head h2, .panel-head h3 { font-size: var(--fs-md); }
+.panel-head .panel-actions { display: flex; gap: var(--sp-2); align-items: center; }
+.panel-body { padding: 1.25rem; }
+.panel-body.no-pad { padding: 0; }
+
+.panel-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; align-items: start; }
+.panel-grid > * { min-width: 0; }
+@media (max-width: 1100px) { .panel-grid { grid-template-columns: 1fr; } }
+
+/* position:relative makes the wrap the containing block for absolutely
+   positioned descendants (e.g. .sr-only header labels), so a table that
+   scrolls inside the wrap can never inflate the DOCUMENT's scroll width. */
+.table-wrap { position: relative; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* --------------------------- Loading skeletons ----------------------------
+   Shared DATA.loading() uses these instead of layout-breaking spinners. The
+   screen-reader status is supplied in the markup; visual bars are decorative. */
+.skeleton-line { display: block; margin: 0; min-width: 2.5rem; }
+.table-skeleton-row td { pointer-events: none; }
+.table-skeleton-row:hover { background: transparent; }
+.loading-skeleton { padding: var(--sp-5); }
+.loading-skeleton-lines { display: grid; gap: var(--sp-3); max-width: 34rem; }
+.loading-skeleton-line-wide { width: 88%; }
+.loading-skeleton-line-mid { width: 66%; }
+.loading-skeleton-line-short { width: 42%; }
+
+/* ------------------------------ Filter bar ------------------------------- */
+.filter-bar {
+  display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: flex-end;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.filter-bar .field { margin-bottom: 0; min-width: 150px; }
+.filter-bar .field .input, .filter-bar .field .select { padding: 0.6em 0.8em; font-size: var(--fs-sm); }
+.filter-actions { display: flex; gap: var(--sp-2); }
+
+/* ----------------------------- Quick actions ----------------------------- */
+.quick-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; }
+.quick-action {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.9rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  font-weight: 600; font-size: var(--fs-sm);
+  transition: border-color var(--speed-2), transform var(--speed-2);
+  text-align: left;
+}
+.quick-action svg { width: 20px; height: 20px; color: var(--color-text-muted); }
+.quick-action:hover { border-color: var(--color-primary); transform: translateY(-1px); }
+
+/* ----------------------------- Status pills ------------------------------ */
+.status-pill {
+  display: inline-flex; align-items: center; gap: 0.4em;
+  padding: 0.28em 0.6em;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.status-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status-available, .status-confirmed, .status-checked_in, .status-checked_out, .status-paid, .status-success, .status-active, .status-clean, .status-reviewed { color: var(--color-success); background: var(--color-success-bg); }
+.status-reserved, .status-pending, .status-partial, .status-partially_paid, .status-cleaning, .status-unpaid, .status-in_progress, .status-new { color: var(--color-warning); background: var(--color-warning-bg); }
+.status-occupied, .status-attention, .status-out_of_service { color: var(--color-info); background: var(--color-info-bg); }
+.status-maintenance, .status-unavailable, .status-cancelled, .status-failed, .status-no_show, .status-expired, .status-refunded, .status-noshow, .status-inactive, .status-closed, .status-resolved, .status-dirty { color: var(--color-danger); background: var(--color-danger-bg); }
+/* Notification read-state (never communicated by colour alone — the pill also
+   carries the words "Read" / "Unread"). */
+.status-read { color: var(--color-success); background: var(--color-success-bg); }
+.status-unread { color: var(--color-info); background: var(--color-info-bg); }
+
+/* --------------------------- Availability calendar ----------------------- */
+.avo-scroller { overflow-x: auto; max-width: 100%; }
+.avo-table { border-collapse: separate; border-spacing: 0; font-size: var(--fs-sm); }
+.avo-table th, .avo-table td { border: 1px solid var(--color-border); padding: 0.45rem 0.55rem; white-space: nowrap; }
+.avo-table thead th { position: sticky; top: 0; background: var(--color-surface-alt); text-transform: uppercase; font-size: 0.65rem; letter-spacing: 0.06em; }
+.avo-cell { width: 44px; height: 34px; display: block; border-radius: var(--radius-sm); }
+.avo-cell.free { background: var(--color-success-bg); }
+.avo-cell.reserved { background: var(--color-warning-bg); }
+.avo-cell.occupied { background: var(--color-info-bg); }
+.avo-cell.maintenance { background: var(--color-danger-bg); }
+.avo-legend { display: flex; gap: var(--sp-4); flex-wrap: wrap; margin-bottom: 1rem; font-size: var(--fs-sm); color: var(--color-text-muted); }
+.avo-legend span { display: inline-flex; align-items: center; gap: 0.4em; }
+.avo-legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+/* ----------------------------- Check-in/out ------------------------------ */
+.checkout-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+.checkout-panel > * { min-width: 0; }
+@media (max-width: 900px) { .checkout-panel { grid-template-columns: 1fr; } }
+.balance-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  background: var(--color-surface);
+  text-align: center;
+}
+.balance-card .amount { font-family: var(--font-body); font-weight: 600; letter-spacing: -0.02em; font-size: var(--fs-3xl); }
+
+/* ------------------------------- Activity --------------------------------- */
+.activity-list { display: grid; }
+.activity-item {
+  display: flex; gap: 0.9rem; padding: 0.9rem 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--fs-sm);
+}
+.activity-item:last-child { border-bottom: 0; }
+.activity-icon { width: 34px; height: 34px; flex-shrink: 0; border-radius: 50%; background: var(--color-surface-deep); display: flex; align-items: center; justify-content: center; color: var(--color-text-muted); }
+.activity-body p { margin: 0; }
+.activity-time { font-size: var(--fs-xs); color: var(--color-text-faint); margin-top: 0.2rem; }
+
+/* ------------------------------ Audit detail ----------------------------- */
+/* Long values/JSON must wrap on phones — never widen the page. */
+.audit-value { overflow-wrap: anywhere; word-break: break-word; font-size: var(--fs-sm); }
+.audit-json {
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 0.9rem;
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+  margin: 0;
+}
+
+/* --------------------------- Notification item --------------------------- */
+.notif-item {
+  display: flex; gap: 0.9rem; padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+  transition: background var(--speed-2);
+}
+.notif-item.unread { background: var(--color-surface-alt); }
+.notif-item.unread .notif-title { font-weight: 700; }
+.notif-icon { width: 38px; height: 38px; flex-shrink: 0; border-radius: 50%; background: var(--color-surface-deep); display: flex; align-items: center; justify-content: center; color: var(--color-text-muted); }
+.notif-item { cursor: pointer; }
+.notif-body { min-width: 0; }
+.notif-body p { margin: 0 0 0.25rem; font-size: var(--fs-sm); overflow-wrap: anywhere; word-break: break-word; }
+.notif-meta { font-size: var(--fs-xs); color: var(--color-text-faint); }
+
+/* ------------------------- Dashboard responsive tables -------------------- */
+@media (max-width: 720px) {
+  .dash-content { padding: 1rem; }
+  .hide-sm { display: none !important; }
+}
+
+/* --------------- Room status board (grid of numbered rooms) -------------- */
+.room-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0.75rem; }
+.room-tile {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0.85rem;
+  background: var(--color-surface);
+}
+.room-tile .room-no { font-family: var(--font-body); font-weight: 600; letter-spacing: -0.01em; font-size: var(--fs-md); color: var(--color-heading); }
+.room-tile .room-type { font-size: var(--fs-xs); color: var(--color-text-muted); }
+
+/* Small-screen operational layout: preserve readable controls without forcing
+   the dashboard viewport wider than the device. */
+@media (max-width: 560px) {
+  .dash-topbar { padding: .65rem .8rem; gap: .5rem; }
+  .dash-topbar-left, .dash-topbar-right { min-width: 0; }
+  .dash-title h1 { font-size: var(--fs-md); }
+  .dash-topbar-actions { gap: .25rem; }
+  .dash-topbar-actions .btn { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dash-content { padding: .75rem; gap: .9rem; }
+  .panel-head { padding: .8rem .9rem; align-items: flex-start; flex-wrap: wrap; }
+  .panel-head .panel-actions { width: 100%; flex-wrap: wrap; }
+  .panel-body { padding: .9rem; }
+  .filter-bar { padding: .8rem .9rem; gap: .65rem; align-items: stretch; }
+  .filter-bar .field { min-width: 0; width: 100%; }
+  .filter-bar .field .btn, .filter-actions { width: 100%; }
+  .form-grid.fg-2 { grid-template-columns: 1fr; }
+  .quick-actions { grid-template-columns: 1fr 1fr; }
+  .table-wrap .table { min-width: 600px; }
+  .table-wrap .table th, .table-wrap .table td { padding: .65rem .55rem; }
+  .modal-panel, .modal-lg { width: calc(100vw - 1rem); max-width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); overflow-y: auto; }
+  .modal-body { padding: .9rem; }
+  .room-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 360px) {
+  .quick-actions { grid-template-columns: 1fr; }
+  .dash-sidebar { width: min(78vw, 248px); }
+  .dash-topbar-right .theme-toggle { width: 34px; height: 34px; }
+}
+
+/* ==========================================================================
+   Image upload drop-zone (JONE.dashboard.formModal field type "imagefile").
+   Used by Room Type / Room forms. Calm, bordered, surface-based — matches the
+   existing field styling rather than introducing a new visual language.
+   ========================================================================== */
+.img-field .img-drop {
+  position: relative;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface-alt);
+  padding: var(--sp-4);
+  transition: border-color .16s ease, background .16s ease;
+}
+.img-field .img-drop:hover,
+.img-field .img-drop.is-dragging { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.img-field .img-drop.has-image { border-style: solid; background: var(--color-surface); }
+.field.has-error .img-drop { border-color: var(--color-danger); }
+
+/* The input covers the empty state so the whole area is clickable/droppable. */
+.img-drop-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+}
+.img-drop.has-image .img-drop-input { display: none; }
+
+.img-drop-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 66px;
+  pointer-events: none;
+}
+.img-drop-icon { color: var(--color-text-faint); display: inline-flex; flex: none; }
+.img-drop-cta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.img-drop-cta strong { font-size: var(--fs-sm); font-weight: 600; color: var(--color-text); }
+
+.img-drop-preview { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.img-drop-preview img {
+  width: 108px;
+  height: 74px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+  flex: none;
+  display: block;
+}
+.img-drop-meta { flex: 1 1 150px; min-width: 0; }
+.img-drop-name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;      /* long filenames must never overflow */
+}
+.img-drop-info { margin-top: 2px; }
+.img-drop-actions { display: flex; gap: var(--sp-2); flex: none; flex-wrap: wrap; }
+
+/* Room-type cover thumbnails in the staff table. */
+.rt-thumb {
+  width: 54px;
+  height: 38px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+  display: block;
+}
+.rt-thumb-empty {
+  width: 54px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--color-border-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-faint);
+  background: var(--color-surface-alt);
+}
+
+@media (max-width: 560px) {
+  .img-field .img-drop { padding: var(--sp-3); }
+  .img-drop-preview img { width: 100%; height: 132px; }
+  .img-drop-meta { flex-basis: 100%; }
+  .img-drop-actions { width: 100%; }
+  .img-drop-actions .btn { flex: 1; justify-content: center; }
+}
+
+/* Printing (receipts): the app shell's fixed-height scroll container would
+   clip everything after page one — let the document flow normally on paper. */
+@media print {
+  .dash { display: block; height: auto; overflow: visible; }
+  .dash-main { height: auto; overflow: visible; }
+  .dash-sidebar, .dash-topbar, .dash-bottom-nav, .dash-sidebar-backdrop { display: none !important; }
+  body.has-bottom-nav .dash-content { padding-bottom: 0; }
+}
+/* ==========================================================================
+   OVERFLOW SAFETY — long values must wrap or clamp, never widen the page.
+   Applies to every dashboard table, card and detail list.
+   ========================================================================== */
+.table td, .table th { overflow-wrap: anywhere; word-break: break-word; }
+.table td a, .table td code { overflow-wrap: anywhere; }
+
+/* --------------------- Identifier / date / action cells -------------------
+   The blanket wrap-anywhere rule above is the overflow SAFETY net, but it
+   also lets the auto table layout squeeze identifier columns down until a
+   booking reference or a date shreds across four lines. Cells that hold
+   ATOMIC values (references, transaction ids, dates, amounts, IPs, action
+   buttons) opt out with .cell-nowrap: they stay on one line and the extra
+   width is handled by .table-wrap's own horizontal scroll — never by the
+   page (html/body keep overflow-x clipped in audit-fixes.css) and never by
+   destroying the value. Nothing is hidden or truncated: the full value is
+   always present and reachable by scrolling the table container. */
+.table td.cell-nowrap, .table th.cell-nowrap {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.table td.cell-nowrap a, .table td.cell-nowrap code { overflow-wrap: normal; }
+/* Secondary caption line under a nowrap value (guest name under the
+   reference) may still wrap gently — but never letter-by-letter. */
+.table td.cell-nowrap .caption,
+.table td.cell-nowrap .receipt-mobile-guest { white-space: normal; overflow-wrap: break-word; }
+
+/* --------------------------- Guest column (bookings) ----------------------
+   The guest cell holds a NAME line and a phone/email caption. Under the auto
+   table layout the blanket wrap-anywhere safety net (above) shreds these into
+   one word/character per line when the column is squeezed. Give the column a
+   sensible min/max width and let the values wrap between words only — never
+   letter-by-letter. Phone numbers/emails are atomic tokens that stay on one
+   line, ellipsised if the (bounded) column can't fit them. */
+.table td.cell-guest {
+  min-width: 12ch;
+  max-width: 24ch;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.table td.cell-guest .cell-guest-name {
+  display: block;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+.table td.cell-guest .cell-guest-contact {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* Long free-text (audit summaries) stays readable: clamp the CELL width so
+   one verbose entry cannot force the whole table to 2000px, wrap within it,
+   and keep the complete text on the details page (and in the title attr). */
+.table td.cell-clamp {
+  max-width: 34ch;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+@media (max-width: 720px) { .table td.cell-clamp { max-width: 22ch; } }
+
+.nowrap-ellipsis {
+  display: block; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Two-line clamp for room-type blurbs and long descriptions. */
+.rt-clamp {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+tr.is-muted { opacity: 0.55; }
+.panel-note {
+  margin: 0 0 var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Compact, wrapping action clusters inside table cells. */
+.row-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+/* Icon spans inside flex-shrunk row-action buttons must not collapse to zero
+   width (the SVG keeps its size, but the wrapping span would otherwise be
+   squeezed away when the button is flex: 1 1 0). */
+.row-actions .btn [data-icon] { flex: 0 0 auto; }
+
+.row-actions-end { justify-content: flex-end; }
+@media (max-width: 560px) {
+  .row-actions { width: 100%; }
+  .row-actions .btn, .row-actions a.btn { flex: 1 1 auto; justify-content: center; }
+  .row-actions-end { justify-content: stretch; }
+}
+
+/* Hide on DESKTOP, show on mobile (the mirror of .hide-sm). */
+@media (min-width: 721px) { .hide-md { display: none !important; } }
+.receipt-mobile-guest {
+  margin-top: .2rem;
+  color: var(--color-text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) { .receipt-mobile-guest { display: block; } }
+
+/* Staff cell in the staff table — avatar + name/email, never overflowing. */
+.staff-cell { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.staff-cell-text { min-width: 0; }
+.staff-cell-text strong,
+.staff-cell-text small { display: block; overflow-wrap: anywhere; }
+.staff-cell-text small { font-size: var(--fs-xs); color: var(--color-text-muted); }
+
+/* --------------------------- Staff table layout ---------------------------
+   Desktop: a real table whose columns can never be pushed wider by long
+   names, emails or phone numbers. Every cell clips with an ellipsis and keeps
+   the full value in a title attribute, so nothing overlaps the actions.
+   ≤720px: the SAME rows are restacked as staff cards (a miniature 5-column
+   table on a phone is unreadable). One DOM, no duplicated markup. */
+.table-staff { table-layout: fixed; }
+.table-staff td { min-width: 0; }
+.table-staff td[data-label] { overflow-wrap: anywhere; }
+.table-staff td[data-label="Staff"] { padding-right: 0.5rem; }
+.table-staff td[data-label="Staff"] .staff-cell-text strong,
+.table-staff td[data-label="Staff"] .staff-cell-text small {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.table-staff td[data-label="Role"],
+.table-staff td[data-label="Status"],
+.table-staff td[data-label="Last login"] {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.table-staff td[data-label="Actions"] { padding-left: 0.5rem; }
+.table-staff td[data-label="Actions"] .row-actions { justify-content: flex-end; }
+/* Icon-only on desktop; the visible label appears in card mode below. */
+.table-staff .btn-label { display: none; }
+
+@media (max-width: 720px) {
+  /* The generic "let wide tables scroll" rule (`.table-wrap .table`
+     min-width: 600px) must not apply once the rows become cards, or every
+     card would be 600px wide inside its own horizontal scroller. */
+  .table-wrap .table-staff,
+  .table-staff { table-layout: auto; min-width: 0; }
+  .table-staff thead { display: none; }
+  .table-staff, .table-staff tbody, .table-staff tr, .table-staff td { display: block; width: 100%; }
+  .table-staff tr {
+    width: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    padding: 0.85rem 0.9rem;
+    margin: 0 0.9rem 0.75rem;
+  }
+  .table-staff tbody tr:last-child { margin-bottom: 0.9rem; }
+  .table-staff td { border: 0; padding: 0.2rem 0; min-width: 0; overflow: visible; }
+  .table-staff td[data-label] { white-space: normal; }
+  .table-staff td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.66rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-text-faint);
+  }
+  .table-staff td[data-label="Staff"] { padding-bottom: 0.55rem; }
+  .table-staff td[data-label="Staff"]::before { display: none; }
+  .table-staff td[data-label="Staff"] .staff-cell-text strong,
+  .table-staff td[data-label="Staff"] .staff-cell-text small {
+    white-space: normal; overflow: visible; text-overflow: clip;
+  }
+  /* Role + status + last login sit on one compact meta line. */
+  .table-staff td[data-label="Role"],
+  .table-staff td[data-label="Status"],
+  .table-staff td[data-label="Last login"] {
+    display: inline-block; width: auto; margin-right: 0.75rem;
+  }
+  .table-staff td[data-label="Role"]::before,
+  .table-staff td[data-label="Status"]::before,
+  .table-staff td[data-label="Last login"]::before {
+    display: inline-block; margin-right: 0.35rem;
+  }
+  .table-staff td[data-label="Actions"] { padding-top: 0.6rem; }
+  .table-staff td[data-label="Actions"] .row-actions {
+    justify-content: stretch; gap: 0.4rem;
+  }
+  .table-staff td[data-label="Actions"] .btn { flex: 1 1 0; min-width: 0; }
+  .table-staff .btn-label { display: inline; }
+  .table-staff .btn { justify-content: center; }
+}
+
+/* ------------------------------ Modal footer ------------------------------ */
+.modal-foot {
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding: 0 var(--sp-5) var(--sp-5);
+}
+@media (max-width: 560px) {
+  .modal-foot { flex-direction: column-reverse; align-items: stretch; }
+  .modal-foot .btn { width: 100%; justify-content: center; }
+}
+
+/* ==========================================================================
+   PAYMENT MODAL — focused "record payment" dialog.
+   The summary sits ABOVE the form so the receptionist confirms the guest and
+   the outstanding balance before typing an amount.
+   ========================================================================== */
+.pay-modal-summary {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-alt);
+  padding: var(--sp-4);
+  margin: 0 var(--sp-5) var(--sp-4);
+}
+.pay-modal-hero { text-align: center; padding-bottom: var(--sp-3); border-bottom: 1px solid var(--color-border); }
+.pay-modal-hero-label {
+  display: block; font-size: var(--fs-xs); letter-spacing: var(--tracking-wider);
+  text-transform: uppercase; color: var(--color-text-muted);
+}
+.pay-modal-hero-amount {
+  display: block; margin-top: 0.25rem;
+  font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -0.02em;
+  color: var(--color-heading);
+}
+.pay-modal-facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  gap: 0.5rem 1.25rem; margin: var(--sp-3) 0 0;
+}
+.pay-modal-fact { min-width: 0; display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.2rem 0; }
+.pay-modal-fact dt { color: var(--color-text-muted); font-size: var(--fs-sm); }
+.pay-modal-fact dd { margin: 0; font-size: var(--fs-sm); font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+
+/* ==========================================================================
+   PROFILE CARDS — staff + guest profile modals.
+   ========================================================================== */
+.profile-card { display: grid; gap: var(--sp-5); }
+.profile-identity { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
+.profile-photo {
+  width: 76px; height: 76px; flex: none;
+  border-radius: 50%; object-fit: cover;
+  border: 1px solid var(--color-border); background: var(--color-surface-alt);
+}
+.profile-photo-fallback {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--color-accent); color: var(--color-accent-ink);
+  font-weight: 700; font-size: var(--fs-lg);
+}
+.profile-identity-text { min-width: 0; flex: 1 1 200px; }
+.profile-identity-text h3 { font-size: var(--fs-lg); overflow-wrap: anywhere; }
+.profile-identity-text p { margin: 0.15rem 0 0.5rem; overflow-wrap: anywhere; }
+.profile-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+
+.profile-grid, .profile-facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 0 var(--sp-5); margin: 0;
+}
+.profile-row {
+  display: flex; justify-content: space-between; gap: var(--sp-3);
+  padding: 0.5rem 0; border-bottom: 1px dashed var(--color-border);
+  min-width: 0;
+}
+.profile-row dt { color: var(--color-text-muted); font-size: var(--fs-sm); flex: none; }
+.profile-row dd { margin: 0; font-size: var(--fs-sm); font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+
+.profile-stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--sp-3);
+}
+.profile-stat {
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  padding: var(--sp-3); text-align: center; background: var(--color-surface-alt);
+}
+.profile-stat-value { display: block; font-size: var(--fs-lg); font-weight: 600; overflow-wrap: anywhere; }
+.profile-stat-label { display: block; font-size: var(--fs-xs); color: var(--color-text-muted); margin-top: 0.2rem; }
+
+.profile-section-title { font-size: var(--fs-md); margin: var(--sp-5) 0 var(--sp-3); }
+
+/* ==========================================================================
+   CHECK-OUT SEARCH — prominent, focused, one job.
+   ========================================================================== */
+.co-search { padding: var(--sp-5) 1.25rem var(--sp-4); border-bottom: 1px solid var(--color-border); }
+.co-search-field { position: relative; display: flex; align-items: center; }
+.co-search-icon {
+  position: absolute; left: 0.9rem; color: var(--color-text-faint);
+  display: inline-flex; pointer-events: none;
+}
+.co-search-input {
+  padding: 0.85rem 2.6rem 0.85rem 2.75rem;
+  font-size: var(--fs-md);
+  min-height: 52px;
+}
+.co-search-clear { position: absolute; right: 0.4rem; }
+.co-search-help { margin: 0.6rem 0 0; font-size: var(--fs-sm); color: var(--color-text-muted); }
+.co-search-help b { color: var(--color-text); font-weight: 600; }
+@media (max-width: 560px) {
+  .co-search { padding: var(--sp-4) 0.9rem var(--sp-3); }
+  .co-search-input { font-size: var(--fs-base); }
+}
+
+.co-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 1rem; padding: 1rem 1.25rem 1.25rem; }
+.co-card {
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  background: var(--color-surface); padding: 1rem;
+  display: flex; flex-direction: column; gap: 0.85rem; min-width: 0;
+}
+.co-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+.co-card-who { min-width: 0; flex: 1 1 160px; }
+.co-card-who h3 { font-size: var(--fs-md); overflow-wrap: anywhere; }
+.co-card-contact { margin: 0.15rem 0 0; font-size: var(--fs-sm); color: var(--color-text-muted); overflow-wrap: anywhere; }
+.co-card-tags { display: flex; flex-direction: column; gap: 0.3rem; align-items: flex-end; }
+.co-card-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin: 0; }
+.co-fact { min-width: 0; }
+.co-fact-label { display: block; font-size: 0.68rem; letter-spacing: var(--tracking-wider); text-transform: uppercase; color: var(--color-text-faint); }
+.co-fact-value { display: block; font-size: var(--fs-sm); font-weight: 600; overflow-wrap: anywhere; }
+.co-fact-sub { display: block; font-weight: 400; font-size: var(--fs-xs); color: var(--color-text-muted); }
+.co-card-money {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem;
+  border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border);
+  padding: 0.75rem 0;
+}
+.co-card-actions { display: grid; gap: 0.5rem; }
+@media (max-width: 400px) {
+  .co-card-facts { grid-template-columns: 1fr; }
+  .co-card-money { grid-template-columns: 1fr; }
+}
+
+/* ==========================================================================
+   NOTIFICATION DETAIL
+   ========================================================================== */
+.nd-card { display: grid; gap: var(--sp-5); }
+.nd-head { display: flex; gap: var(--sp-4); align-items: flex-start; flex-wrap: wrap; }
+.nd-icon { width: 46px; height: 46px; }
+.nd-head-text { min-width: 0; flex: 1 1 240px; }
+.nd-head-text h3 { font-size: var(--fs-lg); overflow-wrap: anywhere; }
+.nd-meta { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.5rem; }
+.nd-message {
+  font-size: var(--fs-base); line-height: var(--leading-relaxed);
+  padding: var(--sp-4); border-radius: var(--radius);
+  background: var(--color-surface-alt); border: 1px solid var(--color-border);
+  overflow-wrap: anywhere;
+}
+.nd-actions { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+@media (max-width: 560px) {
+  .nd-actions .btn { width: 100%; justify-content: center; }
+}
+.notif-chevron { align-self: center; color: var(--color-text-faint); flex: none; }
+.notif-unread-dot { margin-top: 0.4rem; display: inline-block; }
+
+/* ==========================================================================
+   ROOM TYPE MANAGEMENT (dashboard/room-details.html)
+   ========================================================================== */
+.rt-kpis { margin-bottom: 0; }
+.rt-name-cell { min-width: 220px; }
+.rt-name-cell .rt-clamp { font-size: var(--fs-xs); color: var(--color-text-muted); margin-top: 0.15rem; }
+
+/* ===========================================================================
+   DIGITAL PAYMENT RECEIPT — Access-inspired J-ONE transaction receipt
+
+   The receipt is intentionally a white document with a compact horizontal
+   J-ONE lockup, blue title/value text, gold labels, and simple Access-like
+   ruled rows. Buttons/toolbars are never part of exports.
+   ========================================================================== */
+.receipt-sheet {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  width: 100%;
+  max-width: 720px;
+  min-width: 0;
+  margin: 0 auto;
+  background: #fff;
+  color: #17202a;
+  border: 1px solid rgba(20, 61, 105, 0.08);
+  border-radius: 22px;
+  box-shadow: 0 10px 32px rgba(20, 28, 38, 0.08);
+}
+
+.receipt-sheet.rc-access {
+  --rc-blue: #053e75;
+  --rc-value: #123f70;
+  --rc-gold: #a66d10;
+  --rc-gold-bright: #eeb437;
+  --rc-muted: #737b84;
+  --rc-line: #e2e6ea;
+  padding: clamp(1.65rem, 5vw, 3.25rem) clamp(1.1rem, 6vw, 3.75rem) clamp(2rem, 6vw, 3.875rem);
+  font-size: var(--fs-sm);
+  line-height: 1.42;
+}
+
+.receipt-sheet.rc-access::before { content: none; }
+.receipt-watermark { display: none; }
+.receipt-content, .receipt-sheet > *:not(.receipt-watermark) { position: relative; z-index: 1; }
+
+.rc-access * { box-sizing: border-box; }
+.rc-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: clamp(0.75rem, 3vw, 1.5rem);
+  padding: 0;
+  border: 0;
+}
+.rc-logo-lockup { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
+.rc-wordmark-wrap { min-width: 0; }
+.rc-logo {
+  width: 28px;
+  max-width: 28px;
+  height: 52px;
+  object-fit: contain;
+  flex: none;
+}
+.rc-wordmark { font-size: clamp(1.55rem, 5vw, 1.9rem); line-height: 0.9; font-weight: 800; letter-spacing: -0.04em; color: var(--rc-value); text-transform: uppercase; white-space: nowrap; }
+.rc-wordmark-sub { margin-top: 0.35rem; font-size: 0.56rem; font-weight: 800; letter-spacing: 0.28em; color: var(--brand-grey); text-transform: uppercase; white-space: nowrap; }
+.rc-title { margin: clamp(1rem, 3vw, 1.25rem) 0 0; text-align: center; font-size: clamp(1.5rem, 5vw, 1.9rem); line-height: 1.12; font-weight: 800; letter-spacing: -0.02em; color: var(--rc-blue); }
+.rc-generated { margin: clamp(0.85rem, 3vw, 1.1rem) 0 0; text-align: center; font-size: var(--fs-sm); color: var(--rc-muted); overflow-wrap: anywhere; }
+.rc-generated strong { color: var(--brand-grey); font-weight: 800; }
+.rc-access-table { margin-top: clamp(1.4rem, 5vw, 1.9rem); border-top: 0; min-width: 0; }
+.rc-access-row {
+  display: grid;
+  grid-template-columns: minmax(9rem, 14.05rem) minmax(0, 1fr);
+  gap: clamp(0.9rem, 4vw, 1.15rem);
+  min-width: 0;
+  min-height: 3.3rem;
+  align-items: center;
+  padding: 0.7rem 0.5rem 0.7rem 0.35rem;
+  border-bottom: 1px solid var(--rc-line);
+}
+.rc-access-label { font-size: var(--fs-sm); line-height: 1.25; font-weight: 800; color: var(--rc-gold); }
+.rc-access-value { min-width: 0; font-size: var(--fs-sm); line-height: 1.35; font-weight: 650; color: var(--rc-value); overflow-wrap: anywhere; word-break: break-word; }
+.rc-access-value.rc-amount-main { font-size: var(--fs-base); font-weight: 800; }
+.rc-value-line { display: block; margin: 0 0 0.25rem; }
+.rc-value-line:last-child { margin-bottom: 0; }
+.rc-value-muted { color: #65707a; font-weight: 600; }
+.rc-access-status { font-weight: 800; color: var(--color-success); }
+.rc-access-status.is-warning { color: var(--color-warning); }
+.rc-access-status.is-danger { color: var(--color-danger); }
+.rc-access-foot { margin-top: 1.25rem; padding-top: 0; font-size: var(--fs-xs); line-height: 1.35; color: var(--rc-muted); border: 0; }
+.rc-access-foot p { margin: 0 0 0.4rem; overflow-wrap: anywhere; }
+.rc-access-foot a { color: var(--rc-blue); text-decoration: underline; text-underline-offset: 2px; }
+.rc-access-channels { margin-top: 1.65rem; color: #80868d; }
+
+/* Receipt details uses a dedicated Access-like viewer: dark stage,
+   centered white receipt, then Image/PDF download/share cards underneath. */
+body.receipt-view-page { background: #07090b; }
+body.receipt-view-page .dash {
+  display: block;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: #07090b;
+}
+body.receipt-view-page .dash-sidebar,
+body.receipt-view-page .dash-topbar,
+body.receipt-view-page .dash-bottom-nav,
+body.receipt-view-page .dash-sidebar-backdrop {
+  display: none !important;
+}
+body.receipt-view-page .dash-main {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 50% -10%, rgba(51, 82, 110, 0.22), rgba(51, 82, 110, 0) 32rem),
+    linear-gradient(180deg, #050607 0%, #0e1012 100%);
+  color: #fff;
+}
+body.receipt-view-page .dash-content {
+  display: block;
+  min-height: 100%;
+  padding: 0 !important;
+}
+body.receipt-view-page.has-bottom-nav .dash-content { padding-bottom: 0 !important; }
+.receipt-viewer {
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  padding: clamp(1.15rem, 3vw, 2rem) clamp(0.9rem, 3vw, 1.5rem) clamp(2rem, 4vw, 3rem);
+}
+.receipt-view-top {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr) 3rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+.receipt-view-icon {
+  width: clamp(2.35rem, 8vw, 3rem);
+  height: clamp(2.35rem, 8vw, 3rem);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255,255,255,0.78);
+  transition: background var(--speed-2) var(--ease), color var(--speed-2) var(--ease), transform var(--speed-2) var(--ease);
+}
+.receipt-view-icon:hover { background: rgba(255,255,255,0.08); color: #fff; transform: translateY(-1px); }
+.receipt-view-icon:last-child { justify-self: end; }
+.receipt-view-date {
+  min-width: 0;
+  text-align: center;
+  color: rgba(255,255,255,0.25);
+  font-size: clamp(1.1rem, 4.8vw, 2.15rem);
+  line-height: 1.15;
+  font-weight: 850;
+  letter-spacing: -0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.receipt-view-heading {
+  width: min(100%, 760px);
+  margin: clamp(0.9rem, 3vw, 1.5rem) auto clamp(1rem, 3vw, 1.4rem);
+  text-align: center;
+  color: #fff;
+  font-size: clamp(1.7rem, 6vw, 2.6rem);
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+body.receipt-view-page .receipt-details-shell {
+  width: min(100%, 720px);
+}
+body.receipt-view-page .receipt-sheet {
+  border: 0;
+  box-shadow: 0 18px 44px rgba(0,0,0,0.32);
+}
+body.receipt-view-page .receipt-utility-actions .btn-outline,
+body.receipt-view-page .receipt-utility-actions .btn-ghost {
+  color: rgba(255,255,255,0.92);
+  border-color: rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.06);
+}
+body.receipt-view-page .receipt-utility-actions .btn-ghost:hover,
+body.receipt-view-page .receipt-utility-actions .btn-outline:hover {
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+}
+
+/* Receipt preview page + Access-like download/share options. */
+.receipt-details-shell {
+  width: min(100%, 720px);
+  margin: 0 auto;
+  display: grid;
+  gap: clamp(1.15rem, 3vw, 1.5rem);
+  min-width: 0;
+}
+.receipt-export-panel {
+  display: grid;
+  gap: clamp(0.9rem, 3vw, 1.25rem);
+  width: 100%;
+  min-width: 0;
+}
+.receipt-export-row {
+  --rx-bg: #0f3454;
+  --rx-mid: rgba(255,255,255,0.12);
+  --rx-action: #33526e;
+  --rx-icon: #d6e2ea;
+  display: grid;
+  grid-template-columns: minmax(8.75rem, 1.15fr) minmax(7rem, 0.88fr) minmax(8.5rem, 1fr);
+  gap: clamp(0.4rem, 1.8vw, 0.7rem);
+  align-items: stretch;
+  min-height: clamp(5.8rem, 14vw, 7.9rem);
+  padding: clamp(0.35rem, 1.4vw, 0.55rem);
+  border-radius: 18px;
+  background: var(--rx-bg);
+  color: #fff;
+  box-shadow: 0 10px 26px rgba(16, 26, 38, 0.13);
+  overflow: hidden;
+}
+.receipt-export-row.is-pdf {
+  --rx-bg: #2a221c;
+  --rx-mid: rgba(255,255,255,0.12);
+  --rx-action: #b06f12;
+  --rx-icon: #f0b533;
+}
+.receipt-export-kind,
+.receipt-export-action {
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+.receipt-export-kind {
+  justify-content: flex-start;
+  gap: clamp(0.55rem, 2vw, 0.8rem);
+  padding: 0.85rem clamp(0.7rem, 2.5vw, 1.35rem);
+  font-size: clamp(1.05rem, 3.4vw, 1.55rem);
+  line-height: 1;
+  font-weight: 850;
+  letter-spacing: -0.03em;
+}
+.receipt-export-kind svg { width: clamp(1.35rem, 4.2vw, 1.9rem); height: clamp(1.35rem, 4.2vw, 1.9rem); color: var(--rx-icon); stroke-width: 2.1; }
+.receipt-export-file-icon {
+  width: clamp(1.35rem, 4.2vw, 1.9rem);
+  height: clamp(1.35rem, 4.2vw, 1.9rem);
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--rx-icon);
+  color: #2a221c;
+  font-size: clamp(0.45rem, 1.6vw, 0.65rem);
+  font-weight: 900;
+  letter-spacing: -0.06em;
+  flex: none;
+}
+.receipt-export-action {
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.7rem 0.45rem;
+  min-height: 4.9rem;
+  background: var(--rx-mid);
+  color: #fff;
+  font-weight: 760;
+  font-size: clamp(0.78rem, 2.4vw, 1rem);
+  line-height: 1.15;
+  text-align: center;
+  transition: transform var(--speed-2) var(--ease), filter var(--speed-2) var(--ease), background var(--speed-2) var(--ease);
+}
+.receipt-export-action:hover { transform: translateY(-1px); filter: brightness(1.04); }
+.receipt-export-action:focus-visible { outline: 2px solid rgba(255,255,255,0.9); outline-offset: -3px; }
+.receipt-export-action svg { width: clamp(1.35rem, 4vw, 1.85rem); height: clamp(1.35rem, 4vw, 1.85rem); stroke-width: 2.15; }
+.receipt-export-action.is-share { background: var(--rx-action); }
+.receipt-export-action[disabled] { opacity: 0.65; cursor: wait; transform: none; }
+.receipt-utility-actions {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+}
+.receipt-utility-actions .btn { min-height: 2.65rem; }
+
+/* Legacy/action wrappers (never part of receipt image/PDF/print exports). */
+.receipt-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: 0.9rem; }
+.receipt-actions .btn { min-height: 2.65rem; }
+@media (max-width: 720px) {
+  .receipt-actions .btn,
+  .receipt-utility-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .receipt-sheet.rc-access { border-radius: 18px; }
+  .rc-head { gap: 0.75rem; }
+}
+@media (max-width: 640px) {
+  .receipt-sheet.rc-access {
+    padding: clamp(1.05rem, 5vw, 1.35rem) clamp(0.72rem, 4vw, 1rem) clamp(1.25rem, 5vw, 1.7rem);
+    font-size: 0.72rem;
+  }
+  .rc-logo-lockup { gap: 0.55rem; }
+  .rc-logo { width: 22px; max-width: 22px; height: 40px; }
+  .rc-wordmark { font-size: clamp(1.15rem, 6vw, 1.45rem); }
+  .rc-wordmark-sub { margin-top: 0.22rem; font-size: clamp(0.38rem, 2.1vw, 0.5rem); letter-spacing: 0.22em; }
+  .rc-title { margin-top: 0.9rem; font-size: clamp(1.05rem, 6vw, 1.35rem); }
+  .rc-generated { margin-top: 0.65rem; font-size: clamp(0.61rem, 3.2vw, 0.74rem); line-height: 1.35; }
+  .rc-access-table { margin-top: 1rem; }
+  .rc-access-row {
+    grid-template-columns: minmax(5.95rem, 38%) minmax(0, 1fr);
+    gap: clamp(0.42rem, 2.5vw, 0.65rem);
+    min-height: 2.45rem;
+    padding: 0.46rem 0.18rem;
+  }
+  .rc-access-label,
+  .rc-access-value { font-size: clamp(0.62rem, 3vw, 0.76rem); line-height: 1.25; }
+  .rc-access-value.rc-amount-main { font-size: clamp(0.68rem, 3.3vw, 0.82rem); }
+  .rc-value-line { margin-bottom: 0.16rem; }
+  .rc-access-foot { margin-top: 0.85rem; font-size: clamp(0.58rem, 2.7vw, 0.7rem); line-height: 1.32; }
+  .rc-access-channels { margin-top: 1rem; }
+  .receipt-actions .btn,
+  .receipt-utility-actions .btn { flex: 1 1 100%; }
+}
+@media (max-width: 430px) {
+  .receipt-export-row {
+    grid-template-columns: minmax(5.8rem, 1fr) minmax(4.8rem, 0.78fr) minmax(5.5rem, 0.95fr);
+    gap: 0.35rem;
+    min-height: 5.45rem;
+    border-radius: 13px;
+    padding: 0.32rem;
+  }
+  .receipt-export-kind { padding: 0.55rem 0.48rem; font-size: 1rem; gap: 0.42rem; }
+  .receipt-export-action { min-height: 4.7rem; padding: 0.55rem 0.28rem; font-size: 0.75rem; border-radius: 10px; }
+}
+@media (max-width: 360px) {
+  .receipt-sheet.rc-access { padding: 0.95rem 0.65rem 1.25rem; border-radius: 14px; }
+  .rc-logo { width: 19px; max-width: 19px; height: 35px; }
+  .rc-wordmark { font-size: 1.05rem; }
+  .rc-wordmark-sub { font-size: 0.35rem; letter-spacing: 0.18em; }
+  .rc-access-row { grid-template-columns: minmax(5.45rem, 39%) minmax(0, 1fr); gap: 0.35rem; padding: 0.42rem 0.1rem; }
+  .receipt-export-row { grid-template-columns: minmax(5.15rem, 0.95fr) minmax(4.55rem, 0.78fr) minmax(5.1rem, 0.95fr); }
+  .receipt-export-kind { font-size: 0.9rem; }
+  .receipt-export-action { font-size: 0.69rem; }
+}
+
+/* Print: print only the receipt document, never dashboard/site chrome. */
+@media print {
+  .receipt-actions, .no-print { display: none !important; }
+  .receipt-sheet.rc-access {
+    box-shadow: none;
+    border: 0;
+    border-radius: 0;
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 10mm 12mm 12mm;
+  }
+  .rc-access-row { break-inside: avoid; }
+  .rc-access-foot { break-inside: avoid; }
+  @page { margin: 8mm; }
+}
+
+/* --------------------------- Reviews table layout --------------------------
+   Desktop: a compact table. ≤720px: the SAME rows restack as review cards
+   (mirrors the .table-staff pattern) — no horizontal scrolling on phones. */
+@media (max-width: 720px) {
+  .table-wrap .table-reviews,
+  .table-reviews { table-layout: auto; min-width: 0; }
+  .table-reviews thead { display: none; }
+  .table-reviews, .table-reviews tbody, .table-reviews tr, .table-reviews td { display: block; width: 100%; }
+  .table-reviews tr {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    padding: 0.8rem 0.9rem;
+    margin: 0.9rem;
+  }
+  .table-reviews td { border: 0; padding: 0.2rem 0; min-width: 0; overflow-wrap: anywhere; }
+  .table-reviews td[data-label="Rating"] { padding-bottom: 0.35rem; }
+  .table-reviews td:last-child { padding-top: 0.6rem; }
+  .table-reviews td:last-child .btn { width: 100%; justify-content: center; }
+}
+
+.receipt-send-dialog { line-height: 1.5; }
+.receipt-send-summary { display:grid; grid-template-columns: minmax(5rem, auto) 1fr; gap:.55rem 1rem; margin:1rem 0; }
+.receipt-send-summary dt { font-weight:700; color:var(--text-muted, #667085); }
+.receipt-send-summary dd { margin:0; overflow-wrap:anywhere; }
+.receipt-send-dialog .spinner { display:inline-block; width:1em; height:1em; border:.15em solid currentColor; border-right-color:transparent; border-radius:50%; animation:receipt-spin .7s linear infinite; vertical-align:-.15em; }
+@keyframes receipt-spin { to { transform:rotate(360deg); } }
+@media (max-width:480px) { .receipt-send-summary { grid-template-columns:1fr; gap:.2rem; } .receipt-send-summary dd { margin-bottom:.45rem; } }
+/* --------------------------- Guests table layout --------------------------
+   Desktop: a normal five-column table.
+   ≤720px: the SAME rows restack as guest cards (identical technique to
+   .table-staff — one DOM, no duplicated markup, no horizontal scrolling of a
+   five-column table on a phone). The booking count rides with the email so it
+   is legible at both sizes. */
+.table-guests .btn-label { display: none; }
+.table-guests td[data-label="Actions"] .row-actions { justify-content: flex-end; }
+.guest-count { font-weight: 700; color: var(--color-text); white-space: nowrap; }
+
+@media (max-width: 720px) {
+  /* The generic "wide tables scroll" rule (min-width: 600px) must not apply
+     once rows become cards, or each card would be 600px wide. */
+  .table-wrap .table-guests,
+  .table-guests { table-layout: auto; min-width: 0; }
+  .table-guests thead { display: none; }
+  .table-guests,
+  .table-guests tbody,
+  .table-guests tr,
+  .table-guests td { display: block; width: 100%; }
+  /* Cards are auto-width: with width:100% the side margins would push them
+     past the wrapper and create a phantom sideways scroll. */
+  .table-guests tr {
+    width: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    padding: 0.85rem 0.9rem;
+    margin: 0 0.9rem 0.75rem;
+  }
+  .table-guests tbody tr:last-child { margin-bottom: 0.9rem; }
+  .table-guests td {
+    border: 0; padding: 0.2rem 0; min-width: 0;
+    overflow: visible; white-space: normal;
+  }
+  .table-guests td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.66rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-text-faint);
+  }
+  .table-guests td[data-label="Guest"] { padding-bottom: 0.5rem; }
+  .table-guests td[data-label="Guest"]::before { display: none; }
+  .table-guests td[data-label="Guest"] .cell-guest-name { font-size: var(--fs-md); }
+  /* In card mode the email has the full card width, so it wraps in full
+     instead of being ellipsised — the booking count must never be cut off. */
+  .table-guests td[data-label="Guest"].cell-guest { max-width: none; }
+  .table-guests td[data-label="Guest"] .cell-guest-contact {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
+  /* Contact, bookings and last stay share one compact meta line. */
+  .table-guests td[data-label="Contact"],
+  .table-guests td[data-label="Bookings"],
+  .table-guests td[data-label="Last stay"] {
+    display: inline-block; width: auto; margin-right: 0.9rem; text-align: left;
+  }
+  .table-guests td[data-label="Contact"]::before,
+  .table-guests td[data-label="Bookings"]::before,
+  .table-guests td[data-label="Last stay"]::before {
+    display: inline-block; margin-right: 0.35rem;
+  }
+  .table-guests td[data-label="Actions"] { padding-top: 0.6rem; }
+  .table-guests td[data-label="Actions"].cell-nowrap { white-space: normal; }
+  .table-guests td[data-label="Actions"] .row-actions { justify-content: stretch; gap: 0.4rem; }
+  .table-guests td[data-label="Actions"] .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
+  .table-guests .btn-label { display: inline; }
+}
+
+/* --------------------------- Payments table ------------------------------
+   The payments table has more columns than a phone can show, so on mobile it
+   scrolls sideways inside its own wrapper (never the page body — there is no
+   blanket overflow-x:hidden anywhere). The wrapper is focusable so the scroll
+   region is reachable by keyboard, and a subtle edge fade signals that more
+   columns exist. */
+.table-scroll-x { scroll-snap-type: none; }
+.table-scroll-x:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.pay-mobile-guest {
+  display: none;
+  margin-top: .2rem;
+  color: var(--color-text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  /* The guest column is hidden at this width, so the name rides under the
+     payment reference instead — a payment row must always say who paid. */
+  .pay-mobile-guest { display: block; }
+  .table-payments { min-width: 680px; }
+  .table-scroll-x {
+    /* Full-bleed inside the panel so the scrollable area uses the whole
+       screen width and the first column is not clipped. `min-width:0` is
+       required: a grid/flex child defaults to min-content, so the 680px
+       table would widen the PAGE instead of scrolling inside this box. */
+    overflow-x: auto;
+    min-width: 0;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .table-payments td, .table-payments th { padding: .6rem .5rem; }
+}
+
+/* ------------------------- Availability search form -----------------------
+   Desktop: one row of compact fields ending in the Search button.
+   Mobile: two readable columns (dates on their own full-width rows, the two
+   small number fields side by side) with a full-width Search button. No field
+   is ever narrower than a thumb, and nothing overflows the panel. */
+.av-search-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--sp-3);
+  align-items: end;
+  padding: var(--sp-4) var(--sp-5) 0;
+}
+.av-search-form .field { min-width: 0; margin: 0; }
+.av-search-form .input { width: 100%; }
+.av-search-submit .btn { width: 100%; justify-content: center; }
+
+@media (max-width: 720px) {
+  .av-search-form {
+    grid-template-columns: 1fr 1fr;
+    padding: var(--sp-4) var(--sp-4) 0;
+  }
+  /* Dates need the full width to stay legible in the native date picker. */
+  .av-search-form .field:nth-child(1),
+  .av-search-form .field:nth-child(2) { grid-column: 1 / -1; }
+  .av-search-submit { grid-column: 1 / -1; }
+  .av-search-form .input { min-height: 44px; }
+  .av-search-submit .btn { min-height: 44px; }
+}
+
+/* ========================================================================
+   OCCUPANCY CALENDAR (staff)
+   A month grid whose cells list the ROOM NUMBERS occupied that night. The
+   cells stay compact so a whole month fits without horizontal scrolling;
+   on a phone the grid becomes a single-column day list, which is the only
+   readable form of a 7-column calendar at that width.
+   ======================================================================== */
+.cal-nav { display: flex; gap: 0.4rem; align-items: center; flex-wrap: nowrap; }
+.cal-nav .btn { flex: 0 0 auto; }
+.cal-month-input { width: 11rem; min-width: 0; }
+
+.cal-legend { display: flex; flex-wrap: wrap; gap: 0.9rem; margin: 0.75rem 0 1rem; font-size: var(--fs-xs); color: var(--color-text-muted); }
+.cal-legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }
+
+.cal-grid { width: 100%; }
+.cal-weekdays {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.35rem;
+  font-size: var(--fs-xs); letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--color-text-faint); padding-bottom: 0.4rem;
+}
+.cal-weekdays span { text-align: center; }
+.cal-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.35rem; }
+
+.cal-cell {
+  display: flex; flex-direction: column; align-items: stretch; gap: 0.3rem;
+  min-height: 92px; padding: 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+.cal-cell.is-blank { border: 0; background: none; cursor: default; min-height: 0; }
+.cal-cell[disabled] { cursor: default; background: var(--color-surface-alt); }
+.cal-cell.has-rooms:hover { border-color: var(--color-primary); }
+.cal-cell:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.cal-cell.is-today { border-color: var(--color-primary); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.cal-daynum { font-weight: 700; font-size: var(--fs-sm); }
+/* The weekday is only needed where the grid's column headers are hidden. */
+.cal-weekday { display: none; }
+.cal-rooms { display: flex; flex-wrap: wrap; gap: 0.2rem; }
+.cal-count { margin-top: auto; font-size: 0.66rem; color: var(--color-text-faint); }
+.cal-empty { margin-top: auto; font-size: 0.66rem; color: var(--color-text-faint); }
+
+/* Room-number chip, coloured by booking status. */
+.cal-chip {
+  display: inline-block; min-width: 1.6rem; padding: 0.05rem 0.3rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.68rem; font-weight: 700; line-height: 1.5; text-align: center;
+  background: var(--color-surface-deep); color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+.cal-chip-confirmed { background: rgba(47, 128, 237, 0.14); border-color: rgba(47, 128, 237, 0.45); }
+.cal-chip-checked_in { background: rgba(39, 174, 96, 0.16); border-color: rgba(39, 174, 96, 0.5); }
+.cal-chip-checked_out { background: var(--color-surface-alt); color: var(--color-text-muted); }
+.cal-legend .cal-chip { width: 1.1rem; min-width: 1.1rem; height: 1.1rem; padding: 0; }
+
+@media (max-width: 720px) {
+  /* A 7-column month grid is unreadable on a phone: the same cells become a
+     one-per-row day list, so the room numbers stay full size. */
+  .cal-weekdays { display: none; }
+  .cal-days { grid-template-columns: 1fr; gap: 0.4rem; }
+  .cal-cell {
+    flex-direction: row; align-items: center; gap: 0.6rem;
+    min-height: 52px; padding: 0.55rem 0.7rem;
+  }
+  .cal-cell.is-blank { display: none; }
+  .cal-daynum {
+    display: flex; flex-direction: column; align-items: center;
+    min-width: 2.6rem; font-size: var(--fs-md); line-height: 1.1;
+  }
+  .cal-weekday {
+    display: block;
+    font-size: 0.6rem; font-weight: 600; letter-spacing: 0.05em;
+    text-transform: uppercase; color: var(--color-text-faint);
+  }
+  .cal-rooms { flex: 1 1 auto; }
+  .cal-count, .cal-empty { margin: 0; white-space: nowrap; }
+  .cal-nav { width: 100%; }
+  .cal-month-input { flex: 1 1 8rem; min-width: 0; }
+}
+
+/* ------------------- Missed bookings + late arrivals tables ---------------
+   Same restack-as-cards technique as the staff and guests tables: a
+   nine-column operational table is unusable on a phone, and the actions
+   (check in, no-show, reschedule, refund) need full-width tap targets there.
+   Both desk tables share these rules. */
+.table-missed td, .table-missed th,
+.table-late td, .table-late th { vertical-align: middle; }
+/* The actions stay on ONE line; the column is sized to fit them. */
+.table-missed td[data-label="Actions"],
+.table-late td[data-label="Actions"] { width: 1%; min-width: 9rem; }
+.table-missed td[data-label="Actions"] .row-actions,
+.table-late td[data-label="Actions"] .row-actions { flex-wrap: nowrap; justify-content: flex-end; }
+.table-missed td[data-label="Actions"] .btn,
+.table-late td[data-label="Actions"] .btn { flex: 0 0 auto; }
+.table-missed td[data-label="Guest"],
+.table-late td[data-label="Guest"] { min-width: 9rem; }
+.table-missed td[data-label="Guest"] .caption,
+.table-late td[data-label="Guest"] .caption { white-space: nowrap; }
+
+@media (max-width: 1300px) {
+  /* Below this width the columns no longer fit comfortably: the stay dates
+     stack onto two lines rather than forcing the whole table to scroll. */
+  .table-missed td[data-label="Stay"].cell-nowrap,
+  .table-late td[data-label="Stay"].cell-nowrap { white-space: normal; }
+  .table-missed td[data-label="Stay"],
+  .table-late td[data-label="Stay"] { min-width: 7.5rem; }
+}
+.table-missed td[data-label="Status"],
+.table-late td[data-label="Status"] { white-space: nowrap; }
+.table-missed .status-pill,
+.table-late .status-pill { white-space: nowrap; }
+/* Action labels only appear when the row has room for them; below that the
+   icons carry the meaning (each button keeps a title and aria-label). */
+@media (max-width: 1399px) {
+  .table-missed .btn-label,
+  .table-late .btn-label { display: none; }
+}
+
+@media (max-width: 720px) {
+  .table-wrap .table-missed, .table-missed,
+  .table-wrap .table-late, .table-late { table-layout: auto; min-width: 0; }
+  .table-missed thead, .table-late thead { display: none; }
+  .table-missed, .table-missed tbody, .table-missed tr, .table-missed td,
+  .table-late, .table-late tbody, .table-late tr, .table-late td { display: block; width: 100%; }
+  .table-missed tr, .table-late tr {
+    width: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    padding: 0.85rem 0.9rem;
+    margin: 0 0.9rem 0.75rem;
+  }
+  .table-missed tbody tr:last-child,
+  .table-late tbody tr:last-child { margin-bottom: 0.9rem; }
+  /* `tbody td` matches the specificity of the base `.table tbody td` rule —
+     a bare `.table-missed td` loses to it and leaves stray cell dividers
+     across every stacked card. */
+  .table-missed tbody td, .table-late tbody td {
+    border: 0; padding: 0.2rem 0; min-width: 0;
+    overflow: visible; white-space: normal; text-align: left;
+  }
+  .table-missed td[data-label]::before,
+  .table-late td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.66rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-text-faint);
+  }
+  .table-missed td[data-label="Booking"]::before,
+  .table-late td[data-label="Booking"]::before { display: none; }
+  .table-missed td[data-label="Booking"],
+  .table-late td[data-label="Booking"] { padding-bottom: 0.35rem; font-size: var(--fs-md); }
+  /* Short values sit inline as labelled chips instead of one tall column. */
+  .table-missed td[data-label="Stay"],
+  .table-missed td[data-label="Refundable"],
+  .table-missed td[data-label="Status"],
+  .table-late td[data-label="Stay"],
+  .table-late td[data-label="Nights"],
+  .table-late td[data-label="Outstanding"],
+  .table-late td[data-label="Status"] {
+    display: inline-block; width: auto; margin-right: 0.9rem;
+  }
+  .table-missed td[data-label="Stay"]::before,
+  .table-missed td[data-label="Refundable"]::before,
+  .table-missed td[data-label="Status"]::before,
+  .table-late td[data-label="Stay"]::before,
+  .table-late td[data-label="Nights"]::before,
+  .table-late td[data-label="Outstanding"]::before,
+  .table-late td[data-label="Status"]::before {
+    display: inline-block; margin-right: 0.35rem;
+  }
+  .table-missed td[data-label="Actions"],
+  .table-late td[data-label="Actions"] { padding-top: 0.6rem; }
+  .table-missed td[data-label="Actions"].cell-nowrap,
+  .table-late td[data-label="Actions"].cell-nowrap { white-space: normal; }
+  .table-missed td[data-label="Actions"] .row-actions,
+  .table-late td[data-label="Actions"] .row-actions { justify-content: stretch; gap: 0.4rem; }
+  .table-missed td[data-label="Actions"] .btn,
+  .table-late td[data-label="Actions"] .btn { flex: 1 1 0; min-width: 0; justify-content: center; }
+  .table-missed .btn-label, .table-late .btn-label { display: inline; }
+}
+
+/* Occupancy date modal: the five-column room list restacks into labelled
+   blocks on a phone so nothing is cut off inside the dialog. */
+@media (max-width: 720px) {
+  .table-wrap .table-cal-day,
+  .table-cal-day { table-layout: auto; min-width: 0; }
+  .table-cal-day thead { display: none; }
+  .table-cal-day, .table-cal-day tbody, .table-cal-day tr, .table-cal-day td { display: block; width: 100%; }
+  .table-cal-day tr {
+    width: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.8rem;
+    margin-bottom: 0.6rem;
+  }
+  .table-cal-day td {
+    border: 0; padding: 0.15rem 0; white-space: normal; overflow: visible;
+  }
+  .table-cal-day td[data-label]::before {
+    content: attr(data-label);
+    display: inline-block; margin-right: 0.4rem;
+    font-size: 0.66rem; letter-spacing: 0.07em; text-transform: uppercase;
+    color: var(--color-text-faint);
+  }
+  .table-cal-day td[data-label="Room"]::before { display: none; }
+  .table-cal-day td[data-label="Room"] strong { font-size: var(--fs-md); }
+  .table-cal-day td[data-label="Room"] .caption { display: inline; margin-left: 0.4rem; }
+}
+
+/* Availability results keep all six columns on a phone and scroll sideways
+   inside their own wrapper (the room type stays readable rather than being
+   squeezed). */
+@media (max-width: 720px) {
+  .table-availability { min-width: 560px; }
+  .table-availability td, .table-availability th { padding: .6rem .5rem; }
+}

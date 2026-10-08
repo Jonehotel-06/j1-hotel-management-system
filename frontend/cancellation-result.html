@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cancellation / Refund Status | J-ONE Hotel &amp; Lodge</title>
+<meta name="description" content="Check the status of a J-ONE Hotel & Lodge cancellation or refund request.">
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="css/main.css?v=1.1.6">
+<script>(function(){var t;try{t=JSON.parse(localStorage.getItem("jone.theme"))}catch(e){}if(t!=="dark"&&t!=="light"){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"}document.documentElement.setAttribute("data-theme",t);})();</script>
+
+
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="container header-inner">
+    <a href="index.html" class="brand" aria-label="J-ONE Hotel &amp; Lodge — home">
+      <span class="brand-mark-badge">
+        <img src="assets/icons/logo-official.png" alt="" class="brand-mark">
+      </span>
+      <span>
+        <span class="brand-word">J-ONE</span>
+        <span class="brand-sub">Hotel &amp; Lodge</span>
+      </span>
+    </a>
+
+    <nav class="header-nav" aria-label="Primary">
+      <a class="nav-link" data-nav="index.html" href="index.html">Home</a>
+      <a class="nav-link" data-nav="rooms.html" href="rooms.html">Rooms</a>
+      <a class="nav-link" data-nav="facilities.html" href="facilities.html">Facilities</a>
+      <a class="nav-link" data-nav="gallery.html" href="gallery.html">Gallery</a>
+      <a class="nav-link" data-nav="offers.html" href="offers.html">Offers</a>
+      <a class="nav-link" data-nav="about.html" href="about.html">About</a>
+      <a class="nav-link" data-nav="contact.html" href="contact.html">Contact</a>
+    </nav>
+
+    <div class="header-actions">
+      <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+        <span class="icon-moon" data-icon="moon" data-size="20"></span>
+        <span class="icon-sun" data-icon="sun" data-size="20"></span>
+      </button>
+      <a class="btn btn-sm btn-outline btn-review-cta" href="review.html">Leave a Review</a>
+      <a class="btn btn-sm btn-accent btn-book" href="booking.html">Book</a>
+      <button class="btn-icon btn-outline menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" data-icon="menu" data-size="22"></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <section class="page-hero">
+    <div class="container">
+      <span class="eyebrow">Cancellation / Refund Status</span>
+      <h1>Track your request</h1>
+      <p>Use the secure link from your confirmation email or enter the request reference and access token below.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container" style="max-width:920px;">
+      <div class="card card-pad" style="margin-bottom:1rem;">
+        <form data-status-form novalidate style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;align-items:end;">
+          <div class="field" style="margin:0;"><label class="field-label" for="status-ref">Request reference</label><input class="input" id="status-ref" name="reference" placeholder="J1C-YYYYMMDD-..." required></div>
+          <div class="field" style="margin:0;"><label class="field-label" for="status-token">Access token</label><input class="input" id="status-token" name="token" autocomplete="off" required></div>
+          <button class="btn btn-accent" type="submit">Check status</button>
+        </form>
+        <div class="field-error" data-status-error style="display:none;margin-top:1rem;"></div>
+      </div>
+
+      <div class="card card-pad" data-status-card hidden>
+        <div style="display:flex;gap:1rem;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;">
+          <div>
+            <span class="eyebrow">Request</span>
+            <h2 data-status-title style="font-size:var(--fs-xl);margin:0.2rem 0;">—</h2>
+            <p class="muted" data-status-message style="margin:0;max-width:720px;">—</p>
+          </div>
+          <span class="badge" data-status-pill>—</span>
+        </div>
+        <div class="summary-box" style="margin-top:1.25rem;">
+          <div class="summary-row"><span class="label">Booking reference</span><span class="value" data-status-booking>—</span></div>
+          <div class="summary-row"><span class="label">Booking status</span><span class="value" data-status-booking-status>—</span></div>
+          <div class="summary-row"><span class="label">Refund status</span><span class="value" data-status-refund-status>—</span></div>
+          <div class="summary-row"><span class="label">Refund amount</span><span class="value" data-status-refund-amount>—</span></div>
+          <div class="summary-row"><span class="label">Paystack refund reference</span><span class="value" data-status-refund-ref>—</span></div>
+          <div class="summary-row"><span class="label">Last updated</span><span class="value" data-status-updated>—</span></div>
+        </div>
+        <div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-top:1.25rem;">
+          <a class="btn btn-outline" href="contact.html?type=cancellation">Submit another request</a>
+          <a class="btn btn-outline" href="my-bookings.html">View your stays</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <a href="index.html" class="brand">
+          <img src="assets/icons/logo-official.svg" alt="" class="brand-mark" width="21" height="30">
+          <span>
+            <span class="brand-word">J-ONE</span>
+            <span class="brand-sub">Hotel &amp; Lodge</span>
+          </span>
+        </a>
+        <p data-hotel-name="J-ONE HOTEL &amp; LODGE">A quiet, contemporary address for rest and gathering &mdash; private, comfortable and close to everything you need.</p>
+      </div>
+
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <a href="index.html#rooms">Rooms &amp; Suites</a>
+        <a href="facilities.html">Facilities</a>
+        <a href="gallery.html">Gallery</a>
+        <a href="offers.html">Offers</a>
+        <a href="about.html">About</a>
+        <a href="contact.html">Contact</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Booking</h5>
+        <a href="booking.html">Book Your Stay</a>
+        <a href="my-bookings.html">Your stays</a>
+        <a href="portal/login.html">Guest portal</a>
+        <a href="review.html">Leave a Review</a>
+        <a href="policies.html">Hotel Policies</a>
+        <a href="cancellation-policy.html">Cancellation</a>
+        <a href="refund-policy.html">Refunds</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Contact</h5>
+        <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
+        <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
+        <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
+        <a class="footer-line" data-google-maps href="https://www.google.com/maps" target="_blank" rel="noopener"><span data-icon="mapPin" data-size="16"></span>View on Google Maps</a>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>&copy; <span data-year="2026"></span> J-ONE HOTEL &amp; LODGE. All rights reserved.</span>
+      <span>
+        <a href="privacy.html">Privacy</a> &middot;
+        <a href="policies.html">Policies</a> &middot;
+        <a href="terms.html">Terms</a> &middot;
+        <a href="login.html">Staff</a>
+      </span>
+    </div>
+  </div>
+</footer>
+
+<div class="mobile-drawer-backdrop" aria-hidden="true"></div>
+<div class="mobile-drawer" role="dialog" aria-modal="true" aria-label="Menu" aria-hidden="true">
+  <div class="mobile-drawer-head">
+    <span class="brand-word">J-ONE</span>
+    <button class="btn-icon btn-ghost" type="button" aria-label="Close menu" data-drawer-close data-icon="x" data-size="20"></button>
+  </div>
+  <div class="mobile-drawer-body">
+    <nav class="mobile-nav" aria-label="Mobile">
+      <a data-nav="index.html" href="index.html">Home <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="rooms.html" href="rooms.html">Rooms <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="facilities.html" href="facilities.html">Facilities <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="gallery.html" href="gallery.html">Gallery <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="offers.html" href="offers.html">Offers <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="about.html" href="about.html">About <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="contact.html" href="contact.html">Contact <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="review.html" href="review.html">Leave a Review <span data-icon="star" data-size="18"></span></a>
+      <a data-nav="policies.html" href="policies.html">Policies <span data-icon="chevronRight" data-size="18"></span></a>
+    </nav>
+    <div class="mobile-footer-row">
+      <a class="btn btn-accent" href="booking.html">Book Your Stay</a>
+      <a class="btn btn-outline" href="tel:+2348032112874"><span data-icon="phone" data-size="18"></span> Call the hotel</a>
+    </div>
+  </div>
+</div>
+
+<script src="js/runtime-config.js?v=1.1.6"></script>
+<script src="js/config.js?v=1.1.6"></script>
+<script src="js/utils.js?v=1.1.6"></script>
+<script src="js/icons.js?v=1.1.6"></script>
+<script src="js/api.js?v=1.1.6"></script>
+<script src="js/theme.js?v=1.1.6"></script>
+<script src="js/ui.js?v=1.1.6"></script>
+<script src="js/hotel-data.js?v=1.1.6"></script>
+<script src="js/navigation.js?v=1.1.6"></script>
+<script>
+JONE.ui.initChrome(); JONE.nav.init();
+(function(){
+  "use strict";
+  var form=document.querySelector("[data-status-form]");
+  var err=document.querySelector("[data-status-error]");
+  var card=document.querySelector("[data-status-card]");
+  function qs(name){ return new URLSearchParams(location.search||"").get(name)||""; }
+  function set(sel,value){ var n=document.querySelector(sel); if(n) n.textContent=(value==null||value==="")?"—":String(value); }
+  function showErr(msg){ if(err){ err.textContent=msg; err.style.display="block"; err.setAttribute("role","alert"); } }
+  function clearErr(){ if(err){ err.textContent=""; err.style.display="none"; err.removeAttribute("role"); } }
+  function label(v){ return String(v||"—").replace(/_/g," ").toLowerCase().replace(/\b\w/g,function(c){return c.toUpperCase();}); }
+  function render(data){
+    card.hidden=false;
+    set("[data-status-title]", data.cancellation_reference || "Cancellation request");
+    set("[data-status-message]", data.message || "Please contact the hotel for the latest update.");
+    set("[data-status-booking]", data.booking_reference || "—");
+    set("[data-status-booking-status]", label(data.booking_status));
+    set("[data-status-refund-status]", label(data.refund_status));
+    set("[data-status-refund-amount]", data.refund_amount ? JONE.formatNaira(data.refund_amount) : "—");
+    set("[data-status-refund-ref]", data.refund_reference || "Awaiting Paystack");
+    set("[data-status-updated]", data.updated_at ? JONE.formatDateTime(data.updated_at) : "—");
+    var pill=document.querySelector("[data-status-pill]");
+    if(pill){ pill.className="badge " + (/REFUNDED|APPROVED|CANCELLED/.test(String(data.cancellation_status))?"badge-success":/FAILED|REJECTED/.test(String(data.cancellation_status))?"badge-danger":"badge-warning"); pill.textContent=data.status_label||label(data.cancellation_status); }
+    JONE.icons.inject(card);
+  }
+  async function load(ref,token){
+    clearErr();
+    if(!ref||!token){ showErr("Enter the request reference and access token from your email."); return; }
+    var btn=form&&form.querySelector("button[type=submit]");
+    if(btn){ btn.disabled=true; btn.textContent="Checking…"; }
+    try{
+      var res=await window.API.getCancellationStatus(ref,token);
+      render((res&&res.data)||{});
+    }catch(e){
+      card.hidden=true;
+      showErr((e&&e.message)||"We couldn't load this request. Please check the reference and token.");
+    }finally{
+      if(btn){ btn.disabled=false; btn.textContent="Check status"; }
+    }
+  }
+  var refEl=document.getElementById("status-ref"), tokEl=document.getElementById("status-token");
+  if(refEl) refEl.value=qs("ref")||qs("reference");
+  if(tokEl) tokEl.value=qs("token");
+  form.addEventListener("submit",function(e){ e.preventDefault(); load(refEl.value.trim(),tokEl.value.trim()); });
+  if(refEl.value && tokEl.value) load(refEl.value,tokEl.value);
+})();
+</script>
+<script src="js/site.js?v=1.1.6"></script>
+<script src="js/pwa.js?v=1.1.6"></script>
+<script src="js/version.js?v=1.1.6"></script>
+<script src="js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

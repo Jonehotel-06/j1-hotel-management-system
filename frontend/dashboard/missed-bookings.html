@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Missed bookings | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Missed bookings</h1>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Late / missed first-night arrivals</h2>
+  </div>
+  <div class="panel-body no-pad">
+    <p class="caption" style="padding:0.75rem 1.1rem 0;">
+      These guests missed their first night but their stay is still running, so they can
+      still be checked in. Missed nights are not refunded automatically.</p>
+    <div class="table-wrap"><table class="table table-late">
+      <thead><tr>
+        <th>Booking</th><th>Guest</th><th class="hide-sm num">Rooms</th><th>Stay</th>
+        <th class="num">Nights</th><th class="hide-sm num">Paid</th>
+        <th class="num">Outstanding</th><th>Status</th><th></th>
+      </tr></thead>
+      <tbody data-tbody="late"></tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Guests who never arrived</h2>
+  </div>
+  <div class="filter-bar">
+    <div class="field"><label class="field-label" for="ms-q">Search</label>
+      <input class="input" id="ms-q" placeholder="Reference, guest, room"></div>
+    <div class="field"><label class="field-label" for="ms-status">Status</label>
+      <select class="select" id="ms-status">
+        <option value="">All</option>
+        <option value="CONFIRMED">Not yet flagged</option>
+        <option value="NO_SHOW">Marked no-show</option>
+      </select></div>
+    <div class="field"><label class="field-label" for="ms-from">From</label>
+      <input class="input" type="date" id="ms-from"></div>
+    <div class="field"><label class="field-label" for="ms-to">To</label>
+      <input class="input" type="date" id="ms-to"></div>
+    <div class="field"><button class="btn btn-sm" id="ms-apply" type="button">Apply</button></div>
+  </div>
+  <div class="panel-body no-pad">
+    <p class="caption" style="padding:0.75rem 1.1rem 0;">
+      A booking appears here once its arrival day has passed with no check-in. The refundable
+      amount is the hotel's cancellation policy applied by the backend — the cancellation fee is
+      already deducted. Rescheduling keeps the same booking and its payments.</p>
+    <div class="table-wrap"><table class="table table-missed">
+      <thead><tr>
+        <th>Booking</th><th>Guest</th><th class="hide-sm">Room</th><th>Stay</th>
+        <th class="hide-sm num">Paid</th><th class="num">Refundable</th><th>Status</th><th></th>
+      </tr></thead>
+      <tbody data-tbody="missed"></tbody>
+    </table></div>
+    <div class="pagination" data-pagination></div>
+  </div>
+</section>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/hotel-data.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("receptionist");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  "use strict";
+  var DATA = JONE.dashboard.DATA;
+  var tbody = document.querySelector("[data-tbody=missed]");
+  var pager = document.querySelector("[data-pagination]");
+  var state = { page: 1 };
+  var rowsByRef = {};
+  var COLS = 8;
+
+  /* Verified GET /api/admin/bookings/missed/ row (MissedBookingSerializer):
+     the admin booking list fields plus refundable_amount, cancellation_fee,
+     nights_missed and checked_in_at. The backend derives which bookings
+     qualify — status CONFIRMED/NO_SHOW, arrival deadline passed, never
+     checked in — so nothing here is inferred in the browser. */
+  function refOf(b){ return b.booking_reference || b.reference || b.id; }
+
+  function rooms(b){
+    if (b.room_numbers && b.room_numbers.length) return b.room_numbers.join(", ");
+    return b.room_type_name || "—";
+  }
+
+  function render(list){
+    rowsByRef = {};
+    tbody.innerHTML = list.map(function(b){
+      var ref = refOf(b);
+      rowsByRef[String(ref)] = b;
+      var refundable = Number(b.refundable_amount || 0);
+      var isNoShow = String(b.status).toUpperCase() === "NO_SHOW";
+      return "<tr>" +
+        '<td data-label="Booking" class="cell-nowrap"><a href="booking-details.html?ref=' +
+          encodeURIComponent(ref) + '">' + JONE.esc(ref) + "</a>" +
+          (b.nights_missed ? '<div class="caption">' + JONE.esc(b.nights_missed) +
+            " day" + (Number(b.nights_missed) === 1 ? "" : "s") + " ago</div>" : "") + "</td>" +
+        '<td data-label="Guest">' + JONE.esc(b.guest_name || "—") +
+          (b.guest_phone ? '<div class="caption">' + JONE.esc(b.guest_phone) + "</div>" : "") + "</td>" +
+        '<td data-label="Room" class="hide-sm">' + JONE.esc(rooms(b)) + "</td>" +
+        /* Dates wrap onto two lines on narrower screens (see .table-missed
+           rules) instead of pushing the table into a horizontal scroll. */
+        '<td data-label="Stay" class="cell-nowrap"><span class="stay-from">' +
+          JONE.esc(JONE.formatDate(b.check_in, "mid")) + "</span> \u2192 <span class=\"stay-to\">" +
+          JONE.esc(JONE.formatDate(b.check_out, "mid")) + "</span></td>" +
+        '<td data-label="Paid" class="hide-sm num cell-nowrap">' +
+          JONE.esc(JONE.formatNaira(b.amount_paid || 0)) + "</td>" +
+        '<td data-label="Refundable" class="num cell-nowrap">' +
+          JONE.esc(JONE.formatNaira(refundable)) +
+          (Number(b.cancellation_fee || 0) > 0
+            ? '<div class="caption">fee ' + JONE.esc(JONE.formatNaira(b.cancellation_fee)) + "</div>"
+            : "") + "</td>" +
+        '<td data-label="Status">' + JONE.dashboard.statusPill(b.status) + "</td>" +
+        '<td data-label="Actions" class="cell-nowrap"><div class="row-actions row-actions-end">' +
+          (isNoShow ? "" :
+            '<button class="btn btn-sm btn-outline" type="button" data-ms-noshow="' + JONE.esc(ref) + '" title="Mark as no-show" aria-label="Mark ' + JONE.esc(ref) + ' as no-show">' +
+            '<span data-icon="userX" data-size="13"></span> <span class="btn-label">No-show</span></button>') +
+          '<button class="btn btn-sm btn-accent" type="button" data-ms-reschedule="' + JONE.esc(ref) + '" title="Reschedule" aria-label="Reschedule ' + JONE.esc(ref) + '">' +
+            '<span data-icon="calendar" data-size="13"></span> <span class="btn-label">Reschedule</span></button>' +
+          (refundable > 0
+            ? '<button class="btn btn-sm btn-ghost" type="button" data-ms-refund="' + JONE.esc(ref) + '" title="Refund" aria-label="Refund ' + JONE.esc(ref) + '">' +
+              '<span data-icon="rotateCcw" data-size="13"></span> <span class="btn-label">Refund</span></button>'
+            : "") +
+        "</div></td></tr>";
+    }).join("");
+    JONE.icons.inject(tbody);
+  }
+
+  /* ---- Late arrivals: still inside the booked range, can still check in ---- */
+  var lateTbody = document.querySelector("[data-tbody=late]");
+  var LATE_COLS = 9;
+
+  /* Verified GET /api/admin/bookings/late-arrivals/ row
+     (LateArrivalBookingSerializer): the admin booking list fields plus
+     nights_missed, can_check_in and check_in_blocked_reason. Eligibility and
+     the blocked reason are both decided by the backend. */
+  function renderLate(list){
+    lateTbody.innerHTML = list.map(function(b){
+      var ref = refOf(b);
+      var due = Number(b.amount_due || 0);
+      var missed = Number(b.nights_missed || 0);
+      var blocked = !b.can_check_in;
+      return "<tr>" +
+        '<td data-label="Booking" class="cell-nowrap"><a href="booking-details.html?ref=' +
+          encodeURIComponent(ref) + '">' + JONE.esc(ref) + "</a></td>" +
+        '<td data-label="Guest">' + JONE.esc(b.guest_name || "\u2014") +
+          (b.guest_phone ? '<div class="caption">' + JONE.esc(b.guest_phone) + "</div>" : "") + "</td>" +
+        '<td data-label="Rooms" class="hide-sm num">' + JONE.esc(b.number_of_rooms || 1) + "</td>" +
+        '<td data-label="Stay" class="cell-nowrap"><span class="stay-from">' +
+          JONE.esc(JONE.formatDate(b.check_in, "mid")) + "</span> \u2192 <span class=\"stay-to\">" +
+          JONE.esc(JONE.formatDate(b.check_out, "mid")) + "</span></td>" +
+        '<td data-label="Nights" class="num cell-nowrap">' + JONE.esc(b.nights || 0) +
+          (missed ? '<div class="caption">' + missed + " missed</div>" : "") + "</td>" +
+        '<td data-label="Paid" class="hide-sm num cell-nowrap">' +
+          JONE.esc(JONE.formatNaira(b.amount_paid || 0)) + "</td>" +
+        '<td data-label="Outstanding" class="num cell-nowrap">' +
+          JONE.esc(JONE.formatNaira(due)) + "</td>" +
+        '<td data-label="Status">' + JONE.dashboard.statusPill(b.status) + "</td>" +
+        '<td data-label="Actions" class="cell-nowrap"><div class="row-actions row-actions-end">' +
+          '<button class="btn btn-sm btn-accent" type="button" data-late-checkin="' + JONE.esc(ref) + '"' +
+            (blocked ? ' disabled title="' + JONE.esc(b.check_in_blocked_reason || "Check-in is not available.") + '"'
+                     : ' title="Check in"') +
+            ' aria-label="Check in ' + JONE.esc(ref) + '">' +
+            '<span data-icon="logIn" data-size="13"></span> <span class="btn-label">Check in</span></button>' +
+        "</div></td></tr>";
+    }).join("");
+    JONE.icons.inject(lateTbody);
+  }
+
+  async function loadLate(){
+    if (!lateTbody) return;
+    DATA.loading(lateTbody);
+    try {
+      var res = await window.API.listLateArrivals({ page_size: 100 });
+      var list = window.API.normalizeList(res.data, res.pagination).items || [];
+      if (!list.length) {
+        DATA.empty(lateTbody, "checkCircle", "No late arrivals",
+          "Nobody is mid-stay without having checked in.", LATE_COLS);
+        return;
+      }
+      renderLate(list);
+    } catch (err) {
+      DATA.error(lateTbody, "Late arrivals couldn't be loaded",
+        (err && err.message) || "Please try again in a moment.", LATE_COLS);
+    }
+  }
+
+  document.addEventListener("click", async function(e){
+    var btn = e.target.closest("[data-late-checkin]");
+    if (!btn || btn.disabled) return;
+    var ref = btn.getAttribute("data-late-checkin");
+    if (!JONE.guardSubmit(btn)) return;
+    try {
+      await window.API.checkInBooking(ref);
+      JONE.ui.toast("Guest checked in.", "success");
+      loadLate();
+      load();
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "Check-in failed.", "danger");
+    }
+    JONE.releaseGuard(btn);
+  });
+
+  function filters(){
+    var f = { page: state.page, page_size: JONE.dashboard.pageSize() };
+    var q = document.getElementById("ms-q"); if (q && q.value.trim()) f.search = q.value.trim();
+    var st = document.getElementById("ms-status"); if (st && st.value) f.status = st.value;
+    var from = document.getElementById("ms-from"); if (from && from.value) f.date_from = from.value;
+    var to = document.getElementById("ms-to"); if (to && to.value) f.date_to = to.value;
+    return f;
+  }
+
+  function renderPager(meta){ JONE.dashboard.renderPagination(pager, meta, { onPage: load }); }
+
+  async function load(page){
+    if (page != null) state.page = Math.max(1, page);
+    DATA.loading(tbody);
+    try {
+      var res = await window.API.listMissedBookings(filters());
+      var list = window.API.normalizeList(res.data, res.pagination).items || [];
+      if (!list.length) {
+        DATA.empty(tbody, "checkCircle", "No missed bookings",
+          "Every arrival so far has been checked in.", COLS);
+        renderPager(null);
+        return;
+      }
+      render(list);
+      renderPager(res.pagination);
+    } catch (err) {
+      DATA.error(tbody, "Missed bookings couldn't be loaded",
+        (err && err.message) || "Please try again in a moment.", COLS);
+    }
+  }
+
+  document.getElementById("ms-apply").addEventListener("click", function(){ load(1); });
+  document.getElementById("ms-q").addEventListener("input", JONE.debounce(function(){ load(1); }, 300));
+
+  tbody.addEventListener("click", async function(e){
+    var target = e.target.closest && e.target.closest("[data-ms-noshow],[data-ms-reschedule],[data-ms-refund]");
+    if (!target) return;
+
+    var ref = target.getAttribute("data-ms-noshow") ||
+              target.getAttribute("data-ms-reschedule") ||
+              target.getAttribute("data-ms-refund");
+    var booking = rowsByRef[String(ref)] || {};
+
+    /* Flag the booking as a no-show. The backend enforces the state rules. */
+    if (target.hasAttribute("data-ms-noshow")) {
+      if (!JONE.guardSubmit(target)) return;
+      try {
+        target.disabled = true;
+        await window.API.noShowBooking(ref);
+        JONE.ui.toast("Booking marked as no-show.", "success");
+        load();
+      } catch (err) {
+        target.disabled = false; JONE.releaseGuard(target);
+        JONE.ui.toast((err && err.message) || "The booking couldn't be updated.", "error");
+      }
+      return;
+    }
+
+    /* Reschedule: new dates only. Availability and the new price are decided
+       by the backend, which keeps the same booking and its payments. */
+    if (target.hasAttribute("data-ms-reschedule")) {
+      JONE.dashboard.formModal({
+        title: "Reschedule " + ref,
+        submitText: "Reschedule",
+        fields: [
+          { name: "check_in", label: "New check-in", type: "date", required: true,
+            value: JONE.hotelTodayISO(1) },
+          { name: "check_out", label: "New check-out", type: "date", required: true,
+            value: JONE.hotelTodayISO(2),
+            help: "Rooms are re-checked and the stay is re-priced by the hotel system." },
+        ],
+        onSubmit: async function(values){
+          var res = await window.API.rescheduleBooking(ref, {
+            check_in: values.check_in, check_out: values.check_out,
+          });
+          var info = (res && res.data && res.data.reschedule) || {};
+          var due = Number(info.balance_due || 0);
+          JONE.ui.toast(due > 0
+            ? "Rescheduled. Balance now due: " + JONE.formatNaira(due)
+            : "Booking rescheduled.", due > 0 ? "warning" : "success");
+          load();
+        },
+      });
+      return;
+    }
+
+    /* Refund: the money path is the existing cancellation workflow, which is
+       the only place refunds are issued. Staff are taken there with the
+       booking in context rather than given a second, parallel refund route. */
+    if (target.hasAttribute("data-ms-refund")) {
+      var body =
+        '<p>A refund for <strong>' + JONE.esc(ref) + "</strong> is issued through the " +
+        "cancellation workflow, so the hotel's cancellation fee and the Paystack " +
+        "refund record stay in one place.</p>" +
+        '<dl class="profile-grid">' +
+          '<div class="profile-row"><dt>Guest</dt><dd>' + JONE.esc(booking.guest_name || "—") + "</dd></div>" +
+          '<div class="profile-row"><dt>Paid</dt><dd>' + JONE.esc(JONE.formatNaira(booking.amount_paid || 0)) + "</dd></div>" +
+          '<div class="profile-row"><dt>Cancellation fee</dt><dd>' + JONE.esc(JONE.formatNaira(booking.cancellation_fee || 0)) + "</dd></div>" +
+          '<div class="profile-row"><dt>Refundable now</dt><dd>' + JONE.esc(JONE.formatNaira(booking.refundable_amount || 0)) + "</dd></div>" +
+        "</dl>";
+      JONE.dashboard.openPanel("Refund " + ref, body,
+        '<button class="btn btn-sm btn-ghost" data-ms-close>Close</button> ' +
+        '<a class="btn btn-sm btn-accent" href="enquiries.html?search=' + encodeURIComponent(ref) +
+        '">Open cancellation workflow</a>');
+      var close = document.querySelector("[data-ms-close]");
+      if (close) close.addEventListener("click", JONE.dashboard.closePanel);
+    }
+  });
+
+  load(1);
+  loadLate();
+})();
+
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

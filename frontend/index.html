@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>J-ONE Hotel &amp; Lodge | Comfort. Privacy. A Stay Worth Remembering.</title>
+<meta name="description" content="J-ONE Hotel &amp; Lodge — a quiet, contemporary address on Mgbowo Street, Abuja. Comfortable rooms, thoughtful facilities and direct online booking.">
+<meta name="theme-color" content="#373435">
+<meta property="og:type" content="website">
+<meta property="og:title" content="J-ONE Hotel &amp; Lodge">
+<meta property="og:description" content="Comfort. Privacy. A stay worth remembering. Book your stay online.">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon/favicon-32.png" sizes="32x32">
+<link rel="icon" href="favicon/favicon-96.png" sizes="96x96">
+<link rel="apple-touch-icon" href="favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="css/main.css?v=1.1.6">
+<script>(function(){var t;try{t=JSON.parse(localStorage.getItem("jone.theme"))}catch(e){}if(t!=="dark"&&t!=="light"){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"}document.documentElement.setAttribute("data-theme",t);})();</script>
+
+
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="container header-inner">
+    <a href="index.html" class="brand" aria-label="J-ONE Hotel &amp; Lodge — home">
+      <span class="brand-mark-badge">
+        <img src="assets/icons/logo-official.png" alt="" class="brand-mark">
+      </span>
+      <span>
+        <span class="brand-word">J-ONE</span>
+        <span class="brand-sub">Hotel &amp; Lodge</span>
+      </span>
+    </a>
+
+    <nav class="header-nav" aria-label="Primary">
+      <a class="nav-link" data-nav="index.html" href="index.html">Home</a>
+      <a class="nav-link" data-nav="rooms.html" href="rooms.html">Rooms</a>
+      <a class="nav-link" data-nav="facilities.html" href="facilities.html">Facilities</a>
+      <a class="nav-link" data-nav="gallery.html" href="gallery.html">Gallery</a>
+      <a class="nav-link" data-nav="offers.html" href="offers.html">Offers</a>
+      <a class="nav-link" data-nav="about.html" href="about.html">About</a>
+      <a class="nav-link" data-nav="contact.html" href="contact.html">Contact</a>
+    </nav>
+
+    <div class="header-actions">
+      <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+        <span class="icon-moon" data-icon="moon" data-size="20"></span>
+        <span class="icon-sun" data-icon="sun" data-size="20"></span>
+      </button>
+      <a class="btn btn-sm btn-outline btn-review-cta" href="review.html">Leave a Review</a>
+      <a class="btn btn-sm btn-accent btn-book" href="booking.html">Book</a>
+      <button class="btn-icon btn-outline menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" data-icon="menu" data-size="22"></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <!-- HERO — automatic image carousel -->
+  <section class="hero" data-hero-carousel aria-roledescription="carousel" aria-label="J-ONE Hotel &amp; Lodge">
+    <div class="hero-media">
+      <div class="hero-slide is-active"><img src="assets/images/hero-1.jpg" alt="J-ONE Hotel &amp; Lodge exterior at dusk" fetchpriority="high"></div>
+      <div class="hero-slide"><img src="assets/images/hero-2.jpg" alt="Deluxe bedroom with crisp linen and warm lighting" loading="lazy"></div>
+      <div class="hero-slide"><img src="assets/images/hero-3.jpg" alt="Suite living area with city view" loading="lazy"></div>
+      <div class="hero-slide"><img src="assets/images/hero-5.jpg" alt="Hotel dining room set for dinner" loading="lazy"></div>
+      <div class="hero-slide"><img src="assets/images/hero-6.jpg" alt="Hotel lounge and reception" loading="lazy"></div>
+    </div>
+    <button class="hero-arrow prev" type="button" aria-label="Previous image"><span data-icon="chevronLeft" data-size="22"></span></button>
+    <button class="hero-arrow next" type="button" aria-label="Next image"><span data-icon="chevronRight" data-size="22"></span></button>
+    <div class="container hero-content">
+      <span class="hero-kicker">J-ONE HOTEL &amp; LODGE &middot; Enugu</span>
+      <h1>Quiet comfort, close to everything.</h1>
+      <p class="hero-sub">A contemporary, private address on Mgbowo Street restful rooms, attentive hospitality and direct online booking in minutes.</p>
+      <div class="hero-actions">
+        <a class="btn btn-accent" href="booking.html">Book Your Stay</a>
+        <a class="btn btn-outline" href="rooms.html">Explore Rooms</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- BOOKING / SEARCH -->
+  <section style="padding:0;">
+    <div class="container">
+      <form class="search-panel" data-availability-form novalidate>
+        <div class="search-grid">
+          <div class="field">
+            <label class="field-label" for="hp-in">Check-in</label>
+            <input class="input" type="date" id="hp-in" name="check_in" required>
+          </div>
+          <div class="field">
+            <label class="field-label" for="hp-out">Check-out</label>
+            <input class="input" type="date" id="hp-out" name="check_out" required>
+          </div>
+          <div class="field">
+            <label class="field-label" for="hp-adults">Adults</label>
+            <select class="select" id="hp-adults" name="adults">
+              <option>1</option><option selected>2</option><option>3</option><option>4</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="field-label" for="hp-children">Children</label>
+            <select class="select" id="hp-children" name="children">
+              <option selected>0</option><option>1</option><option>2</option><option>3</option>
+            </select>
+          </div>
+          <div class="search-cta">
+            <button class="btn btn-primary" type="submit">Check Availability</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- INTRO -->
+  <section class="section">
+    <div class="container">
+      <div class="editorial">
+        <div class="editorial-media" data-reveal>
+          <div class="media"><img src="assets/images/intro.jpg" alt="Inside J-ONE Hotel &amp; Lodge" loading="lazy" onerror="this.parentNode.classList.add('placeholder');" data-site-image="intro_image" data-site-default="assets/images/intro.jpg"></div>
+        </div>
+        <div class="editorial-body">
+          <span class="eyebrow">Welcome to J-ONE</span>
+          <h2>A stay worth remembering</h2>
+          <p>Tucked on Mgbowo Street, off Ezike Street, J-ONE Hotel &amp; Lodge is a calm, considered place to rest. We focus on what matters most a clean room, a comfortable bed, privacy and a warm welcome without the noise.</p>
+          <p>Whether you are here for a single night or a longer stay, our rooms are designed for ease, and our team is on hand to make your visit effortless.</p>
+          <div class="feature-list" style="margin-top:2rem;">
+            <div class="feature-row">
+              <span class="feature-num">01</span>
+              <div><h4>Privacy &amp; comfort</h4><p>Restful rooms with sound, light and temperature in mind.</p></div>
+              <span data-icon="moon" data-size="20"></span>
+            </div>
+            <div class="feature-row">
+              <span class="feature-num">02</span>
+              <div><h4>Easy direct booking</h4><p>Reserve online in minutes, with clear pricing and confirmation.</p></div>
+              <span data-icon="calendar" data-size="20"></span>
+            </div>
+            <div class="feature-row">
+              <span class="feature-num">03</span>
+              <div><h4>Welcoming hospitality</h4><p>Attentive, friendly service from arrival to departure.</p></div>
+              <span data-icon="heart" data-size="20"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LATEST OFFER (API-driven) — shown ABOVE the rooms so guests see the
+       current deal before they choose a room. -->
+  <section class="section section-subtle" id="featured-offer">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Current offers</span>
+        <h2>Worth knowing</h2>
+      </div>
+      <div class="offer-banner" id="featured-offer-banner"></div>
+    </div>
+  </section>
+
+  <!-- FEATURED ROOMS (API-driven) -->
+  <section class="section" id="rooms">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Stay with us</span>
+        <h2>Rooms &amp; suites</h2>
+        <p class="lede">Every room is kept simple, spotless and comfortable. Choose the space that suits your stay.</p>
+      </div>
+      <div class="room-grid" id="featured-rooms"><!-- populated by js --></div>
+    </div>
+  </section>
+
+  <!-- EXPERIENCE / FACILITIES -->
+  <section class="section">
+    <div class="container">
+      <div class="editorial rev">
+        <div class="editorial-media" data-reveal>
+          <div class="media"><img src="assets/images/experience.jpg" alt="J-ONE Hotel &amp; Lodge facilities" loading="lazy" onerror="this.parentNode.classList.add('placeholder');" data-site-image="experience_image" data-site-default="assets/images/experience.jpg"></div>
+        </div>
+        <div class="editorial-body">
+          <span class="eyebrow">The experience</span>
+          <h2>Everything you need, nothing you don't</h2>
+          <p>From a strong connection and a good meal to a quiet corner to work or unwind, the facilities at J-ONE are chosen to make your stay genuinely comfortable.</p>
+          <a class="btn btn-outline" href="facilities.html">See our facilities</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- GALLERY -->
+  <section class="section section-subtle">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">A closer look</span>
+        <h2>Inside J-ONE</h2>
+      </div>
+      <div class="gallery-grid" id="home-gallery"></div>
+      <div class="center" style="margin-top:2.5rem;">
+        <a class="btn btn-outline" href="gallery.html">View full gallery</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHY STAY -->
+  <section class="section section-subtle">
+    <div class="container">
+      <div class="editorial">
+        <div class="editorial-body">
+          <span class="eyebrow">Why J-ONE</span>
+          <h2>Book direct, book with confidence</h2>
+          <p>Booking through us is simple and transparent. You get clear rates, an instant confirmation with your booking reference, and easy access to your receipt.</p>
+          <div class="stats-band" style="margin-top:2rem;">
+            <div class="stat"><div class="stat-num"><span data-icon="checkCircle" data-size="20"></span></div><div class="stat-label">Instant confirmation</div></div>
+            <div class="stat"><div class="stat-num"><span data-icon="receipt" data-size="20"></span></div><div class="stat-label">Digital receipts</div></div>
+            <div class="stat"><div class="stat-num"><span data-icon="lock" data-size="20"></span></div><div class="stat-label">Secure payment</div></div>
+            <div class="stat"><div class="stat-num">24/7</div><div class="stat-label">Reception</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LOCATION -->
+  <section class="section">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Find us</span>
+        <h2>Our location</h2>
+      </div>
+      <div class="location-grid">
+        <div class="location-map">
+          <div class="media responsive-16-9" style="height:100%">
+            <img src="assets/images/location.jpg" alt="Map to J-ONE Hotel &amp; Lodge" loading="lazy" onerror="this.parentNode.classList.add('placeholder');" data-site-image="location_image" data-site-default="assets/images/location.jpg">
+          </div>
+        </div>
+        <div class="editorial-body">
+          <p class="lede">J-ONE Hotel &amp; Lodge<br><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></p>
+          <div class="feature-list">
+            <div class="feature-row"><span class="feature-num"><span data-icon="phone" data-size="18"></span></span><div><h4>Telephone</h4><p><a data-contact-phone href="tel:+2348032112874">+234 803 211 2874</a></p></div></div>
+            <div class="feature-row"><span class="feature-num"><span data-icon="mail" data-size="18"></span></span><div><h4>Email</h4><p><a data-contact-email href="mailto:jonathanonu76@gmail.com">jonathanonu76@gmail.com</a></p></div></div>
+          </div>
+          <a class="btn btn-outline" data-google-maps href="https://www.google.com/maps" target="_blank" rel="noopener">View on Google Maps</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- GUEST FEEDBACK CTA — invitation only; submitted reviews stay private. -->
+  <section class="section" aria-labelledby="review-invite-heading">
+    <div class="container">
+      <div class="review-invite">
+        <div class="review-invite-body">
+          <span class="review-invite-stars" aria-hidden="true">
+            <span data-icon="star" data-size="18"></span><span data-icon="star" data-size="18"></span><span data-icon="star" data-size="18"></span><span data-icon="star" data-size="18"></span><span data-icon="star" data-size="18"></span>
+          </span>
+          <h2 id="review-invite-heading">Your experience matters</h2>
+          <p>Stayed with us? Tell us how we did — your feedback goes directly to hotel management.</p>
+        </div>
+        <a class="btn btn-outline" href="review.html">Leave a Review</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- FINAL CTA -->
+  <section class="section cta-band section-subtle">
+    <div class="container">
+      <h2>Ready for a stay worth remembering?</h2>
+      <p>Check availability and book your room in a few easy steps.</p>
+      <div class="cta-actions">
+        <a class="btn btn-accent" href="booking.html">Book Your Stay</a>
+        <a class="btn btn-outline" href="rooms.html">Explore Rooms</a>
+      </div>
+    </div>
+  </section>
+</main>
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <a href="index.html" class="brand">
+          <img src="assets/icons/logo-official.svg" alt="" class="brand-mark" width="21" height="30">
+          <span>
+            <span class="brand-word">J-ONE</span>
+            <span class="brand-sub">Hotel &amp; Lodge</span>
+          </span>
+        </a>
+        <p data-hotel-name="J-ONE HOTEL &amp; LODGE">A quiet, contemporary address for rest and gathering &mdash; private, comfortable and close to everything you need.</p>
+      </div>
+
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <a href="index.html#rooms">Rooms &amp; Suites</a>
+        <a href="facilities.html">Facilities</a>
+        <a href="gallery.html">Gallery</a>
+        <a href="offers.html">Offers</a>
+        <a href="about.html">About</a>
+        <a href="contact.html">Contact</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Booking</h5>
+        <a href="booking.html">Book Your Stay</a>
+        <a href="my-bookings.html">Your stays</a>
+        <a href="portal/login.html">Guest portal</a>
+        <a href="review.html">Leave a Review</a>
+        <a href="policies.html">Hotel Policies</a>
+        <a href="cancellation-policy.html">Cancellation</a>
+        <a href="refund-policy.html">Refunds</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Contact</h5>
+        <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
+        <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
+        <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
+        <a class="footer-line" data-google-maps href="https://www.google.com/maps" target="_blank" rel="noopener"><span data-icon="mapPin" data-size="16"></span>View on Google Maps</a>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>&copy; <span data-year="2026"></span> J-ONE HOTEL &amp; LODGE. All rights reserved.</span>
+      <span>
+        <a href="privacy.html">Privacy</a> &middot;
+        <a href="policies.html">Policies</a> &middot;
+        <a href="terms.html">Terms</a> &middot;
+        <a href="login.html">Staff</a>
+      </span>
+    </div>
+  </div>
+</footer>
+
+<div class="mobile-drawer-backdrop" aria-hidden="true"></div>
+<div class="mobile-drawer" role="dialog" aria-modal="true" aria-label="Menu" aria-hidden="true">
+  <div class="mobile-drawer-head">
+    <span class="brand-word">J-ONE</span>
+    <button class="btn-icon btn-ghost" type="button" aria-label="Close menu" data-drawer-close data-icon="x" data-size="20"></button>
+  </div>
+  <div class="mobile-drawer-body">
+    <nav class="mobile-nav" aria-label="Mobile">
+      <a data-nav="index.html" href="index.html">Home <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="rooms.html" href="rooms.html">Rooms <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="facilities.html" href="facilities.html">Facilities <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="gallery.html" href="gallery.html">Gallery <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="offers.html" href="offers.html">Offers <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="about.html" href="about.html">About <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="contact.html" href="contact.html">Contact <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="review.html" href="review.html">Leave a Review <span data-icon="star" data-size="18"></span></a>
+      <a data-nav="policies.html" href="policies.html">Policies <span data-icon="chevronRight" data-size="18"></span></a>
+    </nav>
+    <div class="mobile-footer-row">
+      <a class="btn btn-accent" href="booking.html">Book Your Stay</a>
+      <a class="btn btn-outline" href="tel:+2348032112874"><span data-icon="phone" data-size="18"></span> Call the hotel</a>
+    </div>
+  </div>
+</div>
+
+<script src="js/runtime-config.js?v=1.1.6"></script>
+<script src="js/config.js?v=1.1.6"></script>
+<script src="js/utils.js?v=1.1.6"></script>
+<script src="js/icons.js?v=1.1.6"></script>
+<script src="js/api.js?v=1.1.6"></script>
+<script src="js/theme.js?v=1.1.6"></script>
+<script src="js/ui.js?v=1.1.6"></script>
+<script src="js/hotel-data.js?v=1.1.6"></script>
+<script src="js/site-images.js?v=1.1.6"></script>
+<script src="js/contact.js?v=1.1.6"></script>
+<script src="js/navigation.js?v=1.1.6"></script>
+<script>JONE.ui.initChrome(); JONE.nav.init();</script>
+<script src="js/site.js?v=1.1.6"></script>
+<script src="js/carousel.js?v=1.1.6"></script>
+<script>
+(function () {
+  "use strict";
+
+  /* Featured rooms driven entirely by the backend. No fake fallback records. */
+
+  function roomCard(r, idx) {
+    /* Verified /api/rooms/ item: { name, slug, short_description, base_price
+       (string), max_guests, bed_type, bed_count, room_size, view,
+       is_featured, primary_image_url, amenities:[{name, icon}] } */
+    const img = r.primary_image_url
+      ? '<button type="button" class="media" data-room-img="' + idx + '" aria-label="View photo of ' + JONE.esc(r.name || "Room") + '"><img src="' + JONE.esc(r.primary_image_url) + '" alt="' + JONE.esc(r.name || "Room") + '" loading="lazy"></button>'
+      : '<div class="media placeholder"><div class="placeholder-placeholder"><span data-icon="bed" data-size="32"></span></div></div>';
+    const bed = [r.bed_count > 1 ? r.bed_count + " \u00D7 " : "", r.bed_type].filter(Boolean).join("");
+    const amNames = (r.amenities || []).slice(0, 3).map(a => a.name).join(" \u00B7 ");
+    return '<article class="card card-hover room-card">' +
+      img +
+      '<div class="room-card-body">' +
+        '<h3>' + JONE.esc(r.name || "Room") + '</h3>' +
+        (r.short_description ? '<p class="muted" style="margin-bottom:0.6rem;font-size:var(--fs-sm);">' + JONE.esc(r.short_description) + '</p>' : '') +
+        '<div class="room-facts">' +
+          '<span><span data-icon="users" data-size="15"></span>' + (r.max_guests || 2) + ' guests</span>' +
+          (r.room_size ? '<span><span data-icon="maximize" data-size="15"></span>' + JONE.esc(r.room_size) + '</span>' : '') +
+          (bed ? '<span><span data-icon="bed" data-size="15"></span>' + JONE.esc(bed) + '</span>' : '') +
+        '</div>' +
+        (amNames ? '<div class="room-facts"><span>' + JONE.esc(amNames) + '</span></div>' : '') +
+        '<div class="room-card-foot">' +
+          '<div class="room-price"><div class="price">' + JONE.formatNaira(r.base_price) + '<small> / night</small></div></div>' +
+          '<a class="btn btn-sm" href="room-details.html?room=' + JONE.esc(r.slug || r.id) + '">Details</a>' +
+        '</div>' +
+      '</div></article>';
+  }
+
+  async function loadFeatured() {
+    const holder = document.getElementById("featured-rooms");
+    if (!holder) return;
+    const section = document.getElementById("featured");
+    try {
+      const res = await window.API.getRooms({ featured: true, page_size: 3 });
+      const list = window.API.normalizeList ? window.API.normalizeList(res.data) : ((res.data && res.data.results) || res.data || []);
+      const rooms = (list && list.items) || list || [];
+      if (rooms.length) {
+        holder.innerHTML = rooms.map((r, i) => roomCard(r, i)).join("");
+        // Room photos open in the shared image-preview modal.
+        holder.querySelectorAll("[data-room-img]").forEach(btn => {
+          btn.addEventListener("click", () => {
+            const r = rooms[Number(btn.getAttribute("data-room-img"))];
+            if (!r || !r.primary_image_url) return;
+            JONE.ui.lightbox.open(
+              [{ src: r.primary_image_url, caption: r.name || "Room" }], 0
+            );
+          });
+        });
+      } else {
+        // Backend connected but has no featured rooms hide, never fake.
+        if (section) section.style.display = "none";
+      }
+    } catch (err) {
+      // API unreachable/error show an honest error state, never fake rooms.
+      holder.innerHTML = '<div class="empty-state"><span data-icon="alertTriangle" data-size="42"></span><h3>Rooms need a connection</h3><p>We couldn\'t load our featured rooms. Please refresh, or contact the hotel.</p></div>';
+    } finally {
+      if (holder) JONE.icons.inject(holder);
+    }
+  }
+
+  /* Home gallery verified /api/gallery/ shape: { categories, items } */
+  async function loadHomeGallery() {
+    const holder = document.getElementById("home-gallery");
+    if (!holder) return;
+    try {
+      const res = await window.API.getGallery({ page_size: 6 });
+      const d = res.data || {};
+      const items = d.items || [];
+      if (items.length) {
+        const shown = items.slice(0, 6);
+        // Thumbnails open the shared image-preview modal (prev/next across
+        // the six shown photos — one reusable implementation).
+        const zoomItems = shown.map(g => ({
+          src: g.image_url || "",
+          caption: g.alt_text || g.title || "J-ONE Hotel & Lodge"
+        }));
+        holder.innerHTML = shown.map((g, i) =>
+          '<button type="button" class="media' + (String(g.category || "").toLowerCase() === "rooms" ? " wide" : "") + '" data-gallery-item="' + i + '" aria-label="View ' + JONE.esc(g.alt_text || g.title || "J-ONE Hotel & Lodge") + '"><img src="' + JONE.esc(g.image_url || "") + '" alt="' + JONE.esc(g.alt_text || g.title || "J-ONE Hotel & Lodge") + '" loading="lazy"></button>').join("");
+        holder.querySelectorAll("[data-gallery-item]").forEach(btn => {
+          btn.addEventListener("click", () => {
+            JONE.ui.lightbox.open(zoomItems, Number(btn.getAttribute("data-gallery-item")));
+          });
+        });
+        JONE.icons.inject(holder);
+      } else {
+        holder.style.display = "none";
+      }
+    } catch (_) { holder.style.display = "none"; }
+  }
+
+  /* Featured offer */
+  async function loadOffer() {
+    const banner = document.getElementById("featured-offer-banner");
+    const section = document.getElementById("featured-offer");
+    if (!banner) return;
+    try {
+      /* The homepage shows the LATEST offer. The API orders by
+         (-is_featured, -start_date, title), so a long-standing featured offer
+         would otherwise outrank a newer one — pick the most recent start_date
+         from the first page and fall back to the API's own ordering. */
+      const res = await window.API.getOffers({ active: true, page_size: 10 });
+      const offers = (res.data && res.data.results) || res.data || [];
+      if (offers.length) {
+        /* Verified fields: discount_type PERCENTAGE|FIXED_AMOUNT + discount_value */
+        const o = offers.slice().sort(function (a, b) {
+          return String(b.start_date || "").localeCompare(String(a.start_date || ""));
+        })[0];
+        const img = o.image_url
+          ? '<div class="offer-banner-media"><img src="' + JONE.esc(o.image_url) + '" alt="' + JONE.esc(o.title) + '" loading="lazy"></div>'
+          : '';
+        const tag = JONE.offerDiscountLabel(o);
+        const period = JONE.offerPeriod(o, "mid");
+        const note = JONE.offerStatusNote(o);
+        const criteria = JONE.offerCriteria(o).map(function (line) {
+          return '<li>' + JONE.esc(line) + '</li>';
+        }).join("");
+        const bookUrl = "booking.html" + (o.code ? "?offer=" + encodeURIComponent(o.code) : "");
+        banner.innerHTML = img +
+          '<div class="offer-banner-body">' +
+            (tag ? '<span class="offer-tag">' + JONE.esc(tag) + '</span>' : '') +
+            '<h3>' + JONE.esc(o.title) + '</h3>' +
+            (period ? '<p class="meta offer-period"><span data-icon="calendar" data-size="16"></span>' +
+              '<span>Valid ' + JONE.esc(period) + (note ? ' \u00b7 ' + JONE.esc(note) : '') + '</span></p>' : '') +
+            '<p class="offer-banner-desc">' + JONE.esc(o.short_description || o.description || "") + '</p>' +
+            (criteria ? '<ul class="offer-criteria">' + criteria + '</ul>' : '') +
+            '<div class="offer-banner-actions">' +
+              '<a class="btn btn-accent" href="' + JONE.esc(bookUrl) + '">Book this offer</a>' +
+              '<a class="btn btn-outline" href="offers.html">All offers</a>' +
+            '</div>' +
+          '</div>';
+        if (JONE.icons && JONE.icons.inject) JONE.icons.inject(banner);
+      } else {
+        section.style.display = "none";
+      }
+    } catch (_) { section.style.display = "none"; }
+  }
+
+  loadFeatured();
+  loadHomeGallery();
+  loadOffer();
+})();
+</script>
+<script src="js/pwa.js?v=1.1.6"></script>
+<script src="js/version.js?v=1.1.6"></script>
+<script src="js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

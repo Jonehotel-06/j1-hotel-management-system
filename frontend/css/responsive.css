@@ -1,0 +1,72 @@
+/* css/responsive.css */
+/* ==========================================================================
+   Responsive / breakpoint refinements.
+   Breakpoints: 560 (phone), 720, 860, 960, 1200.
+   ========================================================================== */
+
+/* Narrow phones */
+@media (max-width: 560px) {
+  :root { --fs-display: clamp(2rem, 11vw, 2.8rem); }
+  .hero { min-height: 78vh; }
+  .hero-actions { flex-direction: column; align-items: stretch; }
+  .hero-actions .btn { width: 100%; }
+  .confirm-actions { flex-direction: column; }
+  .confirm-actions .btn { width: 100%; }
+  /* Toasts: top-center on small screens, never over the mobile CTA bar */
+  .toast-region { left: 50%; right: auto; top: 0.75rem; width: min(360px, calc(100vw - 1.5rem)); transform: translateX(-50%); }
+}
+
+/* Toasts sit top-right on wider screens */
+@media (min-width: 561px) {
+  .toast-region { width: min(380px, calc(100vw - 2rem)); }
+}
+
+/* Touch-friendly hero arrows */
+@media (hover: none) {
+  .hero-arrow { width: 40px; height: 40px; }
+}
+
+/* Tablets */
+@media (max-width: 960px) {
+  .header-nav { display: none; }
+  .menu-toggle { display: inline-flex; }
+  /* Compact header CTA stays available on mobile — no floating bar needed. */
+}
+
+@media (max-width: 400px) {
+  .header-actions .btn-book { padding: 0.4em 0.7em; font-size: var(--fs-xs); }
+}
+
+/* The brand wordmark hides its subtitle at very small sizes */
+@media (max-width: 420px) {
+  .brand-sub { display: none; }
+  .brand-mark { height: 30px; }
+}
+
+/* Large desktop */
+@media (min-width: 1440px) {
+  :root { --container-max: 1320px; }
+}
+
+/* Hide hero arrows on very narrow phones; dots remain */
+@media (max-width: 480px) {
+  .hero-arrow { display: none; }
+}
+
+/* Print — receipts / confirmations */
+@media print {
+  .site-header, .site-footer, .mobile-cta-bar, .no-print, .toast-region { display: none !important; }
+  body { background: #fff; color: #000; }
+  .receipt-sheet, .confirm-hero { box-shadow: none; border: 0; margin: 0; max-width: 100%; }
+  .booking-summary { position: static; }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

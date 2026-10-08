@@ -1,0 +1,226 @@
+{% autoescape on %}<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>Payment Receipt — {{ booking_reference }}</title>
+<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->
+<style>
+  /* Progressive enhancement only — every critical style is also inlined so
+     clients that strip <style> still render correctly. */
+  body { margin:0 !important; padding:0 !important; width:100% !important; }
+  table { border-collapse:collapse !important; }
+  img { border:0; line-height:100%; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
+  a { color:#33526E; }
+  .j1-wrap { width:100%; background:#eceef1; }
+  .j1-container { width:600px; max-width:600px; }
+  @media only screen and (max-width:620px) {
+    .j1-container { width:100% !important; }
+    .j1-px { padding-left:22px !important; padding-right:22px !important; }
+    .j1-stack { display:block !important; width:100% !important; box-sizing:border-box !important; }
+    .j1-stack-r { padding-left:0 !important; padding-top:14px !important; text-align:left !important; }
+    .j1-sum-cell { display:block !important; width:100% !important; box-sizing:border-box !important; border-right:0 !important; border-bottom:1px solid #e3e8ed !important; }
+    .j1-sum-cell-last { border-bottom:0 !important; }
+    .j1-amount { font-size:22px !important; }
+    .j1-hist th, .j1-hist td { font-size:12px !important; padding:9px 10px !important; }
+  }
+  @media (prefers-color-scheme: dark) {
+    .j1-wrap, body { background:#14171b !important; }
+    .j1-card { background:#1f242b !important; }
+    .j1-body-text, .j1-strong { color:#e8eaed !important; }
+    .j1-muted { color:#a6adb6 !important; }
+    .j1-soft { background:#262c34 !important; }
+    .j1-border { border-color:#39414b !important; }
+    .j1-hist th { background:#262c34 !important; color:#c7cdd5 !important; }
+    .j1-footer { background:#14171b !important; }
+    .j1-pdf-note { background:#232a33 !important; }
+  }
+</style>
+</head>
+<body style="margin:0; padding:0; background:#eceef1; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%;">
+<div style="display:none; max-height:0; overflow:hidden; opacity:0; mso-hide:all;">Payment receipt for booking {{ booking_reference }} — {{ status_label }}. Your itemised PDF receipt is attached.&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;</div>
+
+<table role="presentation" class="j1-wrap" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eceef1;">
+<tr>
+<td align="center" style="padding:24px 12px;">
+
+  <table role="presentation" class="j1-container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px;">
+
+    <!-- Header / brand -->
+    <tr>
+      <td class="j1-px" style="background:#22262C; border-radius:10px 10px 0 0; padding:26px 34px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td valign="middle" width="52" style="width:52px;">
+              <img src="{{ logo_src }}" width="{{ logo_width }}" height="{{ logo_height }}" alt="{{ hotel_name }}" style="display:block; width:{{ logo_width }}px; height:{{ logo_height }}px; border:0; outline:none; text-decoration:none;">
+            </td>
+            <td valign="middle" style="padding-left:14px;">
+              <div style="font-family:'Helvetica Neue',Arial,sans-serif; font-size:16px; font-weight:700; letter-spacing:1px; color:#ffffff; line-height:1.2;">{{ hotel_name }}</div>
+              <div style="font-family:'Helvetica Neue',Arial,sans-serif; font-size:11px; letter-spacing:2px; text-transform:uppercase; color:#b7c0cb; padding-top:3px;">Payment Receipt</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <!-- Card body -->
+    <tr>
+      <td class="j1-card" style="background:#ffffff;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+
+          <!-- Reference + status -->
+          <tr>
+            <td class="j1-px" style="padding:28px 34px 4px 34px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td class="j1-stack" valign="top" style="font-family:'Helvetica Neue',Arial,sans-serif;">
+                    <div class="j1-muted" style="font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:#7b858f;">Booking Reference</div>
+                    <div class="j1-strong" style="font-size:18px; font-weight:700; color:#22262C; padding-top:4px; word-break:break-all; line-height:1.35;">{{ booking_reference }}</div>
+                    {% if issued_at %}<div class="j1-muted" style="font-size:12px; color:#7b858f; padding-top:8px;">Issued {{ issued_at }}</div>{% endif %}
+                  </td>
+                  <td class="j1-stack j1-stack-r" valign="top" align="right" style="font-family:'Helvetica Neue',Arial,sans-serif;">
+                    {% include "emails/_status_badge.html" %}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Payment summary -->
+          <tr>
+            <td class="j1-px" style="padding:22px 34px 6px 34px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="j1-soft j1-border" style="background:#f6f8fa; border:1px solid #e3e8ed; border-radius:8px;">
+                <tr>
+                  <td class="j1-sum-cell j1-border" width="33.33%" valign="top" style="width:33.33%; padding:16px 14px; border-right:1px solid #e3e8ed; text-align:center; font-family:'Helvetica Neue',Arial,sans-serif;">
+                    <div class="j1-muted" style="font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#7b858f;">Total</div>
+                    <div class="j1-amount j1-strong" style="font-size:19px; font-weight:700; color:#22262C; padding-top:6px; word-break:break-word;">{{ total }}</div>
+                  </td>
+                  <td class="j1-sum-cell j1-border" width="33.33%" valign="top" style="width:33.33%; padding:16px 14px; border-right:1px solid #e3e8ed; text-align:center; font-family:'Helvetica Neue',Arial,sans-serif;">
+                    <div class="j1-muted" style="font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#7b858f;">Amount Paid</div>
+                    <div class="j1-amount" style="font-size:19px; font-weight:700; color:#1E7A4E; padding-top:6px; word-break:break-word;">{{ amount_paid }}</div>
+                  </td>
+                  <td class="j1-sum-cell j1-sum-cell-last" width="33.33%" valign="top" style="width:33.33%; padding:16px 14px; text-align:center; font-family:'Helvetica Neue',Arial,sans-serif;">
+                    <div class="j1-muted" style="font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#7b858f;">Outstanding</div>
+                    <div class="j1-amount{% if not has_outstanding %} j1-strong{% endif %}" style="font-size:19px; font-weight:700; color:{% if has_outstanding %}#BA3A2E{% else %}#22262C{% endif %}; padding-top:6px; word-break:break-word;">{{ outstanding }}</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Guest + room -->
+          <tr>
+            <td class="j1-px" style="padding:20px 34px 0 34px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td class="j1-stack" valign="top" width="50%" style="width:50%; font-family:'Helvetica Neue',Arial,sans-serif; padding-bottom:8px;">
+                    <div class="j1-muted" style="font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#7b858f;">Guest</div>
+                    <div class="j1-body-text" style="font-size:14px; color:#2b3037; padding-top:5px; font-weight:600;">{{ guest_name }}</div>
+                    {% if guest_email %}<div class="j1-muted" style="font-size:12px; color:#7b858f; padding-top:3px; word-break:break-all;">{{ guest_email }}</div>{% endif %}
+                  </td>
+                  <td class="j1-stack j1-stack-r" valign="top" width="50%" style="width:50%; font-family:'Helvetica Neue',Arial,sans-serif; padding-bottom:8px;">
+                    <div class="j1-muted" style="font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#7b858f;">Room</div>
+                    <div class="j1-body-text" style="font-size:14px; color:#2b3037; padding-top:5px; font-weight:600;">{% if rooms_count %}{{ rooms_count }} &times; {% endif %}{{ room_type }}</div>
+                    {% if room_numbers %}<div class="j1-muted" style="font-size:12px; color:#7b858f; padding-top:3px;">Room {{ room_numbers }}</div>{% endif %}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Check-in / check-out -->
+          <tr>
+            <td class="j1-px" style="padding:6px 34px 4px 34px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="j1-border" style="border-top:1px solid #eceff2;">
+                <tr>
+                  <td class="j1-stack" valign="top" width="50%" style="width:50%; font-family:'Helvetica Neue',Arial,sans-serif; padding:14px 0 4px 0;">
+                    <div class="j1-muted" style="font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#7b858f;">Check-in</div>
+                    <div class="j1-body-text" style="font-size:14px; color:#2b3037; padding-top:5px;">{{ check_in|default:"—" }}</div>
+                  </td>
+                  <td class="j1-stack j1-stack-r" valign="top" width="50%" style="width:50%; font-family:'Helvetica Neue',Arial,sans-serif; padding:14px 0 4px 0;">
+                    <div class="j1-muted" style="font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#7b858f;">Check-out</div>
+                    <div class="j1-body-text" style="font-size:14px; color:#2b3037; padding-top:5px;">{{ check_out|default:"—" }}{% if nights %} <span class="j1-muted" style="color:#7b858f; font-size:12px;">&middot; {{ nights }} night{{ nights|pluralize }}</span>{% endif %}</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          {% if has_payments %}
+          <!-- Payment history -->
+          <tr>
+            <td class="j1-px" style="padding:22px 34px 4px 34px; font-family:'Helvetica Neue',Arial,sans-serif;">
+              <div class="j1-strong" style="font-size:13px; font-weight:700; letter-spacing:0.5px; color:#22262C; padding-bottom:10px;">{% if multiple_payments %}Payment History{% else %}Payment Details{% endif %}</div>
+              <table role="presentation" class="j1-hist j1-border" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e3e8ed; border-radius:8px; overflow:hidden;">
+                <tr>
+                  <th align="left" class="j1-soft" style="background:#f1f4f7; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:#5b6570; font-weight:700; padding:10px 12px;">Reference</th>
+                  <th align="right" class="j1-soft" style="background:#f1f4f7; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:#5b6570; font-weight:700; padding:10px 12px;">Amount</th>
+                  <th align="left" class="j1-soft" style="background:#f1f4f7; font-size:10px; letter-spacing:1px; text-transform:uppercase; color:#5b6570; font-weight:700; padding:10px 12px;">Status</th>
+                </tr>
+                {% for p in payments %}
+                <tr>
+                  <td valign="top" class="j1-border j1-body-text" style="border-top:1px solid #e9edf1; padding:11px 12px; font-size:13px; color:#2b3037;">
+                    <span style="word-break:break-all;">{{ p.reference }}</span>
+                    <div class="j1-muted" style="font-size:11px; color:#8b95a0; padding-top:3px;">{{ p.paid_at }}{% if p.method and p.method != "—" %} &middot; {{ p.method }}{% endif %}</div>
+                  </td>
+                  <td valign="top" align="right" class="j1-border j1-body-text" style="border-top:1px solid #e9edf1; padding:11px 12px; font-size:13px; color:#2b3037; font-weight:600; white-space:nowrap;">{{ p.amount }}</td>
+                  <td valign="top" class="j1-border j1-body-text" style="border-top:1px solid #e9edf1; padding:11px 12px; font-size:12px; color:#2b3037;"><span aria-hidden="true">{{ p.status_glyph }}</span> {{ p.status_label }}</td>
+                </tr>
+                {% endfor %}
+              </table>
+            </td>
+          </tr>
+          {% endif %}
+
+          <!-- PDF notice -->
+          <tr>
+            <td class="j1-px" style="padding:22px 34px 6px 34px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="j1-pdf-note j1-border" style="background:#eef3f7; border:1px solid #dbe4ec; border-radius:8px;">
+                <tr>
+                  <td valign="middle" width="46" style="width:46px; padding:14px 0 14px 16px; font-family:'Helvetica Neue',Arial,sans-serif;">
+                    <div style="width:32px; height:32px; background:#33526E; border-radius:6px; text-align:center;">
+                      <span style="display:inline-block; font-size:10px; font-weight:700; color:#ffffff; line-height:32px; letter-spacing:0.5px;">PDF</span>
+                    </div>
+                  </td>
+                  <td valign="middle" style="padding:14px 16px; font-family:'Helvetica Neue',Arial,sans-serif;">
+                    <div class="j1-body-text" style="font-size:13px; color:#2b3037; font-weight:600;">Itemised receipt attached</div>
+                    <div class="j1-muted" style="font-size:12px; color:#5b6570; padding-top:2px;">Your full itemised receipt is attached to this email as a PDF for your records.</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Sign off -->
+          <tr>
+            <td class="j1-px" style="padding:20px 34px 28px 34px; font-family:'Helvetica Neue',Arial,sans-serif;">
+              <div class="j1-body-text" style="font-size:13px; color:#3a4048; line-height:1.6;">Thank you for choosing {{ hotel_name }}. We look forward to welcoming you.</div>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+
+    <!-- Footer -->
+    <tr>
+      <td class="j1-px j1-footer" style="background:#eceef1; border-radius:0 0 10px 10px; padding:22px 34px; text-align:center; font-family:'Helvetica Neue',Arial,sans-serif;">
+        <div class="j1-strong" style="font-size:12px; font-weight:700; letter-spacing:1px; color:#22262C;">{{ hotel_name }}</div>
+        {% if hotel_location %}<div class="j1-muted" style="font-size:11px; color:#7b858f; padding-top:6px; line-height:1.5;">{{ hotel_location }}</div>{% endif %}
+        <div class="j1-muted" style="font-size:11px; color:#7b858f; padding-top:6px; line-height:1.5;">
+          {% if hotel_phone %}{{ hotel_phone }}{% endif %}{% if hotel_phone and hotel_email %} &middot; {% endif %}{% if hotel_email %}<a href="mailto:{{ hotel_email }}" style="color:#33526E; text-decoration:none;">{{ hotel_email }}</a>{% endif %}
+        </div>
+        <div class="j1-muted" style="font-size:10px; color:#9aa3ad; padding-top:12px; line-height:1.5;">This is an automated payment receipt. Please keep it for your records.</div>
+      </td>
+    </tr>
+
+  </table>
+
+</td>
+</tr>
+</table>
+</body>
+</html>{% endautoescape %}

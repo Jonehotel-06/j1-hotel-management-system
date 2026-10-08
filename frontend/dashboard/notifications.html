@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Notifications | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Notifications</h1>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+<section class="panel">
+  <div class="panel-head"><h2>Notifications <span class="notif-count" data-notif-unread hidden style="margin-left:0.4rem;"></span></h2><div class="panel-actions"><button class="btn btn-sm btn-outline" data-notif-all type="button">Mark all read</button></div></div>
+  <div class="notif-list" data-notif-list></div>
+  <div class="pagination" data-pagination></div>
+</section>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/hotel-data.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("receptionist");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  var DATA=JONE.dashboard.DATA;
+  var list=document.querySelector("[data-notif-list]");
+
+  /* Verified /api/notifications/ shape:
+     { unread_count, notifications: [ { id, type, title, message, link,
+       is_read, created_at } ] }
+     Actions: POST /read-all/ · POST /{id}/read/ → { unread_count } */
+  function icon(n){
+    var t=String(n.type||"");
+    if(t.indexOf("PAYMENT")===0) return "wallet";
+    if(t==="CHECK_IN"||t==="CHECK_OUT"||t==="CHECKOUT_AUTO") return "logOut";
+    if(t==="CHECKOUT_DUE_SOON") return "clock";
+    if(t.indexOf("BOOKING")===0) return "calendar";
+    if(t==="ENQUIRY_NEW") return "inbox";
+    if(t==="REVIEW_NEW") return "star";
+    return "bell";
+  }
+  function unread(n){ return n.is_read===false; }
+
+  function setUnread(count){
+    var unreadEl=document.querySelector("[data-notif-unread]");
+    if(unreadEl){ unreadEl.textContent=count>99?"99+":String(count); unreadEl.hidden=!(count>0); }
+    // Push the fresh value to every badge (sidebar / bottom nav) — no extra request.
+    JONE.dashboard.notifBadge.set(count);
+  }
+
+  function render(notifs, unreadCount){
+    setUnread(unreadCount!=null?unreadCount:notifs.filter(unread).length);
+    list.innerHTML=notifs.map(function(n){
+      return '<div class="notif-item'+(unread(n)?" unread":"")+'" data-notif-id="'+JONE.esc(n.id)+'" role="button" tabindex="0">' +
+        '<span class="notif-icon"><span data-icon="'+icon(n)+'" data-size="18"></span></span>' +
+        '<div class="notif-body"><p class="notif-title">'+JONE.esc(n.title||"")+'</p>' +
+        '<p>'+JONE.esc(n.message||"")+'</p>' +
+        '<div class="notif-meta">'+JONE.esc(n.created_at?JONE.formatDateTime(n.created_at):"")+'</div>' +
+        (unread(n) ? '<span class="badge badge-accent notif-unread-dot">Unread</span>' : "") +
+        '</div>' +
+        '<span class="notif-chevron" data-icon="chevronRight" data-size="18"></span>' +
+        '</div>';
+    }).join("") || '<div class="empty-state" style="margin:1.5rem;"><span data-icon="bell"></span><h3>You are all caught up</h3></div>';
+    JONE.icons.inject(list);
+  }
+
+  var loading=false;   // duplicate-request prevention
+  /* Server-driven paging at page_size 20 (unread-count stays authoritative
+     from the payload regardless of which page is shown). */
+  var state={ page:1 };
+  var pager=document.querySelector("[data-pagination]");
+  function renderPager(meta){ JONE.dashboard.renderPagination(pager, meta, { onPage: load }); }
+
+  async function load(page){
+    if(loading) return;
+    if(page!=null) state.page=Math.max(1,page);
+    loading=true;
+    DATA.loading(list, "list");
+    try{
+      var res=await window.API.getNotifications({ page:state.page, page_size: JONE.dashboard.pageSize() });
+      var d=(res&&res.data)||{};
+      var notifs=d.notifications||[];
+      if(!notifs.length){
+        DATA.empty(list,"bell","You are all caught up","No notifications right now.",1);
+        setUnread(d.unread_count||0);
+        renderPager(null);
+        return;
+      }
+      render(notifs, d.unread_count);
+      // The list payload embeds `notifications` inside `data`, so the pager
+      // reads the envelope pagination (res.pagination) directly.
+      renderPager(res.pagination);
+    }catch(err){ DATA.error(list,"Notifications couldn't be loaded",(err&&err.message)||"Please try again in a moment.",1); }
+    finally{ loading=false; }
+  }
+  load(1);
+
+  // Mark all read — one real POST; success only after the backend confirms.
+  var markAll=document.querySelector("[data-notif-all]");
+  if(markAll) markAll.addEventListener("click", async function(){
+    if(!JONE.guardSubmit(markAll)) return;
+    try{
+      await window.API.markAllNotificationsRead();
+      setUnread(0);
+      JONE.ui.toast("All notifications marked as read.","success");
+      await load();
+    }catch(err){
+      JONE.ui.toast(err.message||"Couldn't update notifications.","error");
+    }finally{ JONE.releaseGuard(markAll); }
+  });
+
+  // Activate an unread item -> mark that one read (backend-confirmed).
+  async function markOne(item){
+    if(!item||!item.classList.contains("unread")) return;
+    var id=item.getAttribute("data-notif-id");
+    try{
+      var res=await window.API.markNotificationRead(id);
+      item.classList.remove("unread");
+      var dot=item.querySelector(".notif-unread-dot");
+      if(dot) dot.remove();
+      var count=res&&res.data&&res.data.unread_count;
+      if(count!=null) setUnread(Number(count));
+    }catch(_){ /* keep unread; next load refreshes honestly */ }
+  }
+
+  /* Opening a notification goes to its details page, which loads the FULL
+     record server-side (GET /api/notifications/{id}/), marks it read and shows
+     the related record. Ownership is enforced by the backend — another user's
+     id simply 404s. */
+  function openOne(item){
+    var id=item.getAttribute("data-notif-id");
+    location.href="notification-details.html?id="+encodeURIComponent(id);
+  }
+  list.addEventListener("click", function(e){
+    var item=e.target.closest("[data-notif-id]");
+    if(!item) return;
+    markOne(item);
+    openOne(item);
+  });
+  list.addEventListener("keydown", function(e){
+    if(e.key==="Enter"||e.key===" "){
+      var it=e.target.closest("[data-notif-id]");
+      if(it){ e.preventDefault(); markOne(it); openOne(it); }
+    }
+  });
+})();
+
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

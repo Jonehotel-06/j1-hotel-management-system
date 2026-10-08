@@ -1,0 +1,71 @@
+{
+  "name": "J-ONE HOTEL & LODGE",
+  "short_name": "J1 Hotel",
+  "description": "Book your stay at J-ONE Hotel & Lodge — comfortable rooms, thoughtful facilities and direct online booking.",
+  "id": "/",
+  "start_url": "/index.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F8F9FA",
+  "theme_color": "#373435",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["travel", "lifestyle", "business"],
+  "icons": [
+    {
+      "src": "/favicon/favicon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/favicon/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/favicon/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Book a stay",
+      "short_name": "Book",
+      "url": "/booking.html",
+      "icons": [{ "src": "/favicon/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Rooms & Suites",
+      "short_name": "Rooms",
+      "url": "/rooms.html",
+      "icons": [{ "src": "/favicon/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Your stays",
+      "short_name": "My stays",
+      "url": "/my-bookings.html",
+      "icons": [{ "src": "/favicon/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

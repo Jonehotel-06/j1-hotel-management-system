@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Leave a Review | J-ONE Hotel &amp; Lodge</title>
+<meta name="description" content="Stayed with us? Tell J-ONE Hotel &amp; Lodge how we did — your feedback goes directly to hotel management.">
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="css/main.css?v=1.1.6">
+<script>(function(){var t;try{t=JSON.parse(localStorage.getItem("jone.theme"))}catch(e){}if(t!=="dark"&&t!=="light"){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"}document.documentElement.setAttribute("data-theme",t);})();</script>
+
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="container header-inner">
+    <a href="index.html" class="brand" aria-label="J-ONE Hotel &amp; Lodge — home">
+      <span class="brand-mark-badge">
+        <img src="assets/icons/logo-official.png" alt="" class="brand-mark">
+      </span>
+      <span>
+        <span class="brand-word">J-ONE</span>
+        <span class="brand-sub">Hotel &amp; Lodge</span>
+      </span>
+    </a>
+
+    <nav class="header-nav" aria-label="Primary">
+      <a class="nav-link" data-nav="index.html" href="index.html">Home</a>
+      <a class="nav-link" data-nav="rooms.html" href="rooms.html">Rooms</a>
+      <a class="nav-link" data-nav="facilities.html" href="facilities.html">Facilities</a>
+      <a class="nav-link" data-nav="gallery.html" href="gallery.html">Gallery</a>
+      <a class="nav-link" data-nav="offers.html" href="offers.html">Offers</a>
+      <a class="nav-link" data-nav="about.html" href="about.html">About</a>
+      <a class="nav-link" data-nav="contact.html" href="contact.html">Contact</a>
+    </nav>
+
+    <div class="header-actions">
+      <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+        <span class="icon-moon" data-icon="moon" data-size="20"></span>
+        <span class="icon-sun" data-icon="sun" data-size="20"></span>
+      </button>
+      <a class="btn btn-sm btn-outline btn-review-cta" href="review.html">Leave a Review</a>
+      <a class="btn btn-sm btn-accent btn-book" href="booking.html">Book</a>
+      <button class="btn-icon btn-outline menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" data-icon="menu" data-size="22"></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <section class="page-hero">
+    <div class="container">
+      <span class="eyebrow">Your feedback</span>
+      <h1>How was your stay?</h1>
+      <p>Your feedback helps us improve the J-ONE experience. Reviews go directly to hotel management.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <div class="card card-pad review-card" data-review-app>
+
+        <!-- STEP 1 — verify the completed stay -->
+        <form data-review-verify novalidate>
+          <h2 style="font-size:var(--fs-xl);margin-bottom:0.5rem;">Find your stay</h2>
+          <p class="muted" style="margin-top:0;margin-bottom:1.5rem;">Reviews can be submitted once you've checked in. Enter the booking reference from your confirmation email, together with the email used for the booking.</p>
+          <div class="field">
+            <label class="field-label" for="rv-reference">Booking reference</label>
+            <input class="input" id="rv-reference" name="booking_reference" required autocomplete="off" placeholder="e.g. J1-20260913-AB12CD34">
+            <div class="field-error">Please enter your booking reference.</div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="rv-email">Email on the booking</label>
+            <input class="input" id="rv-email" name="email" type="email" autocomplete="email" placeholder="you@example.com">
+            <div class="field-error">Please enter a valid email address.</div>
+          </div>
+          <div class="field-error" data-verify-error style="display:none;margin-bottom:1rem;"></div>
+          <button class="btn btn-block" type="submit" data-verify-submit>Continue</button>
+        </form>
+
+        <!-- STEP 2 — rate + write the review -->
+        <form data-review-form hidden novalidate>
+          <h2 style="font-size:var(--fs-xl);margin-bottom:0.5rem;" data-review-greeting>How was your stay?</h2>
+          <p class="muted" style="margin-top:0;margin-bottom:1.25rem;">Your feedback helps us improve the J-ONE experience.</p>
+
+          <div class="review-stay-summary" data-stay-summary aria-live="polite"></div>
+
+          <fieldset class="field" style="border:0;padding:0;margin:0 0 1.25rem;">
+            <legend class="field-label" id="rv-rating-label">Your rating *</legend>
+            <div class="star-rating" role="radiogroup" aria-labelledby="rv-rating-label" data-star-rating></div>
+            <div class="field-error" data-rating-error style="display:none;">Please choose a rating from 1 to 5 stars.</div>
+          </fieldset>
+
+          <div class="field">
+            <label class="field-label" for="rv-comment">Your review *</label>
+            <textarea class="textarea" id="rv-comment" name="comment" rows="6" minlength="10" maxlength="2000" required placeholder="Tell us what you loved — and anything we can do better."></textarea>
+            <div class="review-char-count" data-char-count aria-live="polite">0 / 2000 · minimum 10 characters</div>
+            <div class="field-error">Please write at least 10 characters about your stay.</div>
+          </div>
+
+          <div class="field-error" data-submit-error style="display:none;margin-bottom:1rem;"></div>
+          <div style="display:flex;gap:0.6rem;flex-wrap:wrap;">
+            <button class="btn btn-outline" type="button" data-review-back>Back</button>
+            <button class="btn" type="submit" data-review-submit style="flex:1;">Submit review</button>
+          </div>
+        </form>
+
+        <!-- STEP 3 — thank you (+ optional Google review CTA) -->
+        <div class="review-success" data-review-success hidden>
+          <span class="success-icon"><span data-icon="checkCircle" data-size="28"></span></span>
+          <h2>Thank you for your feedback</h2>
+          <p>Your review has been received and will help us improve the J-ONE experience.</p>
+          <!-- Only shown when a Google review URL is configured by the hotel. -->
+          <div class="review-google-cta" data-google-review-cta hidden>
+            <p style="margin-bottom:1rem;">Would you also like to share your experience on Google?</p>
+            <a class="btn btn-outline" data-google-review-link href="#" target="_blank" rel="noopener">
+              <span data-icon="external" data-size="16"></span> Leave a Google Review
+            </a>
+          </div>
+          <div style="margin-top:1.5rem;">
+            <a class="btn btn-ghost" href="index.html">Back to the homepage</a>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+</main>
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <a href="index.html" class="brand">
+          <img src="assets/icons/logo-official.svg" alt="" class="brand-mark" width="21" height="30">
+          <span>
+            <span class="brand-word">J-ONE</span>
+            <span class="brand-sub">Hotel &amp; Lodge</span>
+          </span>
+        </a>
+        <p data-hotel-name="J-ONE HOTEL &amp; LODGE">A quiet, contemporary address for rest and gathering &mdash; private, comfortable and close to everything you need.</p>
+      </div>
+
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <a href="index.html#rooms">Rooms &amp; Suites</a>
+        <a href="facilities.html">Facilities</a>
+        <a href="gallery.html">Gallery</a>
+        <a href="offers.html">Offers</a>
+        <a href="about.html">About</a>
+        <a href="contact.html">Contact</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Booking</h5>
+        <a href="booking.html">Book Your Stay</a>
+        <a href="my-bookings.html">Your stays</a>
+        <a href="portal/login.html">Guest portal</a>
+        <a href="review.html">Leave a Review</a>
+        <a href="policies.html">Hotel Policies</a>
+        <a href="cancellation-policy.html">Cancellation</a>
+        <a href="refund-policy.html">Refunds</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Contact</h5>
+        <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
+        <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
+        <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
+        <a class="footer-line" data-google-maps href="https://www.google.com/maps" target="_blank" rel="noopener"><span data-icon="mapPin" data-size="16"></span>View on Google Maps</a>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>&copy; <span data-year="2026"></span> J-ONE HOTEL &amp; LODGE. All rights reserved.</span>
+      <span>
+        <a href="privacy.html">Privacy</a> &middot;
+        <a href="policies.html">Policies</a> &middot;
+        <a href="terms.html">Terms</a> &middot;
+        <a href="login.html">Staff</a>
+      </span>
+    </div>
+  </div>
+</footer>
+
+<div class="mobile-drawer-backdrop" aria-hidden="true"></div>
+<div class="mobile-drawer" role="dialog" aria-modal="true" aria-label="Menu" aria-hidden="true">
+  <div class="mobile-drawer-head">
+    <span class="brand-word">J-ONE</span>
+    <button class="btn-icon btn-ghost" type="button" aria-label="Close menu" data-drawer-close data-icon="x" data-size="20"></button>
+  </div>
+  <div class="mobile-drawer-body">
+    <nav class="mobile-nav" aria-label="Mobile">
+      <a data-nav="index.html" href="index.html">Home <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="rooms.html" href="rooms.html">Rooms <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="facilities.html" href="facilities.html">Facilities <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="gallery.html" href="gallery.html">Gallery <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="offers.html" href="offers.html">Offers <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="about.html" href="about.html">About <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="contact.html" href="contact.html">Contact <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="review.html" href="review.html">Leave a Review <span data-icon="star" data-size="18"></span></a>
+      <a data-nav="policies.html" href="policies.html">Policies <span data-icon="chevronRight" data-size="18"></span></a>
+    </nav>
+    <div class="mobile-footer-row">
+      <a class="btn btn-accent" href="booking.html">Book Your Stay</a>
+      <a class="btn btn-outline" href="tel:+2348032112874"><span data-icon="phone" data-size="18"></span> Call the hotel</a>
+    </div>
+  </div>
+</div>
+
+<script src="js/runtime-config.js?v=1.1.6"></script>
+<script src="js/config.js?v=1.1.6"></script>
+<script src="js/utils.js?v=1.1.6"></script>
+<script src="js/icons.js?v=1.1.6"></script>
+<script src="js/api.js?v=1.1.6"></script>
+<script src="js/theme.js?v=1.1.6"></script>
+<script src="js/ui.js?v=1.1.6"></script>
+<script src="js/hotel-data.js?v=1.1.6"></script>
+<script src="js/navigation.js?v=1.1.6"></script>
+<script src="js/contact.js?v=1.1.6"></script>
+<script>JONE.ui.initChrome(); JONE.nav.init();</script>
+<script>
+(function () {
+  "use strict";
+
+  var verifyForm = document.querySelector("[data-review-verify]");
+  var reviewForm = document.querySelector("[data-review-form]");
+  var successPanel = document.querySelector("[data-review-success]");
+  var refInput = document.getElementById("rv-reference");
+  var emailInput = document.getElementById("rv-email");
+  var commentInput = document.getElementById("rv-comment");
+  var starHost = document.querySelector("[data-star-rating]");
+  var charCount = document.querySelector("[data-char-count]");
+
+  var verified = null;      // { booking_reference, email } proven pair
+  var currentRating = 0;
+
+  /* Prefill the reference from post-stay email links (?ref=...). */
+  var params = new URLSearchParams(location.search || "");
+  if (params.get("ref")) refInput.value = params.get("ref");
+
+  function showError(sel, msg) {
+    var el = document.querySelector(sel);
+    if (el) { el.textContent = msg; el.style.display = "block"; }
+  }
+  function clearError(sel) {
+    var el = document.querySelector(sel);
+    if (el) { el.textContent = ""; el.style.display = "none"; }
+  }
+  function show(el) { el.hidden = false; }
+  function hide(el) { el.hidden = true; }
+
+  /* -------------------- Accessible 1–5 star selector --------------------
+     Real radio inputs: arrow keys, Tab and screen readers behave like any
+     radio group. Labels carry the visual stars. */
+  var STAR_LABELS = ["1 star", "2 stars", "3 stars", "4 stars", "5 stars"];
+  function buildStars() {
+    var html = "";
+    for (var i = 1; i <= 5; i++) {
+      html +=
+        '<input type="radio" name="rating" id="rv-star-' + i + '" value="' + i + '"' + (i === 1 ? ' required' : '') + '>' +
+        '<label for="rv-star-' + i + '" title="' + STAR_LABELS[i - 1] + '">' +
+          '<span class="visually-hidden">' + STAR_LABELS[i - 1] + '</span>' +
+          '<span data-icon="star" data-size="30" aria-hidden="true"></span>' +
+        '</label>';
+    }
+    html += '<span class="star-rating-value" data-star-value aria-hidden="true"></span>';
+    starHost.innerHTML = html;
+    JONE.icons.inject(starHost);
+
+    function paint(upto) {
+      starHost.querySelectorAll("label").forEach(function (lab, idx) {
+        lab.classList.toggle("is-filled", idx < upto);
+      });
+      var v = starHost.querySelector("[data-star-value]");
+      if (v) v.textContent = upto > 0 ? STAR_LABELS[upto - 1] : "";
+    }
+    starHost.addEventListener("change", function (e) {
+      if (e.target.name === "rating") {
+        currentRating = parseInt(e.target.value, 10) || 0;
+        paint(currentRating);
+        clearError("[data-rating-error]");
+      }
+    });
+    /* Hover preview (mouse only; keyboard uses the radios directly). */
+    starHost.querySelectorAll("label").forEach(function (lab, idx) {
+      lab.addEventListener("mouseenter", function () { paint(idx + 1); });
+    });
+    starHost.addEventListener("mouseleave", function () { paint(currentRating); });
+  }
+  buildStars();
+
+  /* Live character counter for the comment. */
+  function updateCount() {
+    var len = (commentInput.value || "").trim().length;
+    charCount.textContent = len + " / 2000" + (len < 10 ? " · minimum 10 characters" : "");
+    charCount.classList.toggle("is-invalid", len > 0 && len < 10);
+  }
+  commentInput.addEventListener("input", updateCount);
+
+  /* --------------------------- Step 1: verify --------------------------- */
+  verifyForm.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    clearError("[data-verify-error]");
+    var reference = (refInput.value || "").trim();
+    var email = (emailInput.value || "").trim();
+    var ok = true;
+    refInput.closest(".field").classList.toggle("has-error", !reference);
+    if (!reference) ok = false;
+    var emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    emailInput.closest(".field").classList.toggle("has-error", !emailValid);
+    if (!emailValid) ok = false;
+    if (!ok) return;
+
+    var btn = document.querySelector("[data-verify-submit]");
+    if (!JONE.guardSubmit(btn)) return;
+    try {
+      var res = await window.API.verifyReviewStay({ booking_reference: reference, email: email });
+      var stay = (res && res.data) || {};
+      JONE.releaseGuard(btn);
+      if (stay.already_reviewed) {
+        showError("[data-verify-error]", "Thank you — this stay has already been reviewed.");
+        return;
+      }
+      verified = { booking_reference: stay.booking_reference || reference, email: email };
+      renderStay(stay);
+      hide(verifyForm); show(reviewForm);
+      var firstStar = document.getElementById("rv-star-1");
+      if (firstStar) firstStar.focus();
+    } catch (err) {
+      JONE.releaseGuard(btn);
+      var msg = (err && err.message) || "We couldn't verify your stay. Please try again.";
+      if (err && err.status === 404) {
+        msg = "No eligible stay found. Reviews can be submitted once you have checked in — please check your booking reference and the email used for the booking.";
+      }
+      showError("[data-verify-error]", msg);
+    }
+  });
+
+  function renderStay(stay) {
+    var g = document.querySelector("[data-review-greeting]");
+    if (g) g.textContent = stay.guest_first_name
+      ? "How was your stay, " + stay.guest_first_name + "?"
+      : "How was your stay?";
+    var s = document.querySelector("[data-stay-summary]");
+    var nights = stay.nights ? stay.nights + " night" + (stay.nights > 1 ? "s" : "") : "";
+    s.innerHTML =
+      "<span><strong>" + JONE.esc(stay.room_type_name || "Your room") + "</strong>" + (nights ? " · " + JONE.esc(nights) : "") + "</span>" +
+      "<span>" + JONE.esc(JONE.formatDate(stay.check_in, "mid")) + " → " + JONE.esc(JONE.formatDate(stay.check_out, "mid")) + "</span>" +
+      "<span class=\"muted\">Booking " + JONE.esc(stay.booking_reference || "") + "</span>";
+  }
+
+  document.querySelector("[data-review-back]").addEventListener("click", function () {
+    hide(reviewForm); show(verifyForm);
+    clearError("[data-submit-error]");
+    refInput.focus();
+  });
+
+  /* --------------------------- Step 2: submit --------------------------- */
+  reviewForm.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    clearError("[data-submit-error]");
+    if (!verified) { hide(reviewForm); show(verifyForm); return; }
+
+    var comment = (commentInput.value || "").trim();
+    var valid = true;
+    if (!currentRating || currentRating < 1 || currentRating > 5) {
+      showError("[data-rating-error]", "Please choose a rating from 1 to 5 stars.");
+      valid = false;
+    }
+    var commentField = commentInput.closest(".field");
+    var commentOk = comment.length >= 10 && comment.length <= 2000;
+    commentField.classList.toggle("has-error", !commentOk);
+    if (!commentOk) valid = false;
+    if (!valid) return;
+
+    var btn = document.querySelector("[data-review-submit]");
+    if (!JONE.guardSubmit(btn)) return;
+    try {
+      await window.API.submitReview({
+        booking_reference: verified.booking_reference,
+        email: verified.email,
+        rating: currentRating,
+        comment: comment
+      });
+      hide(reviewForm); show(successPanel);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      showGoogleCTAIfConfigured();
+    } catch (err) {
+      JONE.releaseGuard(btn);
+      var msg = (err && err.message) || "Your review couldn't be submitted. Please try again.";
+      if (err && err.code === "ALREADY_REVIEWED") msg = "Thank you — this stay has already been reviewed.";
+      if (err && err.status === 429) msg = "Too many attempts. Please wait a moment and try again.";
+      showError("[data-submit-error]", msg);
+      JONE.ui.toast(msg, "error");
+    }
+  });
+
+  /* ------------------- Optional Google review CTA -----------------------
+     Shown ONLY when the hotel has configured a Google review URL in its
+     settings. The internal review and Google reviews are separate systems —
+     nothing is ever posted to Google automatically. */
+  async function showGoogleCTAIfConfigured() {
+    try {
+      var res = await window.API.getHotelInfo();
+      var raw = (res && res.data) || {};
+      var url = raw.google_review_url || (raw.settings && raw.settings.google_review_url) || "";
+      url = String(url || "").trim();
+      if (!/^https:\/\//i.test(url)) return;   // unset or unsafe — keep hidden
+      var link = document.querySelector("[data-google-review-link]");
+      var cta = document.querySelector("[data-google-review-cta]");
+      if (link && cta) {
+        link.setAttribute("href", url);
+        cta.hidden = false;
+        JONE.icons.inject(cta);
+      }
+    } catch (_) { /* CTA simply stays hidden */ }
+  }
+})();
+</script>
+<script src="js/pwa.js?v=1.1.6"></script>
+<script src="js/version.js?v=1.1.6"></script>
+<script src="js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

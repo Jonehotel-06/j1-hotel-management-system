@@ -1,0 +1,130 @@
+/* css/variables.css */
+/* ==========================================================================
+   J-ONE HOTEL & LODGE — Design Tokens
+   Palette: deep charcoal · warm off-white · soft stone · muted grey,
+   with a restrained ink-blue accent. The yellow in the official logo mark
+   stays in the logo only — it is never used as a UI accent.
+   ========================================================================== */
+
+:root {
+  /* --- Brand (from the official mark; used for logo + dark surfaces only) --- */
+  --brand-charcoal: #22262C;
+  --brand-charcoal-deep: #171A1F;
+  --brand-grey: #727376;
+  --brand-yellow: #FFF212;   /* logo asset only — never a UI accent */
+
+  /* --- Core palette (light) — cool slate neutrals, restrained ink-blue accent --- */
+  --color-primary: #23272E;
+  --color-primary-hover: #303640;
+  --color-primary-ink: #FAFBFC;
+
+  --color-accent: #33526E;
+  --color-accent-hover: #27435A;
+  --color-accent-ink: #F7F9FB;
+  --color-accent-soft: rgba(51, 82, 110, 0.09);
+
+  --color-background: #F8F9FA;
+  --color-surface: #FFFFFF;
+  --color-surface-alt: #F1F4F7;
+  --color-surface-deep: #E9EDF1;
+
+  --color-text: #23272E;
+  --color-text-muted: #5B6570;
+  --color-text-faint: #8B95A0;
+  --color-heading: #181C21;
+
+  --color-border: #E3E8ED;
+  --color-border-strong: #CBD3DB;
+
+  --color-success: #1E7A4E;
+  --color-success-bg: #E6F2EC;
+  --color-warning: #8A5A0A;
+  --color-warning-bg: #F7EFDC;
+  --color-danger: #BA3A2E;
+  --color-danger-bg: #FBEAE7;
+  --color-info: #2E5F82;
+  --color-info-bg: #E8F0F5;
+
+  /* --- Typography (GadgetHub system — inspected, not approximated) ---
+     font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+                  "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji"   */
+  --font-display: var(--font-body);   /* one family everywhere, like GadgetHub */
+  --font-body: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* Same scale units as GadgetHub (Tailwind): xs .75 / sm .875 / base 1 /
+     lg 1.125 / xl 1.25 / 2xl 1.5 / 3xl 1.875 / 4xl 2.25 rem */
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.875rem;
+  --fs-base: 1rem;
+  --fs-md: 1.125rem;
+  --fs-lg: 1.25rem;
+  --fs-xl: 1.5rem;
+  --fs-2xl: 1.875rem;
+  --fs-3xl: 2.25rem;
+  --fs-display: clamp(2rem, 4.2vw, 2.75rem);
+
+  --leading-tight: 1.25;
+  --leading-snug: 1.4;
+  --leading-normal: 1.55;
+  --leading-relaxed: 1.625;
+
+  --tracking-tight: -0.025em;
+  --tracking-wide: 0.01em;
+  --tracking-wider: 0.03em;
+  --tracking-widest: 0.08em;
+
+  /* --- Spacing scale --- */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+  --sp-7: 3rem;
+  --sp-8: 4rem;
+  --sp-9: 6rem;
+  --sp-10: 8rem;
+
+  --section-gap: clamp(3.5rem, 7vw, 6rem);
+
+  /* --- Radius (restrained) --- */
+  --radius-sm: 6px;
+  --radius: 10px;      /* GadgetHub rounded-md (calc(.75rem - 2px)) */
+  --radius-lg: 12px;   /* GadgetHub rounded-lg (.75rem) */
+  --radius-xl: 14px;
+  --radius-pill: 999px;
+
+  /* --- Shadows (subtle, layered) --- */
+  --shadow-xs: 0 1px 2px rgba(24, 22, 18, 0.05);
+  --shadow-sm: 0 1px 2px rgba(24, 22, 18, 0.05), 0 1px 3px rgba(24, 22, 18, 0.06);
+  --shadow-md: 0 2px 6px rgba(24, 22, 18, 0.06), 0 6px 18px rgba(24, 22, 18, 0.07);
+  --shadow-lg: 0 4px 12px rgba(24, 22, 18, 0.08), 0 16px 40px rgba(24, 22, 18, 0.12);
+  --shadow-focus: 0 0 0 3px rgba(51, 82, 110, 0.22);
+
+  /* --- Layout --- */
+  --container-max: 1200px;
+  --container-narrow: 820px;
+  --header-h: 64px;
+  --header-h-scrolled: 54px;
+  --radius-full: 999px;
+
+  /* --- Motion --- */
+  --ease: cubic-bezier(0.33, 1, 0.68, 1);
+  --speed-1: 120ms;
+  --speed-2: 220ms;
+  --speed-3: 360ms;
+
+  /* --- Misc --- */
+  --icon-size: 18px;
+  --focus-ring: 2px solid var(--color-accent);
+}
+
+/* Legibility-safe high-contrast text pairing */
+@media (prefers-contrast: more) {
+  :root {
+    --color-text: #0d0c0a;
+    --color-text-muted: #443f37;
+    --color-border: #b3aca0;
+  }
+}

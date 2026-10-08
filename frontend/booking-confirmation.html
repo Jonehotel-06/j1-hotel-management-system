@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Booking Confirmation | J-ONE Hotel &amp; Lodge</title>
+<meta name="description" content="Your booking confirmation and receipt for J-ONE Hotel &amp; Lodge.">
+<meta name="robots" content="noindex, follow">
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="css/main.css?v=1.1.6">
+<script>(function(){var t;try{t=JSON.parse(localStorage.getItem("jone.theme"))}catch(e){}if(t!=="dark"&&t!=="light"){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"}document.documentElement.setAttribute("data-theme",t);})();</script>
+
+
+
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="container header-inner">
+    <a href="index.html" class="brand" aria-label="J-ONE Hotel &amp; Lodge — home">
+      <span class="brand-mark-badge">
+        <img src="assets/icons/logo-official.png" alt="" class="brand-mark">
+      </span>
+      <span>
+        <span class="brand-word">J-ONE</span>
+        <span class="brand-sub">Hotel &amp; Lodge</span>
+      </span>
+    </a>
+
+    <nav class="header-nav" aria-label="Primary">
+      <a class="nav-link" data-nav="index.html" href="index.html">Home</a>
+      <a class="nav-link" data-nav="rooms.html" href="rooms.html">Rooms</a>
+      <a class="nav-link" data-nav="facilities.html" href="facilities.html">Facilities</a>
+      <a class="nav-link" data-nav="gallery.html" href="gallery.html">Gallery</a>
+      <a class="nav-link" data-nav="offers.html" href="offers.html">Offers</a>
+      <a class="nav-link" data-nav="about.html" href="about.html">About</a>
+      <a class="nav-link" data-nav="contact.html" href="contact.html">Contact</a>
+    </nav>
+
+    <div class="header-actions">
+      <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+        <span class="icon-moon" data-icon="moon" data-size="20"></span>
+        <span class="icon-sun" data-icon="sun" data-size="20"></span>
+      </button>
+      <a class="btn btn-sm btn-outline btn-review-cta" href="review.html">Leave a Review</a>
+      <a class="btn btn-sm btn-accent btn-book" href="booking.html">Book</a>
+      <button class="btn-icon btn-outline menu-toggle" type="button" aria-label="Open menu" aria-expanded="false" data-icon="menu" data-size="22"></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <div class="container booking-shell">
+    <!-- STEPPER (rendered by js/booking-stepper.js) -->
+    <nav id="booking-stepper" aria-label="Booking progress"></nav>
+
+    <!-- PAYMENT STEP -->
+    <section id="payment-screen" class="pay-shell" style="display:none;">
+      <div class="card card-pad">
+        <div id="substitution-notice" hidden style="margin-bottom:1.25rem;"></div>
+        <h2 style="font-size:var(--fs-xl);margin-bottom:0.35rem;">Secure payment</h2>
+        <p class="muted" style="margin-bottom:1.5rem;font-size:var(--fs-sm);">Review your stay, then pay securely to confirm your reservation.</p>
+        <div class="review-card" style="background:var(--color-surface-alt);padding:1.25rem;margin-bottom:1.5rem;">
+          <div class="summary-row"><span class="label">Room</span><span class="value" data-p-room>--</span></div>
+          <div class="summary-row"><span class="label">Check-in</span><span class="value" data-p-ci>--</span></div>
+          <div class="summary-row"><span class="label">Check-out</span><span class="value" data-p-co>--</span></div>
+          <div class="summary-row total"><span class="label">Total</span><span class="value" data-p-total>--</span></div>
+        </div>
+        <div class="notice info" id="payment-security-notice" style="margin-bottom:1.5rem;">
+          <span data-icon="lock" data-size="18"></span>
+          <span data-payment-security-text>You'll be redirected to Paystack to complete payment securely. Your card details are never stored by us.</span>
+        </div>
+        <button class="btn btn-accent btn-lg btn-block" id="pay-btn" type="button">Pay Now</button>
+        <div class="pay-secure-badge center" style="justify-content:center;width:100%;">
+          <span data-icon="lock" data-size="16"></span> Secure payment via Paystack
+        </div>
+      </div>
+    </section>
+
+    <!-- LOADING -->
+    <section id="payment-loading" class="loading-block" style="display:none;" aria-live="polite">
+      <div class="spinner" role="status" aria-label="Loading"></div>
+      <p class="muted">Processing secure payment&hellip; please don't close this page.</p>
+    </section>
+
+    <!-- SUCCESS -->
+    <section id="success-screen" style="display:none;">
+      <div class="confirm-hero">
+        <div id="substitution-notice-success" hidden style="margin:0 auto 1.25rem;max-width:520px;text-align:left;"></div>
+        <div class="confirm-icon-circle"><span data-icon="check" data-size="42"></span></div>
+        <h1>Booking confirmed</h1>
+        <p>Your reservation has been successfully confirmed. A confirmation has been sent to your email.</p>
+        <div class="confirm-reference" data-ref>J1-XXXXXX</div>
+      </div>
+
+      <!-- Receipt/folio sheet -->
+      <article class="receipt-sheet rc-access" id="receipt-sheet" data-receipt style="margin-top:2rem;">
+        <div class="loading-block"><div class="spinner" role="status"></div><p class="muted">Preparing receipt&hellip;</p></div>
+      </article>
+
+      <div class="confirm-actions receipt-actions">
+        <button class="btn" id="receipt-download-image" type="button"><span data-icon="image" data-size="16"></span> Save image</button>
+        <button class="btn btn-outline" id="receipt-download-pdf" type="button"><span data-icon="download" data-size="16"></span> Save PDF</button>
+        <button class="btn btn-outline" id="receipt-print" type="button"><span data-icon="printer" data-size="16"></span> Print receipt</button>
+        <a class="btn btn-outline" href="index.html">Return home</a>
+        <a class="btn btn-outline" href="contact.html">Contact hotel</a>
+      </div>
+    </section>
+
+    <!-- FAILURE -->
+    <section id="failure-screen" style="display:none;">
+      <div class="confirm-hero">
+        <div class="confirm-icon-circle" style="background:var(--color-danger);"><span data-icon="x" data-size="42"></span></div>
+        <h1>Payment not completed</h1>
+        <p>Your booking is saved but we couldn't confirm your payment. Please try again, or contact the hotel for help.</p>
+        <div class="confirm-reference" data-fail-ref>Booking ref: —</div>
+      </div>
+      <div class="confirm-actions">
+        <button class="btn btn-accent" id="retry-pay">Retry payment</button>
+        <a class="btn btn-outline" href="contact.html">Contact hotel</a>
+        <a class="btn btn-outline" href="index.html">Return home</a>
+      </div>
+    </section>
+  </div>
+</main>
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <a href="index.html" class="brand">
+          <img src="assets/icons/logo-official.svg" alt="" class="brand-mark" width="21" height="30">
+          <span>
+            <span class="brand-word">J-ONE</span>
+            <span class="brand-sub">Hotel &amp; Lodge</span>
+          </span>
+        </a>
+        <p data-hotel-name="J-ONE HOTEL &amp; LODGE">A quiet, contemporary address for rest and gathering &mdash; private, comfortable and close to everything you need.</p>
+      </div>
+
+      <div class="footer-col">
+        <h5>Explore</h5>
+        <a href="index.html#rooms">Rooms &amp; Suites</a>
+        <a href="facilities.html">Facilities</a>
+        <a href="gallery.html">Gallery</a>
+        <a href="offers.html">Offers</a>
+        <a href="about.html">About</a>
+        <a href="contact.html">Contact</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Booking</h5>
+        <a href="booking.html">Book Your Stay</a>
+        <a href="my-bookings.html">Your stays</a>
+        <a href="portal/login.html">Guest portal</a>
+        <a href="review.html">Leave a Review</a>
+        <a href="policies.html">Hotel Policies</a>
+        <a href="cancellation-policy.html">Cancellation</a>
+        <a href="refund-policy.html">Refunds</a>
+      </div>
+
+      <div class="footer-col">
+        <h5>Contact</h5>
+        <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
+        <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
+        <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
+        <a class="footer-line" data-google-maps href="https://www.google.com/maps" target="_blank" rel="noopener"><span data-icon="mapPin" data-size="16"></span>View on Google Maps</a>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>&copy; <span data-year="2026"></span> J-ONE HOTEL &amp; LODGE. All rights reserved.</span>
+      <span>
+        <a href="privacy.html">Privacy</a> &middot;
+        <a href="policies.html">Policies</a> &middot;
+        <a href="terms.html">Terms</a> &middot;
+        <a href="login.html">Staff</a>
+      </span>
+    </div>
+  </div>
+</footer>
+
+<div class="mobile-drawer-backdrop" aria-hidden="true"></div>
+<div class="mobile-drawer" role="dialog" aria-modal="true" aria-label="Menu" aria-hidden="true">
+  <div class="mobile-drawer-head">
+    <span class="brand-word">J-ONE</span>
+    <button class="btn-icon btn-ghost" type="button" aria-label="Close menu" data-drawer-close data-icon="x" data-size="20"></button>
+  </div>
+  <div class="mobile-drawer-body">
+    <nav class="mobile-nav" aria-label="Mobile">
+      <a data-nav="index.html" href="index.html">Home <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="rooms.html" href="rooms.html">Rooms <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="facilities.html" href="facilities.html">Facilities <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="gallery.html" href="gallery.html">Gallery <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="offers.html" href="offers.html">Offers <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="about.html" href="about.html">About <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="contact.html" href="contact.html">Contact <span data-icon="chevronRight" data-size="18"></span></a>
+      <a data-nav="review.html" href="review.html">Leave a Review <span data-icon="star" data-size="18"></span></a>
+      <a data-nav="policies.html" href="policies.html">Policies <span data-icon="chevronRight" data-size="18"></span></a>
+    </nav>
+    <div class="mobile-footer-row">
+      <a class="btn btn-accent" href="booking.html">Book Your Stay</a>
+      <a class="btn btn-outline" href="tel:+2348032112874"><span data-icon="phone" data-size="18"></span> Call the hotel</a>
+    </div>
+  </div>
+</div>
+
+<script src="js/runtime-config.js?v=1.1.6"></script>
+<script src="js/config.js?v=1.1.6"></script>
+<script src="js/utils.js?v=1.1.6"></script>
+<script src="js/icons.js?v=1.1.6"></script>
+<script src="js/api.js?v=1.1.6"></script>
+<script src="js/theme.js?v=1.1.6"></script>
+<script src="js/ui.js?v=1.1.6"></script>
+<script src="js/auth.js?v=1.1.6"></script>
+<script src="js/hotel-data.js?v=1.1.6"></script>
+<script src="js/receipt.js?v=1.1.6"></script>
+<script src="js/contact.js?v=1.1.6"></script>
+<script src="js/navigation.js?v=1.1.6"></script>
+<script>JONE.ui.initChrome(); JONE.nav.init();</script>
+<script src="js/site.js?v=1.1.6"></script>
+<script src="js/booking-stepper.js?v=1.1.6"></script>
+<script>
+(function () {
+  "use strict";
+  /* Guest checkout flow (no login required to book or pay):
+     1. step=payment  -> create booking (backend prices it) -> initialize
+         payment -> redirect to the provider's authorization_url.
+     2. ?ref=J1-...   -> view an existing booking; the backend alone decides
+         status/payment; "Pay" only when can_pay && amount_due > 0.
+     Success is only ever shown from backend-confirmed data. */
+  var p = new URLSearchParams(location.search);
+  var step = p.get("step");
+  var bookingRef = p.get("ref");
+  var criteria = {
+    check_in: p.get("check_in"), check_out: p.get("check_out"),
+    adults: p.get("adults") || 1, children: p.get("children") || 0,
+    // Number of rooms of this type (multi-room bookings). URL is the hand-off
+    // contract with the review step; the draft is the refresh fallback.
+    rooms: null,
+    room: p.get("room"), room_name: p.get("room_name"),
+    // Exact physical room the guest selected ("Book this room — Room 203").
+    // Advisory: the server re-checks it and may substitute an equivalent room.
+    room_id: p.get("room_id") || "", room_no: p.get("room_no") || ""
+  };
+  criteria.rooms = Math.max(1, Number(p.get("rooms") || (JONE.storage.get(JONE.APP_CONFIG.STORAGE.BOOKING, {}) || {}).rooms) || 1);
+  // A chosen PHYSICAL room is always exactly one room.
+  if (criteria.room_id) criteria.rooms = 1;
+  var S = JONE.APP_CONFIG.STORAGE.BOOKING;
+  // The authoritative booking (backend response) — memory + one storage copy
+  // so the folio survives the payment redirect.
+  var booking = null;
+  var quote = null;
+  var receiptData = null;
+  function bookingTokenKey(ref) { return "jone.guest_access_token." + String(ref || ""); }
+  var guestToken = (bookingRef && sessionStorage.getItem(bookingTokenKey(bookingRef))) || sessionStorage.getItem("jone.guest_access_token") || p.get("token") || "";
+  if (guestToken) {
+    sessionStorage.setItem("jone.guest_access_token", guestToken); // legacy fallback
+    if (bookingRef) sessionStorage.setItem(bookingTokenKey(bookingRef), guestToken);
+  }
+  function guestOpts() { return window.API.guestAccessOpts(guestToken); }
+
+  /* ------------------------------ Stepper -------------------------------- */
+  // Payment is step 5; confirmation is step 6. Both live on this page.
+  var stepper = JONE.stepper.mount(document.getElementById("booking-stepper"), {
+    current: 5,
+    criteria: {
+      check_in: criteria.check_in, check_out: criteria.check_out,
+      adults: criteria.adults, children: criteria.children,
+      rooms: criteria.rooms,
+      room: criteria.room, room_name: criteria.room_name
+    },
+    onNavigate: function () { return false; }   // all back-nav is cross-page
+  });
+
+  function show(id) {
+    ["payment-screen","payment-loading","success-screen","failure-screen"].forEach(function(s){ document.getElementById(s).style.display = (s===id ? "block":"none"); });
+  }
+  function setColl(sel, val){ var n=document.querySelector(sel); if(n) n.textContent=val; }
+
+  /* ------------------------- receipt / folio ------------------------- */
+  /* The room(s) the backend actually assigned — never the room type name
+     alone once a physical room exists. */
+  function roomSummary(b) {
+    b = b || {};
+    var nums = (b.room_assignments || []).map(function (a) { return a.room_number; }).filter(Boolean);
+    if (nums.length) return b.room_type_name ? (nums.join(", ") + " (" + b.room_type_name + ")") : nums.join(", ");
+    // No assignment list yet (e.g. pay screen before creation): say how many
+    // rooms the booking actually reserves instead of just the type name.
+    var n = Number(b.number_of_rooms || (booking == null ? criteria.rooms : 0)) || 0;
+    var typeName = b.room_type_name || criteria.room_name || criteria.room || "—";
+    return n > 1 ? n + " × " + typeName : typeName;
+  }
+
+  function fillReceipt(source) {
+    var b = source || booking || {};
+    receiptData = b;
+    var ref = b.booking_reference || bookingRef || "—";
+    var sheet = document.getElementById("receipt-sheet");
+    if (window.JONE && JONE.receipts && sheet) {
+      JONE.receipts.render(sheet, b, {
+        assetPrefix: "",
+        sourceLabel: "J-ONE Online Booking",
+        documentTitle: "Transaction Receipt"
+      });
+      // Upgrade the confirmation folio with the richer receipt endpoint when a
+      // guest token is available. The endpoint is still backend-authoritative;
+      // failure simply leaves the already-rendered booking data in place.
+      if (b.booking_reference && !b.latest_payment && window.API && window.API.getBookingReceipt) {
+        window.API.getBookingReceipt(b.booking_reference, guestOpts()).then(function (res) {
+          if (res && res.data) {
+            receiptData = res.data;
+            JONE.receipts.render(sheet, res.data, {
+              assetPrefix: "",
+              sourceLabel: "J-ONE Online Booking",
+              documentTitle: "Transaction Receipt"
+            });
+          }
+        }).catch(function () {});
+      }
+    }
+    var refEl = document.querySelector("[data-ref]");
+    if (refEl) refEl.textContent = ref;
+  }
+
+
+  // Decide, from BACKEND-AUTHORITATIVE booking data alone, whether a success
+  // toast is warranted (and which one). Never inferred from URL/callback.
+  function successOpts(b) {
+    b = b || {};
+    var ps = String(b.payment_status || "").toUpperCase();
+    if (ps === "PAID" || ps === "PARTIALLY_PAID") return { paid: true };
+    if (String(b.status || "").toUpperCase() === "CONFIRMED") return { confirmed: true };
+    return {};
+  }
+
+  var confirmationCelebrated = false;
+  function celebrateConfirmation() {
+    if (confirmationCelebrated || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    confirmationCelebrated = true;
+    var layer = document.createElement("div");
+    layer.className = "bk-confetti";
+    layer.setAttribute("aria-hidden", "true");
+    var colors = ["#b08d57", "#3f4448", "#d8c7aa", "#f5f1e9"];
+    for (var i = 0; i < 34; i += 1) {
+      var piece = document.createElement("i");
+      piece.className = "bk-confetti-piece";
+      piece.style.setProperty("--confetti-x", ((i * 37) % 101) + "%");
+      piece.style.setProperty("--confetti-color", colors[i % colors.length]);
+      piece.style.setProperty("--confetti-rotate", ((i * 47) % 180) + "deg");
+      piece.style.setProperty("--confetti-duration", (1.8 + (i % 6) * .13) + "s");
+      piece.style.setProperty("--confetti-delay", ((i % 8) * .035) + "s");
+      piece.style.setProperty("--confetti-drift", (((i % 7) - 3) * 13) + "px");
+      layer.appendChild(piece);
+    }
+    document.body.appendChild(layer);
+    window.setTimeout(function () { layer.remove(); }, 2900);
+  }
+
+  function renderSuccessView(opts) {
+    opts = opts || {};
+    show("success-screen");
+    showSubstitutionNotice(booking);
+    // Advance the stepper and celebrate immediately when Confirmation opens.
+    stepper.update(6);
+    celebrateConfirmation();
+    fillReceipt();
+    // Beautiful J-ONE success toast — ONLY ever called from a backend-
+    // confirmed booking (paid, or a nothing-due confirmation). Never from a
+    // URL param / provider callback alone.
+    if (opts.paid) {
+      JONE.ui.toast("Your booking has been confirmed.", "success", {
+        title: "Payment successful", assertive: true, duration: 6000
+      });
+    } else if (opts.confirmed) {
+      JONE.ui.toast("Your reservation is confirmed.", "success", {
+        title: "Booking confirmed", assertive: true, duration: 6000
+      });
+    }
+    // Direct guest cancellation is intentionally not offered here. Confirmed/paid
+    // bookings must go through the Contact cancellation/refund request so staff
+    // can review policy and Paystack refund state.
+    var b = booking || {};
+    var actions = document.querySelector(".confirm-actions");
+    if (b.booking_reference && actions && !document.getElementById("request-cancel-btn")) {
+      var link = document.createElement("a");
+      link.className = "btn btn-outline";
+      link.id = "request-cancel-btn";
+      link.href = "contact.html?type=cancellation&booking_reference=" + encodeURIComponent(b.booking_reference) + "&email=" + encodeURIComponent((b.guest && b.guest.email) || "");
+      link.textContent = "Request cancellation / refund";
+      actions.insertBefore(link, actions.firstChild);
+    }
+  }
+
+  /* ---------- "Your exact room was taken" — always tell the guest ------------
+     The backend decides the replacement (same room type, same rate) and
+     returns it as `room_substitution`. A room is NEVER switched silently. */
+  function showSubstitutionNotice(b) {
+    var sub = b && b.room_substitution;
+    // The substitution is transient (it belongs to the create response), so it
+    // is remembered per booking reference — the guest sees it again after the
+    // payment redirect instead of wondering which room they got.
+    if (sub && b.booking_reference) {
+      try {
+        var all = JONE.storage.get(S + ".substitutions", {}) || {};
+        all[b.booking_reference] = sub;
+        JONE.storage.set(S + ".substitutions", all);
+      } catch (_) {}
+    } else if (b && b.booking_reference) {
+      try {
+        var saved = JONE.storage.get(S + ".substitutions", {}) || {};
+        sub = saved[b.booking_reference] || null;
+      } catch (_) { sub = null; }
+    }
+    if (!sub) return;
+    var html =
+      '<div class="notice warning" role="status">' +
+        '<span data-icon="alertTriangle" data-size="18"></span>' +
+        "<span><strong>Room " + JONE.esc(sub.requested_room_number || "you selected") +
+        " was no longer available.</strong> We reserved " +
+        "<strong>Room " + JONE.esc(sub.assigned_room_number || "an equivalent room") + "</strong> " +
+        "for you instead — " + JONE.esc(sub.reason || "the same room type at the same rate.") +
+        (sub.price_changed ? "" : " Your total is unchanged.") + "</span>" +
+      "</div>";
+    ["substitution-notice", "substitution-notice-success"].forEach(function (id) {
+      var holder = document.getElementById(id);
+      if (!holder) return;
+      holder.innerHTML = html;
+      holder.hidden = false;
+      JONE.icons.inject(holder);
+    });
+  }
+
+  /* ------------------------- payment (create + init) ------------------------- */
+  function fillPaymentSummary() {
+    var preRoom = ((criteria.rooms || 1) > 1 ? criteria.rooms + " × " : "") +
+      (criteria.room_name || criteria.room || "--") + (criteria.room_no ? " · Room " + criteria.room_no : "");
+    setColl("[data-p-room]", booking ? roomSummary(booking) : preRoom);
+    setColl("[data-p-ci]", JONE.formatDate((booking && booking.check_in) || criteria.check_in, "mid"));
+    setColl("[data-p-co]", JONE.formatDate((booking && booking.check_out) || criteria.check_out, "mid"));
+    if (booking && booking.total_amount != null) {
+      setColl("[data-p-total]", JONE.formatNaira(booking.total_amount));
+    } else if (quote && quote.total != null) {
+      setColl("[data-p-total]", JONE.formatNaira(quote.total) + " (est.)");
+    } else {
+      setColl("[data-p-total]", "Confirmed when you continue");
+    }
+    var btn = document.getElementById("pay-btn");
+    if (btn && booking && booking.amount_due != null) {
+      btn.textContent = Number(booking.amount_due) > 0 ? "Pay " + JONE.formatNaira(booking.amount_due) : "Confirm booking";
+    }
+  }
+
+  /* ---------------------- idempotent booking creation -----------------------
+     One key per LOGICAL booking submission: generated before the first
+     createBooking call and reused by every retry of that same submission. If
+     the first response is lost (timeout / network drop) the server has
+     usually already created the booking — a retry carrying the same key
+     returns THAT booking instead of creating a duplicate reservation. The key
+     is bound to a signature of the submitted stay (room/dates/guest), so an
+     abandoned attempt's key can never be replayed against a DIFFERENT
+     booking, and it is cleared once creation is confirmed. */
+  var IDEM_KEY = "jone.booking.idem";
+  function bookingIdemKey(payload) {
+    var sig = "";
+    try {
+      sig = JSON.stringify([
+        payload.room_type, payload.check_in, payload.check_out,
+        payload.rooms || 1, payload.room_id || "",
+        payload.adults, payload.children,
+        (payload.guest && payload.guest.email) || ""
+      ]);
+    } catch (_) {}
+    var saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem(IDEM_KEY) || "null"); } catch (_) {}
+    if (saved && saved.key && saved.sig === sig) return saved.key;
+    var key = (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : "bk-" + Date.now() + "-" + Math.random().toString(36).slice(2, 14);
+    try { sessionStorage.setItem(IDEM_KEY, JSON.stringify({ key: key, sig: sig })); } catch (_) {}
+    return key;
+  }
+  function clearBookingIdemKey() {
+    try { sessionStorage.removeItem(IDEM_KEY); } catch (_) {}
+  }
+
+  async function redirectToPayment() {
+    // Initialize via the backend; we never build provider URLs ourselves.
+    var payRes = await window.API.initPayment(booking.booking_reference, guestOpts());
+    var pay = payRes.data || {};
+    var authUrl = pay.authorization_url || pay.payment_url;
+    if (!authUrl || !pay.reference) {
+      throw new Error("Payment could not be started. Please try again.");
+    }
+    try { JONE.storage.set(S + ".confirmed", booking); } catch (_) {}
+    // Scope guest authorization to both records. This survives the same-tab
+    // Paystack redirect without putting the private token in a URL.
+    if (guestToken) {
+      sessionStorage.setItem(bookingTokenKey(booking.booking_reference), guestToken);
+      sessionStorage.setItem("jone.payment_access." + pay.reference, guestToken);
+    }
+    location.href = authUrl;
+    return true;
+  }
+
+  async function pay() {
+    var btn = document.getElementById("pay-btn");
+    // Offline guard: booking creation and Paystack initialization are backend
+    // operations. Nothing is queued — the guest is told to reconnect.
+    if (window.JONE && JONE.pwa && !JONE.pwa.requireOnline(booking ? "payment" : "booking")) return;
+    // guardSubmit returns false on a second click while busy — this is what
+    // prevents duplicate payment-initialization requests.
+    if (!JONE.guardSubmit(btn)) return;
+    // Hold the PWA update lock for the whole create+initialize+redirect
+    // sequence: a service-worker swap mid-payment must never happen.
+    if (window.JONE && JONE.pwa && JONE.pwa.beginCriticalFlow) JONE.pwa.beginCriticalFlow();
+    btn.disabled = true;
+    var prevLabel = btn.innerHTML;
+    btn.innerHTML = '<span class="btn-spinner"></span> Initializing payment\u2026';
+    show("payment-loading");
+    // Restore the button if we DON'T navigate away (only failure paths reach
+    // the catch below, which releases the guard).
+    btn.dataset.prevLabel = prevLabel;
+    var createdThisAttempt = false;
+    try {
+      if (!booking) {
+        // Step 0 — resume: if a booking for THIS exact stay was already
+        // created (payment init failed / page refreshed after creation),
+        // continue with it instead of creating a duplicate reservation.
+        var prior = null;
+        try { prior = JONE.storage.get(S + ".confirmed", null); } catch (_) {}
+        if (
+          prior && prior.booking_reference &&
+          prior.room_type_slug === criteria.room &&
+          // The stored record is the backend booking detail, whose quantity
+          // field is `number_of_rooms` — reading `rooms` made every saved
+          // multi-room booking look like a 1-room one, so the resume check
+          // never matched and a SECOND booking was created (double inventory).
+          Number(prior.number_of_rooms || prior.rooms || 1) === Number(criteria.rooms || 1) &&
+          prior.check_in === criteria.check_in && prior.check_out === criteria.check_out
+        ) {
+          try {
+            var resumed = await window.API.getBooking(prior.booking_reference, guestOpts());
+            var rb = (resumed && resumed.data) || {};
+            if (rb.booking_reference && rb.can_pay && Number(rb.amount_due || 0) > 0) {
+              booking = rb;
+              bookingRef = rb.booking_reference;
+              fillPaymentSummary();
+              showSubstitutionNotice(rb);
+            }
+          } catch (_) { /* stale/expired — fall through and create anew */ }
+        }
+      }
+      if (!booking) {
+        // Step 1 — create the booking. The backend validates availability and
+        // computes every amount; we send criteria + guest contact only. The
+        // Idempotency-Key makes retries of a lost response safe (no duplicate
+        // reservations).
+        var draft = JONE.storage.get(S, {}) || {};
+        var payload = {
+          room_type: criteria.room,
+          check_in: criteria.check_in, check_out: criteria.check_out,
+          rooms: Number(criteria.rooms) || 1, adults: Number(criteria.adults) || 1, children: Number(criteria.children) || 0,
+          offer_code: draft.offer_code || undefined,
+          guest: draft.guest || undefined
+        };
+        // "Book this room" — the exact physical room. The backend re-checks
+        // availability and may assign an equivalent room instead; when it does
+        // it reports `room_substitution` and we tell the guest (never silent).
+        if (criteria.room_id) payload.room_id = Number(criteria.room_id);
+        var res;
+        try {
+          res = await window.API.createBooking(payload, {
+            headers: { "Idempotency-Key": bookingIdemKey(payload) }
+          });
+        } catch (createErr) {
+          /* An offer is optional: never lose a booking over one. Retry once at
+             the standard rate and tell the guest the discount did not apply. */
+          if (String(createErr && createErr.code || "").indexOf("OFFER_") === 0 && payload.offer_code) {
+            JONE.ui.toast(createErr.message || "That offer could not be applied; booking at the standard rate.", "warning");
+            delete payload.offer_code;
+            res = await window.API.createBooking(payload, {
+              headers: { "Idempotency-Key": bookingIdemKey(payload) }
+            });
+          } else {
+            throw createErr;
+          }
+        }
+        booking = res.data || {};
+        createdThisAttempt = true;
+        clearBookingIdemKey();  // creation confirmed — a future booking gets a fresh key
+        if (booking.guest_access_token) {
+          guestToken = booking.guest_access_token;
+          sessionStorage.setItem("jone.guest_access_token", guestToken);
+          sessionStorage.setItem(bookingTokenKey(booking.booking_reference), guestToken);
+        }
+        bookingRef = booking.booking_reference || bookingRef;
+        fillPaymentSummary();
+        showSubstitutionNotice(booking);
+      }
+      // Step 2 — nothing due? The booking itself is the confirmation.
+      if (Number(booking.amount_due || 0) <= 0 || booking.can_pay === false) {
+        var completed = successOpts(booking);
+        if (completed.paid || completed.confirmed) {
+          renderSuccessView(completed);
+          return;
+        }
+        throw new Error("This booking cannot accept payment in its current state. Please contact the hotel.");
+      }
+      // Step 3 — initialize payment and hand off to the provider.
+      var redirected = await redirectToPayment();
+      if (!redirected) throw new Error("Payment could not be started. Please try again.");
+    } catch (err) {
+      JONE.releaseGuard(btn);
+      btn.disabled = false;
+      if (btn.dataset.prevLabel) { btn.innerHTML = btn.dataset.prevLabel; JONE.icons.inject(btn); }
+      if (window.JONE && JONE.pwa && JONE.pwa.endCriticalFlow) JONE.pwa.endCriticalFlow();
+      show("failure-screen");
+      stepper.update(5);
+      document.querySelector("[data-fail-ref]").textContent = "Booking ref: " + (bookingRef || "—");
+      var p2 = document.querySelector("#failure-screen .confirm-hero p");
+      var msg;
+      if (err && err.status === 409 && err.code === "ROOM_UNAVAILABLE") {
+        msg = "The room you selected is no longer available for those dates and no equivalent room could be held automatically. Please choose another room or different dates.";
+      } else if (err && (err.kind === "timeout" || err.kind === "network")) {
+        // The request outcome is genuinely unknown — the booking may already
+        // exist. Pressing Retry is SAFE: the idempotency key returns the
+        // original booking instead of creating a duplicate.
+        msg = booking
+          ? "We lost contact while starting your payment — your booking is saved. Press Retry to continue safely."
+          : "We lost contact with the booking service, so your request may already have gone through. Press Retry — it will resume your booking without creating a duplicate.";
+      } else if (err && (err.status === 401 || (err.status === 404 && booking))) {
+        // The booking exists but the backend no longer accepts our guest
+        // credential — the booking session (guest access token) is invalid
+        // or expired, not a missing booking.
+        msg = "Your booking session has expired or is invalid. Please restart the booking, or open the secure link from your confirmation email.";
+      } else if (err && (err.code === "PAYMENT_GATEWAY_ERROR" || err.code === "PAYMENT_NOT_CONFIGURED" || err.status === 502 || err.status === 503)) {
+        msg = "We could not start your payment. Please try again in a moment — your booking is saved and no money has been taken.";
+      } else {
+        msg = (booking ? "Your booking is saved but payment couldn't be initialized. " : "") + (err.message || "Something went wrong. Please try again.");
+      }
+      if (p2) p2.textContent = msg;
+      JONE.ui.toast(msg, "error", { assertive: true });
+      // If the booking was created but payment failed, remember it so a page
+      // refresh (or "Retry") continues from the booking instead of re-creating.
+      if (createdThisAttempt && booking && booking.booking_reference) {
+        try { JONE.storage.set(S + ".confirmed", booking); } catch (_) {}
+      }
+    }
+  }
+
+  document.getElementById("pay-btn").addEventListener("click", pay);
+  var retryBtn = document.getElementById("retry-pay");
+  if (retryBtn) retryBtn.addEventListener("click", pay);
+
+  async function exportReceipt(button, kind) {
+    var sheet = document.getElementById("receipt-sheet");
+    if (!sheet || !window.JONE || !JONE.receipts) return;
+    var payload = receiptData || booking || {};
+    if (!JONE.guardSubmit(button)) return;
+    var prev = button.innerHTML;
+    button.innerHTML = '<span class="btn-spinner"></span> Preparing…';
+    try {
+      var exportOpts = { assetPrefix: "", sourceLabel: "J-ONE Online Booking", documentTitle: "Transaction Receipt" };
+      if (kind === "pdf") await JONE.receipts.downloadPDF(sheet, payload, exportOpts);
+      else await JONE.receipts.downloadImage(sheet, payload, exportOpts);
+      JONE.ui.toast(kind === "pdf" ? "Receipt PDF saved." : "Receipt image saved.", "success");
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "The receipt could not be exported.", "error");
+    } finally {
+      JONE.releaseGuard(button);
+      button.innerHTML = prev;
+      JONE.icons.inject(button);
+    }
+  }
+
+  var imageBtn = document.getElementById("receipt-download-image");
+  if (imageBtn) imageBtn.addEventListener("click", function () { exportReceipt(imageBtn, "image"); });
+  var pdfBtn = document.getElementById("receipt-download-pdf");
+  if (pdfBtn) pdfBtn.addEventListener("click", function () { exportReceipt(pdfBtn, "pdf"); });
+  var printReceiptBtn = document.getElementById("receipt-print");
+  if (printReceiptBtn) printReceiptBtn.addEventListener("click", function () {
+    var sheet = document.getElementById("receipt-sheet");
+    if (sheet && window.JONE && JONE.receipts) JONE.receipts.printReceipt(sheet, receiptData || booking || {});
+  });
+
+  /* ------------------------- entry points ------------------------- */
+  (async function init() {
+    show("payment-loading");
+    if (bookingRef) {
+      // Viewing an existing booking — entirely backend-authoritative.
+      // Guest checkout: no login wall here; guests returning from the
+      // payment provider must land straight on their booking.
+      try {
+        var res = await window.API.getBooking(bookingRef, guestOpts());
+        booking = res.data || {};
+        fillPaymentSummary();
+        // Returning from the payment provider with a balance still outstanding
+        // lands on the payment screen — the guest must still be told that the
+        // room they picked was substituted (read back from the per-reference
+        // memory written when the booking was created).
+        showSubstitutionNotice(booking);
+        if (booking.can_pay && Number(booking.amount_due || 0) > 0) {
+          // Outstanding balance — offer to pay (backend-decided).
+          // Target the security notice BY ID: a generic
+          // "#payment-screen .notice span:last-child" selector matched the
+          // substitution notice as soon as one was rendered, overwriting the
+          // "your room was replaced" message with the balance text.
+          var notice = document.querySelector("#payment-security-notice [data-payment-security-text]");
+          if (notice) notice.textContent = "This booking has an outstanding balance of " + JONE.formatNaira(booking.amount_due) + ". You'll be redirected to Paystack to pay securely.";
+          show("payment-screen");
+          stepper.update(5);
+          setStepperText(5);
+        } else {
+          // Never turn EXPIRED/CANCELLED/FAILED into a success screen merely
+          // because can_pay is false.
+          var completed = successOpts(booking);
+          if (completed.paid || completed.confirmed) {
+            renderSuccessView(completed);
+            setStepperText(6);
+          } else {
+            show("failure-screen");
+            stepper.update(5);
+            document.querySelector("[data-fail-ref]").textContent = "Booking ref: " + bookingRef;
+            var stateLine = document.querySelector("#failure-screen .confirm-hero p");
+            if (stateLine) stateLine.textContent = "This booking is " + String(booking.status || "not payable").toLowerCase().replace(/_/g, " ") + ". Payment has not been confirmed.";
+          }
+        }
+      } catch (err) {
+        show("failure-screen");
+        document.querySelector("[data-fail-ref]").textContent = "Booking ref: " + bookingRef;
+        var p3 = document.querySelector("#failure-screen .confirm-hero p");
+        if (p3) p3.textContent = err.status === 404
+          ? "We couldn't find that booking reference. Please check it and try again."
+          : (err.message || "We couldn't load this booking.");
+      }
+      return;
+    }
+
+    if (step === "payment") {
+      if (!criteria.check_in || !criteria.room) { location.replace("booking.html"); return; }
+      // Public quote for the pay-screen estimate; the total is fixed by the
+      // backend when the booking is actually created.
+      try {
+        var q = await window.API.quoteBooking({
+          room_type: criteria.room, check_in: criteria.check_in, check_out: criteria.check_out,
+          rooms: Number(criteria.rooms) || 1, adults: Number(criteria.adults) || 1, children: Number(criteria.children) || 0
+        });
+        quote = q.data || null;
+      } catch (_) { quote = null; }
+      fillPaymentSummary();
+      show("payment-screen");
+      return;
+    }
+
+    if (step === "fail") {
+      show("failure-screen");
+      document.querySelector("[data-fail-ref]").textContent = "Booking ref: " + (bookingRef || "—");
+      return;
+    }
+
+    // No reference and no criteria -> restart the flow honestly.
+    location.replace("booking.html");
+  })();
+
+  function setStepperText(n) {
+    stepper.update(n);
+    var el = document.querySelector(".step-mobile");
+    if (el) el.textContent = "Step " + n + " of 6 — " + (n >= 6 ? "Confirmation" : "Payment");
+  }
+})();
+</script>
+<script src="js/pwa.js?v=1.1.6"></script>
+<script src="js/version.js?v=1.1.6"></script>
+<script src="js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

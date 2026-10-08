@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Receipts | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Receipts</h1>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+<section class="panel">
+  <div class="filter-bar">
+    <div class="field"><label class="field-label" for="rc-q">Search</label><input class="input" id="rc-q" placeholder="Receipt no., booking ref, guest, room no."></div>
+  </div>
+  <div class="panel-body no-pad">
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Receipt</th><th>Booking</th><th class="hide-sm">Guest</th><th>Amount</th><th class="hide-sm">Issued</th><th></th></tr></thead>
+      <tbody data-tbody="receipts"></tbody>
+    </table></div>
+    <div class="pagination" data-pagination></div>
+  </div>
+</section>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/hotel-data.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/receipt-email-modal.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script src="../js/receipt.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("receptionist");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  var DATA=JONE.dashboard.DATA;
+  var tbody=document.querySelector("[data-tbody=receipts]");
+
+  /* Receipt emails are delivered SYNCHRONOUSLY by the backend (the SMTP send
+     happens inside the send request), so the API response is already the real
+     outcome — SENT or FAILED. No worker, no polling. */
+
+  /* Receipts view = verified payment records from /api/admin/payments/.
+     Row: { reference, booking_reference, guest_name, provider, amount,
+            currency, status, channel, paid_at, created_at }. */
+  function render(list){
+    tbody.innerHTML=list.map(function(r){
+      var b=r.booking_reference;
+      return '<tr><td class="cell-nowrap">'+JONE.esc(r.reference||"—")+'<span class="receipt-mobile-guest hide-md">'+JONE.esc(r.guest_name||"—")+'</span></td><td class="cell-nowrap">'+(b?'<a href="booking-details.html?ref='+encodeURIComponent(b)+'">'+JONE.esc(b)+'</a>':"—")+'</td><td class="hide-sm">'+JONE.esc(r.guest_name||"—")+'</td><td class="num cell-nowrap">'+JONE.esc(JONE.formatNaira(r.amount))+'</td><td class="hide-sm cell-nowrap">'+JONE.esc(r.paid_at?JONE.formatDate(r.paid_at,"mid"):(r.created_at?JONE.formatDate(r.created_at,"mid"):"—"))+'</td><td class="cell-nowrap">'+(b?'<button class="btn btn-sm btn-outline" type="button" data-view-receipt="'+JONE.esc(b)+'"><span data-icon="printer" data-size="15"></span> View receipt</button>':"—")+'</td></tr>';
+    }).join("") || '<tr><td colspan="6"><div class="empty-state"><span data-icon="receipt"></span><h3>No receipts yet</h3><p>Receipts appear here as payments are confirmed.</p></div></td></tr>';
+    JONE.icons.inject(tbody);
+  }
+
+  /* Server paginates the /api/admin/payments/?status=SUCCESS query (this page
+     IS that endpoint — receipts never live in a second store); the page
+     number is the only list state and the search box resets it to 1. */
+  var state={ page:1 };
+  var pager=document.querySelector("[data-pagination]");
+  function renderPager(meta){ JONE.dashboard.renderPagination(pager, meta, { onPage: load }); }
+
+  async function load(page){
+    if(page!=null) state.page=Math.max(1,page);
+    DATA.loading(tbody);
+    try{
+      // `search` is applied SERVER-SIDE by /api/admin/payments/ (it matches the
+      // payment reference, booking reference, guest name, booking ref and
+      // transaction id) — the page never filters the list locally.
+      var params={ status:"SUCCESS", page:state.page, page_size: JONE.dashboard.pageSize() };
+      var qEl=document.getElementById("rc-q");
+      if(qEl && qEl.value.trim()) params.search=qEl.value.trim();
+      var res=await window.API.list("receipts", params);
+      var list=window.API.normalizeList?window.API.normalizeList(res.data,res.pagination).items:((res.data&&res.data.results)||res.data||[]);
+      if(!(list||[]).length){ DATA.empty(tbody,"receipt","No receipts yet","Receipts generated for confirmed payments will appear here.",6); renderPager(null); return; }
+      render(list);
+      renderPager(res.pagination);
+    }catch(err){ DATA.error(tbody,"Receipts couldn't be loaded",(err&&err.message)||"Please try again in a moment.",6); }
+  }
+  load(1);
+
+  // Details are fetched only when requested; the receipt list remains light.
+  tbody.addEventListener("click", async function(e){
+    var trigger=e.target.closest("[data-view-receipt]");
+    if(!trigger) return;
+    var ref=trigger.getAttribute("data-view-receipt");
+    var body=JONE.el("div",{class:"receipt-modal-content"},JONE.el("div",{class:"loading-block"},JONE.el("div",{class:"spinner",role:"status"}),JONE.el("p",{class:"muted",textContent:"Loading receipt…"})));
+    JONE.ui.modal.open({title:"Receipt "+ref,body:body,size:"modal-lg"});
+    try{
+      var res=await window.API.getBookingReceipt(ref);
+      var receipt=res.data||res;
+      if(!document.body.contains(body)) return;
+      body.innerHTML="";
+      var sheet=JONE.el("article",{class:"receipt-sheet rc-access"});
+      var actions=JONE.el("div",{class:"receipt-modal-actions"});
+      var download=JONE.el("button",{class:"btn btn-sm",type:"button",textContent:"Download image"});
+      var send=JONE.el("button",{class:"btn btn-sm btn-outline",type:"button",textContent:"Send to "+((receipt.guest&&receipt.guest.email)||"guest")});
+      actions.append(download,send); body.append(sheet,actions);
+      JONE.receipts.render(sheet,receipt,{assetPrefix:"../"});
+      download.addEventListener("click",async function(){
+        download.disabled=true;
+        try{await JONE.receipts.downloadImage(sheet,receipt,{assetPrefix:"../",filename:"J1-Hotel-Receipt-"+receipt.booking_reference+".png"});}
+        catch(err){JONE.ui.toast((err&&err.message)||"Receipt download failed.","error");}
+        finally{download.disabled=false;}
+      });
+      send.addEventListener("click",async function(){
+        var guestEmail=(receipt.guest&&receipt.guest.email)||"";
+        if(!guestEmail){JONE.ui.toast("This guest has no email address on file.","error");return;}
+        // Shared staff send-receipt modal: opens immediately with guest and
+        // booking details, shows a visible sending state, prevents duplicate
+        // submission and reports SENT vs FAILED truthfully with retry.
+        if(window.JONE&&JONE.receiptEmailModal){
+          JONE.receiptEmailModal.open({
+            bookingReference:receipt.booking_reference,
+            guestName:(receipt.guest&&receipt.guest.full_name)||"Guest",
+            guestEmail:guestEmail
+          });
+        }
+      });
+    }catch(err){
+      if(document.body.contains(body)) body.innerHTML='<div class="empty-state"><h3>Receipt unavailable</h3><p>'+JONE.esc((err&&err.message)||"Please try again.")+'</p></div>';
+    }
+  });
+
+  // Debounced server-side search (no request per keystroke); a new search
+  // restarts the list at page 1.
+  var rcq=document.getElementById("rc-q");
+  if(rcq) rcq.addEventListener("input", JONE.debounce(function(){ load(1); }, 300));
+})();
+
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

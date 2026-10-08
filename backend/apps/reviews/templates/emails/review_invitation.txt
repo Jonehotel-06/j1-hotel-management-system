@@ -1,0 +1,29 @@
+{% autoescape off %}{{ hotel_name }}
+GUEST FEEDBACK
+========================================
+
+Dear {{ guest_first_name }},
+
+Thank you for staying at {{ hotel_name }}. Now that your stay is complete, we would appreciate hearing about your experience.
+
+----------------------------------------
+YOUR STAY
+----------------------------------------
+Guest:      {{ guest_name }}
+Room:       {% if rooms_count > 1 %}{{ rooms_count }} x {% endif %}{{ room_type }}
+Check-in:   {{ check_in }}
+Check-out:  {{ check_out }}{% if nights %}
+Nights:     {{ nights }}{% endif %}
+Reference:  {{ booking_reference }}
+
+SHARE YOUR FEEDBACK
+{{ review_url }}
+
+Your feedback goes directly to hotel management and helps us improve the J-ONE guest experience.
+
+Warm regards,
+{{ hotel_name }}
+{% if hotel_location %}{{ hotel_location }}
+{% endif %}{% if hotel_phone %}Phone: {{ hotel_phone }}
+{% endif %}{% if hotel_email %}Email: {{ hotel_email }}
+{% endif %}{% endautoescape %}

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Availability | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Availability</h1>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Availability search</h2>
+  </div>
+  <!-- The search controls are their own responsive grid rather than crammed
+       into .panel-actions: on a phone the four fields stack into two readable
+       columns with a full-width Search button, instead of overflowing the
+       header row. -->
+  <form class="av-search-form" id="av-form" novalidate>
+    <div class="field"><label class="field-label" for="av-from">Check-in</label><input class="input" type="date" id="av-from"></div>
+    <div class="field"><label class="field-label" for="av-to">Check-out</label><input class="input" type="date" id="av-to"></div>
+    <div class="field"><label class="field-label" for="av-guests">Guests</label><input class="input" type="number" id="av-guests" min="1" value="2" inputmode="numeric"></div>
+    <div class="field"><label class="field-label" for="av-rooms">Rooms</label><input class="input" type="number" id="av-rooms" min="1" value="1" inputmode="numeric"></div>
+    <div class="field av-search-submit"><button class="btn btn-accent" id="av-search" type="submit">
+      <span data-icon="search" data-size="16"></span> Search</button></div>
+  </form>
+  <div class="panel-body no-pad">
+    <p class="caption" style="padding:0.75rem 1.1rem 0;">Results come straight from the booking system: rooms free for the whole stay, with the system-computed total for the party size.</p>
+    <div class="table-wrap table-scroll-x" tabindex="0" role="region" aria-label="Availability results, scroll sideways to see every column"><table class="table table-availability">
+      <thead><tr><th>Room type</th><th class="hide-sm">Sleeps</th><th>Rooms free</th><th class="hide-sm">Rate / night</th><th>Est. total</th><th>Status</th></tr></thead>
+      <tbody data-tbody="av-results"></tbody>
+    </table></div>
+  </div>
+</section>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/hotel-data.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("receptionist");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  var DATA=JONE.dashboard.DATA;
+  var tbody=document.querySelector("[data-tbody=av-results]");
+  var fromEl=document.getElementById("av-from");
+  var toEl=document.getElementById("av-to");
+
+  // Default: tonight → tomorrow, in the hotel's business timezone.
+  function applyDefaults(){ fromEl.value=JONE.hotelTodayISO(0); toEl.value=JONE.hotelTodayISO(1); }
+  applyDefaults();
+  // The hotel timezone arrives asynchronously (cached fast, else one fetch).
+  // Don't fire the first search with a browser-local "today" the API may
+  // consider past — wait for hotel data, with a safety timeout so the page
+  // still searches when the backend is unreachable.
+  var searched = false;
+  function firstSearch(){ if (searched) return; searched = true; search(); }
+  document.addEventListener("jone:hotel", function(){
+    var stale = fromEl.value && fromEl.value < JONE.hotelTodayISO(0);
+    applyDefaults();
+    if (stale || !searched) firstSearch();
+  });
+  if (JONE.hotelTimezone) firstSearch();
+  else setTimeout(firstSearch, 1500);
+
+  /* Verified: GET /api/rooms/availability/?check_in&check_out&guests&rooms
+     → { nights, results: [ { room_type:{...}, available_rooms, bookable,
+        message, pricing:{ price_per_night, total, ... }|null } ] } */
+  function render(results, nights){
+    if(!results.length){
+      DATA.empty(tbody,"calendar","No rooms available","Nothing is free for those dates. Try different dates.",6);
+      return;
+    }
+    tbody.innerHTML=results.map(function(r){
+      var rt=r.room_type||{};
+      var bookable=r.bookable!==false;
+      var pr=r.pricing||null;
+      return '<tr'+(bookable?'':' style="opacity:0.55;"')+'>'+
+        '<td><strong>'+JONE.esc(rt.name||"—")+'</strong>'+(r.message?'<div class="caption">'+JONE.esc(r.message)+'</div>':'')+'</td>'+
+        '<td class="hide-sm">'+JONE.esc(rt.max_guests!=null?rt.max_guests:"—")+'</td>'+
+        '<td>'+JONE.esc(r.available_rooms!=null?r.available_rooms:"—")+'</td>'+
+        '<td class="hide-sm">'+(pr?JONE.esc(JONE.formatNaira(pr.price_per_night)):"—")+'</td>'+
+        '<td>'+(pr?JONE.esc(JONE.formatNaira(pr.total)):"—")+'</td>'+
+        '<td>'+(bookable?JONE.dashboard.statusPill("available"):JONE.dashboard.statusPill("unavailable"))+'</td>'+
+      '</tr>';
+    }).join("");
+    JONE.icons.inject(tbody);
+  }
+
+  async function search(){
+    if(!fromEl.value||!toEl.value){ JONE.ui.toast("Choose both check-in and check-out dates.","warning"); return; }
+    if(fromEl.value>=toEl.value){ JONE.ui.toast("Check-out must be after check-in.","warning"); return; }
+    DATA.loading(tbody);
+    try{
+      var res=await window.API.checkAvailability({
+        check_in: fromEl.value, check_out: toEl.value,
+        guests: Number(document.getElementById("av-guests").value)||1,
+        rooms: Number(document.getElementById("av-rooms").value)||1
+      });
+      var d=(res&&res.data)||{};
+      render(d.results||[], d.nights);
+    }catch(err){
+      DATA.error(tbody,"Availability couldn't be loaded",(err&&err.message)||"Please try again in a moment.",6);
+    }
+  }
+
+  /* Submitting the form (Enter in any field or the Search button) runs the
+     same single search path. */
+  document.getElementById("av-form").addEventListener("submit", function(e){
+    e.preventDefault();
+    search();
+  });
+  // first search is triggered by firstSearch() above (hotel-timezone aware)
+})();
+
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

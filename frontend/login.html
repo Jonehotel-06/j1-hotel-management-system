@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Staff Sign In | J-ONE Hotel &amp; Lodge</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="css/main.css?v=1.1.6">
+<script>(function(){var t;try{t=JSON.parse(localStorage.getItem("jone.theme"))}catch(e){}if(t!=="dark"&&t!=="light"){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"}document.documentElement.setAttribute("data-theme",t);})();</script>
+
+
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<main id="main" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem 1rem;background:var(--color-background);">
+  <div style="width:100%;max-width:420px;">
+    <div class="center" style="margin-bottom:2rem;">
+      <a href="index.html" class="brand" style="display:inline-flex;justify-content:center;">
+        <img src="assets/icons/logo-official.svg" alt="J-ONE Hotel &amp; Lodge" width="22" height="38" style="margin:0 auto;display:block;">
+      </a>
+      <h1 style="font-size:var(--fs-xl);margin-top:1rem;">Sign in</h1>
+      <p class="muted">Hotel staff access only.</p>
+    </div>
+
+    <div class="card card-pad">
+      <form id="login-form" novalidate>
+        <div class="field">
+          <label class="field-label" for="email">Email</label>
+          <input class="input" id="email" name="email" type="email" required autocomplete="email">
+          <div class="field-error">Please enter your email.</div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="password">Password</label>
+          <div style="position:relative;">
+            <input class="input" id="password" name="password" type="password" required autocomplete="current-password" style="padding-right:2.6rem;">
+            <button class="btn-icon btn-ghost" type="button" id="pw-toggle" aria-label="Show password" aria-pressed="false"
+              style="position:absolute;right:0.15rem;top:50%;transform:translateY(-50%);color:var(--color-text-muted);">
+              <span data-icon="eye" data-size="17"></span>
+            </button>
+          </div>
+          <div class="field-error">Please enter your password.</div>
+        </div>
+        <div class="field-error" data-form-error style="display:none;color:var(--color-danger);margin-bottom:1rem;"></div>
+        <button class="btn btn-block" type="submit">Sign in</button>
+      </form>
+      <p class="caption center" style="margin-top:1.5rem;">Guests can book and pay without creating an account.</p>
+      <p class="caption center" style="margin-top:0.75rem;">
+        <a href="index.html">&larr; Back to website</a>
+      </p>
+    </div>
+  </div>
+</main>
+
+<script src="js/runtime-config.js?v=1.1.6"></script>
+<script src="js/config.js?v=1.1.6"></script>
+<script src="js/utils.js?v=1.1.6"></script>
+<script src="js/icons.js?v=1.1.6"></script>
+<script src="js/api.js?v=1.1.6"></script>
+<script src="js/theme.js?v=1.1.6"></script>
+<script src="js/ui.js?v=1.1.6"></script>
+<script src="js/auth.js?v=1.1.6"></script>
+<script src="js/hotel-data.js?v=1.1.6"></script>
+<script src="js/contact.js?v=1.1.6"></script>
+<script src="js/navigation.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  // Already signed in? Staff accounts go directly to the console.
+  if (window.Auth.isAuthenticated()) {
+    window.Auth.restore();
+    location.replace("dashboard/index.html");
+  } else {
+    window.Auth.bindLoginForm("#login-form");
+  }
+document.getElementById("pw-toggle").addEventListener("click", function () {
+  var inp = document.getElementById("password");
+  var show = inp.type === "password";
+  inp.type = show ? "text" : "password";
+  this.setAttribute("aria-label", show ? "Hide password" : "Show password");
+  this.setAttribute("aria-pressed", show ? "true" : "false");
+  this.innerHTML = '<span data-icon="' + (show ? "eyeOff" : "eye") + '" data-size="17"></span>';
+  JONE.icons.inject(this);
+});
+</script>
+<script src="js/pwa.js?v=1.1.6"></script>
+<script src="js/version.js?v=1.1.6"></script>
+<script src="js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

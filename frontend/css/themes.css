@@ -1,0 +1,78 @@
+/* css/themes.css */
+/* ==========================================================================
+   Themes — light / dark.
+   All colors flow from CSS custom properties, so a theme = swapping tokens.
+   The [data-theme] attribute on <html> drives the override.
+
+   DARK SYSTEM (redesigned, GadgetHub-inspired):
+   - deep charcoal base, blue-leaning — never pure black
+   - slightly lighter charcoal surfaces; graphite elevated surfaces
+   - subtle cool slate borders (low contrast against surface, like GadgetHub)
+   - soft off-white text, muted grey secondary text
+   - restrained slate-blue accent; clear success/warning/danger
+   ========================================================================== */
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Primary control (light button on dark) */
+  --color-primary: #E7EAEE;
+  --color-primary-hover: #F4F6F8;
+  --color-primary-ink: #15181D;
+
+  /* Restrained slate-blue accent */
+  --color-accent: #8FB0CB;
+  --color-accent-hover: #A9C6DE;
+  --color-accent-ink: #12161C;
+  --color-accent-soft: rgba(143, 176, 203, 0.13);
+
+  /* Neutral ramp: deep charcoal -> graphite */
+  --color-background: #0D0F13;
+  --color-surface: #14171C;
+  --color-surface-alt: #1A1E24;
+  --color-surface-deep: #20252D;
+
+  --color-text: #E6E9ED;
+  --color-text-muted: #9AA3AF;
+  --color-text-faint: #6C7580;
+  --color-heading: #F1F3F6;
+
+  --color-border: #262B33;
+  --color-border-strong: #343B45;
+
+  --color-success: #55BE8A;
+  --color-success-bg: #16281F;
+  --color-warning: #D6B36A;
+  --color-warning-bg: #2E2614;
+  --color-danger: #F09187;
+  --color-danger-bg: #38201B;
+  --color-info: #85B4D6;
+  --color-info-bg: #1B2D3D;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.6);
+  --shadow-focus: 0 0 0 3px rgba(143, 176, 203, 0.32);
+}
+
+/* Dark-theme fixes for fixed dark surfaces (footer, page hero, drawer):
+   they must sit subtly against the dark page, separated by borders —
+   never disappear into it, never glow. */
+html[data-theme="dark"] .site-footer {
+  background: #101318;
+  border-top: 1px solid var(--color-border);
+}
+html[data-theme="dark"] .page-hero {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+html[data-theme="dark"] .mobile-drawer {
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+}
+
+/* The theme is set early via an inline head snippet (see build.py).
+   No body-hiding is used — that could leave the page blank if any script
+   fails. Instead data-theme is applied before first paint to avoid a
+   wrong-theme flash. */

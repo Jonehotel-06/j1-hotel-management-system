@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Notification | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Notification</h1>
+          <p>Alert details</p>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+<section class="panel">
+  <div class="panel-head">
+    <h2 data-nd-type>Notification</h2>
+    <div class="panel-actions">
+      <button class="btn btn-sm btn-outline" data-nd-mark hidden type="button"><span data-icon="check" data-size="14"></span> Mark as read</button>
+      <a class="btn btn-sm btn-outline" href="notifications.html"><span data-icon="arrowLeft" data-size="14"></span> All notifications</a>
+    </div>
+  </div>
+  <div class="panel-body" data-nd-body>
+    <div class="loading-block"><div class="spinner" role="status"></div><p class="muted">Loading notification&hellip;</p></div>
+  </div>
+</section>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/hotel-data.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("receptionist");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  "use strict";
+  var body = document.querySelector("[data-nd-body]");
+  var typeEl = document.querySelector("[data-nd-type]");
+  var markBtn = document.querySelector("[data-nd-mark]");
+  var id = new URLSearchParams(location.search).get("id");
+  var current = null;
+
+  /* Verified: GET /api/notifications/{id}/ → { id, type, type_label, title,
+     message, link, is_read, created_at, related: {kind, reference, link}|null,
+     unread_count }. The backend scopes the queryset to the signed-in user, so
+     someone else's notification is a 404 — ownership is enforced server-side,
+     never by hiding a button here. Opening the detail already marks it read. */
+
+  var TYPE_ICON = {
+    PAYMENT: "wallet", CHECK_IN: "logOut", CHECK_OUT: "logOut", CHECKOUT_AUTO: "logOut",
+    CHECKOUT_DUE_SOON: "clock", BOOKING: "calendar", ENQUIRY: "inbox",
+    REVIEW: "star",
+  };
+  function iconFor(type){
+    var t = String(type || "");
+    if (TYPE_ICON[t]) return TYPE_ICON[t];
+    for (var key in TYPE_ICON) { if (t.indexOf(key) === 0) return TYPE_ICON[key]; }
+    return "bell";
+  }
+
+  /* One place for every failure state, so the page can never sit on
+     "Loading notification…" forever. 401 is handled by the shared auth layer
+     (it refreshes once, otherwise sends the user back to the login page). */
+  function showError(title, message, opts){
+    opts = opts || {};
+    body.innerHTML = '<div class="empty-state"><span data-icon="alertTriangle" data-size="34"></span>' +
+      "<h3>" + JONE.esc(title) + "</h3><p>" + JONE.esc(message || "Please try again.") + "</p>" +
+      '<div class="nd-actions">' +
+        (opts.retry ? '<button class="btn btn-sm btn-accent" data-nd-retry type="button">' +
+          '<span data-icon="refresh" data-size="14"></span> Try again</button>' : "") +
+        '<a class="btn btn-sm btn-outline" href="notifications.html">' +
+        '<span data-icon="arrowLeft" data-size="14"></span> All notifications</a>' +
+      "</div></div>";
+    JONE.icons.inject(body);
+    var retry = body.querySelector("[data-nd-retry]");
+    if (retry) retry.addEventListener("click", function(){ loading(); load(); });
+  }
+
+  function loading(){
+    body.innerHTML = '<div class="loading-block"><div class="spinner" role="status"></div>' +
+      '<p class="muted">Loading notification&hellip;</p></div>';
+  }
+
+  function factRow(label, value){
+    return '<div class="profile-row"><dt>' + JONE.esc(label) + "</dt><dd>" +
+      JONE.esc(value == null || value === "" ? "—" : String(value)) + "</dd></div>";
+  }
+
+  /* The related record is reached through the link the BACKEND generated —
+     never hand-built here. Backend links are ROOT-relative
+     ("/dashboard/booking-details.html?ref=…"), so they must be resolved
+     against the frontend root: this page lives inside /dashboard/, and simply
+     dropping the leading "/" produced the invalid
+     "/dashboard/dashboard/booking-details.html". */
+  function relatedAction(related){
+    if (!related || !related.link) return "";
+    var labels = {
+      booking: "Open booking", payment: "Open payment", guest: "Open guest",
+      room: "Open rooms", enquiry: "Open enquiry", notification: "Open",
+    };
+    var label = labels[related.kind] || "Open related record";
+    var href = JONE.appUrl(related.link);
+    if (!href) return "";
+    return '<a class="btn btn-accent" href="' + JONE.esc(href) + '">' +
+      '<span data-icon="arrowRight" data-size="16"></span> ' + JONE.esc(label) + "</a>";
+  }
+
+  function render(n){
+    current = n || {};
+    var typeLabel = current.type_label ||
+      String(current.type || "Notification").replace(/_/g, " ").toLowerCase()
+        .replace(/^./, function(c){ return c.toUpperCase(); });
+    if (typeEl) typeEl.textContent = typeLabel;
+    var related = current.related;
+    var reference = related && related.reference ? related.reference : "";
+    body.innerHTML =
+      '<article class="nd-card">' +
+        '<div class="nd-head">' +
+          '<span class="notif-icon nd-icon"><span data-icon="' + iconFor(current.type) + '" data-size="20"></span></span>' +
+          '<div class="nd-head-text">' +
+            '<h3>' + JONE.esc(current.title || "Notification") + "</h3>" +
+            '<div class="nd-meta">' +
+              JONE.dashboard.statusPill(current.is_read ? "read" : "unread",
+                                        current.is_read ? "Read" : "Unread") +
+              '<span class="caption">' + JONE.esc(typeLabel) + "</span>" +
+            "</div>" +
+          "</div>" +
+        "</div>" +
+        '<div class="nd-message">' + JONE.esc(current.message || "—") + "</div>" +
+        '<dl class="profile-grid">' +
+          factRow("Notification type", typeLabel) +
+          factRow("Category code", current.type) +
+          factRow("Status", current.is_read ? "Read" : "Unread") +
+          factRow("Received", current.created_at ? JONE.formatDateTime(current.created_at) : "—") +
+          (reference ? factRow(relatedLabel(related) + " reference", reference) : "") +
+          factRow("Notification ID", current.id) +
+        "</dl>" +
+        '<div class="nd-actions">' + relatedAction(related) +
+          '<a class="btn btn-outline" href="notifications.html"><span data-icon="bell" data-size="16"></span> All notifications</a>' +
+        "</div>" +
+      "</article>";
+    JONE.icons.inject(body);
+    if (markBtn) markBtn.hidden = !!current.is_read;
+  }
+
+  function relatedLabel(related){
+    var names = {
+      booking: "Booking", payment: "Payment", guest: "Guest",
+      room: "Room", enquiry: "Enquiry", notification: "Notification",
+    };
+    return (related && names[related.kind]) || "Related";
+  }
+
+  /* ONE request for the detail — never "load the list and find it in JS". */
+  async function load(){
+    if (!id) {
+      showError("Notification not found", "No notification was specified.");
+      return;
+    }
+    try {
+      var res = await window.API.getNotification(id);
+      var payload = res && res.data;
+      if (!payload || typeof payload !== "object") {
+        showError("Notification not found", "This notification could not be found or does not belong to your account.", { retry: true });
+        return;
+      }
+      render(payload);
+      // The detail response carries the fresh total — push it to every badge
+      // so the sidebar/bottom-nav count updates without another request.
+      var count = payload.unread_count;
+      if (count != null) JONE.dashboard.notifBadge.set(Number(count));
+    } catch (err) {
+      var status = err && err.status;
+      if (status === 404) {
+        // Queryset is recipient-scoped: another user's id is indistinguishable
+        // from a missing one — by design, so ownership is never leaked.
+        showError("Notification not found", "This notification could not be found or does not belong to your account.");
+      } else if (status === 403) {
+        showError("Access denied", "You can only open your own notifications.");
+      } else if (status === 401) {
+        showError("Session expired", "Please sign in again to view this notification.", { retry: true });
+      } else if (status === 0) {
+        showError("Notification could not be loaded",
+          "We couldn't reach the hotel right now. Please try again.", { retry: true });
+      } else {
+        showError("Notification could not be loaded",
+          (err && err.message) || "Something went wrong on our side. Please try again.", { retry: true });
+      }
+    }
+  }
+  load();
+
+  if (markBtn) markBtn.addEventListener("click", async function(){
+    if (!current) return;
+    if (!JONE.guardSubmit(markBtn)) return;
+    try {
+      var res = await window.API.markNotificationRead(current.id);
+      current.is_read = true;
+      render(current);
+      var count = res && res.data && res.data.unread_count;
+      if (count != null) JONE.dashboard.notifBadge.set(Number(count));
+      JONE.ui.toast("Notification marked as read.", "success");
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "The notification couldn't be updated.", "error");
+    } finally {
+      JONE.releaseGuard(markBtn);
+    }
+  });
+})();
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

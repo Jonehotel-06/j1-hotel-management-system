@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Hotel Settings | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Hotel Settings</h1>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+<section class="panel" style="max-width:860px;">
+  <div class="panel-head"><h2>Hotel settings</h2><div class="panel-actions"><span class="caption" data-updated-at></span></div></div>
+  <div class="panel-body">
+    <div id="st-loading"><div class="loading-block"><div class="spinner" role="status"></div><p class="muted">Loading settings&hellip;</p></div></div>
+    <div id="st-error" style="display:none;"></div>
+    <form id="st-form" style="display:none;" novalidate>
+
+      <h3 style="font-size:var(--fs-md);margin-bottom:0.9rem;">Identity</h3>
+      <div class="form-grid fg-2">
+        <div class="field"><label class="field-label" for="st-name">Hotel name</label><input class="input" id="st-name" name="hotel_name" required></div>
+        <div class="field"><label class="field-label" for="st-tagline">Tagline</label><input class="input" id="st-tagline" name="tagline" placeholder="A short memorable line"></div>
+      </div>
+      <div class="field"><label class="field-label" for="st-desc">Description</label><textarea class="textarea" id="st-desc" name="description" rows="3"></textarea></div>
+
+      <h3 style="font-size:var(--fs-md);margin:1.4rem 0 0.9rem;">Location &amp; contact</h3>
+      <div class="field"><label class="field-label" for="st-address">Address</label><input class="input" id="st-address" name="address"></div>
+      <div class="form-grid fg-3">
+        <div class="field"><label class="field-label" for="st-city">City</label><input class="input" id="st-city" name="city"></div>
+        <div class="field"><label class="field-label" for="st-state">State</label><input class="input" id="st-state" name="state"></div>
+        <div class="field"><label class="field-label" for="st-country">Country</label><input class="input" id="st-country" name="country"></div>
+      </div>
+      <div class="form-grid fg-2">
+        <div class="field"><label class="field-label" for="st-phone">Phone</label><input class="input" id="st-phone" name="phone" type="tel"></div>
+        <div class="field"><label class="field-label" for="st-email">Email</label><input class="input" id="st-email" name="email" type="email"></div>
+      </div>
+      <div class="field"><label class="field-label" for="st-maps">Google Maps URL</label><input class="input" id="st-maps" name="google_maps_url" placeholder="https://maps.google.com/&hellip;">
+        <div class="hint">Used by the public contact page&rsquo;s embedded map. A place URL is enough — the site converts it to an embed automatically.</div></div>
+      <div class="field"><label class="field-label" for="st-greview">Google review URL</label><input class="input" id="st-greview" name="google_review_url" placeholder="https://g.page/r/&hellip;/review">
+        <div class="hint">Direct &ldquo;write a review&rdquo; link for the hotel&rsquo;s Google Business profile. When set, guests are offered a Google review after submitting website feedback. Leave blank to hide that button.</div></div>
+      <div class="field"><label class="field-label" for="st-social">Social links (JSON)</label><textarea class="textarea" id="st-social" name="social_links" rows="2" placeholder='[{"platform":"Instagram","url":"https://instagram.com/…"}]'></textarea>
+        <div class="hint">A JSON list of {"platform","url"} objects. Leave empty for none.</div></div>
+
+      <h3 style="font-size:var(--fs-md);margin:1.4rem 0 0.9rem;">Stay rules</h3>
+      <div class="form-grid fg-4">
+        <div class="field"><label class="field-label" for="st-ci">Check-in time</label><input class="input" id="st-ci" name="check_in_time" type="time"></div>
+        <div class="field"><label class="field-label" for="st-co">Check-out time</label><input class="input" id="st-co" name="check_out_time" type="time"></div>
+        <div class="field"><label class="field-label" for="st-minn">Min nights</label><input class="input" id="st-minn" name="min_stay_nights" type="number" min="1"></div>
+        <div class="field"><label class="field-label" for="st-maxn">Max nights</label><input class="input" id="st-maxn" name="max_stay_nights" type="number" min="1"></div>
+      </div>
+
+      <h3 style="font-size:var(--fs-md);margin:1.4rem 0 0.9rem;">Pricing &amp; booking</h3>
+      <div class="form-grid fg-4">
+        <div class="field"><label class="field-label" for="st-currency">Currency</label><input class="input" id="st-currency" name="currency" placeholder="NGN" maxlength="3"></div>
+        <div class="field"><label class="field-label" for="st-tax">Tax %</label><input class="input" id="st-tax" name="tax_rate_percent" type="number" step="0.01" min="0"></div>
+        <div class="field"><label class="field-label" for="st-fee">Service fee</label><input class="input" id="st-fee" name="service_fee" type="number" step="0.01" min="0"></div>
+        <div class="field"><label class="field-label" for="st-deposit">Deposit %</label><input class="input" id="st-deposit" name="deposit_percent" type="number" step="0.01" min="0" max="100"></div>
+      </div>
+      <div class="form-grid fg-3">
+        <div class="field"><label class="field-label" for="st-pending">Pending window (min)</label><input class="input" id="st-pending" name="pending_booking_minutes" type="number" min="5"></div>
+        <div class="field"><label class="field-label" for="st-cancelh">Cancellation deadline (h)</label><input class="input" id="st-cancelh" name="cancellation_deadline_hours" type="number" min="0"></div>
+        <div class="field"><label class="field-label" for="st-cancelf">Cancellation fee %</label><input class="input" id="st-cancelf" name="cancellation_fee_percent" type="number" step="0.01" min="0" max="100"></div>
+      </div>
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" id="st-restrict-checkin" name="restrict_check_in_to_booked_date">
+          <span>Restrict check-in to the booked check-in date</span>
+        </label>
+        <div class="hint">Blocks <strong>early</strong> arrivals only. A guest who misses the first
+          night can always still be checked in on a later day of their stay.</div>
+      </div>
+
+      <h3 style="font-size:var(--fs-md);margin:1.4rem 0 0.9rem;">Hotel policy</h3>
+      <div class="field">
+        <label class="field-label" for="st-policy">Custom policy text</label>
+        <textarea class="textarea" id="st-policy" name="policy_text" rows="8" placeholder="Leave empty to keep the existing published policy."></textarea>
+        <div class="hint">Plain text only — line breaks and numbering are preserved exactly on the public page.
+          <strong>Leave empty</strong> to keep the existing policy documents; when filled, this text is shown on the
+          <a href="../policies.html" target="_blank" rel="noopener">public policies page</a> instead.</div>
+        <div style="margin-top:0.5rem;"><button class="btn btn-sm btn-outline" type="button" id="st-policy-preview">Preview current public policy</button></div>
+        <div id="st-policy-preview-box" class="notice" style="display:none;margin-top:0.6rem;white-space:pre-line;max-height:16rem;overflow:auto;"></div>
+      </div>
+
+      <div class="field-error" id="st-form-error" style="display:none;margin-top:0.75rem;"></div>
+      <div style="display:flex;gap:0.6rem;justify-content:flex-end;margin-top:1rem;">
+        <button class="btn btn-outline" type="button" id="st-reload">Reload</button>
+        <button class="btn btn-accent" type="submit" id="st-save"><span data-icon="save" data-size="15"></span> Save settings</button>
+      </div>
+      <p class="caption" id="st-readonly-note" style="display:none;margin-top:0.75rem;">View-only — only administrators can change hotel settings.</p>
+    </form>
+  </div>
+</section>
+
+<section class="panel" style="max-width:860px;margin-top:1.5rem;">
+  <div class="panel-head"><h2>Website images</h2></div>
+  <div class="panel-body">
+    <p class="muted" style="margin-top:0;">Optional replacements for the public site&rsquo;s images. Until a custom
+      image is uploaded, the site keeps showing its built-in image — uploading can never blank the site.</p>
+    <div id="si-list"><div class="loading-block"><div class="spinner" role="status"></div><p class="muted">Loading images&hellip;</p></div></div>
+    <p class="caption" id="si-readonly-note" style="display:none;margin-top:0.75rem;">View-only — only administrators can change website images.</p>
+  </div>
+</section>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/hotel-data.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("admin");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  "use strict";
+  /* Contract: GET/PATCH /api/admin/settings/ are ADMIN-only. The boot("admin")
+     guard above is UX-only; the backend enforces authorization regardless. */
+
+  var EP = window.APP_CONFIG.API_ENDPOINTS.settings;   // "/api/admin/settings/"
+  var current = null;
+  var isAdmin = false;
+
+  function $(id){ return document.getElementById(id); }
+  function show(id){ $(id).style.display = ""; }
+  function hide(id){ $(id).style.display = "none"; }
+
+  var FIELDS = ["hotel_name","tagline","description","address","city","state","country",
+    "phone","email","google_maps_url","google_review_url","social_links","check_in_time","check_out_time",
+    "min_stay_nights","max_stay_nights","currency","tax_rate_percent","service_fee",
+    "deposit_percent","pending_booking_minutes","cancellation_deadline_hours",
+    "cancellation_fee_percent","restrict_check_in_to_booked_date","policy_text"];
+
+  function role(){
+    // Single source of truth for the signed-in profile: auth.js state.
+    var u = window.Auth && window.Auth.state && window.Auth.state.user;
+    return (u && u.role) || null;
+  }
+
+  function fill(){
+    FIELDS.forEach(function(k){
+      var el = document.getElementsByName(k)[0];
+      if(!el) return;
+      var v = current[k];
+      if(k === "social_links") el.value = (v && v.length) ? JSON.stringify(v, null, 0) : "";
+      else if(el.type === "checkbox") el.checked = !!v;
+      else if(v != null) el.value = v;
+    });
+    var updatedEl = document.querySelector("[data-updated-at]");
+    if(current.updated_at && updatedEl){
+      var d = new Date(current.updated_at);
+      updatedEl.textContent = "Updated " + d.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"});
+    }
+  }
+
+  async function load(){
+    show("st-loading"); hide("st-error"); hide("st-form");
+    try{
+      var res = await window.API.get(EP);
+      current = res.data;
+      fill();
+      // Auth normalizes roles to lowercase; the old UPPERCASE comparison
+      // silently disabled the form even for real admins.
+      isAdmin = String(role() || "").toLowerCase() === "admin";
+      if(!isAdmin){
+        $("st-form").querySelectorAll("input, textarea").forEach(function(el){ el.disabled = true; });
+        $("st-save").style.display = "none";
+        show("st-readonly-note");
+      }
+      hide("st-loading"); show("st-form");
+      JONE.icons.inject($("st-form"));
+      renderImageManager();
+    }catch(err){
+      hide("st-loading");
+      $("st-error").innerHTML = '<div class="empty-state"><span data-icon="alertTriangle" data-size="34"></span><h3>Settings couldn\'t be loaded</h3><p>' + ((err&&err.message)||"Please refresh the page.") + '</p></div>';
+      show("st-error"); JONE.icons.inject($("st-error"));
+    }
+  }
+
+  $("st-form").addEventListener("submit", async function(e){
+    e.preventDefault();
+    var errBox = $("st-form-error"); errBox.style.display = "none";
+    if(!this.checkValidity()){ this.reportValidity(); return; }
+    var btn = $("st-save");
+    if(!JONE.guardSubmit(btn)) return;
+
+    // Send only the fields that actually changed.
+    var payload = {};
+    FIELDS.forEach(function(k){
+      var el = document.getElementsByName(k)[0];
+      if(!el) return;
+      var v = el.value;
+      if(k === "social_links"){
+        var old = JSON.stringify(current.social_links || []);
+        if(v.trim() === ""){ if(old !== "[]") payload.social_links = []; }
+        else {
+          try{
+            var parsed = JSON.parse(v);
+            if(!Array.isArray(parsed)) throw new Error("not a list");
+            payload.social_links = parsed;
+          }catch(_){
+            errBox.textContent = "Social links must be a valid JSON list."; errBox.style.display = "block";
+            JONE.releaseGuard(btn); return;
+          }
+        }
+        return;
+      }
+      if(el.type === "checkbox"){
+        if(el.checked !== !!current[k]) payload[k] = el.checked;
+        return;
+      }
+      if(String(v) !== String(current[k] == null ? "" : current[k])) payload[k] = v;
+    });
+
+    if(!Object.keys(payload).length){
+      JONE.ui.toast("No changes to save.","info");
+      JONE.releaseGuard(btn); return;
+    }
+
+    try{
+      var res = await window.API.patch(EP, payload);
+      current = res.data || current;
+      fill();
+      JONE.ui.toast("Settings saved.","success");
+    }catch(err){
+      var msg = (err && err.message) || "Couldn't save settings.";
+      errBox.textContent = msg; errBox.style.display = "block";
+      JONE.ui.toast(msg, "error");
+    }finally{ JONE.releaseGuard(btn); }
+  });
+
+  /* ----- Policy: live preview of what the public page currently shows ----- */
+  $("st-policy-preview").addEventListener("click", async function () {
+    var box = $("st-policy-preview-box");
+    if (box.style.display !== "none") { box.style.display = "none"; this.textContent = "Preview current public policy"; return; }
+    this.disabled = true;
+    try {
+      var res = await window.API.getPolicies();
+      var list = (res && res.data) || [];
+      box.textContent = list.map(function (p) { return "— " + (p.title || "Policy") + " —\n" + (p.content || ""); }).join("\n\n") || "No policies published.";
+      box.style.display = "block";
+      this.textContent = "Hide preview";
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "Couldn't load the public policy.", "error");
+    } finally { this.disabled = false; }
+  });
+
+  /* ----------------------- Website image manager ----------------------- */
+  var IMAGE_FIELDS = [
+    { key: "hero_image", label: "Homepage hero image", fallback: "../assets/images/hero-1.jpg",
+      note: "Replaces the built-in hero slideshow on the homepage while set." },
+    { key: "intro_image", label: "Homepage welcome image", fallback: "../assets/images/intro.jpg" },
+    { key: "experience_image", label: "Homepage experience image", fallback: "../assets/images/experience.jpg" },
+    { key: "location_image", label: "Homepage location image", fallback: "../assets/images/location.jpg" },
+    { key: "policy_image", label: "Policy page image", fallback: "",
+      note: "Shown at the top of the policies page only when configured." },
+    { key: "contact_image", label: "Contact page image", fallback: "",
+      note: "Shown on the contact page only when configured." }
+  ];
+
+  function imageRow(spec) {
+    var customUrl = current[spec.key + "_url"];
+    var wrap = JONE.el("div", { class: "field", style: "border-top:1px solid var(--border,rgba(0,0,0,.08));padding-top:1rem;margin-top:1rem;" });
+    var preview = JONE.el("img", {
+      alt: spec.label,
+      style: "width:220px;max-width:100%;height:132px;object-fit:cover;border-radius:8px;display:block;background:var(--surface-alt,#eee);"
+    });
+    preview.src = customUrl || spec.fallback || "";
+    if (!customUrl && !spec.fallback) preview.style.display = "none";
+    preview.addEventListener("click", function () {
+      if (preview.src) JONE.ui.lightbox.open([{ src: preview.src, caption: spec.label }], 0);
+    });
+    preview.style.cursor = "zoom-in";
+    preview.onerror = function () { preview.style.display = "none"; };
+
+    var badge = JONE.el("span", {
+      class: "badge",
+      textContent: customUrl ? "Custom image" : (spec.fallback ? "Built-in default" : "No image (page shows none)")
+    });
+    var file = JONE.el("input", { class: "input", type: "file", accept: "image/*", style: "max-width:320px;" });
+    file.disabled = !isAdmin;
+    file.addEventListener("change", function () {
+      if (file.files && file.files[0]) {
+        preview.style.display = "";
+        preview.src = URL.createObjectURL(file.files[0]);   // local pre-upload preview
+      }
+    });
+
+    var status = JONE.el("p", { class: "caption", role: "status", "aria-live": "polite" });
+    var saveBtn = JONE.el("button", { class: "btn btn-sm btn-accent", type: "button", textContent: "Save image" });
+    var removeBtn = JONE.el("button", { class: "btn btn-sm btn-outline", type: "button", textContent: "Remove custom image" });
+    saveBtn.disabled = !isAdmin;
+    removeBtn.disabled = !isAdmin || !customUrl;
+
+    saveBtn.addEventListener("click", async function () {
+      if (!file.files || !file.files[0]) { JONE.ui.toast("Choose an image file first.", "warning"); return; }
+      var f = file.files[0];
+      if (!/^image\//.test(f.type)) { JONE.ui.toast("Please choose a valid image file.", "error"); return; }
+      saveBtn.disabled = true; status.textContent = "Uploading…";
+      try {
+        var fd = new FormData();
+        fd.append(spec.key, f);
+        var res = await window.API.patch(EP, fd);
+        current = res.data || current;
+        JONE.ui.toast(spec.label + " saved.", "success");
+        renderImageManager();
+      } catch (err) {
+        status.textContent = "";
+        JONE.ui.toast((err && err.message) || "The image couldn't be saved.", "error");
+        saveBtn.disabled = false;
+      }
+    });
+
+    removeBtn.addEventListener("click", async function () {
+      var ok = await JONE.ui.confirm({
+        title: "Remove custom image",
+        message: "The built-in default image will be used again for “" + spec.label + "”.",
+        confirmText: "Remove"
+      });
+      if (!ok) return;
+      removeBtn.disabled = true;
+      try {
+        var patch = {}; patch[spec.key] = null;
+        var res = await window.API.patch(EP, patch);
+        current = res.data || current;
+        JONE.ui.toast(spec.label + " reset to the default.", "success");
+        renderImageManager();
+      } catch (err) {
+        JONE.ui.toast((err && err.message) || "Couldn't remove the image.", "error");
+        removeBtn.disabled = false;
+      }
+    });
+
+    var kids = [
+      JONE.el("label", { class: "field-label", textContent: spec.label }), " ",
+      badge,
+      JONE.el("div", { style: "margin:0.6rem 0;" }, preview),
+      JONE.el("div", { class: "note", style: "display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center;" }, file, saveBtn, removeBtn)
+    ];
+    if (spec.note) kids.push(JONE.el("div", { class: "hint", textContent: spec.note }));
+    kids.push(status);
+    kids.forEach(function (k) { wrap.appendChild(k instanceof Node ? k : document.createTextNode(k)); });
+    return wrap;
+  }
+
+  function renderImageManager() {
+    var list = $("si-list");
+    if (!list || !current) return;
+    list.innerHTML = "";
+    IMAGE_FIELDS.forEach(function (spec) { list.appendChild(imageRow(spec)); });
+    if (!isAdmin) show("si-readonly-note");
+  }
+
+  $("st-reload").addEventListener("click", load);
+  load();
+})();
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

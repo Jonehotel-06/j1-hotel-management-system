@@ -1,0 +1,45 @@
+/* Capability-scoped operations widgets: bounded server-search pickers. */
+.op-picker { display: grid; gap: 0.45rem; }
+.op-picker-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 0.55rem 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 42%, var(--color-border));
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+  font-size: var(--fs-sm);
+}
+.op-picker-results { display: grid; gap: 0.35rem; max-height: 13rem; overflow: auto; }
+.op-picker-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.op-picker-chip { display: inline-flex; align-items: center; gap: 0.25rem; max-width: 100%; padding: 0.25rem 0.35rem 0.25rem 0.55rem; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-alt); font-size: var(--fs-xs); }
+.op-picker-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op-picker-chip .btn { min-height: 0; padding: 0.16rem 0.3rem; font-size: var(--fs-xs); }
+.op-picker-results > .caption { margin: 0.1rem 0; }
+.op-line-picker-list { display: grid; gap: 0.5rem; }
+.op-line-picker-row { display: grid; grid-template-columns:minmax(0, 1fr) auto; gap: 0.55rem; align-items: end; padding: 0.65rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-alt); font-size: var(--fs-sm); }
+.op-line-picker-row > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op-line-picker-controls { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.5rem; }
+.op-line-picker-controls .field { margin: 0; }
+.op-line-picker-controls .field-label { font-size: var(--fs-xs); }
+.op-picker-option {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.op-picker-option:hover, .op-picker-option:focus-visible {
+  border-color: var(--color-primary);
+  background: var(--color-surface-alt);
+  outline: none;
+}
+@media (max-width: 480px) {
+  .op-picker-selected { align-items: flex-start; flex-direction: column; }
+}

@@ -1,0 +1,50 @@
+{% autoescape off %}{{ hotel_name }}
+PAYMENT RECEIPT
+========================================
+
+Booking reference: {{ booking_reference }}
+Receipt reference: {{ receipt_reference }}
+{% if issued_at %}Issued: {{ issued_at }}{% endif %}
+
+PAYMENT STATUS: {{ status_badge }} ({{ status_label }})
+
+----------------------------------------
+GUEST
+----------------------------------------
+Name:  {{ guest_name }}
+{% if guest_email %}Email: {{ guest_email }}{% endif %}
+
+----------------------------------------
+STAY
+----------------------------------------
+Room:       {% if rooms_count %}{{ rooms_count }} x {% endif %}{{ room_type }}{% if room_numbers %} (Room {{ room_numbers }}){% endif %}
+Check-in:   {{ check_in }}{% if check_out %}
+Check-out:  {{ check_out }}{% endif %}{% if nights %}
+Nights:     {{ nights }}{% endif %}{% if number_of_guests %}
+Guests:     {{ number_of_guests }}{% endif %}
+
+----------------------------------------
+PAYMENT SUMMARY
+----------------------------------------
+Total:       {{ total }}
+Amount paid: {{ amount_paid }}
+Outstanding: {{ outstanding }}
+{% if has_payments %}
+----------------------------------------
+PAYMENT HISTORY
+----------------------------------------
+{% for p in payments %}- {{ p.reference }}
+  Amount: {{ p.amount }} | Status: {{ p.status_label }}
+  Date:   {{ p.paid_at }}{% if p.method and p.method != "—" %} | Method: {{ p.method }}{% endif %}
+{% endfor %}{% endif %}
+----------------------------------------
+Your itemised receipt is attached to this email as a PDF.
+----------------------------------------
+
+{{ hotel_name }}
+{% if hotel_location %}{{ hotel_location }}
+{% endif %}{% if hotel_phone %}Phone: {{ hotel_phone }}
+{% endif %}{% if hotel_email %}Email: {{ hotel_email }}
+{% endif %}
+This is an automated payment receipt. Please keep it for your records.
+{% endautoescape %}

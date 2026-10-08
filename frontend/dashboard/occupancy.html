@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Occupancy calendar | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Occupancy calendar</h1>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+<section class="panel">
+  <div class="panel-head">
+    <h2 data-cal-title>Occupancy</h2>
+    <div class="panel-actions cal-nav">
+      <button class="btn btn-sm btn-outline" type="button" data-cal-prev aria-label="Previous month">
+        <span data-icon="chevronLeft" data-size="16"></span></button>
+      <label class="field-label sr-only" for="cal-month">Month</label>
+      <input class="input cal-month-input" type="month" id="cal-month">
+      <button class="btn btn-sm btn-outline" type="button" data-cal-next aria-label="Next month">
+        <span data-icon="chevronRight" data-size="16"></span></button>
+      <button class="btn btn-sm btn-ghost" type="button" data-cal-today>Today</button>
+    </div>
+  </div>
+  <div class="panel-body">
+    <p class="caption">Each date lists the room numbers occupied that night, taken from the
+      booking system's own room assignments. A multi-room booking shows every one of its rooms.
+      Select a date to see the guest, booking reference and stay dates for each room.</p>
+    <div class="cal-legend">
+      <span class="cal-legend-item"><span class="cal-chip cal-chip-confirmed" aria-hidden="true"></span> Confirmed</span>
+      <span class="cal-legend-item"><span class="cal-chip cal-chip-checked_in" aria-hidden="true"></span> In house</span>
+      <span class="cal-legend-item"><span class="cal-chip cal-chip-checked_out" aria-hidden="true"></span> Departed</span>
+    </div>
+    <div data-cal-grid aria-live="polite"></div>
+  </div>
+</section>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/hotel-data.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("receptionist");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  "use strict";
+  var grid = document.querySelector("[data-cal-grid]");
+  var monthInput = document.getElementById("cal-month");
+  var titleEl = document.querySelector("[data-cal-title]");
+
+  /* Verified GET /api/admin/bookings/calendar/?year&month →
+     { year, month, start_date, end_date,
+       days: { "YYYY-MM-DD": [ { booking_id, booking_reference, room_number,
+               room_type_name, guest_name, status, check_in, check_out } ] } }
+     The backend derives occupancy from BookingRoom assignments, so cancelled,
+     expired and no-show bookings never appear and the checkout day is free. */
+  var current = null;          // last payload, used by the date modal
+  var view = { year: 0, month: 0 };
+
+  var WEEKDAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+  function pad(n){ return (n < 10 ? "0" : "") + n; }
+  function monthValue(y, m){ return y + "-" + pad(m); }
+  function monthLabel(y, m){
+    return new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" })
+      .format(new Date(y, m - 1, 1));
+  }
+
+  function loading(){
+    grid.innerHTML = '<div class="loading-block"><div class="spinner" role="status"></div></div>';
+  }
+  function errorState(message){
+    grid.innerHTML = '<div class="empty-state"><span data-icon="alertTriangle"></span>' +
+      '<h3>The calendar couldn\'t be loaded</h3><p>' + JONE.esc(message) + '</p></div>';
+    JONE.icons.inject(grid);
+  }
+
+  /* One compact cell per date: the room NUMBERS occupied that night, shown as
+     chips. Room numbers (not guest names) are what staff scan for; the names
+     live one tap away in the date modal. */
+  function cellHTML(dateISO, entries, inMonth, isToday){
+    var day = Number(dateISO.slice(8, 10));
+    /* In the mobile day-list there are no column headers, so each row carries
+       its own weekday. It is hidden in the desktop grid by CSS. */
+    var weekday = new Intl.DateTimeFormat("en-GB", { weekday: "short" })
+      .format(new Date(dateISO + "T00:00:00"));
+    var rooms = entries.map(function(e){
+      return '<span class="cal-chip cal-chip-' + JONE.esc(String(e.status || "").toLowerCase()) + '" ' +
+        'title="' + JONE.esc(e.room_number + " · " + e.guest_name) + '">' +
+        JONE.esc(e.room_number) + "</span>";
+    }).join("");
+    var cls = "cal-cell" + (inMonth ? "" : " is-outside") + (isToday ? " is-today" : "") +
+      (entries.length ? " has-rooms" : "");
+    return '<button type="button" class="' + cls + '" data-cal-date="' + JONE.esc(dateISO) + '"' +
+      (entries.length ? "" : " disabled") +
+      ' aria-label="' + JONE.esc(dateISO) + ", " + entries.length + ' room(s) occupied">' +
+      '<span class="cal-daynum">' + day +
+        '<span class="cal-weekday">' + JONE.esc(weekday) + "</span></span>" +
+      (entries.length
+        ? '<span class="cal-rooms">' + rooms + "</span>" +
+          '<span class="cal-count">' + entries.length + " room" + (entries.length === 1 ? "" : "s") + "</span>"
+        : '<span class="cal-empty">Free</span>') +
+      "</button>";
+  }
+
+  function render(payload){
+    current = payload;
+    var year = payload.year, month = payload.month;
+    titleEl.textContent = "Occupancy — " + monthLabel(year, month);
+    monthInput.value = monthValue(year, month);
+
+    var first = new Date(year, month - 1, 1);
+    var daysInMonth = new Date(year, month, 0).getDate();
+    /* Monday-first grid: JS getDay() is 0=Sunday. */
+    var lead = (first.getDay() + 6) % 7;
+    var todayISO = JONE.hotelTodayISO(0);
+
+    var cells = "";
+    var i;
+    for (i = 0; i < lead; i++) cells += '<div class="cal-cell is-blank" aria-hidden="true"></div>';
+    for (i = 1; i <= daysInMonth; i++) {
+      var iso = year + "-" + pad(month) + "-" + pad(i);
+      cells += cellHTML(iso, payload.days[iso] || [], true, iso === todayISO);
+    }
+
+    grid.innerHTML =
+      '<div class="cal-grid" role="grid">' +
+        '<div class="cal-weekdays" role="row">' +
+          WEEKDAYS.map(function(d){ return '<span role="columnheader">' + d + "</span>"; }).join("") +
+        "</div>" +
+        '<div class="cal-days">' + cells + "</div>" +
+      "</div>";
+    JONE.icons.inject(grid);
+  }
+
+  async function load(year, month){
+    view = { year: year, month: month };
+    loading();
+    try {
+      var res = await window.API.getOccupancyCalendar({ year: year, month: month });
+      render((res && res.data) || { year: year, month: month, days: {} });
+    } catch (err) {
+      errorState((err && err.message) || "Please try again in a moment.");
+    }
+  }
+
+  /* Date modal: every room occupied on that night with its guest, booking
+     reference, status and stay dates — a direct link to each booking. */
+  grid.addEventListener("click", function(e){
+    var cell = e.target.closest && e.target.closest("[data-cal-date]");
+    if (!cell || cell.disabled || !current) return;
+    var iso = cell.getAttribute("data-cal-date");
+    var entries = (current.days && current.days[iso]) || [];
+    if (!entries.length) return;
+    var rows = entries.map(function(en){
+      return "<tr>" +
+        '<td data-label="Room" class="cell-nowrap"><strong>' + JONE.esc(en.room_number) + "</strong>" +
+          '<div class="caption">' + JONE.esc(en.room_type_name || "") + "</div></td>" +
+        '<td data-label="Guest">' + JONE.esc(en.guest_name || "—") + "</td>" +
+        '<td data-label="Booking" class="cell-nowrap"><a href="booking-details.html?ref=' +
+          encodeURIComponent(en.booking_reference) + '">' + JONE.esc(en.booking_reference) + "</a></td>" +
+        '<td data-label="Stay" class="cell-nowrap">' + JONE.esc(JONE.formatDate(en.check_in, "mid")) + " → " +
+          JONE.esc(JONE.formatDate(en.check_out, "mid")) + "</td>" +
+        '<td data-label="Status">' + JONE.dashboard.statusPill(en.status) + "</td>" +
+      "</tr>";
+    }).join("");
+    JONE.dashboard.openPanel(
+      JONE.formatDate(iso) + " · " + entries.length + " room" + (entries.length === 1 ? "" : "s") + " occupied",
+      '<div class="table-wrap"><table class="table table-cal-day"><thead><tr>' +
+        "<th>Room</th><th>Guest</th><th>Booking</th><th>Stay</th><th>Status</th>" +
+        "</tr></thead><tbody>" + rows + "</tbody></table></div>",
+      '<button class="btn btn-sm btn-ghost" data-cal-close>Close</button>',
+      "modal-lg"
+    );
+    var close = document.querySelector("[data-cal-close]");
+    if (close) close.addEventListener("click", JONE.dashboard.closePanel);
+  });
+
+  function shift(delta){
+    var m = view.month + delta, y = view.year;
+    if (m < 1) { m = 12; y -= 1; }
+    if (m > 12) { m = 1; y += 1; }
+    load(y, m);
+  }
+  document.querySelector("[data-cal-prev]").addEventListener("click", function(){ shift(-1); });
+  document.querySelector("[data-cal-next]").addEventListener("click", function(){ shift(1); });
+  document.querySelector("[data-cal-today]").addEventListener("click", function(){
+    var t = JONE.hotelTodayISO(0);
+    load(Number(t.slice(0, 4)), Number(t.slice(5, 7)));
+  });
+  monthInput.addEventListener("change", function(){
+    var v = monthInput.value;
+    if (!/^\d{4}-\d{2}$/.test(v)) return;
+    load(Number(v.slice(0, 4)), Number(v.slice(5, 7)));
+  });
+
+  /* Start on the hotel's current month (its timezone, not the browser's). */
+  var started = false;
+  function start(){
+    if (started) return;
+    started = true;
+    var t = JONE.hotelTodayISO(0);
+    load(Number(t.slice(0, 4)), Number(t.slice(5, 7)));
+  }
+  document.addEventListener("jone:hotel", start);
+  if (JONE.hotelTimezone) start(); else setTimeout(start, 1500);
+})();
+
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

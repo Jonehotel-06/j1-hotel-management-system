@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Guest Requests | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,.2);"><span data-icon="logOut" data-size="16"></span> Sign out</button></div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title" data-dash-title><h1>Guest requests</h1><p>Route, progress, and document guest needs without losing the operational trail.</p></div></div>
+      <div class="dash-topbar-right"><div class="dash-topbar-actions" data-topbar-actions></div><button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false"><span class="icon-moon" data-icon="moon" data-size="18"></span><span class="icon-sun" data-icon="sun" data-size="18"></span></button></div>
+    </div>
+    <main class="dash-content">
+      <section class="panel">
+        <div class="panel-head"><h2>Request queue</h2><div class="panel-actions"><button class="btn btn-sm" type="button" data-sr-new><span data-icon="plus" data-size="15"></span> New request</button></div></div>
+        <div class="filter-bar">
+          <div class="field"><label class="field-label" for="sr-search">Search</label><input class="input" id="sr-search" placeholder="Reference, guest, room, summary"></div>
+          <div class="field"><label class="field-label" for="sr-status">Status</label><select class="select" id="sr-status"><option value="">All statuses</option><option value="OPEN">Open</option><option value="ACKNOWLEDGED">Acknowledged</option><option value="IN_PROGRESS">In progress</option><option value="ESCALATED">Escalated</option><option value="RESOLVED">Resolved</option><option value="CLOSED">Closed</option><option value="CANCELLED">Cancelled</option></select></div>
+          <div class="field"><label class="field-label" for="sr-priority">Priority</label><select class="select" id="sr-priority"><option value="">All priorities</option><option value="URGENT">Urgent</option><option value="HIGH">High</option><option value="NORMAL">Normal</option><option value="LOW">Low</option></select></div>
+          <div class="field"><label class="field-label" for="sr-team">Team</label><select class="select" id="sr-team"><option value="">All teams</option><option value="FRONT_DESK">Front desk</option><option value="HOUSEKEEPING">Housekeeping</option><option value="MAINTENANCE">Maintenance</option><option value="FOOD_BEVERAGE">Food &amp; beverage</option><option value="MANAGEMENT">Management</option></select></div>
+          <div class="field"><button class="btn btn-sm btn-outline" id="sr-apply" type="button">Apply</button></div>
+        </div>
+        <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Guest service requests, scroll sideways to see every column"><table class="table"><thead><tr><th>Request</th><th>Guest / room</th><th>Type</th><th class="hide-sm">Owner</th><th class="hide-sm">Due</th><th>Status</th><th></th></tr></thead><tbody data-sr-rows></tbody></table></div><div class="pagination" data-sr-pagination></div></div>
+      </section>
+    </main>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script><script src="../js/config.js?v=1.1.6"></script><script src="../js/utils.js?v=1.1.6"></script><script src="../js/icons.js?v=1.1.6"></script><script src="../js/api.js?v=1.1.6"></script><script src="../js/theme.js?v=1.1.6"></script><script src="../js/ui.js?v=1.1.6"></script><script src="../js/auth.js?v=1.1.6"></script><script src="../js/navigation.js?v=1.1.6"></script><script src="../js/dashboard.js?v=1.1.6"></script><script src="../js/operations.js?v=1.1.6"></script>
+<script>
+JONE.ui.initChrome();
+var __serviceRequestsAllowed=JONE.dashboard.boot(["admin","manager","receptionist","housekeeping","maintenance"]);
+document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
+(function(){
+  if(!__serviceRequestsAllowed)return;
+  var DATA=JONE.dashboard.DATA, OPS=JONE.operations, rowsEl=document.querySelector("[data-sr-rows]"), pager=document.querySelector("[data-sr-pagination]");
+  var state={page:1};
+  var statusNext={OPEN:["ACKNOWLEDGED","IN_PROGRESS","ESCALATED","CANCELLED"],ACKNOWLEDGED:["IN_PROGRESS","ESCALATED","CANCELLED"],IN_PROGRESS:["RESOLVED","ESCALATED"],ESCALATED:["ACKNOWLEDGED","IN_PROGRESS","RESOLVED","CANCELLED"],RESOLVED:["CLOSED","IN_PROGRESS"]};
+  function isDispatcher(){return window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager","receptionist"]);}
+  function isCreator(){return isDispatcher();}
+  function human(value){return OPS.label(value);}
+  function formatDue(value){return value?JONE.formatDateTime(value):"—";}
+  function filters(){var out={page:state.page,page_size:JONE.dashboard.pageSize()};[["search","sr-search"],["status","sr-status"],["priority","sr-priority"],["owner_team","sr-team"]].forEach(function(pair){var value=(document.getElementById(pair[1]).value||"").trim();if(value)out[pair[0]]=value;});return out;}
+  function statusButton(ref,target){return '<button class="btn btn-sm btn-outline" type="button" data-sr-status="'+JONE.esc(ref)+'" data-sr-target="'+JONE.esc(target)+'">'+JONE.esc(human(target))+'</button>';}
+  function actions(item){
+    var buttons='<button class="btn btn-sm btn-outline" type="button" data-sr-view="'+JONE.esc(item.reference)+'">View</button>';
+    if(!item.assigned_to_email&&item.status!=="CLOSED"&&item.status!=="CANCELLED")buttons+='<button class="btn btn-sm" type="button" data-sr-claim="'+JONE.esc(item.reference)+'">Claim</button>';
+    if(isDispatcher()&&item.status!=="CLOSED"&&item.status!=="CANCELLED")buttons+='<button class="btn btn-sm btn-outline" type="button" data-sr-assign="'+JONE.esc(item.reference)+'">Dispatch</button>';
+    (statusNext[item.status]||[]).forEach(function(target){buttons+=statusButton(item.reference,target);});
+    if(item.category==="HOUSEKEEPING"&&!item.housekeeping_task_reference)buttons+='<button class="btn btn-sm btn-outline" type="button" data-sr-route-hk="'+JONE.esc(item.reference)+'">Housekeeping task</button>';
+    if(item.category==="MAINTENANCE"&&!item.maintenance_work_order_reference)buttons+='<button class="btn btn-sm btn-outline" type="button" data-sr-route-maint="'+JONE.esc(item.reference)+'">Work order</button>';
+    return '<div class="row-actions">'+buttons+'</div>';
+  }
+  function render(items){
+    if(!items.length){DATA.empty(rowsEl,"message","No guest requests found","Adjust the filters or create a new request.",7);return;}
+    rowsEl.innerHTML=items.map(function(item){var guest=(item.guest_name||"Guest")+(item.room_number?" · Room "+item.room_number:"");var owner=human(item.owner_team)+(item.assigned_to_name?" · "+item.assigned_to_name:"");return '<tr><td><strong>'+JONE.esc(item.reference)+'</strong><br><small>'+JONE.esc(item.summary)+'</small></td><td>'+JONE.esc(guest)+'</td><td>'+JONE.esc(human(item.category))+'<br><small>'+JONE.dashboard.statusPill(item.priority)+'</small></td><td class="hide-sm">'+JONE.esc(owner)+'</td><td class="hide-sm cell-nowrap">'+JONE.esc(formatDue(item.due_at))+'</td><td>'+JONE.dashboard.statusPill(item.status)+'</td><td>'+actions(item)+'</td></tr>';}).join("");JONE.icons.inject(rowsEl);
+  }
+  async function load(page){if(page!=null)state.page=Math.max(1,page);DATA.loading(rowsEl);try{var response=await window.API.list("serviceRequests",filters()),items=OPS.listItems(response);render(items);JONE.dashboard.renderPagination(pager,items.length?response.pagination:null,{onPage:load});}catch(err){DATA.error(rowsEl,"Guest requests couldn't be loaded",(err&&err.message)||"Please try again in a moment.",7);}}
+  function guestPicker(){return OPS.searchPicker({name:"guest_id",label:"Guest",required:true,resource:"guests",placeholder:"Search guest name, email, or phone",display:function(row){return (row.full_name||"Guest")+" · "+(row.email||"");}});}
+  function roomPicker(){return OPS.searchPicker({name:"room_id",label:"Room",resource:"rooms",placeholder:"Search room number",display:function(row){return "Room "+(row.room_number||row.id)+(row.room_type_name?" · "+row.room_type_name:"");}});}
+  function assigneePicker(){return OPS.searchPicker({name:"assigned_to_id",label:"Assignee",resource:"staffDirectory",placeholder:"Search staff name or email",display:function(row){return (row.full_name||row.email)+" · "+human(row.role);}});}
+  async function createRequest(){
+    if(!isCreator()){JONE.ui.toast("Your role can progress assigned requests; dispatch creates requests.","info");return;}
+    var fields=[guestPicker(),roomPicker(),{name:"stay_reference",label:"Stay reference",type:"text",placeholder:"Optional; must belong to the selected guest"},{name:"category",label:"Request type",type:"select",required:true,options:[{value:"HOUSEKEEPING",label:"Housekeeping"},{value:"MAINTENANCE",label:"Maintenance"},{value:"ROOM_SERVICE",label:"Room service"},{value:"AMENITY",label:"Amenity / supplies"},{value:"TRANSPORT",label:"Transport"},{value:"BILLING",label:"Billing / folio"},{value:"GENERAL",label:"General assistance"}]},{name:"priority",label:"Priority",type:"select",required:true,options:[{value:"NORMAL",label:"Normal"},{value:"HIGH",label:"High"},{value:"URGENT",label:"Urgent"},{value:"LOW",label:"Low"}]},{name:"channel",label:"Channel",type:"select",required:true,options:[{value:"FRONT_DESK",label:"Front desk"},{value:"PHONE",label:"Phone"},{value:"IN_PERSON",label:"In person"},{value:"STAFF",label:"Staff created"}]},{name:"owner_team",label:"Route to team",type:"select",options:[{value:"",label:"Auto-route from request type"},{value:"FRONT_DESK",label:"Front desk"},{value:"HOUSEKEEPING",label:"Housekeeping"},{value:"MAINTENANCE",label:"Maintenance"},{value:"FOOD_BEVERAGE",label:"Food & beverage"},{value:"MANAGEMENT",label:"Management"}]},assigneePicker(),{name:"due_at",label:"Due by",type:"datetime-local",help:"Optional. The server applies the priority SLA when blank."},{name:"summary",label:"Summary",type:"text",required:true,placeholder:"Concise guest need"},{name:"detail",label:"Details",type:"textarea",rows:4,placeholder:"Helpful operational context"}];
+    var result=await JONE.dashboard.formModal({title:"Create guest request",submitText:"Create request",wide:true,fields:fields,values:{priority:"NORMAL",channel:"FRONT_DESK"},onSubmit:async function(values){values=OPS.omitEmpty(values);values.idempotency_key=OPS.newIdempotencyKey("guest-request");await window.API.create("serviceRequests",values);return{message:"Guest request created."};}});if(result){JONE.ui.toast("Guest request created.","success");load(1);}
+  }
+  async function dispatch(reference){var result=await JONE.dashboard.formModal({title:"Dispatch "+reference,submitText:"Save dispatch",wide:true,fields:[assigneePicker(),{name:"owner_team",label:"Owner team",type:"select",options:[{value:"",label:"Keep current team"},{value:"FRONT_DESK",label:"Front desk"},{value:"HOUSEKEEPING",label:"Housekeeping"},{value:"MAINTENANCE",label:"Maintenance"},{value:"FOOD_BEVERAGE",label:"Food & beverage"},{value:"MANAGEMENT",label:"Management"}]},{name:"due_at",label:"Due by",type:"datetime-local"},{name:"note",label:"Dispatch note",type:"textarea",rows:3}],onSubmit:async function(values){await window.API.resourceAction("serviceRequests",reference,"assign",OPS.omitEmpty(values));return{message:"Dispatch recorded."};}});if(result){JONE.ui.toast("Dispatch recorded.","success");load();}}
+  async function changeStatus(reference,target){var result=await JONE.dashboard.formModal({title:"Update request status",submitText:"Save status",fields:[{name:"note",label:"Update note",type:"textarea",rows:3,placeholder:"Optional update for the guest and team"},{name:"guest_visible",label:"Show this update to the guest",type:"checkbox",help:"Only guest-visible updates appear in the verified guest portal."}],values:{guest_visible:true},onSubmit:async function(values){await window.API.resourceAction("serviceRequests",reference,"status",{status:target,note:values.note||"",guest_visible:values.guest_visible});return{message:"Status updated."};}});if(result){JONE.ui.toast("Request status updated.","success");load();}}
+  async function claim(reference){try{await window.API.resourceAction("serviceRequests",reference,"claim",{});JONE.ui.toast("Request claimed.","success");load();}catch(err){JONE.ui.toast((err&&err.message)||"The request could not be claimed.","error");}}
+  async function route(reference,kind){var action=kind==="housekeeping"?"housekeeping-task":"maintenance-work-order";try{var response=await window.API.resourceAction("serviceRequests",reference,action,{}),data=response.data||{};JONE.ui.toast((kind==="housekeeping"?"Housekeeping task ":"Work order ")+(data.task_reference||data.work_order_reference||"linked")+" linked.","success");load();}catch(err){JONE.ui.toast((err&&err.message)||"The linked operation could not be created.","error");}}
+  async function view(reference){var body=JONE.el("div",{class:"loading-skeleton",textContent:"Loading request…"});var comment=JONE.el("button",{class:"btn btn-sm btn-outline",type:"button",textContent:"Add comment"});var footer=JONE.el("div",{},comment);JONE.ui.modal.open({title:"Guest request "+reference,body:body,size:"modal-lg",footer:footer});comment.addEventListener("click",function(){commentRequest(reference);});try{var response=await window.API.getOne("serviceRequests",reference),item=response.data||{},events=(item.events||[]).map(function(event){return '<li><strong>'+JONE.esc(human(event.type))+'</strong> · '+JONE.esc(event.created_at?JONE.formatDateTime(event.created_at):"—")+(event.actor_email?" · "+JONE.esc(event.actor_email):"")+(event.message?'<br><span class="caption">'+JONE.esc(event.message)+'</span>':"")+'</li>';}).join("")||"<li>No timeline events recorded.</li>";body.innerHTML='<dl class="profile-grid"><div><dt>Guest</dt><dd>'+JONE.esc(item.guest_name||"—")+'</dd></div><div><dt>Room</dt><dd>'+JONE.esc(item.room_number||"—")+'</dd></div><div><dt>Status</dt><dd>'+JONE.dashboard.statusPill(item.status)+'</dd></div><div><dt>Priority</dt><dd>'+JONE.dashboard.statusPill(item.priority)+'</dd></div></dl><h4 style="margin:1rem 0 .45rem;">Details</h4><p>'+JONE.esc(item.detail||"No additional details.")+'</p><h4 style="margin:1rem 0 .45rem;">Timeline</h4><ul>'+events+'</ul>';JONE.icons.inject(body);}catch(err){body.innerHTML='<div class="empty-state"><h3>Request unavailable</h3><p>'+JONE.esc((err&&err.message)||"Please try again.")+'</p></div>';}}
+  async function commentRequest(reference){JONE.ui.modal.close();var result=await JONE.dashboard.formModal({title:"Add request comment",submitText:"Add comment",fields:[{name:"message",label:"Comment",type:"textarea",rows:4,required:true},{name:"guest_visible",label:"Show this comment to the guest",type:"checkbox"}],onSubmit:async function(values){await window.API.resourceAction("serviceRequests",reference,"comments",values);return{message:"Comment recorded."};}});if(result){JONE.ui.toast("Comment recorded.","success");view(reference);load();}}
+  document.querySelector("[data-sr-new]").addEventListener("click",createRequest);document.getElementById("sr-apply").addEventListener("click",function(){load(1);});document.getElementById("sr-search").addEventListener("input",JONE.debounce(function(){load(1);},300));["sr-status","sr-priority","sr-team"].forEach(function(id){document.getElementById(id).addEventListener("change",function(){load(1);});});
+  rowsEl.addEventListener("click",function(event){var target=event.target.closest("button");if(!target)return;if(target.dataset.srView)view(target.dataset.srView);else if(target.dataset.srClaim)claim(target.dataset.srClaim);else if(target.dataset.srAssign)dispatch(target.dataset.srAssign);else if(target.dataset.srStatus)changeStatus(target.dataset.srStatus,target.dataset.srTarget);else if(target.dataset.srRouteHk)route(target.dataset.srRouteHk,"housekeeping");else if(target.dataset.srRouteMaint)route(target.dataset.srRouteMaint,"maintenance");});
+  if(!isCreator())document.querySelector("[data-sr-new]").hidden=true;load(1);
+})();
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script><script src="../js/version.js?v=1.1.6"></script><script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>

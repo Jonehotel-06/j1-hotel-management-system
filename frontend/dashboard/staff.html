@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Staff | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Staff management</h1>
+          <p>Accounts, roles and access</p>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </div>
+    <div class="dash-content">
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Staff accounts</h2>
+    <div class="panel-actions">
+      <button class="btn btn-sm" data-new type="button"><span data-icon="plus" data-size="14"></span> New staff member</button>
+    </div>
+  </div>
+  <div class="filter-bar">
+    <div class="field"><label class="field-label" for="q">Search</label><input class="input" id="q" placeholder="Name, email, phone"></div>
+    <div class="field"><label class="field-label" for="role">Role</label><select class="select" id="role"><option value="">All staff</option><option value="ADMIN">Administrators</option><option value="MANAGER">Managers</option><option value="RECEPTIONIST">Receptionists</option><option value="CASHIER">Cashiers</option><option value="HOUSEKEEPING">Housekeeping</option><option value="MAINTENANCE">Maintenance</option><option value="INVENTORY_CLERK">Inventory clerks</option></select></div>
+    <div class="field"><label class="field-label" for="active">Status</label><select class="select" id="active"><option value="">All statuses</option><option value="true">Active</option><option value="false">Inactive</option></select></div>
+  </div>
+  <div class="panel-body no-pad">
+    <div class="table-wrap"><table class="table table-staff">
+      <colgroup>
+        <col style="width:38%"><col style="width:14%"><col style="width:12%">
+        <col style="width:16%"><col style="width:20%">
+      </colgroup>
+      <thead><tr>
+        <th scope="col">Staff</th><th scope="col">Role</th><th scope="col">Status</th>
+        <th scope="col">Last login</th><th scope="col">Actions</th>
+      </tr></thead>
+      <tbody data-rows></tbody>
+    </table></div>
+    <div class="pagination" data-pagination></div>
+  </div>
+</section>
+    </div>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.6"></script>
+<script src="../js/config.js?v=1.1.6"></script>
+<script src="../js/utils.js?v=1.1.6"></script>
+<script src="../js/icons.js?v=1.1.6"></script>
+<script src="../js/api.js?v=1.1.6"></script>
+<script src="../js/theme.js?v=1.1.6"></script>
+<script src="../js/ui.js?v=1.1.6"></script>
+<script src="../js/auth.js?v=1.1.6"></script>
+<script src="../js/navigation.js?v=1.1.6"></script>
+<script src="../js/dashboard.js?v=1.1.6"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("admin");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  "use strict";
+  var rows = document.querySelector("[data-rows]");
+  var q = document.getElementById("q");
+  var role = document.getElementById("role");
+  var active = document.getElementById("active");
+
+  /* Verified /api/admin/users/ row (AdminUserListSerializer):
+     { id, email, first_name, last_name, full_name, phone, role, is_active,
+       email_verified, profile_image_url, date_joined, last_login, is_staff }
+     Detail (GET /{id}/) adds the nested `profile` object.
+
+     Role enforcement is ADMIN-only on the backend (IsAdminRole) — this page is
+     booted with boot("admin"), and every write below is re-checked server-side,
+     so a tampered localStorage role changes nothing but what is visible. */
+  function esc(x){ return JONE.esc(x == null || x === "" ? "—" : String(x)); }
+
+  function render(list){
+    if(!list.length){
+      JONE.dashboard.DATA.empty(rows, "users", "No staff found", "Create an operational staff account.", 5);
+      return;
+    }
+    rows.innerHTML = list.map(function(u){
+      var name = u.full_name || [u.first_name, u.last_name].filter(Boolean).join(" ") || u.email || "—";
+      var pic = u.profile_image_url
+        ? '<img class="dash-avatar" src="' + JONE.esc(u.profile_image_url) + '" alt="" loading="lazy">'
+        : '<span class="dash-avatar">' + JONE.esc(JONE.initials(name)) + "</span>";
+      var contact = esc(u.email) + (u.phone ? " · " + esc(u.phone) : "");
+      var id = JONE.esc(u.id);
+      /* Every action keeps a REAL accessible name (aria-label) and, on narrow
+         screens, a visible text label too — the buttons must never depend on a
+         hover tooltip to be understood. */
+      function action(attr, icon, label){
+        return '<button class="btn btn-sm btn-ghost" ' + attr + '="' + id + '"' +
+          ' aria-label="' + JONE.esc(label + " — " + name) + '" title="' + JONE.esc(label) + '">' +
+          '<span data-icon="' + icon + '" data-size="13"></span>' +
+          '<span class="btn-label">' + JONE.esc(label) + "</span></button>";
+      }
+      return '<tr>' +
+        '<td data-label="Staff"><div class="staff-cell">' + pic +
+          '<span class="staff-cell-text"><strong title="' + JONE.esc(name) + '">' + esc(name) + "</strong>" +
+          '<small title="' + JONE.esc(contact) + '">' + contact + "</small></span></div></td>" +
+        '<td data-label="Role">' + JONE.esc(String(u.role || "").replace(/_/g, " ")) + "</td>" +
+        '<td data-label="Status">' + JONE.dashboard.statusPill(u.is_active ? "ACTIVE" : "INACTIVE") + "</td>" +
+        '<td data-label="Last login">' + esc(u.last_login ? JONE.formatDate(u.last_login, "mid") : "Never") + "</td>" +
+        '<td data-label="Actions"><div class="row-actions">' +
+          '<button class="btn btn-sm btn-outline" data-profile="' + id + '"' +
+            ' aria-label="View profile for ' + JONE.esc(name) + '" title="Profile">' +
+            '<span data-icon="user" data-size="13"></span><span class="btn-label">Profile</span></button>' +
+          action("data-edit", "edit", "Edit") +
+          (u.is_active
+            ? action("data-deactivate", "lock", "Deactivate")
+            : action("data-activate", "check", "Activate")) +
+        "</div></td>" +
+      "</tr>";
+    }).join("");
+    JONE.icons.inject(rows);
+  }
+
+  /* Server-driven paging: q/role/active are re-read on every request, so
+     paging keeps the active filters; any filter change restarts at page 1. */
+  var state = { page: 1 };
+  var pager = document.querySelector("[data-pagination]");
+  function renderPager(meta){ JONE.dashboard.renderPagination(pager, meta, { onPage: load }); }
+
+  async function load(page){
+    if (page != null) state.page = Math.max(1, page);
+    JONE.dashboard.DATA.loading(rows);
+    try {
+      var params = { page: state.page, page_size: JONE.dashboard.pageSize(), role__in: "ADMIN,MANAGER,RECEPTIONIST,CASHIER,HOUSEKEEPING,MAINTENANCE,INVENTORY_CLERK" };
+      if (q && q.value.trim()) params.search = q.value.trim();
+      if (role && role.value) params.role = role.value;
+      if (active && active.value !== "") params.is_active = active.value;
+      var res = await window.API.list("users", params);
+      var items = window.API.normalizeList(res.data, res.pagination).items || [];
+      render(items);
+      renderPager(items.length ? res.pagination : null);
+    } catch (err) {
+      JONE.dashboard.DATA.error(rows, "Staff could not be loaded",
+        (err && err.message) || "Please try again in a moment.", 5);
+    }
+  }
+  load(1);
+  [q, role, active].forEach(function(el){ if (el) el.addEventListener("change", function(){ load(1); }); });
+  if (q) q.addEventListener("input", JONE.debounce(function(){ load(1); }, 300));
+
+  /* ---------------------- Complete staff profile card ----------------------
+     GET /api/admin/users/staff/{id}/ — photo, name, email, phone, role,
+     status, date joined, last login, activity counts. No credentials are ever
+     returned (the serializer exposes nothing a password or token lives in). */
+  document.addEventListener("click", function(e){
+    var p = e.target.closest && e.target.closest("[data-profile]");
+    if (p) {
+      JONE.dashboard.staffProfileModal(p.getAttribute("data-profile"), {
+        canManage: true,
+        onChanged: load,
+      });
+      return;
+    }
+    var ed = e.target.closest && e.target.closest("[data-edit]");
+    if (ed) { openForm(ed.getAttribute("data-edit")); return; }
+    var de = e.target.closest && e.target.closest("[data-deactivate]");
+    if (de) { toggleActive(de.getAttribute("data-deactivate"), false); return; }
+    var ac = e.target.closest && e.target.closest("[data-activate]");
+    if (ac) { toggleActive(ac.getAttribute("data-activate"), true); return; }
+  });
+
+  async function toggleActive(id, next){
+    try {
+      await window.API.update("users", id, { is_active: next });
+      JONE.ui.toast(next ? "Account activated." : "Account deactivated.", "success");
+      load();
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "The account couldn't be updated.", "error");
+    }
+  }
+
+  var newBtn = document.querySelector("[data-new]");
+  if (newBtn) newBtn.addEventListener("click", function(){ openForm(null); });
+
+  async function openForm(id){
+    var u = null;
+    if (id) {
+      try { u = (await window.API.getOne("users", id)).data; }
+      catch (err) { JONE.ui.toast((err && err.message) || "Could not load this staff account.", "error"); return; }
+    }
+    var fields = [
+      { name: "first_name", label: "First name", type: "text", required: true },
+      { name: "last_name", label: "Last name", type: "text", required: true },
+      { name: "email", label: "Email", type: "email", required: true },
+      { name: "phone", label: "Phone", type: "tel" },
+      { name: "role", label: "Role", type: "select", required: true, options: [
+        { value: "ADMIN", label: "Administrator" },
+        { value: "MANAGER", label: "Manager" },
+        { value: "RECEPTIONIST", label: "Receptionist" },
+        { value: "CASHIER", label: "Cashier" },
+        { value: "HOUSEKEEPING", label: "Housekeeping" },
+        { value: "MAINTENANCE", label: "Maintenance" },
+        { value: "INVENTORY_CLERK", label: "Inventory clerk" },
+      ] },
+      { name: "is_active", label: "Active account", type: "checkbox" },
+      { name: "profile_image", label: "Profile photo", type: "imagefile",
+        currentUrl: u ? u.profile_image_url : null, removeName: "remove_profile_image", maxMB: 5 },
+    ];
+    if (!id) fields.push({ name: "password", label: "Temporary password", type: "password", required: true });
+
+    await JONE.dashboard.formModal({
+      title: id ? "Edit staff member" : "Create staff member",
+      fields: fields,
+      values: u || { role: "RECEPTIONIST", is_active: true },
+      multipart: true,
+      submitText: id ? "Save changes" : "Create account",
+      onSubmit: async function(values, formData){
+        if (id) await window.API.update("users", id, formData);
+        else await window.API.create("users", formData);
+        load();
+        JONE.ui.toast(id ? "Staff account updated." : "Staff account created.", "success");
+      }
+    });
+  }
+})();
+</script>
+<script src="../js/pwa.js?v=1.1.6"></script>
+<script src="../js/version.js?v=1.1.6"></script>
+<script src="../js/update-checker.js?v=1.1.6"></script>
+</body>
+</html>
