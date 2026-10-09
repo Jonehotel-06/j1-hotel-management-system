@@ -28,6 +28,7 @@ qr_public_urlpatterns = [
 
 portal_urlpatterns = [
     path("", views.PortalServiceRequestListCreateView.as_view(), name="portal-requests"),
+    path("catalog/", views.PortalServiceCatalogView.as_view(), name="portal-service-catalog"),
     path("<str:reference>/", views.PortalServiceRequestDetailView.as_view(), name="portal-request-detail"),
     path("<str:reference>/comments/", views.PortalServiceRequestCommentView.as_view(), name="portal-request-comments"),
     path("<str:reference>/cancel/", views.PortalServiceRequestCancelView.as_view(), name="portal-request-cancel"),

@@ -128,3 +128,31 @@ class RestaurantTableSessionConflictError(JOneAPIError):
     status_code = status.HTTP_409_CONFLICT
     default_detail = "The restaurant table session conflicts with current table/order state."
     default_code = "TABLE_SESSION_CONFLICT"
+
+
+class ServiceQRExpiredError(JOneAPIError):
+    """A printed service QR token has passed its validity window (distinct from invalid/revoked)."""
+
+    status_code = status.HTTP_410_GONE
+    default_detail = "This QR code has expired. Please ask the hotel team for a new one."
+    default_code = "QR_LINK_EXPIRED"
+
+
+class StaffSignInRestrictedError(JOneAPIError):
+    """Operational staff password was valid, but no Receptionist Desktop key was presented."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+    default_detail = (
+        "Staff sign-in is available only from the Receptionist Desktop. "
+        "Ask the front desk to sign you in, or contact an administrator."
+    )
+    default_code = "STAFF_SIGN_IN_RESTRICTED"
+
+
+
+class FaceVerificationFailedError(JOneAPIError):
+    """Clock-in/out refused because facial verification did not pass. No attendance is written."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    default_detail = "Facial verification did not pass, so attendance was not recorded."
+    default_code = "FACE_VERIFICATION_FAILED"

@@ -176,7 +176,8 @@
     try {
       const cred = getSessionCred();
       if (!cred || !cred.refresh) return false;
-      const res = await window.API.refreshTokenCall(cred.refresh);
+      const deskKey = receptionistDesktopKey();
+      const res = await window.API.refreshTokenCall(cred.refresh, deskKey ? { headers: { "X-JONE-Desktop-Key": deskKey } } : {});
       const tokens = (res.data && (res.data.tokens || res.data)) || {};
       const access = tokens.access || null;
       if (!access) return false;
@@ -227,8 +228,26 @@
     }
   }
 
+  /* Receptionist Desktop enrolment. The desk key is issued by an administrator
+     and kept in this browser only; the server stores just its digest. Staff
+     (other than management) can sign in only when this key is present. */
+  const DESKTOP_KEY_STORAGE = "jone.receptionistDesktopKey";
+  function receptionistDesktopKey() {
+    try { return localStorage.getItem(DESKTOP_KEY_STORAGE) || ""; } catch (_) { return ""; }
+  }
+  function setReceptionistDesktopKey(value) {
+    const key = String(value || "").trim();
+    try {
+      if (key) localStorage.setItem(DESKTOP_KEY_STORAGE, key);
+      else localStorage.removeItem(DESKTOP_KEY_STORAGE);
+    } catch (_) { return false; }
+    return true;
+  }
+
   async function login(email, password) {
-    const res = await window.API.login({ email: email, password: password });
+    const key = receptionistDesktopKey();
+    const opts = key ? { headers: { "X-JONE-Desktop-Key": key } } : {};
+    const res = await window.API.login({ email: email, password: password }, opts);
     storeSession(res.data);
     setAPITokenProvider();
     return res.data;
@@ -294,6 +313,7 @@
         location.href = next;
       } catch (err) {
         JONE.releaseGuard(btn);
+        if (err.code === "STAFF_SIGN_IN_RESTRICTED" && typeof opts.onRestricted === "function") opts.onRestricted();
         const msg = err.status === 401 ? "Incorrect email or password." : (err.message || "Sign-in failed. Please try again.");
         JONE.ui.toast(msg, "error");
         const errBox = form.querySelector("[data-form-error]");
@@ -306,6 +326,7 @@
     ROLES, state, login, logout, guard, hasRole, hasAnyRole, can,
     isAuthenticated, restore, refreshProfile, onUnauthorized,
     bindLoginForm, clearSession, refreshAccess, loadCapabilities,
+    receptionistDesktopKey, setReceptionistDesktopKey,
     hasCapability, hasAnyCapability,
     isStaffRole
   };

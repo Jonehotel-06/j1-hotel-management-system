@@ -84,3 +84,37 @@ class PortalSession(TimeStampedModel):
 
     def __str__(self):
         return f"Portal session for {self.email} issued {self.issued_at:%Y-%m-%d %H:%M}"
+
+
+class GuestPortalInvitation(TimeStampedModel):
+    """One automatic portal invitation per stay, created after a successful check-in.
+
+    The row is the idempotency key (unique stay) and links to the EmailLog that
+    recorded the real provider outcome, so the status shown to staff is never a
+    guess. The invitation carries no sign-in token: guests still sign in through
+    the existing one-time magic-link flow.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Queued"
+        SENT = "SENT", "Sent"
+        FAILED = "FAILED", "Not delivered"
+        NO_EMAIL = "NO_EMAIL", "No email address on file"
+
+    stay = models.OneToOneField("stays.Stay", on_delete=models.PROTECT, related_name="portal_invitation")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING, db_index=True)
+    # Needed to deliver or resend. Staff responses show only a masked form.
+    recipient_email = models.EmailField(blank=True, default="")
+    email_log = models.ForeignKey(
+        "notifications.EmailLog", null=True, blank=True, on_delete=models.SET_NULL, related_name="portal_invitations",
+    )
+    attempts = models.PositiveSmallIntegerField(default=0)
+    last_attempt_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_error_code = models.CharField(max_length=40, blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        indexes = [models.Index(fields=["status", "last_attempt_at"])]
+
+    def __str__(self):
+        return f"Portal invitation for stay {self.stay_id}: {self.status}"

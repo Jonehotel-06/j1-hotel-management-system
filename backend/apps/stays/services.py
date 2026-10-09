@@ -88,7 +88,19 @@ def _post_elapsed_accommodation_for_checkout(*, stay, actor):
 
 @transaction.atomic
 def ensure_stay_for_check_in(*, booking, assignments, actor):
-    """Create the one operational stay for a confirmed arrival, idempotently."""
+    """Create the one operational stay for a confirmed arrival, idempotently.
+
+    After the stay is in house, the guest-portal invitation is scheduled for
+    commit. Scheduling is idempotent and never affects the check-in itself.
+    """
+    stay = _ensure_stay_for_check_in(booking=booking, assignments=assignments, actor=actor)
+    from apps.portal.invitations import schedule_portal_invitation
+
+    schedule_portal_invitation(stay.pk)
+    return stay
+
+
+def _ensure_stay_for_check_in(*, booking, assignments, actor):
     checked_in_at = booking.checked_in_at or timezone.now()
     stay = Stay.objects.select_for_update().filter(booking=booking).first()
     if stay is None:

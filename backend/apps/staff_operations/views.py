@@ -13,6 +13,9 @@ from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
 
 from .models import AttendanceEvent, AttendanceRecord, LeaveRequest, LeaveRequestEvent, ShiftAssignment, ShiftAssignmentEvent, ShiftTemplate, StaffProfile
+from apps.core.exceptions import FaceVerificationFailedError
+from .services import face_service
+
 from .serializers import (
     AttendanceClockSerializer, AttendanceRecordDetailSerializer, AttendanceRecordListSerializer,
     LeaveCancelSerializer, LeaveRequestCreateSerializer, LeaveRequestDetailSerializer, LeaveRequestListSerializer,
@@ -222,6 +225,16 @@ class AttendanceClockView(APIView):
     permission_classes = [HasCapability]; required_capability = "attendance.clock"
     def post(self, request):
         serializer = AttendanceClockSerializer(data=request.data); serializer.is_valid(raise_exception=True); data = serializer.validated_data
+        probe = request.data.get("face_probe")
+        manual_reason = str(request.data.get("manual_override_reason") or "")
+        if face_service.face_verification_required() or probe is not None or manual_reason:
+            source_key = face_service.clock_source_key(staff=request.user, action=data["action"], raw_key=data["idempotency_key"])
+            outcome, passed = face_service.verify_for_clock(staff=request.user, actor=request.user, action=data["action"],
+                                                            source_key=source_key, probe=probe, manual_reason=manual_reason)
+            if not passed:
+                log_action(actor=request.user, action="ATTENDANCE_FACE_REFUSED", request=request,
+                           metadata={"action": data["action"], "outcome": outcome})
+                raise FaceVerificationFailedError(detail=f"Facial verification did not pass ({outcome}); attendance was not recorded.")
         record, created = clock_attendance(staff=request.user, action=data["action"], actor=request.user,
                                            idempotency_key=data["idempotency_key"], shift_reference=data.get("shift_reference", ""))
         log_action(actor=request.user, action=f"ATTENDANCE_{data['action']}", instance=record, request=request, metadata={"reference": record.reference, "created": created})

@@ -8,6 +8,7 @@ from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -16,11 +17,14 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
+from apps.audit.services import log_action
 from apps.core.emails import queue_email
+from apps.core.exceptions import StaffSignInRestrictedError
 from apps.core.responses import success_response
 from apps.core.serializers import EmptySerializer
 
 from .capabilities import capability_codes_for_user
+from .desktop_policy import presented_desktop_key, receptionist_desktop_for_key, sign_in_policy_applies
 from .models import User
 from .serializers import (
     JOneTokenObtainPairSerializer,
@@ -70,7 +74,12 @@ class LoginView(TokenObtainPairView):
     serializer_class = JOneTokenObtainPairSerializer
 
     def post(self, request, *args, **kwargs):
-        response = super().post(request, *args, **kwargs)
+        try:
+            response = super().post(request, *args, **kwargs)
+        except AuthenticationFailed:
+            # Log the refusal without the email, password, or any token.
+            logger.info("Sign-in refused: invalid credentials request_id=%s", getattr(request, "request_id", ""))
+            raise
         payload = {"user": response.data.get("user"), "tokens": {
             "access": response.data.get("access"), "refresh": response.data.get("refresh")}}
         return success_response(payload, message="Logged in successfully.")
@@ -79,11 +88,38 @@ class LoginView(TokenObtainPairView):
 @extend_schema(tags=["Auth"], summary="Exchange a refresh token for new tokens")
 class JOneTokenRefreshView(TokenRefreshView):
     def post(self, request, *args, **kwargs):
+        # Checked before simplejwt rotates/blacklists the refresh token, so a
+        # refused refresh leaves the session untouched. This closes the gap where
+        # a refresh token issued before the desk rule would otherwise keep
+        # operational staff signed in indefinitely from any device.
+        _refuse_staff_refresh_outside_desk(request)
         response = super().post(request, *args, **kwargs)
         tokens = {"access": response.data.get("access")}
         if response.data.get("refresh"):
             tokens["refresh"] = response.data["refresh"]
         return success_response({"tokens": tokens}, message="Token refreshed.")
+
+
+def _refuse_staff_refresh_outside_desk(request):
+    raw = request.data.get("refresh") if hasattr(request.data, "get") else None
+    if not isinstance(raw, str) or not raw:
+        return
+    try:
+        token = RefreshToken(raw)
+    except TokenError:
+        return  # simplejwt returns its standard 401 for malformed or expired tokens
+    user = User.objects.filter(pk=token.get("user_id")).first()
+    if user is None or not sign_in_policy_applies(user):
+        return
+    if receptionist_desktop_for_key(presented_desktop_key(request)) is not None:
+        return
+    logger.warning("Staff session refresh refused: user_id=%s role=%s reason=no_receptionist_desktop", user.pk, user.role)
+    log_action(
+        actor=user, action="STAFF_SIGN_IN_RESTRICTED", request=request,
+        metadata={"reason": "refresh_outside_receptionist_desktop", "role": user.role},
+        summary="Staff session refresh refused outside the Receptionist Desktop",
+    )
+    raise StaffSignInRestrictedError()
 
 
 @extend_schema(tags=["Auth"], request=None, summary="Log out (blacklist refresh token)")

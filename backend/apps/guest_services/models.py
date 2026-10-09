@@ -106,6 +106,14 @@ class ServiceRequest(TimeStampedModel):
         return f"{self.reference} · {self.summary}"
 
 
+def _default_service_qr_expiry():
+    """Expiry for a newly issued QR token (callable default keeps migrations and direct creates consistent)."""
+    from datetime import timedelta
+
+    hours = int(getattr(settings, "SERVICE_QR_LINK_TTL_HOURS", 720))
+    return timezone.now() + timedelta(hours=hours)
+
+
 class ServiceQRLink(TimeStampedModel):
     """Revocable bearer link for an in-room or table-side service request."""
 
@@ -125,6 +133,8 @@ class ServiceQRLink(TimeStampedModel):
     # only its SHA-256 digest. Links are disabled, never deleted, for auditability.
     token_hash = models.CharField(max_length=64, unique=True)
     is_active = models.BooleanField(default=True, db_index=True)
+    # Null (legacy/unknown) fails closed: a token without a valid expiry is refused.
+    expires_at = models.DateTimeField(null=True, blank=True, default=_default_service_qr_expiry, db_index=True)
     last_used_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,

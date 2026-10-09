@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Table layout fixture</title>
+  <link rel="stylesheet" href="../../css/main.css">
+  <link rel="stylesheet" href="../../css/dashboard.css">
+</head>
+<body style="padding:1rem;">
+  <h1>Ledger</h1>
+  <div class="table-wrap" tabindex="0" role="region" aria-label="Ledger">
+    <table class="table" id="ledger">
+      <thead><tr><th>Reference</th><th>Guest name</th><th>Room type</th><th>Check-in date</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>
+        <tr><td>BKG-20261009-7D56C384E9FB</td><td>Alhaji Mohammed Abubakar Ibrahim-Kanuri</td><td>Executive suite with garden view and extended balcony</td><td>2026-10-09</td><td>₦1,250,000.00</td><td>CHECKED IN</td><td><button class="btn btn-sm" type="button">View</button> <button class="btn btn-sm" type="button">Print</button></td></tr>
+        <tr><td>BKG-20261010-AA12BB34CC56</td><td>Ngozi Eze</td><td>Standard</td><td>2026-10-10</td><td>₦45,000.00</td><td>CONFIRMED</td><td><button class="btn btn-sm" type="button">View</button></td></tr>
+        <tr><td>BKG-20261011-0F1E2D3C4B5A</td><td>Yusuf</td><td>Deluxe twin</td><td>2026-10-11</td><td>₦987,654.32</td><td>PENDING</td><td><button class="btn btn-sm" type="button">View</button></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Wide register</h2>
+  <div class="table-wrap" tabindex="0" role="region" aria-label="Wide register">
+    <table class="table" id="wide">
+      <thead><tr><th>Reference</th><th>Date</th><th>Item name</th><th>Description</th><th>Qty</th><th>Unit price</th><th>Subtotal</th><th>Tax</th><th>Discount</th><th>Total</th><th>Paid</th><th>Balance due</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>INV-000000000001</td><td>2026-10-09</td><td>Bottled water, large</td><td>Chilled 1.5 litre bottle served at the lobby bar and restaurant with ice</td><td>12</td><td>₦1,500.00</td><td>₦18,000.00</td><td>₦1,350.00</td><td>₦0.00</td><td>₦19,350.00</td><td>₦19,350.00</td><td>₦0.00</td><td>PAID</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <script src="../../js/table-fit.js"></script>
+</body>
+</html>

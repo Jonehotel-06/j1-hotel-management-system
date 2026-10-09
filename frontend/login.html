@@ -51,6 +51,21 @@
         <div class="field-error" data-form-error style="display:none;color:var(--color-danger);margin-bottom:1rem;"></div>
         <button class="btn btn-block" type="submit">Sign in</button>
       </form>
+      <details id="desk-setup" style="margin-top:1.25rem;">
+        <summary class="caption" style="cursor:pointer;">Set up this Receptionist Desktop</summary>
+        <div style="margin-top:0.75rem;">
+          <p class="caption muted">Front desk staff can sign in only from an enrolled Receptionist Desktop. Enter the desktop key an administrator issued for this front desk workstation. The key is kept in this browser only.</p>
+          <div class="field" style="margin-top:0.75rem;">
+            <label class="field-label" for="desk-key">Receptionist Desktop key</label>
+            <input class="input" id="desk-key" name="desk-key" type="password" autocomplete="off" spellcheck="false">
+          </div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <button class="btn btn-ghost" type="button" id="desk-key-save">Save desktop key</button>
+            <button class="btn btn-ghost" type="button" id="desk-key-clear">Remove key</button>
+          </div>
+          <p class="caption" id="desk-key-status" role="status" style="margin-top:0.75rem;"></p>
+        </div>
+      </details>
       <p class="caption center" style="margin-top:1.5rem;">Guests can book and pay without creating an account.</p>
       <p class="caption center" style="margin-top:0.75rem;">
         <a href="index.html">&larr; Back to website</a>
@@ -77,8 +92,34 @@
     window.Auth.restore();
     location.replace("dashboard/index.html");
   } else {
-    window.Auth.bindLoginForm("#login-form");
+    window.Auth.bindLoginForm("#login-form", {
+      onRestricted: function () {
+        var setup = document.getElementById("desk-setup");
+        if (setup) setup.open = true;
+      }
+    });
   }
+  (function () {
+    var status = document.getElementById("desk-key-status");
+    var input = document.getElementById("desk-key");
+    function say(text) { if (status) status.textContent = text; }
+    document.getElementById("desk-key-save").addEventListener("click", function () {
+      var value = (input.value || "").trim();
+      if (!value) { say("Enter the desktop key first."); return; }
+      if (window.Auth.setReceptionistDesktopKey(value)) {
+        input.value = "";
+        say("Desktop key saved in this browser. You can now sign in as front desk staff.");
+      } else {
+        say("This browser does not allow saving the desktop key. Check your privacy settings.");
+      }
+    });
+    document.getElementById("desk-key-clear").addEventListener("click", function () {
+      window.Auth.setReceptionistDesktopKey("");
+      input.value = "";
+      say("Desktop key removed from this browser.");
+    });
+    if (window.Auth.receptionistDesktopKey()) say("A desktop key is saved in this browser.");
+  })();
 document.getElementById("pw-toggle").addEventListener("click", function () {
   var inp = document.getElementById("password");
   var show = inp.type === "password";

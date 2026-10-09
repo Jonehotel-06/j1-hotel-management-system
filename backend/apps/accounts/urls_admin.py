@@ -9,6 +9,7 @@ urlpatterns = [
     path("", views_admin.AdminUserListCreateView.as_view(), name="user-list"),
     path("terminals/", views_admin.WorkstationListCreateView.as_view(), name="workstation-list"),
     path("terminals/<int:pk>/", views_admin.WorkstationDetailView.as_view(), name="workstation-detail"),
+    path("terminals/<int:pk>/desktop-key/", views_admin.WorkstationDesktopKeyView.as_view(), name="workstation-desktop-key"),
     # Assignment-picker projection is capability-gated separately from the
     # administrator-only account management collection.
     path("directory/", views_admin.OperationalStaffDirectoryView.as_view(), name="operational-staff-directory"),

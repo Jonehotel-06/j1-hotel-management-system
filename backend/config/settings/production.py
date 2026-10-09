@@ -81,6 +81,14 @@ if _portal_frontend.scheme != "https" or _portal_frontend.hostname in {"localhos
     raise ImproperlyConfigured(
         "PORTAL_FRONTEND_URL (or FRONTEND_URL fallback) must be a public HTTPS URL in production."
     )
+# Printed service QR codes encode this origin; a non-HTTPS or local origin would
+# print codes that guests cannot open safely.
+SERVICE_QR_REQUIRE_HTTPS = True
+_service_qr_frontend = urlparse(SERVICE_QR_FRONTEND_URL)
+if _service_qr_frontend.scheme != "https" or _service_qr_frontend.hostname in {"localhost", "127.0.0.1", None}:
+    raise ImproperlyConfigured(
+        "SERVICE_QR_FRONTEND_URL (or FRONTEND_URL fallback) must be a public HTTPS URL in production."
+    )
 
 
 # --- Redis-backed cache (throttles, settings cache, hot public content) ------

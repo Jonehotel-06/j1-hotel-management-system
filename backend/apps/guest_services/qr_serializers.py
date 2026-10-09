@@ -6,14 +6,20 @@ from apps.guest_services.models import ServiceQRLink, ServiceRequest
 
 class ServiceQRLinkSerializer(serializers.ModelSerializer):
     room_number = serializers.CharField(source="room.room_number", read_only=True, allow_null=True)
+    is_expired = serializers.SerializerMethodField()
 
     class Meta:
         model = ServiceQRLink
         fields = [
             "reference", "target_type", "room", "room_number", "table_number", "label", "is_active",
-            "last_used_at", "created_at", "updated_at",
+            "expires_at", "is_expired", "last_used_at", "created_at", "updated_at",
         ]
-        read_only_fields = fields
+        read_only_fields = [f for f in fields if f != "is_expired"]
+
+    def get_is_expired(self, obj):
+        from django.utils import timezone
+
+        return obj.expires_at is None or obj.expires_at <= timezone.now()
 
 
 class ServiceQRLinkCreateSerializer(serializers.Serializer):

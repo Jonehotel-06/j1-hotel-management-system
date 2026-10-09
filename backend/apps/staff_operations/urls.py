@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import payroll_views, views
+from . import payroll_views, views, views_face
 
 app_name = "staff_operations"
 
@@ -14,6 +14,9 @@ urlpatterns = [
     path("shifts/<str:reference>/cancel/", views.ShiftAssignmentCancelView.as_view(), name="shift-cancel"),
     path("attendance/", views.AttendanceRecordListView.as_view(), name="attendance"),
     path("attendance/clock/", views.AttendanceClockView.as_view(), name="attendance-clock"),
+    path("face/enrollment/", views_face.FaceEnrollmentView.as_view(), name="face-enrollment"),
+    path("face/enrollments/", views_face.FaceEnrollmentQueueView.as_view(), name="face-enrollment-queue"),
+    path("face/enrollments/<int:pk>/<str:action>/", views_face.FaceEnrollmentActionView.as_view(), name="face-enrollment-action"),
     path("attendance/<str:reference>/", views.AttendanceRecordDetailView.as_view(), name="attendance-detail"),
     path("leave-requests/", views.LeaveRequestListCreateView.as_view(), name="leave-requests"),
     path("leave-requests/<str:reference>/", views.LeaveRequestDetailView.as_view(), name="leave-detail"),

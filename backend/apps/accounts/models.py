@@ -145,6 +145,12 @@ class Workstation(TimeStampedModel):
     location = models.CharField(max_length=120, blank=True, default="")
     is_active = models.BooleanField(default=True, db_index=True)
     last_seen_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Receptionist Desktop enrolment. Only a SHA-256 digest of the one-time
+    # desktop key is stored; the raw key is shown once when issued. A front
+    # desk workstation with a key is the only place operational staff (other
+    # than management) can sign in. See apps/accounts/desktop_policy.py.
+    sign_in_key_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    sign_in_key_issued_at = models.DateTimeField(null=True, blank=True)
     current_staff = models.ForeignKey(
         "accounts.User",
         null=True,

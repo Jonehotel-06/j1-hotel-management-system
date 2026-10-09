@@ -13,6 +13,7 @@ from apps.accounts.models import User
 from apps.audit.services import log_action
 from apps.bookings.models import Guest
 from apps.core.pagination import StandardPagination
+from apps.core.exceptions import ServiceQRExpiredError
 from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
 from apps.portal.authentication import PortalSessionAuthentication
@@ -52,6 +53,8 @@ from .services.qr_service import (
     revoke_service_qr_link,
     rotate_service_qr_link,
     service_qr_link_for_token,
+    service_qr_link_state,
+    STATE_EXPIRED,
 )
 
 
@@ -360,6 +363,34 @@ class _PortalServiceRequestBase(APIView):
 
 
 @extend_schema(tags=["Guest Portal · Requests"], summary="List service requests owned by the verified email")
+class PortalServiceCatalogView(_PortalServiceRequestBase):
+    """Services a verified guest may request, with the department each one routes to.
+
+    Authorization is the portal session alone; the list is the hotel's configured
+    PORTAL_ENABLED_SERVICE_CATEGORIES (default: all categories). Routing reuses the
+    same OwnerTeam mapping that places each request in a department queue.
+    """
+
+    def get(self, request):
+        from django.conf import settings as dj_settings
+
+        from .services.request_service import _DEFAULT_TEAM
+
+        enabled = set(getattr(dj_settings, "PORTAL_ENABLED_SERVICE_CATEGORIES", None) or ServiceRequest.Category.values)
+        services = []
+        for value, label in ServiceRequest.Category.choices:
+            if value not in enabled:
+                continue
+            team = _DEFAULT_TEAM.get(value, ServiceRequest.OwnerTeam.FRONT_DESK)
+            services.append({
+                "category": value,
+                "label": label,
+                "department": team,
+                "department_label": ServiceRequest.OwnerTeam(team).label,
+            })
+        return success_response({"services": services})
+
+
 class PortalServiceRequestListCreateView(_PortalServiceRequestBase):
     def get(self, request):
         queryset = _portal_base_queryset(request.portal_session.email)
@@ -550,8 +581,10 @@ class PublicServiceQRContextView(APIView):
         return super().get_throttles()
 
     def get(self, request):
-        link = service_qr_link_for_token(request.headers.get("X-Service-QR-Token", ""))
+        link, state = service_qr_link_state(request.headers.get("X-Service-QR-Token", ""))
         if link is None:
+            if state == STATE_EXPIRED:
+                raise ServiceQRExpiredError()
             raise NotFound("This hotel service link is not active.")
         room_target = link.target_type == ServiceQRLink.TargetType.ROOM
         location = link.room.room_number if room_target and link.room_id else link.table_number
@@ -588,8 +621,10 @@ class PublicServiceQRRequestView(APIView):
         serializer = ServiceQRRequestCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        link = service_qr_link_for_token(request.headers.get("X-Service-QR-Token", ""), for_update=True)
+        link, state = service_qr_link_state(request.headers.get("X-Service-QR-Token", ""), for_update=True)
         if link is None:
+            if state == STATE_EXPIRED:
+                raise ServiceQRExpiredError()
             raise NotFound("This hotel service link is not active.")
 
         guest = stay = room = None

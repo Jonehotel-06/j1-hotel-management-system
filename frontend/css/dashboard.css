@@ -706,8 +706,14 @@ body.drawer-open .dash-main { overflow: hidden; }
    OVERFLOW SAFETY — long values must wrap or clamp, never widen the page.
    Applies to every dashboard table, card and detail list.
    ========================================================================== */
-.table td, .table th { overflow-wrap: anywhere; word-break: break-word; }
-.table td a, .table td code { overflow-wrap: anywhere; }
+/* Root cause fixed here: `overflow-wrap:anywhere` / `word-break:break-word`
+   count every character as a legal break point, so the auto table layout
+   shrinks each column to roughly one glyph and short amounts, dates and
+   references split mid-token. `break-word` only breaks a token that cannot
+   fit its column at all, and never lowers the column's minimum width, so
+   ordinary values stay whole and long prose still wraps between words. */
+.table td, .table th { overflow-wrap: break-word; word-break: normal; }
+.table td a, .table td code { overflow-wrap: break-word; }
 
 /* --------------------- Identifier / date / action cells -------------------
    The blanket wrap-anywhere rule above is the overflow SAFETY net, but it
@@ -725,6 +731,20 @@ body.drawer-open .dash-main { overflow: hidden; }
   word-break: normal;
 }
 .table td.cell-nowrap a, .table td.cell-nowrap code { overflow-wrap: normal; }
+
+/* Auto-classified atomic columns (amounts, dates, references, statuses,
+   action clusters). js/table-fit.js adds .cell-fit from the column heading.
+   Desktop only: on phones the same rows restack as cards and must wrap. */
+@media (min-width: 721px) {
+  .table td.cell-fit, .table th.cell-fit { white-space: nowrap; overflow-wrap: normal; }
+}
+/* Phones: generic tables keep their columns and scroll horizontally inside
+   .table-wrap (a reference must never break mid-token). The card-restacked
+   .table-staff layout is excluded: its cells wrap inside each card. */
+@media (max-width: 720px) {
+  .table-wrap .table:not(.table-staff) td.cell-fit,
+  .table-wrap .table:not(.table-staff) th.cell-fit { white-space: nowrap; overflow-wrap: normal; }
+}
 /* Secondary caption line under a nowrap value (guest name under the
    reference) may still wrap gently — but never letter-by-letter. */
 .table td.cell-nowrap .caption,

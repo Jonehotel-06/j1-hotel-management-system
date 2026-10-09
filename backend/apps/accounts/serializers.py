@@ -1,5 +1,7 @@
 # apps/accounts/serializers.py
 """Account serializers. Never expose password hashes or role-equality tricks."""
+import logging
+
 from django.contrib.auth import password_validation
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_str
@@ -7,10 +9,15 @@ from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+from apps.audit.services import log_action
+from apps.core.exceptions import StaffSignInRestrictedError
 from apps.core.storage import absolute_media_url
 
 from .capabilities import capability_codes_for_user
+from .desktop_policy import presented_desktop_key, receptionist_desktop_for_key, sign_in_policy_applies
 from .models import User, Workstation
+
+logger = logging.getLogger("apps")
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -80,8 +87,47 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         data = super().validate(attrs)
+        request = self.context.get("request")
+        desktop = None
+        if sign_in_policy_applies(self.user):
+            # Enforced after the password check so the response reveals nothing
+            # about an account until its credentials are proven.
+            desktop = receptionist_desktop_for_key(presented_desktop_key(request))
+            if desktop is None:
+                log_staff_sign_in_rejected(self.user, request)
+                raise StaffSignInRestrictedError()
+        log_staff_sign_in(self.user, request, desktop)
         data["user"] = UserSerializer(self.user, context=self.context).data
         return data
+
+
+def log_staff_sign_in_rejected(user, request):
+    """Audit + log a refused staff sign-in. Never records the password or key."""
+    logger.warning("Staff sign-in refused: user_id=%s role=%s reason=no_receptionist_desktop", user.pk, user.role)
+    log_action(
+        actor=user, action="STAFF_SIGN_IN_RESTRICTED", request=request,
+        metadata={"reason": "no_receptionist_desktop", "role": user.role},
+        summary="Staff sign-in refused outside the Receptionist Desktop",
+    )
+
+
+def log_staff_sign_in(user, request, desktop):
+    """Record successful operational-staff sign-ins (exempt roles included)."""
+    if not getattr(user, "is_staff_member", False):
+        return
+    logger.info(
+        "Staff sign-in: user_id=%s role=%s desktop=%s",
+        user.pk, user.role, desktop.reference if desktop else "management-exempt",
+    )
+    log_action(
+        actor=user, action="STAFF_SIGN_IN", request=request,
+        metadata={
+            "role": user.role,
+            "desktop_reference": desktop.reference if desktop else "",
+            "policy": "receptionist_desktop" if desktop else "management_exempt",
+        },
+        summary="Staff signed in",
+    )
 
 
 class LogoutSerializer(serializers.Serializer):
@@ -267,14 +313,24 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
 class WorkstationSerializer(serializers.ModelSerializer):
     current_staff_email = serializers.CharField(source="current_staff.email", read_only=True, allow_null=True)
     current_staff_name = serializers.CharField(source="current_staff.full_name", read_only=True, allow_null=True)
+    # Whether a Receptionist Desktop key is currently issued. The key itself is
+    # never serialized; it is returned once from the create/rotate endpoints.
+    receptionist_key_configured = serializers.SerializerMethodField()
 
     class Meta:
         model = Workstation
         fields = [
             "id", "reference", "name", "department", "location", "is_active", "last_seen_at",
-            "current_staff_email", "current_staff_name", "created_at", "updated_at",
+            "current_staff_email", "current_staff_name", "receptionist_key_configured",
+            "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "reference", "last_seen_at", "current_staff_email", "current_staff_name", "created_at", "updated_at"]
+        read_only_fields = [
+            "id", "reference", "last_seen_at", "current_staff_email", "current_staff_name",
+            "receptionist_key_configured", "created_at", "updated_at",
+        ]
+
+    def get_receptionist_key_configured(self, obj):
+        return bool(obj.sign_in_key_hash)
 
 
 class AdminUserUpdateSerializer(serializers.ModelSerializer):

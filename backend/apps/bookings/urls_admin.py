@@ -1,6 +1,8 @@
 # apps/bookings/urls_admin.py
 from django.urls import path
 
+from apps.portal.views_admin import AdminBookingPortalInvitationView
+
 from . import views_admin
 
 app_name = "bookings_admin"
@@ -17,6 +19,7 @@ bookings_urlpatterns = [
     path("<str:lookup>/cancel/", views_admin.AdminBookingCancelView.as_view(), name="booking-cancel"),
     path("<str:lookup>/check-in/", views_admin.AdminBookingCheckInView.as_view(), name="booking-check-in"),
     path("<str:lookup>/check-out/", views_admin.AdminBookingCheckOutView.as_view(), name="booking-check-out"),
+    path("<str:lookup>/portal-invitation/", AdminBookingPortalInvitationView.as_view(), name="booking-portal-invitation"),
     path("<str:lookup>/no-show/", views_admin.AdminBookingNoShowView.as_view(), name="booking-no-show"),
     path("<str:lookup>/assign-room/", views_admin.AdminBookingAssignRoomView.as_view(), name="booking-assign-room"),
     path("<str:lookup>/reschedule/", views_admin.AdminBookingRescheduleView.as_view(), name="booking-reschedule"),

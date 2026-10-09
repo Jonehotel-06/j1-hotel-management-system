@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from apps.rooms.models import Room
 
-from ..models import ServiceQRLink
+from ..models import ServiceQRLink, _default_service_qr_expiry
 
 
 def _token_digest(token: str) -> str:
@@ -60,7 +60,7 @@ def create_service_qr_link(*, target_type, actor, room_id=None, table_number="",
         raise ValidationError({"target_type": "Target type must be ROOM or TABLE."})
 
     link = ServiceQRLink.objects.select_for_update().filter(target_key=target_key).first()
-    if link and link.is_active:
+    if link and link.is_active and link.expires_at and link.expires_at > timezone.now():
         raise ValidationError({"target_type": "An active QR link already exists for this location. Rotate it to reprint."})
 
     token = _new_token()
@@ -68,8 +68,9 @@ def create_service_qr_link(*, target_type, actor, room_id=None, table_number="",
         link.label = target_label
         link.token_hash = _token_digest(token)
         link.is_active = True
+        link.expires_at = _default_service_qr_expiry()
         link.updated_by = actor
-        link.save(update_fields=["label", "token_hash", "is_active", "updated_by", "updated_at"])
+        link.save(update_fields=["label", "token_hash", "is_active", "expires_at", "updated_by", "updated_at"])
         return link, token, False
 
     link = ServiceQRLink(
@@ -80,6 +81,7 @@ def create_service_qr_link(*, target_type, actor, room_id=None, table_number="",
         table_number=stored_table,
         label=target_label,
         token_hash=_token_digest(token),
+        expires_at=_default_service_qr_expiry(),
         created_by=actor,
         updated_by=actor,
     )
@@ -100,8 +102,9 @@ def rotate_service_qr_link(*, link, actor):
     token = _new_token()
     link.token_hash = _token_digest(token)
     link.is_active = True
+    link.expires_at = _default_service_qr_expiry()
     link.updated_by = actor
-    link.save(update_fields=["token_hash", "is_active", "updated_by", "updated_at"])
+    link.save(update_fields=["token_hash", "is_active", "expires_at", "updated_by", "updated_at"])
     return link, token
 
 
@@ -116,15 +119,39 @@ def revoke_service_qr_link(*, link, actor):
     return link
 
 
-def service_qr_link_for_token(token: str, *, for_update=False):
-    """Return an active link for a well-formed, unguessable raw bearer token."""
+STATE_ACTIVE = "active"
+STATE_INVALID = "invalid"
+STATE_REVOKED = "revoked"
+STATE_EXPIRED = "expired"
+
+
+def service_qr_link_state(token: str, *, for_update=False):
+    """Resolve a raw bearer token to (link, state).
+
+    state is STATE_ACTIVE only when the link is enabled and unexpired. Malformed,
+    unknown, revoked and expired tokens are distinguished only so the public page
+    can tell a guest to ask for a new code; the link is never returned unless active.
+    """
     token = str(token or "").strip()
     if not 32 <= len(token) <= 128:
-        return None
-    queryset = ServiceQRLink.objects.filter(token_hash=_token_digest(token), is_active=True)
+        return None, STATE_INVALID
+    queryset = ServiceQRLink.objects.filter(token_hash=_token_digest(token))
     if for_update:
         queryset = queryset.select_for_update()
-    return queryset.select_related("room").first()
+    link = queryset.select_related("room").first()
+    if link is None:
+        return None, STATE_INVALID
+    if not link.is_active:
+        return None, STATE_REVOKED
+    if link.expires_at is None or link.expires_at <= timezone.now():
+        return None, STATE_EXPIRED
+    return link, STATE_ACTIVE
+
+
+def service_qr_link_for_token(token: str, *, for_update=False):
+    """Return an active, unexpired link for a well-formed, unguessable raw bearer token."""
+    link, state = service_qr_link_state(token, for_update=for_update)
+    return link if state == STATE_ACTIVE else None
 
 
 def mark_service_qr_used(*, link):
@@ -133,7 +160,12 @@ def mark_service_qr_used(*, link):
 
 def public_service_url(token: str) -> str:
     base = (getattr(settings, "SERVICE_QR_FRONTEND_URL", "") or settings.FRONTEND_URL).rstrip("/")
-    return f"{base}/qr-service.html#token={token}"
+    url = f"{base}/qr-service.html#token={token}"
+    # Production enables SERVICE_QR_REQUIRE_HTTPS: a printed code that a phone
+    # cannot open safely is worse than no code.
+    if getattr(settings, "SERVICE_QR_REQUIRE_HTTPS", False) and not url.startswith("https://"):
+        raise ValidationError({"service_url": "Service QR codes require a public HTTPS frontend URL (SERVICE_QR_FRONTEND_URL)."})
+    return url
 
 
 def build_qr_svg(url: str) -> str:

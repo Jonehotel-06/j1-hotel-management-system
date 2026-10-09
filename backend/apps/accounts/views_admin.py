@@ -5,6 +5,7 @@ import logging
 from django.db.models import Count, Q
 from drf_spectacular.utils import extend_schema
 from rest_framework import filters, generics, status
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -15,6 +16,7 @@ from apps.core.pagination import StandardPagination
 from apps.core.permissions import CanViewStaffProfile, HasCapability, IsAdminRole
 from apps.core.responses import success_response
 
+from .desktop_policy import clear_desktop_key, issue_desktop_key
 from .models import User, Workstation
 from .serializers import (
     AdminStaffProfileSerializer,
@@ -99,15 +101,21 @@ class WorkstationListCreateView(APIView):
         serializer = WorkstationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         terminal = serializer.save(created_by=request.user, updated_by=request.user)
+        payload = WorkstationSerializer(terminal).data
+        message = "Workstation registered. Its reference is optional attribution, not a login credential."
+        if terminal.department == Workstation.Department.FRONT_DESK and terminal.is_active:
+            # The Receptionist Desktop key is shown once; only its digest is stored.
+            raw_key = issue_desktop_key(terminal)
+            terminal.save(update_fields=["sign_in_key_hash", "sign_in_key_issued_at", "updated_at"])
+            payload = WorkstationSerializer(terminal).data
+            payload["receptionist_desktop_key"] = raw_key
+            message = "Receptionist Desktop registered. Copy its key now; it will not be shown again."
         log_action(
             actor=request.user, action="WORKSTATION_REGISTERED", instance=terminal, request=request,
-            metadata={"reference": terminal.reference, "department": terminal.department},
+            metadata={"reference": terminal.reference, "department": terminal.department,
+                      "receptionist_key_issued": bool(payload.get("receptionist_desktop_key"))},
         )
-        return success_response(
-            WorkstationSerializer(terminal).data,
-            message="Workstation registered. Its reference is optional attribution, not a login credential.",
-            status=status.HTTP_201_CREATED,
-        )
+        return success_response(payload, message=message, status=status.HTTP_201_CREATED)
 
 
 class WorkstationDetailView(APIView):
@@ -122,11 +130,45 @@ class WorkstationDetailView(APIView):
         serializer = WorkstationSerializer(terminal, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         terminal = serializer.save(updated_by=request.user)
+        if terminal.department != Workstation.Department.FRONT_DESK and terminal.sign_in_key_hash:
+            # A non-reception workstation can never act as the Receptionist Desktop.
+            clear_desktop_key(terminal)
+            terminal.save(update_fields=["sign_in_key_hash", "sign_in_key_issued_at", "updated_at"])
         log_action(
             actor=request.user, action="WORKSTATION_UPDATED", instance=terminal, request=request,
             metadata={"reference": terminal.reference, "is_active": terminal.is_active},
         )
         return success_response(WorkstationSerializer(terminal).data, message="Workstation updated.")
+
+
+@extend_schema(tags=["Admin · Users"], summary="Issue a new Receptionist Desktop key (rotates the previous key)")
+class WorkstationDesktopKeyView(APIView):
+    """Rotate a front-desk workstation's key. The new key is returned exactly once."""
+
+    permission_classes = [HasCapability]
+    required_capability = "terminal.manage"
+
+    def post(self, request, pk):
+        terminal = Workstation.objects.filter(pk=pk).first()
+        if terminal is None:
+            raise NotFound("Workstation not found.")
+        if terminal.department != Workstation.Department.FRONT_DESK:
+            raise ValidationError({"department": "Only a FRONT_DESK workstation can be the Receptionist Desktop."})
+        if not terminal.is_active:
+            raise ValidationError({"is_active": "Activate this workstation before issuing its desktop key."})
+        raw_key = issue_desktop_key(terminal)
+        terminal.updated_by = request.user
+        terminal.save(update_fields=["sign_in_key_hash", "sign_in_key_issued_at", "updated_by", "updated_at"])
+        log_action(
+            actor=request.user, action="RECEPTIONIST_DESKTOP_KEY_ISSUED", instance=terminal, request=request,
+            metadata={"reference": terminal.reference},
+            summary="Receptionist Desktop key issued; any previous key was revoked",
+        )
+        payload = WorkstationSerializer(terminal).data
+        payload["receptionist_desktop_key"] = raw_key
+        return success_response(
+            payload, message="Receptionist Desktop key issued. Copy it now; it will not be shown again.",
+        )
 
 
 class AdminUserQuerysetMixin:

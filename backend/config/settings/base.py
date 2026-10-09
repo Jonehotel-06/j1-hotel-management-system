@@ -25,7 +25,8 @@ DEBUG = config("DJANGO_DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
 DJANGO_APPS = [
-    "django.contrib.admin",
+    # Restricted admin site (management roles only); see apps/accounts/admin_site.py.
+    "apps.accounts.apps.JOneAdminConfig",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
@@ -363,6 +364,7 @@ CORS_ALLOW_HEADERS = (
     "x-service-qr-token",
     "idempotency-key",
     "x-jone-terminal",
+    "x-jone-desktop-key",
     "x-request-id",
 )
 
@@ -376,6 +378,10 @@ PORTAL_FRONTEND_URL = (config("PORTAL_FRONTEND_URL", default="") or FRONTEND_URL
 # Printed service QR links are public frontend URLs; never point them at the API
 # origin unless the frontend is actually served there.
 SERVICE_QR_FRONTEND_URL = (config("SERVICE_QR_FRONTEND_URL", default="") or FRONTEND_URL).rstrip("/")
+# Validity of a printed service QR token. Expired or revoked tokens fail closed
+# with a distinct, guest-safe response; staff reissue with rotate.
+SERVICE_QR_REQUIRE_HTTPS = config("SERVICE_QR_REQUIRE_HTTPS", default=False, cast=bool)
+SERVICE_QR_LINK_TTL_HOURS = min(max(config("SERVICE_QR_LINK_TTL_HOURS", default=720, cast=int), 1), 8760)
 PAYMENT_CALLBACK_URL = (
     config("PAYMENT_CALLBACK_URL", default="") or f"{FRONTEND_URL}/payment-verify.html"
 )
@@ -384,6 +390,17 @@ PAYMENT_CALLBACK_URL = (
 # deferred until a deployment has an explicit compatible cookie/CSRF policy.
 PORTAL_CHALLENGE_MINUTES = config("PORTAL_CHALLENGE_MINUTES", default=15, cast=int)
 PORTAL_SESSION_HOURS = config("PORTAL_SESSION_HOURS", default=8, cast=int)
+# Minimum gap between staff resends of the automatic portal invitation.
+# Service categories a guest may request in the portal (comma-separated values from
+# ServiceRequest.Category). Empty means all categories.
+PORTAL_ENABLED_SERVICE_CATEGORIES = [v.strip().upper() for v in config("PORTAL_ENABLED_SERVICE_CATEGORIES", default="").split(",") if v.strip()]
+PORTAL_INVITATION_RESEND_COOLDOWN_MINUTES = config("PORTAL_INVITATION_RESEND_COOLDOWN_MINUTES", default=5, cast=int)
+# Facial verification for staff attendance. Enforcement is opt-in until the desk
+# capture UI is deployed; when a probe is sent it is always verified.
+STAFF_FACE_VERIFICATION_REQUIRED = config("STAFF_FACE_VERIFICATION_REQUIRED", default=False, cast=bool)
+FACE_MATCH_MAX_DISTANCE = config("FACE_MATCH_MAX_DISTANCE", default=0.5, cast=float)
+FACE_TEMPLATE_RETENTION_DAYS = config("FACE_TEMPLATE_RETENTION_DAYS", default=365, cast=int)
+FACE_ATTEMPT_RETENTION_DAYS = config("FACE_ATTEMPT_RETENTION_DAYS", default=365, cast=int)
 PORTAL_SESSION_TOUCH_MINUTES = config("PORTAL_SESSION_TOUCH_MINUTES", default=15, cast=int)
 PORTAL_CHALLENGES_PER_EMAIL_PER_HOUR = config("PORTAL_CHALLENGES_PER_EMAIL_PER_HOUR", default=5, cast=int)
 

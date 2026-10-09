@@ -252,3 +252,6 @@ from .payroll_models import (  # noqa: E402,F401
     PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment, PayrollStatutoryRuleEvent,
     PayrollStatutoryRuleSet, PayrollTaxIdentity, StaffCompensation,
 )
+
+# Facial-verification records live in their own module (descriptor-only, retention-bound).
+from .face_models import FaceTemplate, FaceVerificationAttempt  # noqa: E402,F401
