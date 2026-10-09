@@ -24,16 +24,14 @@
   // Django dev server used when running locally and nothing else is configured.
   var LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
 
-  // Deployed Django backend used when the frontend runs anywhere but localhost.
-  var PRODUCTION_API_BASE_URL = "https://j1-hotel-management-system-production.up.railway.app";
-
-  // Resolution order:
-  //   1. API_BASE_URL from runtime-config.js (if non-empty)
+  // Resolution order (no deployment host is ever hard-coded in this file):
+  //   1. API_BASE_URL from the deployment-owned runtime-config.js (if non-empty)
   //   2. Local dev server when running on localhost / 127.0.0.1 / file://
-  //   3. Production backend on Render
+  //   3. Same-origin "/api/..." requests (reverse proxy / single-host deployments)
+  // A static frontend hosted apart from the API must set API_BASE_URL in
+  // runtime-config.js; see docs/SETUP.md ("Frontend API origin").
   function resolveApiBase(value) {
-    return normalizeApiBase(value) ||
-      (isLocalHost() ? LOCAL_API_BASE_URL : PRODUCTION_API_BASE_URL);
+    return normalizeApiBase(value) || (isLocalHost() ? LOCAL_API_BASE_URL : "");
   }
 
   var API_BASE_URL = resolveApiBase(runtimeConfig.API_BASE_URL);
