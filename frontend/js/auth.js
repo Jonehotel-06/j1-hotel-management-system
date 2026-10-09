@@ -328,7 +328,7 @@
     bindLoginForm, clearSession, refreshAccess, loadCapabilities,
     receptionistDesktopKey, setReceptionistDesktopKey,
     hasCapability, hasAnyCapability,
-    isStaffRole
+    isStaffRole, defaultStaffLanding
   };
   window.JONE = window.JONE || {};
 })();

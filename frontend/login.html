@@ -87,10 +87,12 @@
 <script src="js/navigation.js?v=1.1.11"></script>
 <script>
   JONE.ui.initChrome();
-  // Already signed in? Staff accounts go directly to the console.
+  // Already signed in? Staff accounts go directly to their departmental console.
   if (window.Auth.isAuthenticated()) {
     window.Auth.restore();
-    location.replace("dashboard/index.html");
+    var role = (window.Auth.state && window.Auth.state.role) || (window.Auth.state && window.Auth.state.user && window.Auth.state.user.role);
+    var landing = window.Auth.isStaffRole(role) ? window.Auth.defaultStaffLanding(role) : "index.html";
+    location.replace(landing);
   } else {
     window.Auth.bindLoginForm("#login-form", {
       onRestricted: function () {

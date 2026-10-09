@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Barcode Label Printing | J-ONE Staff</title>
+  <link rel="stylesheet" href="../css/main.css?v=1.1.11">
+  <link rel="stylesheet" href="../css/dashboard.css?v=1.1.11">
+  <style>
+    .label-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+    .label-card { border: 1px solid var(--color-border); padding: 1rem; border-radius: var(--radius-sm); background: #fff; text-align: center; }
+    .label-card h4 { margin: 0 0 .5rem; font-size: 0.95rem; }
+    .label-card p { margin: .25rem 0; font-size: 0.85rem; color: var(--color-text-muted); }
+    @media print {
+      body * { visibility: hidden; }
+      .label-grid, .label-grid * { visibility: visible; }
+      .label-grid { position: absolute; left: 0; top: 0; width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5cm; }
+      .label-card { border: 1px dashed #ccc; page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,.2);"><span data-icon="logOut" data-size="16"></span> Sign out</button></div>
+  </aside>
+  <div class="dash-main">
+    <div class="dash-topbar"><div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title"><h1>Barcode Label Printing</h1><p>Standardized barcode labels for POS menu items and stock inventory.</p></div></div><div class="dash-topbar-right"><button class="btn btn-sm btn-primary" onclick="window.print()"><span data-icon="printer"></span> Print labels</button></div></div>
+    <main class="dash-content">
+      <section class="panel">
+        <div class="panel-head"><h2>Product & Stock Barcode Labels</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" id="load-pos-items">Load POS items</button><button class="btn btn-sm btn-outline" id="load-inv-items">Load inventory items</button></div></div>
+        <div class="panel-body">
+          <div class="label-grid" id="label-container">
+            <div class="empty-state"><h3>Loading barcode labels…</h3></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.11"></script>
+<script src="../js/config.js?v=1.1.11"></script>
+<script src="../js/utils.js?v=1.1.11"></script>
+<script src="../js/icons.js?v=1.1.11"></script>
+<script src="../js/api.js?v=1.1.11"></script>
+<script src="../js/theme.js?v=1.1.11"></script>
+<script src="../js/ui.js?v=1.1.11"></script>
+<script src="../js/auth.js?v=1.1.11"></script>
+<script src="../js/navigation.js?v=1.1.11"></script>
+<script src="../js/dashboard.js?v=1.1.11"></script>
+<script src="../js/barcode-scanner.js?v=1.1.11"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot("receptionist");
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+  var container = document.getElementById("label-container");
+
+  function renderLabels(items) {
+    if (!items.length) {
+      container.innerHTML = '<div class="empty-state"><h3>No items found</h3><p>Select a catalog to generate printable barcodes.</p></div>';
+      return;
+    }
+    container.innerHTML = items.map(function(item) {
+      var sku = item.sku || item.item_sku || ("SKU-" + item.id);
+      var svg = JONE.barcode.generateBarcodeSvg(sku, { height: 42, barWidth: 2 });
+      return '<div class="label-card">' +
+        '<h4>' + JONE.esc(item.name || item.item_name || "Product") + '</h4>' +
+        '<p>' + (item.base_price ? '₦' + JONE.esc(item.base_price) : (item.base_unit || "Unit")) + '</p>' +
+        svg +
+        '</div>';
+    }).join("");
+  }
+
+  async function loadPos() {
+    try {
+      var res = await window.API.get("/api/admin/pos/menu/");
+      var categories = (res.data || []);
+      var items = [];
+      categories.forEach(function(c) { (c.items || []).forEach(function(it) { items.push(it); }); });
+      renderLabels(items);
+    } catch (e) {
+      container.innerHTML = '<div class="empty-state"><h3>Failed to load items</h3><p>' + JONE.esc(e.message) + '</p></div>';
+    }
+  }
+
+  async function loadInventory() {
+    try {
+      var res = await window.API.list("inventoryItems", { page_size: 50 });
+      var items = (res.data && res.data.results) || res.data || [];
+      renderLabels(items);
+    } catch (e) {
+      container.innerHTML = '<div class="empty-state"><h3>Failed to load items</h3><p>' + JONE.esc(e.message) + '</p></div>';
+    }
+  }
+
+  document.getElementById("load-pos-items").addEventListener("click", loadPos);
+  document.getElementById("load-inv-items").addEventListener("click", loadInventory);
+  loadPos();
+</script>
+</body>
+</html>

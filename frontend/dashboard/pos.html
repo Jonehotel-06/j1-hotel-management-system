@@ -135,6 +135,7 @@
 <script src="../js/hotel-data.js?v=1.1.11"></script>
 <script src="../js/navigation.js?v=1.1.11"></script>
 <script src="../js/dashboard.js?v=1.1.11"></script><script src="../js/table-fit.js"></script>
+<script src="../js/barcode-scanner.js?v=1.1.11"></script>
 <script>
 JONE.ui.initChrome();
 var __posAllowed=JONE.dashboard.boot(["admin","manager","general_manager","cashier","restaurant_manager","waiter","bar_manager","bartender","kitchen_manager","chef"]);
@@ -606,6 +607,28 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   orderBody.addEventListener("click",function(event){var view=event.target.closest("[data-pos-view]");var action=event.target.closest("[data-pos-action]");var tender=event.target.closest("[data-pos-tender]");if(view)viewOrder(view.getAttribute("data-pos-view"));else if(action)advanceOrder(action.getAttribute("data-pos-ref"),action.getAttribute("data-pos-action"),action);else if(tender)captureTender(tender.getAttribute("data-pos-tender"));});
   document.querySelector("[data-pos-add-category]").addEventListener("click",addCategory);
   document.querySelector("[data-pos-add-item]").addEventListener("click",addMenuItem);
+  // USB HID Barcode Scanner Integration for POS item addition
+  if (window.JONE && window.JONE.barcode) {
+    window.JONE.barcode.initScanner({
+      onScan: function(code) {
+        var scannedSku = String(code || "").trim().toLowerCase();
+        var itemMatch = null;
+        Object.keys(state.itemsById || {}).forEach(function(id) {
+          var it = state.itemsById[id];
+          if (it && (String(it.sku || "").trim().toLowerCase() === scannedSku || String(it.id) === scannedSku)) {
+            itemMatch = it;
+          }
+        });
+        if (itemMatch) {
+          addItem(itemMatch.id, 1, [], "");
+          JONE.ui.toast("Scanned & added: " + itemMatch.name, "success");
+        } else {
+          JONE.ui.toast("Scanned barcode [" + code + "] not found in active menu.", "error");
+        }
+      }
+    });
+  }
+
   function startWorkspace(){
     applyAccess();updateMode();renderCart();
     if(allowedModes().length)loadOrders(1);

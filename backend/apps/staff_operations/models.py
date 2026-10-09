@@ -255,3 +255,8 @@ from .payroll_models import (  # noqa: E402,F401
 
 # Facial-verification records live in their own module (descriptor-only, retention-bound).
 from .face_models import FaceTemplate, FaceVerificationAttempt  # noqa: E402,F401
+
+# Fingerprint biometrics and temporary credentials.
+from .biometric_models import (  # noqa: E402,F401
+    FingerprintTemplate, FingerprintVerificationAttempt, TemporaryWorkstationCredential
+)

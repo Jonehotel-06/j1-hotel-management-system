@@ -14,7 +14,7 @@ from apps.core.responses import success_response
 
 from .models import AttendanceEvent, AttendanceRecord, LeaveRequest, LeaveRequestEvent, ShiftAssignment, ShiftAssignmentEvent, ShiftTemplate, StaffProfile
 from apps.core.exceptions import FaceVerificationFailedError
-from .services import face_service
+from .services import face_service, fingerprint_service
 
 from .serializers import (
     AttendanceClockSerializer, AttendanceRecordDetailSerializer, AttendanceRecordListSerializer,
@@ -226,8 +226,23 @@ class AttendanceClockView(APIView):
     def post(self, request):
         serializer = AttendanceClockSerializer(data=request.data); serializer.is_valid(raise_exception=True); data = serializer.validated_data
         probe = request.data.get("face_probe")
+        fingerprint_probe = request.data.get("fingerprint_probe")
         manual_reason = str(request.data.get("manual_override_reason") or "")
-        if face_service.face_verification_required() or probe is not None or manual_reason:
+        
+        # 1. Fingerprint verification check
+        if fingerprint_service.fingerprint_verification_required() or fingerprint_probe is not None:
+            fp_key = fingerprint_service.biometric_clock_source_key(staff=request.user, action=data["action"], raw_key=data["idempotency_key"])
+            fp_outcome, fp_passed = fingerprint_service.verify_fingerprint_for_clock(
+                staff=request.user, actor=request.user, action=data["action"],
+                source_key=fp_key, probe=fingerprint_probe, manual_reason=manual_reason
+            )
+            if not fp_passed:
+                log_action(actor=request.user, action="ATTENDANCE_FINGERPRINT_REFUSED", request=request,
+                           metadata={"action": data["action"], "outcome": fp_outcome})
+                raise FaceVerificationFailedError(detail=f"Fingerprint biometric verification did not pass ({fp_outcome}); attendance was not recorded.")
+
+        # 2. Facial verification check (if configured/probed)
+        elif face_service.face_verification_required() or probe is not None or manual_reason:
             source_key = face_service.clock_source_key(staff=request.user, action=data["action"], raw_key=data["idempotency_key"])
             outcome, passed = face_service.verify_for_clock(staff=request.user, actor=request.user, action=data["action"],
                                                             source_key=source_key, probe=probe, manual_reason=manual_reason)

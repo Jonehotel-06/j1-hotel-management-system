@@ -119,6 +119,18 @@
 <script src="../js/dashboard.js?v=1.1.11"></script><script src="../js/table-fit.js"></script>
 <script>
   JONE.ui.initChrome();
+  // Role check: operational roles (CHEF, HOUSEKEEPING, etc.) have dedicated departmental consoles.
+  // Direct them to their operational dashboard rather than attempting to load the receptionist console.
+  window.Auth.restore();
+  var curRole = (window.Auth.state && window.Auth.state.role) || (window.Auth.state && window.Auth.state.user && window.Auth.state.user.role);
+  if (curRole && !window.Auth.hasRole("receptionist")) {
+    var operationalLanding = window.Auth.defaultStaffLanding(curRole);
+    if (operationalLanding && operationalLanding !== "dashboard/index.html") {
+      var target = operationalLanding.replace(/^dashboard\//, "");
+      location.replace(target);
+    }
+  }
+
   // The dashboard stats payload includes unread_count, so it supplies the
   // shared badge below instead of boot() issuing a duplicate count request.
   JONE.dashboard.boot("receptionist", { deferNotificationBadge: true });

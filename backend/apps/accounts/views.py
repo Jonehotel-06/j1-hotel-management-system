@@ -65,7 +65,7 @@ class RegisterView(generics.CreateAPIView):
         )
 
 
-@extend_schema(tags=["Auth"], summary="Log in with email and password")
+@extend_schema(tags=["Auth"], summary="Log in with email and password, or temporary biometric token")
 class LoginView(TokenObtainPairView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "login"
@@ -74,6 +74,20 @@ class LoginView(TokenObtainPairView):
     serializer_class = JOneTokenObtainPairSerializer
 
     def post(self, request, *args, **kwargs):
+        # Support temporary biometric workstation credential token
+        temp_token = request.data.get("temporary_token")
+        if temp_token:
+            from apps.staff_operations.services.fingerprint_service import consume_temporary_workstation_credential
+            user = consume_temporary_workstation_credential(temp_token)
+            if not user or not user.is_active:
+                raise AuthenticationFailed("Invalid or expired temporary workstation credential.")
+            tokens = _tokens_for(user)
+            payload = {
+                "user": UserSerializer(user, context={"request": request}).data,
+                "tokens": tokens,
+            }
+            return success_response(payload, message="Logged in with temporary biometric credential.")
+
         try:
             response = super().post(request, *args, **kwargs)
         except AuthenticationFailed:
