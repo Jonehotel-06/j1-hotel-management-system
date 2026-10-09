@@ -11,7 +11,7 @@ from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsManagerOrAdmin, IsStaffRole
+from apps.core.permissions import HasCapability, IsManagerOrAdmin, IsStaffRole
 from apps.core.responses import success_response
 from apps.core.serializers import EmptySerializer
 from apps.core.emails import send_email_safe
@@ -375,15 +375,32 @@ class AdminGuestDetailView(generics.RetrieveUpdateAPIView):
             message="Guest updated.",
         )
 
+class AdminBookingReceiptView(APIView):
+    """Read a booking receipt from the staff payment workspace.
+
+    This is separate from the guest-owned ``/api/bookings/{ref}/receipt/``
+    route so finance staff can perform their job without broad booking access.
+    """
+
+    permission_classes = [HasCapability]
+    required_capability = "payment.read"
+    serializer_class = EmptySerializer
+
+    def get(self, request, lookup):
+        booking = _get_admin_booking(lookup)
+        return success_response(ReceiptSerializer().to_representation(booking))
+
+
 class AdminBookingSendReceiptView(APIView):
     """Send the confirmed payment receipt (with PDF) to the guest — NOW.
 
-    Delivery is SYNCHRONOUS: the provider request (Brevo HTTPS API in
-    production) happens during this HTTP request, and the response reports the
+    Delivery is SYNCHRONOUS: the configured email provider request happens
+    during this HTTP request, and the response reports the
     REAL outcome. "Sent" is only returned after the provider accepted the
     message; anything else is an honest failure with a safe reason.
     """
-    permission_classes = [IsStaffRole]
+    permission_classes = [HasCapability]
+    required_capability = "payment.receipt.send"
     serializer_class = EmptySerializer
 
     def post(self, request, lookup):

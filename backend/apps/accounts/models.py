@@ -1,5 +1,7 @@
 # apps/accounts/models.py
 """Custom user model — email is the sole authentication identifier."""
+import secrets
+
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
 from django.db import models
@@ -45,13 +47,30 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         HOUSEKEEPING = "HOUSEKEEPING", "Housekeeping"
         MAINTENANCE = "MAINTENANCE", "Maintenance"
         INVENTORY_CLERK = "INVENTORY_CLERK", "Inventory Clerk"
+        FRONT_DESK_SUPERVISOR = "FRONT_DESK_SUPERVISOR", "Front Desk Supervisor"
+        GENERAL_MANAGER = "GENERAL_MANAGER", "General Manager"
+        RESTAURANT_MANAGER = "RESTAURANT_MANAGER", "Restaurant Manager"
+        WAITER = "WAITER", "Waiter / Server"
+        BAR_MANAGER = "BAR_MANAGER", "Bar Manager"
+        BARTENDER = "BARTENDER", "Bartender"
+        KITCHEN_MANAGER = "KITCHEN_MANAGER", "Kitchen Manager"
+        CHEF = "CHEF", "Chef / Kitchen Staff"
+        HOUSEKEEPING_MANAGER = "HOUSEKEEPING_MANAGER", "Housekeeping Manager"
+        HOUSEKEEPER = "HOUSEKEEPER", "Housekeeper"
+        MAINTENANCE_TECHNICIAN = "MAINTENANCE_TECHNICIAN", "Maintenance Technician"
+        ACCOUNTS_MANAGER = "ACCOUNTS_MANAGER", "Accounts Manager"
+        ACCOUNTANT = "ACCOUNTANT", "Accountant"
+        HR_MANAGER = "HR_MANAGER", "HR Manager"
+        SECURITY = "SECURITY", "Security"
+        PROCUREMENT_OFFICER = "PROCUREMENT_OFFICER", "Procurement Officer"
+        STOREKEEPER = "STOREKEEPER", "Storekeeper"
         GUEST = "GUEST", "Guest"
 
     email = models.EmailField(unique=True, db_index=True)
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
     phone = models.CharField(max_length=20, blank=True, default="")
-    role = models.CharField(max_length=20, choices=Role.choices, default=Role.RECEPTIONIST, db_index=True)
+    role = models.CharField(max_length=32, choices=Role.choices, default=Role.RECEPTIONIST, db_index=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)  # Django admin access only
     email_verified = models.BooleanField(default=False)
@@ -91,15 +110,62 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         ADMIN/MANAGER/RECEPTIONIST until they are migrated individually. New
         operational endpoints use named capabilities instead.
         """
-        return self.role in (
-            self.Role.ADMIN,
-            self.Role.MANAGER,
-            self.Role.RECEPTIONIST,
-            self.Role.CASHIER,
-            self.Role.HOUSEKEEPING,
-            self.Role.MAINTENANCE,
-            self.Role.INVENTORY_CLERK,
-        )
+        return self.role in (role for role in self.Role.values if role != self.Role.GUEST)
+
+
+def _new_workstation_reference():
+    return "wks-" + secrets.token_urlsafe(18)
+
+
+class Workstation(TimeStampedModel):
+    """Optional workstation attribution; never an authentication factor."""
+
+    class Department(models.TextChoices):
+        SHARED = "SHARED", "Shared"
+        FRONT_DESK = "FRONT_DESK", "Front desk"
+        RESTAURANT = "RESTAURANT", "Restaurant"
+        BAR = "BAR", "Bar"
+        KITCHEN = "KITCHEN", "Kitchen"
+        HOUSEKEEPING = "HOUSEKEEPING", "Housekeeping"
+        MAINTENANCE = "MAINTENANCE", "Maintenance"
+        ACCOUNTS = "ACCOUNTS", "Accounts"
+        INVENTORY = "INVENTORY", "Inventory / stores"
+        HR = "HR", "Human resources"
+        SECURITY = "SECURITY", "Security"
+        MANAGEMENT = "MANAGEMENT", "Management"
+
+    reference = models.CharField(
+        max_length=48,
+        unique=True,
+        default=_new_workstation_reference,
+        editable=False,
+    )
+    name = models.CharField(max_length=120)
+    department = models.CharField(max_length=24, choices=Department.choices, default=Department.SHARED, db_index=True)
+    location = models.CharField(max_length=120, blank=True, default="")
+    is_active = models.BooleanField(default=True, db_index=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    current_staff = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reported_current_workstations",
+        help_text="Informational account reported by this client; not verified session ownership.",
+    )
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="workstations_created"
+    )
+    updated_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="workstations_updated"
+    )
+
+    class Meta:
+        ordering = ["department", "name", "pk"]
+        indexes = [models.Index(fields=["is_active", "department"])]
+
+    def __str__(self):
+        return f"{self.name} ({self.department})"
 
 
 class Capability(TimeStampedModel):
@@ -131,7 +197,7 @@ class RoleCapability(TimeStampedModel):
     authoritative.
     """
 
-    role = models.CharField(max_length=20, choices=User.Role.choices, db_index=True)
+    role = models.CharField(max_length=32, choices=User.Role.choices, db_index=True)
     capability = models.ForeignKey(Capability, on_delete=models.PROTECT, related_name="role_grants")
 
     class Meta:

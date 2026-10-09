@@ -2,8 +2,8 @@
 from rest_framework import serializers
 
 from .models import (
-    AttendanceEvent, AttendanceRecord, LeaveRequest, LeaveRequestEvent,
-    ShiftAssignment, ShiftAssignmentEvent, ShiftTemplate, StaffProfile,
+    AttendanceEvent, AttendanceRecord, LeaveRequest, LeaveRequestEvent, PayrollEvent, PayrollLine, PayrollPeriod,
+    ShiftAssignment, ShiftAssignmentEvent, ShiftTemplate, StaffCompensation, StaffProfile,
 )
 
 
@@ -11,14 +11,16 @@ class StaffProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source="user.email", read_only=True)
     full_name = serializers.CharField(source="user.full_name", read_only=True)
     role = serializers.CharField(source="user.role", read_only=True)
+    phone = serializers.CharField(source="user.phone", read_only=True)
 
     class Meta:
         model = StaffProfile
         fields = [
-            "id", "user", "email", "full_name", "role", "employee_code", "department", "job_title",
-            "employment_status", "employment_start", "notes", "created_at", "updated_at",
+            "id", "user", "email", "phone", "full_name", "role", "employee_code", "department", "job_title",
+            "employment_status", "employment_start", "emergency_contact_name", "emergency_contact_phone",
+            "notes", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "user", "email", "full_name", "role", "employee_code", "created_at", "updated_at"]
+        read_only_fields = ["id", "user", "email", "phone", "full_name", "role", "employee_code", "created_at", "updated_at"]
 
 
 class StaffProfileCreateSerializer(serializers.Serializer):
@@ -26,6 +28,8 @@ class StaffProfileCreateSerializer(serializers.Serializer):
     department = serializers.CharField(required=False, allow_blank=True, max_length=120)
     job_title = serializers.CharField(required=False, allow_blank=True, max_length=120)
     employment_start = serializers.DateField(required=False, allow_null=True)
+    emergency_contact_name = serializers.CharField(required=False, allow_blank=True, max_length=160)
+    emergency_contact_phone = serializers.CharField(required=False, allow_blank=True, max_length=40)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=5000)
 
 

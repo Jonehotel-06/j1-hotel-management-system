@@ -19,6 +19,7 @@ _DEFAULT_TEAM = {
     ServiceRequest.Category.HOUSEKEEPING: ServiceRequest.OwnerTeam.HOUSEKEEPING,
     ServiceRequest.Category.MAINTENANCE: ServiceRequest.OwnerTeam.MAINTENANCE,
     ServiceRequest.Category.ROOM_SERVICE: ServiceRequest.OwnerTeam.FOOD_BEVERAGE,
+    ServiceRequest.Category.FOOD_BEVERAGE: ServiceRequest.OwnerTeam.FOOD_BEVERAGE,
     ServiceRequest.Category.AMENITY: ServiceRequest.OwnerTeam.HOUSEKEEPING,
     ServiceRequest.Category.TRANSPORT: ServiceRequest.OwnerTeam.FRONT_DESK,
     ServiceRequest.Category.BILLING: ServiceRequest.OwnerTeam.FRONT_DESK,
@@ -33,6 +34,8 @@ _SLA = {
 _TEAM_FOR_ROLE = {
     User.Role.HOUSEKEEPING: ServiceRequest.OwnerTeam.HOUSEKEEPING,
     User.Role.MAINTENANCE: ServiceRequest.OwnerTeam.MAINTENANCE,
+    User.Role.WAITER: ServiceRequest.OwnerTeam.FOOD_BEVERAGE,
+    User.Role.BARTENDER: ServiceRequest.OwnerTeam.FOOD_BEVERAGE,
 }
 _TERMINAL_STATUSES = {ServiceRequest.Status.CLOSED, ServiceRequest.Status.CANCELLED}
 _ALLOWED_TRANSITIONS = {
@@ -99,7 +102,7 @@ def _create_event(*, request, event_type, actor=None, actor_label="", message=""
 
 
 def _validate_context(*, guest, stay=None, room=None):
-    if stay and stay.guest_id != guest.pk:
+    if stay and (guest is None or stay.guest_id != guest.pk):
         raise ValidationError("The service-request stay must belong to the selected guest.")
     if room and stay:
         # A request remains tied to an actual historic/current occupancy, not a
@@ -158,6 +161,8 @@ def create_service_request(
     due_at=None,
     actor=None,
     portal_email="",
+    table_number="",
+    qr_link=None,
     idempotency_key: str | None = None,
 ) -> tuple[ServiceRequest, bool]:
     """Create a request with a stable retry key and immutable creation event."""
@@ -169,6 +174,26 @@ def create_service_request(
         raise ValidationError({"channel": "Invalid service-request channel."})
     if owner_team and owner_team not in ServiceRequest.OwnerTeam.values:
         raise ValidationError({"owner_team": "Invalid owner team."})
+    table_number = str(table_number or "").strip()[:40]
+    if channel == ServiceRequest.Channel.QR:
+        if qr_link is None or not getattr(qr_link, "is_active", False):
+            raise ValidationError("An active QR link is required for a QR-originated request.")
+        if qr_link.target_type == "ROOM":
+            if guest is None or stay is None or room is None or room.pk != qr_link.room_id:
+                raise ValidationError("Room QR requests require the matching in-house room and guest.")
+            if stay.guest_id != guest.pk:
+                raise ValidationError("The QR request stay must belong to the current room guest.")
+        elif qr_link.target_type == "TABLE":
+            if guest is not None or stay is not None or room is not None or table_number.casefold() != qr_link.table_number.casefold():
+                raise ValidationError("Table QR requests must use the link's table context without guest identity data.")
+            if category != ServiceRequest.Category.FOOD_BEVERAGE:
+                raise ValidationError({"category": "Table QR requests are routed to food and beverage service."})
+        else:
+            raise ValidationError("This QR link target is not supported.")
+    elif qr_link is not None or table_number:
+        raise ValidationError("Table context is accepted only for an active QR service link.")
+    elif guest is None:
+        raise ValidationError({"guest": "A guest identity is required outside the table QR flow."})
     summary = str(summary or "").strip()
     if not summary:
         raise ValidationError({"summary": "A concise request summary is required."})
@@ -182,7 +207,7 @@ def create_service_request(
     if idempotency_key:
         existing = ServiceRequest.objects.select_for_update().filter(idempotency_key=idempotency_key).first()
         if existing:
-            if existing.guest_id != guest.pk:
+            if existing.guest_id != getattr(guest, "pk", None):
                 # Digest collision/cross-scope reuse must not disclose another
                 # guest's request even though a SHA-256 collision is implausible.
                 raise ValidationError({"idempotency_key": "This retry key is not valid for this guest."})
@@ -195,6 +220,8 @@ def create_service_request(
         guest=guest,
         stay=stay,
         room=room,
+        table_number=table_number,
+        qr_link=qr_link,
         category=category,
         priority=priority,
         channel=channel,
@@ -207,7 +234,7 @@ def create_service_request(
         portal_email=(portal_email or "")[:254],
     )
     if not created:
-        if request.guest_id != guest.pk:
+        if request.guest_id != getattr(guest, "pk", None):
             raise ValidationError({"idempotency_key": "This retry key is not valid for this guest."})
         return request, False
     _create_event(
@@ -218,7 +245,13 @@ def create_service_request(
         message=detail,
         guest_visible=True,
         new_status=request.status,
-        details={"channel": channel, "category": category, "priority": priority},
+        details={
+            "channel": channel,
+            "category": category,
+            "priority": priority,
+            "qr_link_reference": qr_link.reference if qr_link else "",
+            "table_number": table_number,
+        },
     )
     if assigned_to:
         _create_event(

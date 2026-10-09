@@ -13,7 +13,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
-<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+<link rel="stylesheet" href="../css/main.css?v=1.1.11">
 
 </head>
 <body>
@@ -67,27 +67,35 @@
     </div>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.6"></script>
-<script src="../js/config.js?v=1.1.6"></script>
-<script src="../js/utils.js?v=1.1.6"></script>
-<script src="../js/icons.js?v=1.1.6"></script>
-<script src="../js/api.js?v=1.1.6"></script>
-<script src="../js/theme.js?v=1.1.6"></script>
-<script src="../js/ui.js?v=1.1.6"></script>
-<script src="../js/auth.js?v=1.1.6"></script>
-<script src="../js/hotel-data.js?v=1.1.6"></script>
-<script src="../js/navigation.js?v=1.1.6"></script>
-<script src="../js/receipt-email-modal.js?v=1.1.6"></script>
-<script src="../js/dashboard.js?v=1.1.6"></script>
-<script src="../js/receipt.js?v=1.1.6"></script>
+<script src="../js/runtime-config.js?v=1.1.11"></script>
+<script src="../js/config.js?v=1.1.11"></script>
+<script src="../js/utils.js?v=1.1.11"></script>
+<script src="../js/icons.js?v=1.1.11"></script>
+<script src="../js/api.js?v=1.1.11"></script>
+<script src="../js/theme.js?v=1.1.11"></script>
+<script src="../js/ui.js?v=1.1.11"></script>
+<script src="../js/auth.js?v=1.1.11"></script>
+<script src="../js/hotel-data.js?v=1.1.11"></script>
+<script src="../js/navigation.js?v=1.1.11"></script>
+<script src="../js/receipt-email-modal.js?v=1.1.11"></script>
+<script src="../js/dashboard.js?v=1.1.11"></script>
+<script src="../js/receipt.js?v=1.1.11"></script>
 <script>
   JONE.ui.initChrome();
-  JONE.dashboard.boot("receptionist");
+  JONE.dashboard.boot(["admin", "manager", "receptionist", "front_desk_supervisor", "general_manager", "accounts_manager", "accountant"]);
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+  var receiptCapabilitiesReady = window.Auth && typeof window.Auth.loadCapabilities === "function"
+    ? window.Auth.loadCapabilities().catch(function(){ return []; })
+    : Promise.resolve([]);
 
 (function(){
   var DATA=JONE.dashboard.DATA;
   var tbody=document.querySelector("[data-tbody=receipts]");
+  function canOpenBookingReference(){
+    return !!(window.Auth && window.Auth.hasCapability && window.Auth.hasAnyRole &&
+      window.Auth.hasAnyRole(["admin", "manager", "receptionist"]) &&
+      (window.Auth.hasCapability("booking.read") || window.Auth.hasCapability("booking.manage")));
+  }
 
   /* Receipt emails are delivered SYNCHRONOUSLY by the backend (the SMTP send
      happens inside the send request), so the API response is already the real
@@ -99,7 +107,8 @@
   function render(list){
     tbody.innerHTML=list.map(function(r){
       var b=r.booking_reference;
-      return '<tr><td class="cell-nowrap">'+JONE.esc(r.reference||"—")+'<span class="receipt-mobile-guest hide-md">'+JONE.esc(r.guest_name||"—")+'</span></td><td class="cell-nowrap">'+(b?'<a href="booking-details.html?ref='+encodeURIComponent(b)+'">'+JONE.esc(b)+'</a>':"—")+'</td><td class="hide-sm">'+JONE.esc(r.guest_name||"—")+'</td><td class="num cell-nowrap">'+JONE.esc(JONE.formatNaira(r.amount))+'</td><td class="hide-sm cell-nowrap">'+JONE.esc(r.paid_at?JONE.formatDate(r.paid_at,"mid"):(r.created_at?JONE.formatDate(r.created_at,"mid"):"—"))+'</td><td class="cell-nowrap">'+(b?'<button class="btn btn-sm btn-outline" type="button" data-view-receipt="'+JONE.esc(b)+'"><span data-icon="printer" data-size="15"></span> View receipt</button>':"—")+'</td></tr>';
+      var bookingCell=b?(canOpenBookingReference()?'<a href="booking-details.html?ref='+encodeURIComponent(b)+'">'+JONE.esc(b)+'</a>':JONE.esc(b)):"—";
+      return '<tr><td class="cell-nowrap">'+JONE.esc(r.reference||"—")+'<span class="receipt-mobile-guest hide-md">'+JONE.esc(r.guest_name||"—")+'</span></td><td class="cell-nowrap">'+bookingCell+'</td><td class="hide-sm">'+JONE.esc(r.guest_name||"—")+'</td><td class="num cell-nowrap">'+JONE.esc(JONE.formatNaira(r.amount))+'</td><td class="hide-sm cell-nowrap">'+JONE.esc(r.paid_at?JONE.formatDate(r.paid_at,"mid"):(r.created_at?JONE.formatDate(r.created_at,"mid"):"—"))+'</td><td class="cell-nowrap">'+(b?'<button class="btn btn-sm btn-outline" type="button" data-view-receipt="'+JONE.esc(b)+'"><span data-icon="printer" data-size="15"></span> View receipt</button>':"—")+'</td></tr>';
     }).join("") || '<tr><td colspan="6"><div class="empty-state"><span data-icon="receipt"></span><h3>No receipts yet</h3><p>Receipts appear here as payments are confirmed.</p></div></td></tr>';
     JONE.icons.inject(tbody);
   }
@@ -128,7 +137,7 @@
       renderPager(res.pagination);
     }catch(err){ DATA.error(tbody,"Receipts couldn't be loaded",(err&&err.message)||"Please try again in a moment.",6); }
   }
-  load(1);
+  receiptCapabilitiesReady.then(function(){ load(1); });
 
   // Details are fetched only when requested; the receipt list remains light.
   tbody.addEventListener("click", async function(e){
@@ -138,7 +147,7 @@
     var body=JONE.el("div",{class:"receipt-modal-content"},JONE.el("div",{class:"loading-block"},JONE.el("div",{class:"spinner",role:"status"}),JONE.el("p",{class:"muted",textContent:"Loading receipt…"})));
     JONE.ui.modal.open({title:"Receipt "+ref,body:body,size:"modal-lg"});
     try{
-      var res=await window.API.getBookingReceipt(ref);
+      var res=await window.API.getStaffBookingReceipt(ref);
       var receipt=res.data||res;
       if(!document.body.contains(body)) return;
       body.innerHTML="";
@@ -146,7 +155,9 @@
       var actions=JONE.el("div",{class:"receipt-modal-actions"});
       var download=JONE.el("button",{class:"btn btn-sm",type:"button",textContent:"Download image"});
       var send=JONE.el("button",{class:"btn btn-sm btn-outline",type:"button",textContent:"Send to "+((receipt.guest&&receipt.guest.email)||"guest")});
-      actions.append(download,send); body.append(sheet,actions);
+      actions.append(download);
+      if(window.Auth && window.Auth.hasCapability && window.Auth.hasCapability("payment.receipt.send")) actions.append(send);
+      body.append(sheet,actions);
       JONE.receipts.render(sheet,receipt,{assetPrefix:"../"});
       download.addEventListener("click",async function(){
         download.disabled=true;
@@ -180,8 +191,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.6"></script>
-<script src="../js/version.js?v=1.1.6"></script>
-<script src="../js/update-checker.js?v=1.1.6"></script>
+<script src="../js/pwa.js?v=1.1.11"></script>
+<script src="../js/version.js?v=1.1.11"></script>
+<script src="../js/update-checker.js?v=1.1.11"></script>
 </body>
 </html>

@@ -37,7 +37,8 @@
     THEME: "jone.theme",
     AUTH: "jone.auth",
     BOOKING: "jone.booking.draft",
-    SESSION: "jone.session"
+    SESSION: "jone.session",
+    TERMINAL: "jone.terminal.reference"
   },
 
   /* ========================================================================
@@ -72,6 +73,8 @@
     auditLogActions: "/api/admin/audit-logs/actions/",  // ADMIN, filter choices
     reviews:       "/api/admin/reviews/",         // ADMIN-only guest reviews (private)
     users:         "/api/admin/users/",           // ADMIN
+    workstations:  "/api/admin/users/terminals/", // capability-gated; attribution only
+    staffCapabilities: "/api/auth/capabilities/", // current account's server-resolved UI capability hints
     settings:      "/api/admin/settings/",        // GET manager+, PATCH admin-only
     stats:         "/api/admin/dashboard/",       // dashboard KPIs
     facilities:    "/api/admin/facilities/",
@@ -84,6 +87,8 @@
     posMenuCategories:   "/api/admin/pos/menu/categories/",
     posMenuItems:        "/api/admin/pos/menu/items/",
     posMenuModifiers:    "/api/admin/pos/menu/modifiers/",
+    posRestaurantTables: "/api/admin/pos/restaurant-tables/",
+    posRestaurantTableSessions: "/api/admin/pos/restaurant-table-sessions/",
     posRoomServiceStays: "/api/admin/pos/room-service-stays/",
     posOrders:           "/api/admin/pos/orders/",
     posKitchenTickets:   "/api/admin/pos/kitchen-tickets/",
@@ -92,6 +97,9 @@
 
     /* Guest-service and operations queues (capability-gated server-side). */
     serviceRequests:       "/api/admin/service-requests/",
+    serviceQrLinks:        "/api/admin/service-qr-links/",
+    serviceQrContext:      "/api/service-qr/context/",
+    serviceQrRequests:     "/api/service-qr/requests/",
     housekeepingTasks:     "/api/admin/housekeeping/",
     maintenanceWorkOrders: "/api/admin/maintenance/",
     staffDirectory:        "/api/admin/users/directory/",
@@ -101,6 +109,11 @@
     attendance:            "/api/admin/staff-operations/attendance/",
     attendanceClock:       "/api/admin/staff-operations/attendance/clock/",
     leaveRequests:         "/api/admin/staff-operations/leave-requests/",
+    payrollCompensation:   "/api/admin/staff-operations/payroll/compensation/",
+    payrollTaxIdentities:  "/api/admin/staff-operations/payroll/tax-identities/",
+    payrollStatutoryRules: "/api/admin/staff-operations/payroll/statutory-rules/",
+    payrollPeriods:       "/api/admin/staff-operations/payroll/periods/",
+    payrollPayslips:      "/api/admin/staff-operations/payroll/payslips/",
 
     /* Inventory and procurement (capability-gated server-side). */
     inventoryLocations:           "/api/admin/inventory/locations/",

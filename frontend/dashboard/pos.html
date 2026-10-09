@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<title>POS &amp; Room Service | J-ONE Staff</title>
+<title>Restaurant, Bar &amp; Room Service POS | J-ONE Staff</title>
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
@@ -13,7 +13,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
-<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+<link rel="stylesheet" href="../css/main.css?v=1.1.11">
 <style>
   .pos-workspace{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(300px,.9fr);gap:1.25rem;margin-top:1.25rem;align-items:start}
   .pos-cart{display:grid;gap:.55rem;margin:.8rem 0}.pos-cart-row{display:flex;gap:.65rem;justify-content:space-between;align-items:center;padding:.7rem .8rem;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface-alt)}
@@ -39,14 +39,14 @@
   </aside>
   <div class="dash-main">
     <div class="dash-topbar">
-      <div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title" data-dash-title><h1>POS &amp; Room Service</h1><p>Orders, kitchen fulfilment, and controlled tender collection.</p></div></div>
+      <div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title" data-dash-title><h1>Restaurant, Bar &amp; Room Service POS</h1><p>Department-scoped orders, production queues, and controlled tender collection.</p></div></div>
       <div class="dash-topbar-right"><div class="dash-topbar-actions" data-topbar-actions></div><button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false"><span class="icon-moon" data-icon="moon" data-size="18"></span><span class="icon-sun" data-icon="sun" data-size="18"></span></button></div>
     </div>
     <main class="dash-content">
-      <section class="panel">
+      <section class="panel" data-pos-orders-panel>
         <div class="filter-bar">
           <div class="field"><label class="field-label" for="pos-search">Search orders</label><input class="input" id="pos-search" placeholder="Order, guest, table"></div>
-          <div class="field"><label class="field-label" for="pos-mode-filter">Mode</label><select class="select" id="pos-mode-filter"><option value="">All modes</option><option value="ROOM_SERVICE">Room service</option><option value="RESTAURANT">Restaurant</option><option value="TAKEAWAY">Takeaway</option></select></div>
+          <div class="field"><label class="field-label" for="pos-mode-filter">Mode</label><select class="select" id="pos-mode-filter"><option value="">All available modes</option><option value="ROOM_SERVICE">Room service</option><option value="RESTAURANT">Restaurant</option><option value="BAR">Bar</option><option value="TAKEAWAY">Takeaway</option></select></div>
           <div class="field"><label class="field-label" for="pos-status-filter">Status</label><select class="select" id="pos-status-filter"><option value="">All statuses</option><option value="DRAFT">Draft</option><option value="SUBMITTED">Submitted</option><option value="PREPARING">Preparing</option><option value="READY">Ready</option><option value="DELIVERED">Delivered</option><option value="CANCELLED">Cancelled</option></select></div>
           <div class="field"><button class="btn btn-sm" id="pos-apply" type="button">Apply</button></div>
         </div>
@@ -60,14 +60,16 @@
       </section>
 
       <div class="pos-workspace">
-        <section class="panel">
+        <section class="panel" data-pos-order-entry>
           <div class="panel-head"><h2>New order</h2><div class="panel-actions"><span class="caption">Amounts are calculated by the server.</span></div></div>
           <div class="panel-body">
             <form id="pos-create-form" novalidate>
+              <div class="hint" data-pos-service-request hidden role="status" style="margin-bottom:.8rem;"></div>
               <div class="form-grid fg-2">
-                <div class="field"><label class="field-label" for="pos-mode">Order mode</label><select class="select" id="pos-mode" required><option value="ROOM_SERVICE">Room service</option><option value="RESTAURANT">Restaurant / dine in</option><option value="TAKEAWAY">Takeaway</option></select></div>
+                <div class="field"><label class="field-label" for="pos-mode">Order mode</label><select class="select" id="pos-mode" required><option value="ROOM_SERVICE">Room service</option><option value="RESTAURANT">Restaurant / dine in</option><option value="BAR">Bar</option><option value="TAKEAWAY">Takeaway</option></select></div>
                 <div class="field" data-pos-direct-guest hidden><label class="field-label" for="pos-guest">Guest / customer</label><input class="input" id="pos-guest" maxlength="200" placeholder="Walk-in guest (optional)"></div>
-                <div class="field" data-pos-table hidden><label class="field-label" for="pos-table">Table</label><input class="input" id="pos-table" maxlength="40" placeholder="e.g. T-4"></div>
+                <div class="field" data-pos-bar-table hidden><label class="field-label" for="pos-table">Bar table / pickup</label><input class="input" id="pos-table" maxlength="40" placeholder="Optional · e.g. B-4"></div>
+                <div class="field" data-pos-restaurant-table-session hidden><label class="field-label" for="pos-table-session">Open restaurant table session</label><select class="select" id="pos-table-session"><option value="">Choose an open table session</option></select><div class="hint" data-pos-selected-session-hint>Select a session, or open a new one in Restaurant tables.</div></div>
                 <div class="field" data-pos-delivery><label class="field-label" for="pos-delivery">Delivery location</label><input class="input" id="pos-delivery" maxlength="160" placeholder="Room / pickup note"></div>
               </div>
               <div data-pos-room-service>
@@ -92,37 +94,50 @@
         </section>
 
         <aside style="display:grid;gap:1.25rem;">
-          <section class="panel">
-            <div class="panel-head"><h2>Kitchen queue</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-pos-refresh-kitchen>Refresh</button></div></div>
-            <div class="panel-body"><div class="pos-ticket-list" data-pos-kitchen></div></div>
+          <section class="panel" data-pos-table-workspace hidden>
+            <div class="panel-head"><h2>Restaurant tables</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-pos-refresh-tables>Refresh</button><button class="btn btn-sm" type="button" data-pos-add-table hidden>Add table</button></div></div>
+            <div class="panel-body">
+              <div class="form-grid fg-2">
+                <div class="field"><label class="field-label" for="pos-open-table">Table</label><select class="select" id="pos-open-table"><option value="">Loading tables…</option></select></div>
+                <div class="field"><label class="field-label" for="pos-open-covers">Covers</label><input class="input" id="pos-open-covers" type="number" min="1" max="60" value="2"></div>
+              </div>
+              <button class="btn btn-sm btn-accent" type="button" data-pos-open-session>Open table session</button>
+              <div class="field-error" data-pos-table-error hidden></div>
+              <div class="pos-ticket-list" data-pos-restaurant-table-register hidden style="margin-top:.85rem;" aria-label="Registered tables"></div>
+              <div class="pos-ticket-list" data-pos-table-sessions style="margin-top:.85rem;" aria-live="polite"></div>
+            </div>
           </section>
           <section class="panel">
+            <div class="panel-head"><h2 data-pos-queue-title>Production queue</h2><div class="panel-actions"><span class="caption" data-pos-live-status>Connecting to live updates…</span><button class="btn btn-sm btn-outline" type="button" data-pos-refresh-kitchen>Refresh</button></div></div>
+            <div class="panel-body"><div class="pos-ticket-list" data-pos-kitchen></div></div>
+          </section>
+          <section class="panel" data-pos-cash-panel hidden>
             <div class="panel-head"><h2>Cash drawer</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-pos-refresh-drawer>Refresh</button></div></div>
             <div class="panel-body"><div data-pos-drawer class="caption" aria-live="polite">Loading drawer status…</div><div class="pos-action-stack" style="margin-top:.8rem;"><button class="btn btn-sm" type="button" data-pos-open-drawer>Open drawer</button><button class="btn btn-sm btn-outline" type="button" data-pos-close-drawer disabled>Close drawer</button></div></div>
           </section>
           <details class="panel" data-pos-menu-admin hidden>
             <summary style="padding:1rem 1.25rem;cursor:pointer;font-weight:600;">Menu management</summary>
-            <div class="panel-body"><p class="caption" style="margin-top:0;">Manager-only catalog actions. Existing order prices remain frozen snapshots.</p><div class="pos-action-stack"><button class="btn btn-sm btn-outline" type="button" data-pos-add-category>Add category</button><button class="btn btn-sm btn-outline" type="button" data-pos-add-item>Add menu item</button></div></div>
+            <div class="panel-body"><p class="caption" style="margin-top:0;">Catalog actions are limited to your permitted menu service areas. Existing order prices remain frozen snapshots.</p><div class="pos-action-stack"><button class="btn btn-sm btn-outline" type="button" data-pos-add-category>Add category</button><button class="btn btn-sm btn-outline" type="button" data-pos-add-item>Add menu item</button></div></div>
           </details>
         </aside>
       </div>
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.6"></script>
-<script src="../js/config.js?v=1.1.6"></script>
-<script src="../js/utils.js?v=1.1.6"></script>
-<script src="../js/icons.js?v=1.1.6"></script>
-<script src="../js/api.js?v=1.1.6"></script>
-<script src="../js/theme.js?v=1.1.6"></script>
-<script src="../js/ui.js?v=1.1.6"></script>
-<script src="../js/auth.js?v=1.1.6"></script>
-<script src="../js/hotel-data.js?v=1.1.6"></script>
-<script src="../js/navigation.js?v=1.1.6"></script>
-<script src="../js/dashboard.js?v=1.1.6"></script>
+<script src="../js/runtime-config.js?v=1.1.11"></script>
+<script src="../js/config.js?v=1.1.11"></script>
+<script src="../js/utils.js?v=1.1.11"></script>
+<script src="../js/icons.js?v=1.1.11"></script>
+<script src="../js/api.js?v=1.1.11"></script>
+<script src="../js/theme.js?v=1.1.11"></script>
+<script src="../js/ui.js?v=1.1.11"></script>
+<script src="../js/auth.js?v=1.1.11"></script>
+<script src="../js/hotel-data.js?v=1.1.11"></script>
+<script src="../js/navigation.js?v=1.1.11"></script>
+<script src="../js/dashboard.js?v=1.1.11"></script>
 <script>
 JONE.ui.initChrome();
-var __posAllowed=JONE.dashboard.boot(["admin","manager","cashier"]);
+var __posAllowed=JONE.dashboard.boot(["admin","manager","general_manager","cashier","restaurant_manager","waiter","bar_manager","bartender","kitchen_manager","chef"]);
 document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
 
 (function(){
@@ -135,7 +150,8 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   var stayResults=document.querySelector("[data-pos-stay-results]");
   var selectedStayLabel=document.querySelector("[data-pos-selected-stay]");
   var createError=document.querySelector("[data-pos-create-error]");
-  var state={page:1,menu:[],itemsById:{},cart:[],selectedStay:null,orderKey:newKey(),drawer:null};
+  var serviceRequestReference=new URLSearchParams(window.location.search||"").get("service_request")||"";
+  var state={page:1,menu:[],itemsById:{},cart:[],selectedStay:null,orderKey:newKey(),drawer:null,menuArea:null,menuRequest:0,restaurantTables:[],tableSessions:[],selectedTableSession:null,openTableSessionKey:newKey(),serviceRequestReference:serviceRequestReference,serviceRequest:null};
 
   function endpoint(name){ return window.APP_CONFIG&&window.APP_CONFIG.API_ENDPOINTS&&window.APP_CONFIG.API_ENDPOINTS[name]; }
   function listItems(res){ return window.API.normalizeList(res.data,res.pagination).items||[]; }
@@ -150,7 +166,67 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   }
   function label(value){return String(value||"—").toLowerCase().replace(/_/g," ");}
   function setCreateError(message){if(!createError)return;createError.hidden=!message;createError.textContent=message||"";}
-  function roleIsManager(){return window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager"]);}
+  function hasCapability(code, fallbackRoles){
+    var auth=window.Auth;
+    if(auth&&auth.state&&auth.state.capabilitiesLoaded) return !!(auth.hasCapability&&auth.hasCapability(code));
+    return !!(auth&&auth.hasAnyRole&&auth.hasAnyRole(fallbackRoles||[]));
+  }
+  function allowedModes(){
+    var modes=[];
+    if(hasCapability("pos.order.manage",["admin","manager","general_manager","cashier"])) return ["ROOM_SERVICE","RESTAURANT","BAR","TAKEAWAY"];
+    if(hasCapability("restaurant.order.manage",["admin","manager","general_manager","restaurant_manager","waiter"])) modes.push("RESTAURANT","TAKEAWAY");
+    if(hasCapability("bar.order.manage",["admin","manager","general_manager","bar_manager","bartender"])) modes.push("BAR");
+    return modes;
+  }
+  function allowedMenuAreas(){
+    var areas=[];
+    if(hasCapability("pos.menu.manage",["admin","manager","general_manager"])) return ["RESTAURANT","BAR"];
+    if(hasCapability("restaurant.menu.manage",["restaurant_manager"])) areas.push("RESTAURANT");
+    if(hasCapability("bar.menu.manage",["bar_manager"])) areas.push("BAR");
+    return areas;
+  }
+  function canManageMenu(){return allowedMenuAreas().length>0;}
+  function canTender(){return hasCapability("payment.capture",["admin","manager","general_manager","cashier","accounts_manager","accountant","receptionist","restaurant_manager","waiter","bar_manager","bartender"]);}
+  function canOpenCash(){return hasCapability("cash_session.open",["admin","manager","general_manager","cashier","accounts_manager"]);}
+  function canCloseCash(){return hasCapability("cash_session.close",["admin","manager","general_manager","cashier","accounts_manager"]);}
+  function applyAccess(){
+    var modes=allowedModes();
+    var createMode=document.getElementById("pos-mode");
+    var modeFilter=document.getElementById("pos-mode-filter");
+    [createMode,modeFilter].forEach(function(select){
+      if(!select)return;
+      Array.prototype.forEach.call(select.options,function(option){
+        if(option.value)option.hidden=modes.indexOf(option.value)===-1;
+      });
+      if(select===createMode&&modes.indexOf(select.value)===-1)select.value=modes[0]||"";
+      if(select===modeFilter&&select.value&&modes.indexOf(select.value)===-1)select.value="";
+      select.disabled=select===createMode&&!modes.length;
+    });
+    var canOrder=modes.length>0;
+    var orderPanel=document.querySelector("[data-pos-orders-panel]");
+    var orderEntry=document.querySelector("[data-pos-order-entry]");
+    if(orderPanel)orderPanel.hidden=!canOrder;
+    if(orderEntry)orderEntry.hidden=!canOrder;
+    var cashPanel=document.querySelector("[data-pos-cash-panel]");
+    if(cashPanel)cashPanel.hidden=!(canOpenCash()||canCloseCash());
+    var openButton=document.querySelector("[data-pos-open-drawer]");
+    var closeButton=document.querySelector("[data-pos-close-drawer]");
+    if(openButton)openButton.hidden=!canOpenCash();
+    if(closeButton)closeButton.hidden=!canCloseCash();
+    var menuAdmin=document.querySelector("[data-pos-menu-admin]");
+    if(menuAdmin)menuAdmin.hidden=!canManageMenu();
+    var tableWorkspace=document.querySelector("[data-pos-table-workspace]");
+    if(tableWorkspace)tableWorkspace.hidden=!hasCapability("restaurant.order.manage",["admin","manager","general_manager","restaurant_manager","waiter"]);
+    var addTableButton=document.querySelector("[data-pos-add-table]");
+    if(addTableButton)addTableButton.hidden=!hasCapability("restaurant.table.manage",["admin","manager","general_manager","restaurant_manager"]);
+    var queueTitle=document.querySelector("[data-pos-queue-title]");
+    if(queueTitle){
+      var all=hasCapability("pos.order.manage",["admin","manager","general_manager","cashier"]);
+      var bar=hasCapability("bar.order.manage",["admin","manager","general_manager","bar_manager","bartender"]);
+      var restaurant=hasCapability("restaurant.order.manage",["admin","manager","general_manager","restaurant_manager","waiter"]);
+      queueTitle.textContent=all||bar&&restaurant?"Kitchen & bar production queue":bar?"Bar production queue":"Kitchen production queue";
+    }
+  }
 
   function renderCart(){
     if(!cartEl)return;
@@ -189,22 +265,115 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     category.disabled=!state.menu.length;
     renderItemChoices();
   }
-  async function loadMenu(){
-    try{var res=await window.API.get(endpoint("posMenu"));state.menu=res.data||[];renderMenu();}
-    catch(err){
+  async function loadMenu(area){
+    var params=area?{area:area}:{};
+    var requestId=++state.menuRequest;
+    try{
+      var res=await window.API.get(endpoint("posMenu"),{params:params});
+      if(requestId!==state.menuRequest)return;
+      state.menu=res.data||[];renderMenu();
+    }catch(err){
+      if(requestId!==state.menuRequest)return;
       state.menu=[];renderMenu();
       setCreateError((err&&err.message)||"The POS menu could not be loaded.");
     }
   }
 
+  function setTableError(message){var node=document.querySelector("[data-pos-table-error]");if(!node)return;node.hidden=!message;node.textContent=message||"";}
+  function renderRestaurantTables(){
+    var select=document.getElementById("pos-open-table"),register=document.querySelector("[data-pos-restaurant-table-register]");
+    var rows=state.restaurantTables||[],activeRows=rows.filter(function(table){return !!table.is_active;});
+    if(select){select.innerHTML='<option value="">'+(activeRows.length?'Choose a table':'No active restaurant tables')+'</option>'+activeRows.map(function(table){return '<option value="'+JONE.esc(table.id)+'">'+JONE.esc(table.code)+(table.name?' · '+JONE.esc(table.name):'')+(table.section?' · '+JONE.esc(table.section):'')+' · '+JONE.esc(table.seats)+' seats</option>';}).join('');select.disabled=!activeRows.length;}
+    if(register){var canManage=hasCapability('restaurant.table.manage',['admin','manager','general_manager','restaurant_manager']);register.hidden=!canManage;if(!canManage)return;register.innerHTML=rows.length?rows.map(function(table){return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(table.code)+(table.name?' · '+JONE.esc(table.name):'')+'</strong>'+JONE.dashboard.statusPill(table.is_active?'ACTIVE':'INACTIVE')+'<span class="caption">'+JONE.esc(table.seats)+' seats · '+JONE.esc(table.section||'Main dining')+'</span></div><div class="pos-action-stack" style="margin-top:.45rem;"><button type="button" class="btn btn-sm btn-outline" data-pos-edit-restaurant-table="'+JONE.esc(table.id)+'">Edit / status</button></div></div>';}).join(''):'<div class="empty-state"><h3>No tables registered</h3><p>Register the restaurant floor plan before opening dine-in sessions.</p></div>';}
+  }
+  function renderRestaurantSessions(){
+    var select=document.getElementById("pos-table-session"),target=document.querySelector("[data-pos-table-sessions]"),hint=document.querySelector("[data-pos-selected-session-hint]");
+    var rows=state.tableSessions||[];
+    if(state.selectedTableSession&&!rows.some(function(row){return row.reference===state.selectedTableSession;}))state.selectedTableSession=null;
+    if(select){select.innerHTML='<option value="">'+(rows.length?'Choose an open table session':'No open table sessions')+'</option>'+rows.map(function(session){return '<option value="'+JONE.esc(session.reference)+'">'+JONE.esc(session.table_code)+' · '+JONE.esc(session.covers)+' cover'+(session.covers===1?'':'s')+' · '+JONE.esc(session.order_count)+' order(s)</option>';}).join('');select.disabled=!rows.length;select.value=state.selectedTableSession||'';}
+    var selected=rows.find(function(row){return row.reference===state.selectedTableSession;});
+    if(hint)hint.textContent=selected?'Selected '+selected.table_code+' · '+selected.covers+' cover(s). New restaurant orders will join this service session.':'Select an open session, or open a new one in Restaurant tables.';
+    if(!target)return;
+    target.innerHTML=rows.length?rows.map(function(session){var selectedNow=session.reference===state.selectedTableSession;var detail=session.order_count+' order(s) · '+session.active_order_count+' in progress · '+session.unpaid_order_count+' unpaid';return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(session.table_code)+(session.table_name?' · '+JONE.esc(session.table_name):'')+'</strong><span class="badge">'+JONE.esc(session.covers)+' covers</span></div><p>'+JONE.esc(session.table_section||'Main dining')+' · opened '+JONE.esc(session.opened_at?JONE.formatDateTime(session.opened_at):'—')+'<br>'+JONE.esc(detail)+'</p><div class="pos-action-stack" style="margin-top:.55rem;"><button type="button" class="btn btn-sm '+(selectedNow?'':'btn-outline')+'" data-pos-select-table-session="'+JONE.esc(session.reference)+'">'+(selectedNow?'Selected for order':'Use this table')+'</button><button type="button" class="btn btn-sm btn-outline" data-pos-close-table-session="'+JONE.esc(session.reference)+'">Close session</button></div></div>';}).join(''):'<div class="empty-state"><h3>No open table sessions</h3><p>Choose a registered table and open a service session to begin dine-in orders.</p></div>';
+  }
+  function selectRestaurantTableSession(reference){state.selectedTableSession=(state.tableSessions||[]).some(function(row){return row.reference===reference;})?reference:null;renderRestaurantSessions();}
+  async function loadRestaurantTables(silent){
+    if(!hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter']))return true;
+    var select=document.getElementById('pos-open-table');if(select&&!silent)select.innerHTML='<option value="">Loading tables…</option>';
+    try{var showAll=hasCapability('restaurant.table.manage',['admin','manager','general_manager','restaurant_manager']);var res=await window.API.list('posRestaurantTables',{active:showAll?'all':'true',page_size:100});state.restaurantTables=listItems(res);renderRestaurantTables();setTableError('');return true;}
+    catch(err){state.restaurantTables=[];renderRestaurantTables();setTableError((err&&err.message)||'The restaurant table register could not be loaded.');return false;}
+  }
+  async function loadRestaurantSessions(silent){
+    if(!hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter']))return true;
+    var target=document.querySelector('[data-pos-table-sessions]');if(target&&!silent)DATA.loading(target,'list');
+    try{var res=await window.API.list('posRestaurantTableSessions',{status:'OPEN',page_size:100});state.tableSessions=listItems(res);renderRestaurantSessions();return true;}
+    catch(err){if(!silent)DATA.error(target,'Table sessions could not be loaded',(err&&err.message)||'Refresh and try again.',1);return false;}
+  }
+  async function openRestaurantTableSession(button){
+    var tableId=Number(document.getElementById('pos-open-table').value||0),covers=Number(document.getElementById('pos-open-covers').value||0);
+    if(!tableId){JONE.ui.toast('Choose a registered table first.','warning');return;}
+    if(!Number.isInteger(covers)||covers<1||covers>60){JONE.ui.toast('Covers must be between 1 and 60.','warning');return;}
+    if(!JONE.guardSubmit(button))return;
+    try{var res=await window.API.create('posRestaurantTableSessions',{table_id:tableId,covers:covers,notes:'',idempotency_key:state.openTableSessionKey});var session=res.data||{};state.selectedTableSession=session.reference||null;state.openTableSessionKey=newKey();JONE.ui.toast('Table session opened for '+(session.table_code||'table')+'.','success');await loadRestaurantSessions(true);}
+    catch(err){JONE.releaseGuard(button);JONE.ui.toast((err&&err.message)||'The table session could not be opened. Refresh and check the register.','error');loadRestaurantTables(true);loadRestaurantSessions(true);}
+  }
+  async function closeRestaurantTableSession(reference,button){
+    var confirmed=await JONE.ui.confirm({title:'Close table session?',message:'Every order must be finished, and delivered orders must be fully settled. The server will reject closure while anything remains open or unpaid.',confirmText:'Close session'});if(!confirmed)return;
+    if(!JONE.guardSubmit(button))return;
+    try{await window.API.resourceAction('posRestaurantTableSessions',reference,'close',{close_note:''});if(state.selectedTableSession===reference)state.selectedTableSession=null;JONE.ui.toast('Restaurant table session closed.','success');await loadRestaurantSessions(true);}
+    catch(err){JONE.releaseGuard(button);JONE.ui.toast((err&&err.message)||'The table session could not be closed.','error');loadRestaurantSessions(true);}
+  }
+  async function addRestaurantTable(){
+    if(!hasCapability('restaurant.table.manage',['admin','manager','general_manager','restaurant_manager']))return;
+    var result=await JONE.dashboard.formModal({title:'Register restaurant table',submitText:'Register table',fields:[{name:'code',label:'Table code',type:'text',required:true,placeholder:'e.g. T-01'},{name:'name',label:'Display name',type:'text',placeholder:'Optional · window table'},{name:'section',label:'Dining section',type:'text',placeholder:'Main dining'},{name:'seats',label:'Seat capacity',type:'number',min:'1',max:'60',value:'2',required:true}],onSubmit:async function(values){await window.API.create('posRestaurantTables',{code:String(values.code||'').trim().toUpperCase(),name:values.name||'',section:values.section||'',seats:Number(values.seats),is_active:true});return{message:'Restaurant table registered.'};}});
+    if(result){await loadRestaurantTables();}
+  }
+  async function editRestaurantTable(id){
+    if(!hasCapability('restaurant.table.manage',['admin','manager','general_manager','restaurant_manager']))return;
+    var table=(state.restaurantTables||[]).find(function(row){return String(row.id)===String(id);});if(!table)return;
+    var result=await JONE.dashboard.formModal({title:'Table '+table.code,submitText:'Save table',fields:[{name:'code',label:'Table code',type:'text',value:table.code,required:true},{name:'name',label:'Display name',type:'text',value:table.name||''},{name:'section',label:'Dining section',type:'text',value:table.section||''},{name:'seats',label:'Seat capacity',type:'number',min:'1',max:'60',value:String(table.seats),required:true},{name:'is_active',label:'Availability',type:'select',value:table.is_active?'true':'false',options:[{value:'true',label:'Active · available for seating'},{value:'false',label:'Inactive · no new sessions'}]}],onRender:function(panel){var note=document.createElement('p');note.className='hint';note.textContent='Identity and layout fields are frozen after the first service session; tables with history can only be activated or deactivated.';panel.prepend(note);},onSubmit:async function(values){var patch={};var code=String(values.code||'').trim().toUpperCase();var name=values.name||'';var section=values.section||'';var seats=Number(values.seats);var active=values.is_active==='true';if(code!==table.code)patch.code=code;if(name!==(table.name||''))patch.name=name;if(section!==(table.section||''))patch.section=section;if(seats!==Number(table.seats))patch.seats=seats;if(active!==!!table.is_active)patch.is_active=active;if(!Object.keys(patch).length)return{message:'No changes made.'};await window.API.update('posRestaurantTables',table.id,patch);return{message:'Restaurant table updated.'};}});
+    if(result)await loadRestaurantTables();
+  }
+
+  function showServiceRequestNotice(message){var node=document.querySelector("[data-pos-service-request]");if(!node)return;node.textContent=message||"";node.hidden=!message;}
+  function normalizedTableCode(value){return String(value||"").trim().replace(/\s+/g," ").toLowerCase();}
+  async function loadServiceRequestContext(){
+    if(!state.serviceRequestReference)return;
+    showServiceRequestNotice("Loading linked QR guest request…");
+    try{
+      var response=await window.API.getOne("serviceRequests",state.serviceRequestReference),item=response.data||{};
+      if(item.channel!=="QR"||item.category!=="FOOD_BEVERAGE"||!item.table_number)throw new Error("Only a table QR food-and-beverage request can start a POS draft.");
+      state.serviceRequest=item;
+      if(item.pos_order_reference){showServiceRequestNotice("This QR request is already linked to POS order "+item.pos_order_reference+". No second order will be created.");return;}
+      var modes=allowedModes(),preferred=modes.indexOf("RESTAURANT")!==-1?"RESTAURANT":modes.indexOf("BAR")!==-1?"BAR":"";
+      if(!preferred)throw new Error("Your account has no restaurant or bar order capability for this request.");
+      document.getElementById("pos-mode").value=preferred;updateMode();
+      if(preferred==="RESTAURANT"){
+        await loadRestaurantSessions(true);
+        var match=(state.tableSessions||[]).filter(function(session){return normalizedTableCode(session.table_code)===normalizedTableCode(item.table_number);});
+        if(match.length===1)selectRestaurantTableSession(match[0].reference);
+        showServiceRequestNotice("QR request "+item.reference+" · "+item.table_number+" · "+item.summary+(item.detail?" · "+item.detail:"")+". Confirm the guest's actual menu choices, then choose items and review the draft. Nothing is sent to production or charged until staff submit and deliver it.");
+      }else{
+        document.getElementById("pos-table").value=item.table_number;
+        showServiceRequestNotice("QR request "+item.reference+" · "+item.table_number+" · "+item.summary+(item.detail?" · "+item.detail:"")+". Confirm the guest's actual menu choices, then choose items and review the draft. Nothing is sent to production or charged until staff submit and deliver it.");
+      }
+    }catch(err){
+      state.serviceRequest=null;
+      showServiceRequestNotice("Unable to start a POS draft from this request: "+((err&&err.message)||"request unavailable."));
+    }
+  }
   function mode(){return document.getElementById("pos-mode").value;}
   function updateMode(){
-    var room=mode()==="ROOM_SERVICE", restaurant=mode()==="RESTAURANT", takeaway=mode()==="TAKEAWAY";
+    if(!allowedModes().length){state.menuArea=null;return;}
+    var value=mode(), room=value==="ROOM_SERVICE", restaurant=value==="RESTAURANT", bar=value==="BAR", takeaway=value==="TAKEAWAY";
     document.querySelectorAll("[data-pos-room-service]").forEach(function(el){el.hidden=!room;});
     document.querySelectorAll("[data-pos-direct-guest]").forEach(function(el){el.hidden=room;});
-    document.querySelectorAll("[data-pos-table]").forEach(function(el){el.hidden=!restaurant;});
+    document.querySelectorAll("[data-pos-bar-table]").forEach(function(el){el.hidden=!bar;});
+    document.querySelectorAll("[data-pos-restaurant-table-session]").forEach(function(el){el.hidden=!restaurant;});
     document.querySelectorAll("[data-pos-delivery]").forEach(function(el){el.hidden=takeaway;});
-    document.getElementById("pos-delivery").placeholder=room?"Room / delivery note":restaurant?"Service note (optional)":"Pickup note (optional)";
+    document.getElementById("pos-delivery").placeholder=room?"Room / delivery note":restaurant?"Service note (optional)":bar?"Bar pickup / service note":"Pickup note (optional)";
+    var area=room?"":bar?"BAR":"RESTAURANT";
+    if(state.menuArea!==area){state.menuArea=area;loadMenu(area);}
   }
   function renderStayResults(rows){
     if(!stayResults)return;
@@ -248,13 +417,14 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(status==="SUBMITTED")buttons+='<button class="btn btn-sm" type="button" data-pos-action="PREPARING" data-pos-ref="'+ref+'">Start</button>';
     if(status==="PREPARING")buttons+='<button class="btn btn-sm" type="button" data-pos-action="READY" data-pos-ref="'+ref+'">Ready</button>';
     if(status==="READY")buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-action="DELIVERED" data-pos-ref="'+ref+'">Deliver</button>';
-    if(status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&order.settlement_status!=="PAID")buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-tender="'+ref+'">Tender</button>';
+    if(["DRAFT","SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-action="CANCELLED" data-pos-ref="'+ref+'">Cancel</button>';
+    if(status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&order.settlement_status!=="PAID"&&canTender())buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-tender="'+ref+'">Tender</button>';
     return '<div class="pos-action-stack">'+buttons+'</div>';
   }
   function renderOrders(rows){
     if(!rows.length){DATA.empty(orderBody,"utensils","No POS orders found","Create an order or change the filters.",7);return;}
     orderBody.innerHTML=rows.map(function(order){
-      var guest=order.guest_name||"Walk-in";var location=order.mode==="RESTAURANT"?(order.table_number||"—"):(order.delivery_location||((order.stay_reference||"—")));
+      var guest=order.guest_name||"Walk-in";var location=(order.mode==="RESTAURANT"||order.mode==="BAR")?(order.table_number||order.delivery_location||"—"):(order.delivery_location||((order.stay_reference||"—")));
       return '<tr><td class="cell-nowrap"><strong>'+JONE.esc(order.reference)+'</strong><small class="receipt-mobile-guest hide-md">'+JONE.esc(guest)+'</small></td><td>'+JONE.esc(label(order.mode))+'<br><small class="hide-sm">'+JONE.esc(guest)+'</small></td><td class="hide-sm">'+JONE.esc(location)+'</td><td class="num cell-nowrap">'+JONE.esc(money(order.total_amount,order.currency))+'</td><td>'+JONE.dashboard.statusPill(order.status)+'</td><td class="hide-sm">'+JONE.dashboard.statusPill(order.settlement_status)+'</td><td>'+actionButtons(order)+'</td></tr>';
     }).join('');JONE.icons.inject(orderBody);
   }
@@ -265,18 +435,61 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     var statusValue=document.getElementById("pos-status-filter").value;if(statusValue)out.status=statusValue;
     return out;
   }
-  async function loadOrders(page){
-    if(page!=null)state.page=Math.max(1,page);DATA.loading(orderBody);
-    try{var res=await window.API.list("posOrders",filters());var rows=listItems(res);renderOrders(rows);JONE.dashboard.renderPagination(document.querySelector("[data-pos-pagination]"),rows.length?res.pagination:null,{onPage:loadOrders});}
-    catch(err){DATA.error(orderBody,"POS orders couldn't be loaded",(err&&err.message)||"Please try again in a moment.",7);}
+  async function loadOrders(page,silent){
+    if(!allowedModes().length)return true;
+    if(page!=null)state.page=Math.max(1,page);
+    if(!silent)DATA.loading(orderBody);
+    try{
+      var res=await window.API.list("posOrders",filters());var rows=listItems(res);renderOrders(rows);
+      JONE.dashboard.renderPagination(document.querySelector("[data-pos-pagination]"),rows.length?res.pagination:null,{onPage:loadOrders});
+      return true;
+    }catch(err){
+      if(!silent)DATA.error(orderBody,"POS orders couldn't be loaded",(err&&err.message)||"Please try again in a moment.",7);
+      return false;
+    }
   }
-  async function loadKitchen(){
-    if(!kitchen)return;DATA.loading(kitchen,"list");
-    try{var res=await window.API.list("posKitchenTickets",{page_size:20});var rows=listItems(res);kitchen.innerHTML=rows.length?rows.map(function(ticket){return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(ticket.order_reference||"Kitchen ticket")+'</strong>'+JONE.dashboard.statusPill(ticket.status)+'</div><p>'+JONE.esc(ticket.order_guest_name||ticket.order_delivery_location||ticket.order_table_number||"Order awaiting fulfilment")+'</p></div>';}).join(''):'<div class="empty-state"><span data-icon="coffee"></span><h3>Kitchen queue is clear</h3><p>Submitted orders will appear here.</p></div>';JONE.icons.inject(kitchen);}
-    catch(err){DATA.error(kitchen,"Kitchen queue couldn't be loaded",(err&&err.message)||"Please try again in a moment.",1);}
+  function canProgressTickets(){
+    return hasCapability("kitchen.ticket.manage",["kitchen_manager","chef"])||
+      hasCapability("pos.order.manage",["admin","manager","general_manager","cashier"])||
+      hasCapability("restaurant.order.manage",["admin","manager","general_manager","restaurant_manager","waiter"])||
+      hasCapability("bar.order.manage",["admin","manager","general_manager","bar_manager","bartender"]);
+  }
+  function ticketActionButton(ticket){
+    if(!canProgressTickets())return "";
+    var target=ticket.status==="QUEUED"?"PREPARING":ticket.status==="PREPARING"?"READY":"";
+    if(!target)return "";
+    var text=target==="PREPARING"?"Start preparation":"Mark ready";
+    return '<button type="button" class="btn btn-sm btn-outline" data-pos-ticket-status="'+JONE.esc(ticket.id)+'" data-pos-ticket-target="'+target+'">'+text+'</button>';
+  }
+  async function advanceTicket(id,target,button){
+    if(!JONE.guardSubmit(button))return;
+    try{
+      await window.API.updatePosKitchenTicketStatus(id,target);
+      JONE.ui.toast("Production ticket updated.","success");
+      loadKitchen();
+      if(allowedModes().length)loadOrders();
+    }catch(err){JONE.releaseGuard(button);JONE.ui.toast((err&&err.message)||"The production ticket could not be updated.","error");}
+  }
+  async function loadKitchen(silent){
+    if(!kitchen)return true;
+    if(!silent)DATA.loading(kitchen,"list");
+    try{
+      var res=await window.API.list("posKitchenTickets",{page_size:20});var rows=listItems(res);
+      kitchen.innerHTML=rows.length?rows.map(function(ticket){
+        var lines=(ticket.order_lines||[]).map(function(line){return JONE.esc(line.quantity)+" × "+JONE.esc(line.item_name);}).join(" · ");
+        var place=ticket.order_guest_name||ticket.order_delivery_location||ticket.order_table_number||"Order awaiting fulfilment";
+        return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(ticket.order_reference||"Production ticket")+'</strong><span class="badge">'+JONE.esc(label(ticket.station||"KITCHEN"))+'</span>'+JONE.dashboard.statusPill(ticket.status)+'</div><p>'+JONE.esc(place)+(lines?'<br>'+lines:'')+'</p><div class="pos-action-stack" style="margin-top:.55rem;">'+ticketActionButton(ticket)+'</div></div>';
+      }).join(''):'<div class="empty-state"><span data-icon="coffee"></span><h3>Production queue is clear</h3><p>Submitted orders appear at their assigned station.</p></div>';
+      JONE.icons.inject(kitchen);
+      return true;
+    }
+    catch(err){
+      if(!silent)DATA.error(kitchen,"Production queue couldn't be loaded",(err&&err.message)||"Please try again in a moment.",1);
+      return false;
+    }
   }
   async function loadDrawer(){
-    if(!drawer)return;drawer.textContent="Loading drawer status…";
+    if(!drawer||!(canOpenCash()||canCloseCash()))return;drawer.textContent="Loading drawer status…";
     try{
       var res=await window.API.list("financeCashSessions",{status:"OPEN",page_size:100});
       var email=((window.Auth&&window.Auth.state.user&&window.Auth.state.user.email)||"").toLowerCase();
@@ -293,7 +506,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       var lines=(order.lines||[]).map(function(line){return '<tr><td>'+JONE.esc(line.item_name)+'</td><td class="num">'+JONE.esc(line.quantity)+'</td><td class="num">'+JONE.esc(money(line.line_total,order.currency))+'</td></tr>';}).join('')||'<tr><td colspan="3">No lines</td></tr>';
       var events=(order.events||[]).map(function(event){return '<li><strong>'+JONE.esc(label(event.type))+'</strong> · '+JONE.esc(event.occurred_at?JONE.formatDateTime(event.occurred_at):"—")+(event.actor_email?' · '+JONE.esc(event.actor_email):'')+'</li>';}).join('')||'<li>No events recorded.</li>';
       var tenders=(order.tenders||[]).map(function(tender){return '<li>'+JONE.esc(label(tender.method))+' · '+JONE.esc(money(tender.amount,tender.currency))+' · '+JONE.esc(label(tender.status))+'</li>';}).join('')||'<li>No direct tenders recorded.</li>';
-      body.innerHTML='<dl class="profile-grid"><div><dt>Status</dt><dd>'+JONE.dashboard.statusPill(order.status)+'</dd></div><div><dt>Settlement</dt><dd>'+JONE.dashboard.statusPill(order.settlement_status)+'</dd></div><div><dt>Total</dt><dd>'+JONE.esc(money(order.total_amount,order.currency))+'</dd></div><div><dt>Ledger charge</dt><dd>'+JONE.esc(order.charge_financial_reference||"Not posted")+'</dd></div></dl><h4 style="margin:1rem 0 .5rem;">Order lines</h4><div class="table-wrap"><table class="table"><thead><tr><th>Item</th><th>Qty</th><th>Total</th></tr></thead><tbody>'+lines+'</tbody></table></div><h4 style="margin:1rem 0 .5rem;">Tenders</h4><ul>'+tenders+'</ul><h4 style="margin:1rem 0 .5rem;">Timeline</h4><ul>'+events+'</ul>';
+      body.innerHTML='<dl class="profile-grid"><div><dt>Status</dt><dd>'+JONE.dashboard.statusPill(order.status)+'</dd></div><div><dt>Settlement</dt><dd>'+JONE.dashboard.statusPill(order.settlement_status)+'</dd></div><div><dt>Total</dt><dd>'+JONE.esc(money(order.total_amount,order.currency))+'</dd></div><div><dt>Table / session</dt><dd>'+JONE.esc(order.table_session_code||order.table_number||'—')+(order.table_session_reference?' · '+JONE.esc(order.table_session_reference):'')+'</dd></div><div><dt>Ledger charge</dt><dd>'+JONE.esc(order.charge_financial_reference||"Not posted")+'</dd></div></dl><h4 style="margin:1rem 0 .5rem;">Order lines</h4><div class="table-wrap"><table class="table"><thead><tr><th>Item</th><th>Qty</th><th>Total</th></tr></thead><tbody>'+lines+'</tbody></table></div><h4 style="margin:1rem 0 .5rem;">Tenders</h4><ul>'+tenders+'</ul><h4 style="margin:1rem 0 .5rem;">Timeline</h4><ul>'+events+'</ul>';
       JONE.icons.inject(body);
     }catch(err){body.innerHTML='<div class="empty-state"><h3>Order unavailable</h3><p>'+JONE.esc((err&&err.message)||"Please try again.")+'</p></div>';}
   }
@@ -301,21 +514,27 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(action==="DELIVERED"){
       var confirmed=await JONE.ui.confirm({title:"Mark order delivered?",message:"Delivery posts the immutable POS charge. A delivered order cannot be cancelled.",confirmText:"Mark delivered"});if(!confirmed)return;
     }
+    if(action==="CANCELLED"){
+      var cancelConfirmed=await JONE.ui.confirm({title:"Cancel this order?",message:"This keeps an audit record and posts no charge. A delivered order must be corrected through the approved financial workflow.",confirmText:"Cancel order"});if(!cancelConfirmed)return;
+    }
     if(!JONE.guardSubmit(button))return;
-    try{if(action==="submit")await window.API.submitPosOrder(reference,{});else await window.API.updatePosOrderStatus(reference,action);JONE.ui.toast(action==="submit"?"Order submitted to kitchen.":"Order status updated.","success");loadOrders();loadKitchen();}
+    try{if(action==="submit")await window.API.submitPosOrder(reference,{});else await window.API.updatePosOrderStatus(reference,action);JONE.ui.toast(action==="submit"?"Order sent to its production station.":"Order status updated.","success");loadOrders();loadKitchen();}
     catch(err){JONE.releaseGuard(button);JONE.ui.toast((err&&err.message)||"The order could not be updated.","error");}
   }
   async function captureTender(reference){
     await loadDrawer();
     var orderRes;try{orderRes=await window.API.getOne("posOrders",reference);}catch(err){JONE.ui.toast((err&&err.message)||"Order could not be loaded.","error");return;}
     var order=orderRes.data||{};
-    var result=await JONE.dashboard.formModal({title:"Capture tender · "+reference,submitText:"Capture tender",wide:true,fields:[
-      {name:"method",label:"Method",type:"select",required:true,options:[{value:"CASH",label:"Cash"},{value:"CARD",label:"Card / POS terminal"},{value:"BANK_TRANSFER",label:"Bank transfer"}]},
+    var tenderOptions=[{value:"CARD",label:"Card / POS terminal"},{value:"BANK_TRANSFER",label:"Bank transfer"}];
+    if(canOpenCash())tenderOptions.unshift({value:"CASH",label:"Cash"});
+    var tenderFields=[
+      {name:"method",label:"Method",type:"select",required:true,options:tenderOptions},
       {name:"amount",label:"Amount ("+(order.currency||"NGN")+")",type:"number",step:"0.01",required:true,placeholder:"Server rejects an amount above the unpaid balance."},
-      {name:"external_reference",label:"Terminal / transfer reference",type:"text",placeholder:"Optional for cash"},
-      {name:"cash_session_reference",label:"Cash-session reference",type:"text",value:(state.drawer&&state.drawer.reference)||"",help:"Required for cash. The current user's open drawer is prefilled when available."},
-      {name:"notes",label:"Notes",type:"textarea",rows:2}
-    ],onSubmit:async function(values){
+      {name:"external_reference",label:"Terminal / transfer reference",type:"text",placeholder:"Optional for cash"}
+    ];
+    if(canOpenCash())tenderFields.push({name:"cash_session_reference",label:"Cash-session reference",type:"text",value:(state.drawer&&state.drawer.reference)||"",help:"Required for cash. Your open drawer is prefilled when available."});
+    tenderFields.push({name:"notes",label:"Notes",type:"textarea",rows:2});
+    var result=await JONE.dashboard.formModal({title:"Capture tender · "+reference,submitText:"Capture tender",wide:true,fields:tenderFields,onSubmit:async function(values){
       if(values.method!=="CASH")values.cash_session_reference="";
       await window.API.capturePosTender(reference,{method:values.method,amount:String(values.amount),cash_session_reference:values.cash_session_reference||"",external_reference:values.external_reference||"",notes:values.notes||""});
       return {message:"Tender captured."};
@@ -332,14 +551,18 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(result)loadDrawer();
   }
   async function addCategory(){
-    var result=await JONE.dashboard.formModal({title:"Add menu category",submitText:"Create category",fields:[{name:"name",label:"Name",type:"text",required:true},{name:"slug",label:"Slug",type:"text",help:"Leave blank to derive from the name."},{name:"description",label:"Description",type:"textarea",rows:2},{name:"sort_order",label:"Display order",type:"number",value:"0"}],onSubmit:async function(values){await window.API.create("posMenuCategories",values);return{message:"Menu category created."};}});
-    if(result)loadMenu();
+    var areas=allowedMenuAreas();
+    var areaOptions=areas.map(function(area){return{value:area,label:area==="BAR"?"Bar":"Restaurant"};});
+    var defaultArea=mode()==="BAR"?"BAR":mode()==="RESTAURANT"||mode()==="TAKEAWAY"?"RESTAURANT":areas[0];
+    var fields=[{name:"name",label:"Name",type:"text",required:true},{name:"slug",label:"Slug",type:"text",help:"Leave blank to derive from the name."},{name:"service_area",label:"Service area",type:"select",required:true,value:defaultArea,options:areaOptions},{name:"description",label:"Description",type:"textarea",rows:2},{name:"sort_order",label:"Display order",type:"number",value:"0"}];
+    var result=await JONE.dashboard.formModal({title:"Add menu category",submitText:"Create category",fields:fields,onSubmit:async function(values){await window.API.create("posMenuCategories",values);return{message:"Menu category created."};}});
+    if(result){state.menuArea=null;updateMode();}
   }
   async function addMenuItem(){
     if(!state.menu.length){JONE.ui.toast("Create a category first.","warning");return;}
     var categoryOptions=state.menu.map(function(row){return{value:row.id,label:row.name};});
     var result=await JONE.dashboard.formModal({title:"Add menu item",submitText:"Create menu item",wide:true,fields:[{name:"category",label:"Category",type:"select",required:true,options:categoryOptions},{name:"name",label:"Name",type:"text",required:true},{name:"sku",label:"SKU",type:"text",required:true},{name:"base_price",label:"Base price (NGN)",type:"number",step:"0.01",required:true},{name:"tax_rate_percent",label:"Tax rate (%)",type:"number",step:"0.01",value:"0.00"},{name:"preparation_minutes",label:"Preparation minutes",type:"number",value:"15"},{name:"description",label:"Description",type:"textarea",rows:2}],onSubmit:async function(values){await window.API.create("posMenuItems",values);return{message:"Menu item created."};}});
-    if(result)loadMenu();
+    if(result){state.menuArea=null;updateMode();}
   }
 
   document.getElementById("pos-mode").addEventListener("change",updateMode);
@@ -352,31 +575,63 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   cartEl.addEventListener("click",function(event){var button=event.target.closest("[data-pos-remove-line]");if(!button)return;state.cart.splice(Number(button.getAttribute("data-pos-remove-line")),1);renderCart();});
   document.getElementById("pos-create-form").addEventListener("submit",async function(event){
     event.preventDefault();setCreateError("");
+    if(state.serviceRequestReference&&!state.serviceRequest){setCreateError("The linked QR request has not been verified. Return to Guest requests and reopen the action.");return;}
+    if(state.serviceRequest&&state.serviceRequest.pos_order_reference){setCreateError("This QR request already has a linked POS order.");return;}
+    if(state.serviceRequest&&["RESTAURANT","BAR"].indexOf(mode())<0){setCreateError("A table QR request can create only a restaurant or bar draft.");return;}
     if(!state.cart.length){setCreateError("Add at least one menu item before creating the draft.");return;}
     if(mode()==="ROOM_SERVICE"&&!state.selectedStay){setCreateError("Select an in-house guest for room service.");return;}
+    if(mode()==="RESTAURANT"&&!state.selectedTableSession){setCreateError("Select an open registered table session for restaurant dine-in.");return;}
     var button=document.getElementById("pos-create");if(!JONE.guardSubmit(button))return;
-    var payload={mode:mode(),lines:state.cart.map(function(line){return{menu_item_id:line.menu_item_id,quantity:line.quantity,modifier_ids:line.modifier_ids,notes:line.notes};}),idempotency_key:state.orderKey,guest_name:(document.getElementById("pos-guest").value||"").trim(),table_number:(document.getElementById("pos-table").value||"").trim(),delivery_location:(document.getElementById("pos-delivery").value||"").trim(),notes:""};
+    var payload={mode:mode(),lines:state.cart.map(function(line){return{menu_item_id:line.menu_item_id,quantity:line.quantity,modifier_ids:line.modifier_ids,notes:line.notes};}),idempotency_key:state.orderKey,guest_name:(document.getElementById("pos-guest").value||"").trim(),table_number:mode()==="BAR"?(document.getElementById("pos-table").value||"").trim():"",table_session_reference:mode()==="RESTAURANT"?state.selectedTableSession:"",delivery_location:(document.getElementById("pos-delivery").value||"").trim(),notes:""};
     if(state.selectedStay)payload.stay_id=state.selectedStay.id;
-    try{var res=await window.API.create("posOrders",payload);var order=res.data||{};JONE.ui.toast("POS draft "+(order.reference||"created")+" created. Submit it when the order is final.","success");state.cart=[];state.selectedStay=null;state.orderKey=newKey();selectedStayLabel.textContent="No in-house guest selected.";stayResults.innerHTML="";document.getElementById("pos-create-form").reset();updateMode();renderCart();loadOrders();}
+    if(state.serviceRequest){payload.service_request_reference=state.serviceRequest.reference;if(mode()==="BAR")payload.table_number=state.serviceRequest.table_number;}
+    try{var res=await window.API.create("posOrders",payload);var order=res.data||{};JONE.ui.toast(state.serviceRequest?"POS draft "+(order.reference||"created")+" linked to request "+state.serviceRequest.reference+". Review it before submission.":"POS draft "+(order.reference||"created")+" created. Submit it when the order is final.","success");state.cart=[];state.selectedStay=null;state.orderKey=newKey();if(state.serviceRequestReference){state.serviceRequestReference="";state.serviceRequest=null;showServiceRequestNotice("");var cleanUrl=new URL(window.location.href);cleanUrl.searchParams.delete("service_request");window.history.replaceState(null,document.title,cleanUrl.pathname+cleanUrl.search+cleanUrl.hash);}selectedStayLabel.textContent="No in-house guest selected.";stayResults.innerHTML="";document.getElementById("pos-create-form").reset();document.getElementById("pos-mode").value=allowedModes()[0]||"";renderRestaurantSessions();state.menuArea=null;updateMode();renderCart();loadOrders();}
     catch(err){JONE.releaseGuard(button);setCreateError((err&&err.message)||"The POS draft could not be created.");}
   });
   document.getElementById("pos-apply").addEventListener("click",function(){loadOrders(1);});
   document.getElementById("pos-search").addEventListener("input",JONE.debounce(function(){loadOrders(1);},300));
   document.querySelector("[data-pos-refresh-kitchen]").addEventListener("click",loadKitchen);
+  document.querySelector("[data-pos-refresh-tables]").addEventListener("click",function(){loadRestaurantTables();loadRestaurantSessions();});
+  document.querySelector("[data-pos-open-session]").addEventListener("click",function(event){openRestaurantTableSession(event.currentTarget);});
+  document.querySelector("[data-pos-add-table]").addEventListener("click",addRestaurantTable);
+  document.getElementById("pos-open-table").addEventListener("change",function(){state.openTableSessionKey=newKey();});
+  document.getElementById("pos-open-covers").addEventListener("input",function(){state.openTableSessionKey=newKey();});
+  document.getElementById("pos-table-session").addEventListener("change",function(){selectRestaurantTableSession(this.value);});
+  document.querySelector("[data-pos-table-sessions]").addEventListener("click",function(event){var close=event.target.closest("[data-pos-close-table-session]");var select=event.target.closest("[data-pos-select-table-session]");if(close)closeRestaurantTableSession(close.getAttribute("data-pos-close-table-session"),close);else if(select)selectRestaurantTableSession(select.getAttribute("data-pos-select-table-session"));});
+  document.querySelector("[data-pos-restaurant-table-register]").addEventListener("click",function(event){var button=event.target.closest("[data-pos-edit-restaurant-table]");if(button)editRestaurantTable(button.getAttribute("data-pos-edit-restaurant-table"));});
+  kitchen.addEventListener("click",function(event){var button=event.target.closest("[data-pos-ticket-status]");if(button)advanceTicket(button.getAttribute("data-pos-ticket-status"),button.getAttribute("data-pos-ticket-target"),button);});
   document.querySelector("[data-pos-refresh-drawer]").addEventListener("click",loadDrawer);
   document.querySelector("[data-pos-open-drawer]").addEventListener("click",openDrawer);
   document.querySelector("[data-pos-close-drawer]").addEventListener("click",closeDrawer);
   orderBody.addEventListener("click",function(event){var view=event.target.closest("[data-pos-view]");var action=event.target.closest("[data-pos-action]");var tender=event.target.closest("[data-pos-tender]");if(view)viewOrder(view.getAttribute("data-pos-view"));else if(action)advanceOrder(action.getAttribute("data-pos-ref"),action.getAttribute("data-pos-action"),action);else if(tender)captureTender(tender.getAttribute("data-pos-tender"));});
-  if(roleIsManager()){
-    var manager=document.querySelector("[data-pos-menu-admin]");manager.hidden=false;
-    document.querySelector("[data-pos-add-category]").addEventListener("click",addCategory);
-    document.querySelector("[data-pos-add-item]").addEventListener("click",addMenuItem);
+  document.querySelector("[data-pos-add-category]").addEventListener("click",addCategory);
+  document.querySelector("[data-pos-add-item]").addEventListener("click",addMenuItem);
+  function startWorkspace(){
+    applyAccess();updateMode();renderCart();
+    if(allowedModes().length)loadOrders(1);
+    if(hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter'])){loadRestaurantTables();loadRestaurantSessions();}
+    if(state.serviceRequestReference)loadServiceRequestContext();
+    loadKitchen();loadDrawer();
+    var liveStatus=document.querySelector("[data-pos-live-status]");
+    if(liveStatus)liveStatus.textContent="Live refresh · every 15 seconds";
+    if(state.liveRefreshStop)state.liveRefreshStop();
+    state.liveRefreshStop=JONE.dashboard.startLiveRefresh(function(){
+      var refreshes=[loadKitchen(true)];
+      if(allowedModes().length)refreshes.push(loadOrders(undefined,true));
+      if(hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter']))refreshes.push(loadRestaurantSessions(true));
+      return Promise.all(refreshes).then(function(results){
+        if(liveStatus)liveStatus.textContent=results.every(Boolean)?"Live · just refreshed":"Refresh issue · last successful data retained";
+      });
+    },15000,{refreshOnVisible:true});
+    window.addEventListener&&window.addEventListener("pagehide",function(){if(state.liveRefreshStop)state.liveRefreshStop();},{once:true});
   }
-  updateMode();renderCart();loadMenu();loadOrders(1);loadKitchen();loadDrawer();
+  if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){
+    window.Auth.loadCapabilities().then(startWorkspace).catch(startWorkspace);
+  }else startWorkspace();
 })();
 </script>
-<script src="../js/pwa.js?v=1.1.6"></script>
-<script src="../js/version.js?v=1.1.6"></script>
-<script src="../js/update-checker.js?v=1.1.6"></script>
+<script src="../js/pwa.js?v=1.1.11"></script>
+<script src="../js/version.js?v=1.1.11"></script>
+<script src="../js/update-checker.js?v=1.1.11"></script>
 </body>
 </html>

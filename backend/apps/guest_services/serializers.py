@@ -24,22 +24,25 @@ class ServiceRequestEventPortalSerializer(serializers.ModelSerializer):
 
 
 class ServiceRequestListSerializer(serializers.ModelSerializer):
-    guest_name = serializers.CharField(source="guest.full_name", read_only=True)
-    guest_email = serializers.EmailField(source="guest.email", read_only=True)
+    guest_name = serializers.CharField(source="guest.full_name", read_only=True, allow_null=True)
+    guest_email = serializers.EmailField(source="guest.email", read_only=True, allow_null=True)
     stay_reference = serializers.CharField(source="stay.reference", read_only=True, allow_null=True)
     room_number = serializers.CharField(source="room.room_number", read_only=True, allow_null=True)
+    qr_link_reference = serializers.CharField(source="qr_link.reference", read_only=True, allow_null=True)
     assigned_to_name = serializers.CharField(source="assigned_to.full_name", read_only=True, allow_null=True)
     assigned_to_email = serializers.EmailField(source="assigned_to.email", read_only=True, allow_null=True)
     housekeeping_task_reference = serializers.CharField(source="housekeeping_task.reference", read_only=True, allow_null=True)
     maintenance_work_order_reference = serializers.CharField(source="maintenance_work_order.reference", read_only=True, allow_null=True)
+    pos_order_reference = serializers.CharField(source="pos_order.reference", read_only=True, allow_null=True)
 
     class Meta:
         model = ServiceRequest
         fields = [
-            "reference", "guest_name", "guest_email", "stay_reference", "room_number", "category", "priority",
-            "channel", "status", "owner_team", "assigned_to_name", "assigned_to_email", "summary", "due_at",
+            "reference", "guest_name", "guest_email", "stay_reference", "room_number", "table_number",
+            "qr_link_reference", "category", "priority", "channel", "status", "owner_team", "assigned_to_name",
+            "assigned_to_email", "summary", "due_at",
             "acknowledged_at", "resolved_at", "closed_at", "housekeeping_task_reference",
-            "maintenance_work_order_reference", "created_at", "updated_at",
+            "maintenance_work_order_reference", "pos_order_reference", "created_at", "updated_at",
         ]
         read_only_fields = fields
 

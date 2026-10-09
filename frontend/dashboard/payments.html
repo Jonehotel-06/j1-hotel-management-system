@@ -13,7 +13,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
-<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+<link rel="stylesheet" href="../css/main.css?v=1.1.11">
 
 </head>
 <body>
@@ -60,7 +60,7 @@
     <div class="field"><button class="btn btn-sm" id="p-apply" type="button">Apply</button></div>
   </div>
 
-  <details class="panel" style="border:1px solid var(--color-border);margin-bottom:1.25rem;">
+  <details class="panel" data-record-payment-panel hidden style="border:1px solid var(--color-border);margin-bottom:1.25rem;">
     <summary style="padding:0.85rem 1.1rem;cursor:pointer;font-weight:600;">Record offline payment (cash / POS / transfer)</summary>
     <div class="panel-body">
       <form id="record-payment-form" class="filter-bar" style="flex-wrap:wrap;">
@@ -94,25 +94,33 @@
     </div>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.6"></script>
-<script src="../js/config.js?v=1.1.6"></script>
-<script src="../js/utils.js?v=1.1.6"></script>
-<script src="../js/icons.js?v=1.1.6"></script>
-<script src="../js/api.js?v=1.1.6"></script>
-<script src="../js/theme.js?v=1.1.6"></script>
-<script src="../js/ui.js?v=1.1.6"></script>
-<script src="../js/auth.js?v=1.1.6"></script>
-<script src="../js/hotel-data.js?v=1.1.6"></script>
-<script src="../js/navigation.js?v=1.1.6"></script>
-<script src="../js/dashboard.js?v=1.1.6"></script>
+<script src="../js/runtime-config.js?v=1.1.11"></script>
+<script src="../js/config.js?v=1.1.11"></script>
+<script src="../js/utils.js?v=1.1.11"></script>
+<script src="../js/icons.js?v=1.1.11"></script>
+<script src="../js/api.js?v=1.1.11"></script>
+<script src="../js/theme.js?v=1.1.11"></script>
+<script src="../js/ui.js?v=1.1.11"></script>
+<script src="../js/auth.js?v=1.1.11"></script>
+<script src="../js/hotel-data.js?v=1.1.11"></script>
+<script src="../js/navigation.js?v=1.1.11"></script>
+<script src="../js/dashboard.js?v=1.1.11"></script>
 <script>
   JONE.ui.initChrome();
-  JONE.dashboard.boot("receptionist");
+  JONE.dashboard.boot(["admin", "manager", "receptionist", "front_desk_supervisor", "general_manager", "accounts_manager", "accountant"]);
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+  var paymentCapabilitiesReady = window.Auth && typeof window.Auth.loadCapabilities === "function"
+    ? window.Auth.loadCapabilities().catch(function(){ return []; })
+    : Promise.resolve([]);
 
 (function(){
   var DATA=JONE.dashboard.DATA;
   var tbody=document.querySelector("[data-tbody=payments]");
+  function canOpenBookingReference(){
+    return !!(window.Auth && window.Auth.hasCapability && window.Auth.hasAnyRole &&
+      window.Auth.hasAnyRole(["admin", "manager", "receptionist"]) &&
+      (window.Auth.hasCapability("booking.read") || window.Auth.hasCapability("booking.manage")));
+  }
 
   /* Verified /api/admin/payments/ row:
      { id, reference, booking_reference, guest_name, staff_email, provider,
@@ -131,7 +139,7 @@
         '<td class="cell-nowrap">' + JONE.esc(p.reference || "—") +
           (guest ? '<span class="pay-mobile-guest hide-md">' + JONE.esc(guest) + '</span>' : '') +
         '</td>' +
-        '<td class="cell-nowrap">' + (b ? '<a href="booking-details.html?ref=' + encodeURIComponent(b) + '">' + JONE.esc(b) + '</a>' : "—") + '</td>' +
+        '<td class="cell-nowrap">' + (b ? (canOpenBookingReference() ? '<a href="booking-details.html?ref=' + encodeURIComponent(b) + '">' + JONE.esc(b) + '</a>' : JONE.esc(b)) : "—") + '</td>' +
         '<td class="hide-sm">' + JONE.esc(guest || "—") + '</td>' +
         '<td class="cell-nowrap">' + JONE.esc(String(p.provider || "—").toLowerCase().replace(/_/g, " ")) + '</td>' +
         '<td class="hide-sm cell-nowrap">' + JONE.esc(p.paid_at ? JONE.formatDate(p.paid_at, "mid") : "—") + '</td>' +
@@ -175,7 +183,6 @@
       renderPager(list.length?res.pagination:null);
     }catch(err){ DATA.error(tbody,"Payments couldn't be loaded",(err&&err.message)||"Please try again in a moment.",9); }
   }
-  load(1);
 
   /* View opens the full payment record in the shared side panel. Everything
      shown comes from the row the backend already returned plus a detail fetch
@@ -194,7 +201,8 @@
     if(!list.length){ refundBody.innerHTML='<tr><td colspan="7"><div class="empty-state"><span data-icon="rotateCcw"></span><h3>No refunds</h3><p>Paystack refund attempts appear here after staff submit an approved cancellation refund.</p></div></td></tr>'; JONE.icons.inject(refundBody); return; }
     refundBody.innerHTML=list.map(function(r){
       var b=r.booking_reference;
-      return '<tr><td class="cell-nowrap">#'+JONE.esc(r.id||"—")+'</td><td class="cell-nowrap">'+(b?'<a href="booking-details.html?ref='+encodeURIComponent(b)+'">'+JONE.esc(b)+'</a>':"—")+'</td><td class="cell-nowrap">'+JONE.esc(r.payment_reference||"—")+'</td><td class="num cell-nowrap">'+JONE.esc(JONE.formatNaira(r.amount))+'</td><td class="cell-nowrap">'+JONE.dashboard.statusPill(r.status)+'</td><td class="hide-sm cell-nowrap">'+JONE.esc(r.submitted_at?JONE.formatDateTime(r.submitted_at):"—")+'</td><td class="hide-sm cell-nowrap">'+JONE.esc(r.paystack_refund_reference||r.paystack_refund_id||"Awaiting Paystack")+'</td></tr>';
+      var bookingCell=b?(canOpenBookingReference()?'<a href="booking-details.html?ref='+encodeURIComponent(b)+'">'+JONE.esc(b)+'</a>':JONE.esc(b)):"—";
+      return '<tr><td class="cell-nowrap">#'+JONE.esc(r.id||"—")+'</td><td class="cell-nowrap">'+bookingCell+'</td><td class="cell-nowrap">'+JONE.esc(r.payment_reference||"—")+'</td><td class="num cell-nowrap">'+JONE.esc(JONE.formatNaira(r.amount))+'</td><td class="cell-nowrap">'+JONE.dashboard.statusPill(r.status)+'</td><td class="hide-sm cell-nowrap">'+JONE.esc(r.submitted_at?JONE.formatDateTime(r.submitted_at):"—")+'</td><td class="hide-sm cell-nowrap">'+JONE.esc(r.paystack_refund_reference||r.paystack_refund_id||"Awaiting Paystack")+'</td></tr>';
     }).join("");
   }
   var refundPagerEl=document.querySelector("[data-refund-pagination]");
@@ -213,7 +221,6 @@
       renderRefundPager(list.length?res.pagination:null);
     }catch(err){ DATA.error(refundBody,"Refunds couldn't be loaded",(err&&err.message)||"Please try again in a moment.",7); }
   }
-  loadRefunds(1);
 
   var applyBtn=document.getElementById("p-apply");
   if(applyBtn) applyBtn.addEventListener("click",function(){ load(1); });
@@ -254,11 +261,18 @@
       JONE.ui.toast(msg,"error");
     }
   });
+
+  paymentCapabilitiesReady.then(function(){
+    var capturePanel=document.querySelector("[data-record-payment-panel]");
+    if(capturePanel) capturePanel.hidden=!(window.Auth && window.Auth.hasCapability && window.Auth.hasCapability("booking.manage") && window.Auth.hasCapability("payment.capture"));
+    load(1);
+    loadRefunds(1);
+  });
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.6"></script>
-<script src="../js/version.js?v=1.1.6"></script>
-<script src="../js/update-checker.js?v=1.1.6"></script>
+<script src="../js/pwa.js?v=1.1.11"></script>
+<script src="../js/version.js?v=1.1.11"></script>
+<script src="../js/update-checker.js?v=1.1.11"></script>
 </body>
 </html>

@@ -21,12 +21,21 @@
   const state = {
     user: null,
     role: null,
-    permissions: []
+    permissions: [],
+    capabilities: [],
+    capabilitiesLoaded: false
   };
 
   const ROLES = {
     ADMIN: "admin", MANAGER: "manager", RECEPTIONIST: "receptionist", CASHIER: "cashier",
     HOUSEKEEPING: "housekeeping", MAINTENANCE: "maintenance", INVENTORY_CLERK: "inventory_clerk",
+    FRONT_DESK_SUPERVISOR: "front_desk_supervisor", GENERAL_MANAGER: "general_manager",
+    RESTAURANT_MANAGER: "restaurant_manager", WAITER: "waiter", BAR_MANAGER: "bar_manager",
+    BARTENDER: "bartender", KITCHEN_MANAGER: "kitchen_manager", CHEF: "chef",
+    HOUSEKEEPING_MANAGER: "housekeeping_manager", HOUSEKEEPER: "housekeeper",
+    MAINTENANCE_TECHNICIAN: "maintenance_technician", ACCOUNTS_MANAGER: "accounts_manager",
+    ACCOUNTANT: "accountant", HR_MANAGER: "hr_manager", SECURITY: "security",
+    PROCUREMENT_OFFICER: "procurement_officer", STOREKEEPER: "storekeeper",
     GUEST: "guest", STAFF: "staff"
   };
 
@@ -37,7 +46,21 @@
 
   function isStaffRole(role) {
     const r = normRole(role || state.role);
-    return ["admin", "manager", "receptionist", "cashier", "housekeeping", "maintenance", "inventory_clerk"].includes(r);
+    return Object.values(ROLES).filter((value) => value !== "guest").includes(r);
+  }
+
+  function defaultStaffLanding(role) {
+    const r = normRole(role);
+    if (["cashier", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef"].includes(r)) {
+      return "dashboard/pos.html";
+    }
+    if (["housekeeping", "housekeeping_manager", "housekeeper"].includes(r)) return "dashboard/housekeeping.html";
+    if (["maintenance", "maintenance_technician"].includes(r)) return "dashboard/maintenance.html";
+    if (["inventory_clerk", "storekeeper"].includes(r)) return "dashboard/inventory.html";
+    if (r === "procurement_officer") return "dashboard/procurement.html";
+    if (["accounts_manager", "accountant"].includes(r)) return "dashboard/payments.html";
+    if (["hr_manager"].includes(r)) return "dashboard/workforce.html";
+    return "dashboard/index.html";
   }
 
   /* Store a session from either the login/register shape
@@ -56,6 +79,8 @@
     state.user = profile;
     state.role = normRole(profile.role);
     state.permissions = profile.permissions || [];
+    state.capabilities = [];
+    state.capabilitiesLoaded = false;
     return state.user;
   }
 
@@ -63,6 +88,7 @@
     try { sessionStorage.removeItem(SESSION_KEY); } catch (_) {}
     JONE.storage.remove(KEY);
     state.user = null; state.role = null; state.permissions = [];
+    state.capabilities = []; state.capabilitiesLoaded = false;
   }
 
   function getSessionCred() {
@@ -75,9 +101,13 @@
   }
 
   function hasRole(minRole) {
-    // guest < receptionist < manager < admin
+    // Legacy hierarchy for the existing front-desk/management shell. Department
+    // roles stay outside it and must pass exact-role or capability checks.
     if (!state.role) return false;
-    const order = { guest: 0, receptionist: 1, staff: 1, manager: 2, admin: 3 };
+    const order = {
+      guest: 0, receptionist: 1, front_desk_supervisor: 1, staff: 1,
+      manager: 2, general_manager: 2, admin: 3,
+    };
     return (order[state.role] != null ? order[state.role] : -1) >= (order[minRole] != null ? order[minRole] : 99);
   }
 
@@ -93,6 +123,37 @@
     if (!perm) return true;
     if (state.permissions.includes("*")) return true;
     return state.permissions.includes(perm);
+  }
+
+  let capabilityRequest = null;
+  function loadCapabilities(options) {
+    options = options || {};
+    if (state.capabilitiesLoaded && !options.force) return Promise.resolve(state.capabilities.slice());
+    if (capabilityRequest) return capabilityRequest;
+    if (!window.API || typeof window.API.get !== "function") return Promise.resolve([]);
+    const endpoint = window.APP_CONFIG && window.APP_CONFIG.API_ENDPOINTS &&
+      window.APP_CONFIG.API_ENDPOINTS.staffCapabilities || "/api/auth/capabilities/";
+    capabilityRequest = window.API.get(endpoint).then((response) => {
+      const payload = response && response.data || {};
+      state.capabilities = Array.isArray(payload.capabilities) ? payload.capabilities.slice() : [];
+      state.capabilitiesLoaded = true;
+      return state.capabilities.slice();
+    }).catch((error) => {
+      // Role-based UX remains a fallback only when the capability read fails;
+      // all protected resources continue to use server-side capability checks.
+      state.capabilities = [];
+      state.capabilitiesLoaded = false;
+      throw error;
+    }).finally(() => { capabilityRequest = null; });
+    return capabilityRequest;
+  }
+
+  function hasCapability(code) {
+    return !!(state.capabilitiesLoaded && state.capabilities.includes(String(code || "")));
+  }
+
+  function hasAnyCapability(codes) {
+    return Array.isArray(codes) && codes.some(hasCapability);
   }
 
   /* Wire API token provider + one-time refresh provider. */
@@ -228,7 +289,8 @@
         const params = new URLSearchParams(location.search);
         let next = params.get("next");
         if (!next || /login/i.test(next)) next = null;   // never bounce back to the login page
-        if (!next) next = isStaffRole(session && session.user && session.user.role) ? "dashboard/index.html" : "index.html";
+        if (!next) next = isStaffRole(session && session.user && session.user.role)
+          ? defaultStaffLanding(session && session.user && session.user.role) : "index.html";
         location.href = next;
       } catch (err) {
         JONE.releaseGuard(btn);
@@ -243,7 +305,8 @@
   window.Auth = {
     ROLES, state, login, logout, guard, hasRole, hasAnyRole, can,
     isAuthenticated, restore, refreshProfile, onUnauthorized,
-    bindLoginForm, clearSession, refreshAccess,
+    bindLoginForm, clearSession, refreshAccess, loadCapabilities,
+    hasCapability, hasAnyCapability,
     isStaffRole
   };
   window.JONE = window.JONE || {};

@@ -31,7 +31,14 @@ class CapabilityMatrixTests(BaseAPITestCase):
         cashier = make_staff("cap-cashier@staff.dev", role=User.Role.CASHIER)
         self.assertTrue(cashier.is_staff_member)
         self.assertTrue(has_capability(cashier, "payment.capture"))
+        self.assertFalse(has_capability(cashier, "booking.read"))
+        self.assertFalse(has_capability(cashier, "payment.read"))
         self.assertFalse(has_capability(cashier, "settings.manage"))
+
+        accountant = make_staff("cap-accountant@staff.dev", role=User.Role.ACCOUNTANT)
+        self.assertTrue(has_capability(accountant, "payment.read"))
+        self.assertFalse(has_capability(accountant, "booking.read"))
+        self.assertFalse(has_capability(accountant, "payment.receipt.send"))
 
         # Existing broad endpoint rules intentionally stay on their old
         # ADMIN/MANAGER/RECEPTIONIST allowlist until migrated individually.

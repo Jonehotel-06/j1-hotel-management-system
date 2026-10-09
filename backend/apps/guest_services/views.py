@@ -1,8 +1,11 @@
 """Capability-scoped staff and verified-email portal service-request APIs."""
+from django.db import transaction
 from django.db.models import Prefetch, Q
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.permissions import AllowAny
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.accounts.capabilities import has_capability
@@ -17,7 +20,8 @@ from apps.portal.permissions import HasPortalSession
 from apps.rooms.models import Room
 from apps.stays.models import Stay, StayRoom
 
-from .models import ServiceRequest, ServiceRequestEvent
+from .models import ServiceQRLink, ServiceRequest, ServiceRequestEvent
+from .qr_serializers import ServiceQRLinkCreateSerializer, ServiceQRLinkSerializer, ServiceQRRequestCreateSerializer
 from .serializers import (
     PortalServiceRequestCancelSerializer,
     PortalServiceRequestCommentSerializer,
@@ -41,6 +45,14 @@ from .services.request_service import (
     service_request_queryset_for_staff,
     transition_service_request,
 )
+from .services.qr_service import (
+    create_service_qr_link,
+    issued_qr_payload,
+    mark_service_qr_used,
+    revoke_service_qr_link,
+    rotate_service_qr_link,
+    service_qr_link_for_token,
+)
 
 
 def _page(view, request, queryset, serializer):
@@ -51,7 +63,7 @@ def _page(view, request, queryset, serializer):
 
 def _staff_base_queryset(actor, *, detail=False):
     queryset = service_request_queryset_for_staff(actor).select_related(
-        "guest", "stay", "room", "assigned_to", "created_by"
+        "guest", "stay", "room", "qr_link", "assigned_to", "created_by", "pos_order"
     )
     if detail:
         queryset = queryset.prefetch_related(
@@ -116,6 +128,7 @@ class ServiceRequestListCreateView(APIView):
                 | Q(guest__first_name__icontains=search)
                 | Q(guest__last_name__icontains=search)
                 | Q(room__room_number__icontains=search)
+                | Q(table_number__icontains=search)
             )
         return _page(self, request, queryset.order_by("due_at", "-created_at", "-pk"), ServiceRequestListSerializer)
 
@@ -442,3 +455,199 @@ class PortalServiceRequestCancelView(_PortalServiceRequestBase):
         return success_response(PortalServiceRequestDetailSerializer(
             _portal_request_or_404(email=request.portal_session.email, reference=updated.reference, detail=True)
         ).data, message="Service request cancelled.")
+
+
+@extend_schema(tags=["Admin · Guest services"], summary="List and issue room/table service QR links")
+class ServiceQRLinkListCreateView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "service_qr.manage"
+
+    def get(self, request):
+        queryset = ServiceQRLink.objects.select_related("room").order_by("target_type", "label", "reference")
+        if active := (request.query_params.get("active") or "").strip().lower():
+            if active not in {"true", "false"}:
+                raise ValidationError({"active": "Use true or false."})
+            queryset = queryset.filter(is_active=(active == "true"))
+        if search := (request.query_params.get("search") or "").strip():
+            queryset = queryset.filter(
+                Q(reference__icontains=search)
+                | Q(label__icontains=search)
+                | Q(room__room_number__icontains=search)
+                | Q(table_number__icontains=search)
+            )
+        return _page(self, request, queryset, ServiceQRLinkSerializer)
+
+    def post(self, request):
+        serializer = ServiceQRLinkCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        link, token, created = create_service_qr_link(actor=request.user, **serializer.validated_data)
+        log_action(
+            actor=request.user,
+            action="SERVICE_QR_CREATED" if created else "SERVICE_QR_REACTIVATED",
+            instance=link,
+            request=request,
+            metadata={"reference": link.reference, "target_type": link.target_type},
+        )
+        payload = ServiceQRLinkSerializer(link).data
+        payload.update(issued_qr_payload(link=link, token=token))
+        return success_response(
+            payload,
+            message="QR link created and ready to print." if created else "QR link reactivated with a new token.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+@extend_schema(tags=["Admin · Guest services"], summary="Rotate and reprint a service QR link")
+class ServiceQRLinkRotateView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "service_qr.manage"
+
+    def post(self, request, reference):
+        link = ServiceQRLink.objects.select_related("room").filter(reference=reference).first()
+        if link is None:
+            raise NotFound("Service QR link not found.")
+        link, token = rotate_service_qr_link(link=link, actor=request.user)
+        log_action(
+            actor=request.user,
+            action="SERVICE_QR_ROTATED",
+            instance=link,
+            request=request,
+            metadata={"reference": link.reference, "target_type": link.target_type},
+        )
+        payload = ServiceQRLinkSerializer(link).data
+        payload.update(issued_qr_payload(link=link, token=token))
+        return success_response(payload, message="Previous QR token revoked; print this replacement.")
+
+
+@extend_schema(tags=["Admin · Guest services"], summary="Revoke a room/table service QR link")
+class ServiceQRLinkRevokeView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "service_qr.manage"
+
+    def post(self, request, reference):
+        link = ServiceQRLink.objects.filter(reference=reference).first()
+        if link is None:
+            raise NotFound("Service QR link not found.")
+        link = revoke_service_qr_link(link=link, actor=request.user)
+        log_action(
+            actor=request.user,
+            action="SERVICE_QR_REVOKED",
+            instance=link,
+            request=request,
+            metadata={"reference": link.reference, "target_type": link.target_type},
+        )
+        return success_response(ServiceQRLinkSerializer(link).data, message="Service QR link revoked.")
+
+
+@extend_schema(tags=["Guest QR"], summary="Read the public context for a room/table QR link")
+class PublicServiceQRContextView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+
+    def get_throttles(self):
+        self.throttle_scope = "service_qr_context"
+        return super().get_throttles()
+
+    def get(self, request):
+        link = service_qr_link_for_token(request.headers.get("X-Service-QR-Token", ""))
+        if link is None:
+            raise NotFound("This hotel service link is not active.")
+        room_target = link.target_type == ServiceQRLink.TargetType.ROOM
+        location = link.room.room_number if room_target and link.room_id else link.table_number
+        categories = (
+            [
+                {"value": ServiceRequest.Category.FOOD_BEVERAGE, "label": "Food & beverage service"},
+            ]
+            if not room_target
+            else [
+                {"value": value, "label": label}
+                for value, label in ServiceRequest.Category.choices
+            ]
+        )
+        return success_response({
+            "target_type": link.target_type,
+            "label": link.label,
+            "location": location,
+            "categories": categories,
+        })
+
+
+@extend_schema(tags=["Guest QR"], summary="Submit a service request from a room/table QR link")
+class PublicServiceQRRequestView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+
+    def get_throttles(self):
+        self.throttle_scope = "service_qr_submit"
+        return super().get_throttles()
+
+    @transaction.atomic
+    def post(self, request):
+        serializer = ServiceQRRequestCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        link = service_qr_link_for_token(request.headers.get("X-Service-QR-Token", ""), for_update=True)
+        if link is None:
+            raise NotFound("This hotel service link is not active.")
+
+        guest = stay = room = None
+        table_number = ""
+        if link.target_type == ServiceQRLink.TargetType.ROOM:
+            room = Room.objects.select_for_update().filter(pk=link.room_id, is_active=True).first()
+            if room is None:
+                raise NotFound("This room service link is not available right now.")
+            active_assignments = list(
+                StayRoom.objects.select_for_update()
+                .select_related("stay__guest")
+                .filter(room=room, released_at__isnull=True, stay__status=Stay.Status.IN_HOUSE)
+                .order_by("pk")[:2]
+            )
+            if len(active_assignments) != 1:
+                raise ValidationError("Room service requests are available only during an active in-house stay.")
+            stay = active_assignments[0].stay
+            guest = stay.guest
+            category = data.get("category", ServiceRequest.Category.GENERAL)
+        else:
+            if data.get("category") not in (None, ServiceRequest.Category.FOOD_BEVERAGE):
+                raise ValidationError({"category": "Table QR requests are routed to food and beverage service."})
+            category = ServiceRequest.Category.FOOD_BEVERAGE
+            table_number = link.table_number
+
+        idempotency_key = scoped_idempotency_key(
+            scope=f"service-qr:{link.pk}", raw_key=data["idempotency_key"]
+        )
+        service_request, created = create_service_request(
+            guest=guest,
+            stay=stay,
+            room=room,
+            table_number=table_number,
+            qr_link=link,
+            category=category,
+            priority=ServiceRequest.Priority.NORMAL,
+            channel=ServiceRequest.Channel.QR,
+            summary=data["summary"],
+            detail=data.get("detail", ""),
+            actor=None,
+            idempotency_key=idempotency_key,
+        )
+        mark_service_qr_used(link=link)
+        if created:
+            log_action(
+                actor=None,
+                action="SERVICE_QR_REQUEST_CREATED",
+                instance=service_request,
+                request=request,
+                metadata={
+                    "reference": service_request.reference,
+                    "qr_link_reference": link.reference,
+                    "target_type": link.target_type,
+                    "category": service_request.category,
+                },
+            )
+        return success_response({
+            "reference": service_request.reference,
+            "category": service_request.category,
+            "status": service_request.status,
+        }, message="Your request has been sent to the hotel team.", status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)

@@ -22,18 +22,20 @@
       { label: "Missed bookings", href: "missed-bookings.html", icon: "userX", view: "missed-bookings" },
       { label: "Guests", href: "guests.html", icon: "users", view: "guests" },
       { label: "Rooms", href: "rooms.html", icon: "bed", view: "rooms" },
-      { label: "POS & Room Service", href: "pos.html", icon: "utensils", view: "pos", roles: ["admin", "manager", "cashier"] },
-      { label: "Workforce", href: "workforce.html", icon: "clock", view: "workforce", roles: ["admin", "manager", "receptionist", "cashier", "housekeeping", "maintenance", "inventory_clerk"] },
-      { label: "Guest Requests", href: "service-requests.html", icon: "messageCircle", view: "service-requests", roles: ["admin", "manager", "receptionist", "housekeeping", "maintenance"] },
-      { label: "Housekeeping", href: "housekeeping.html", icon: "bed", view: "housekeeping", roles: ["admin", "manager", "receptionist", "housekeeping"] },
-      { label: "Maintenance", href: "maintenance.html", icon: "settings", view: "maintenance", roles: ["admin", "manager", "receptionist", "maintenance"] },
-      { label: "Inventory", href: "inventory.html", icon: "inbox", view: "inventory", roles: ["admin", "manager", "inventory_clerk"] },
-      { label: "Procurement", href: "procurement.html", icon: "receipt", view: "procurement", roles: ["admin", "manager", "inventory_clerk"] },
+      { label: "POS & Room Service", href: "pos.html", icon: "utensils", view: "pos", capabilities: ["pos.order.manage", "restaurant.order.manage", "bar.order.manage", "kitchen.queue.view", "kitchen.ticket.manage"], roles: ["admin", "manager", "general_manager", "cashier", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef"] },
+      { label: "Workforce", href: "workforce.html", icon: "clock", view: "workforce", capabilities: ["staff.profile.manage", "shift.manage", "attendance.clock", "attendance.manage", "leave.request", "leave.approve", "payroll.view", "payroll.manage"], roles: ["admin", "manager", "receptionist", "cashier", "housekeeping", "maintenance", "inventory_clerk", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "housekeeping_manager", "housekeeper", "maintenance_technician", "accounts_manager", "accountant", "hr_manager", "security", "procurement_officer", "storekeeper"] },
+      { label: "Guest Requests", href: "service-requests.html", icon: "messageCircle", view: "service-requests", capabilities: ["guest_request.manage", "guest_request.assign"], roles: ["admin", "manager", "receptionist", "housekeeping", "maintenance", "waiter", "bartender", "security"] },
+      { label: "Service QR", href: "service-qr.html", icon: "grid", view: "service-qr", capabilities: ["service_qr.manage"], roles: ["admin", "manager", "general_manager"] },
+      { label: "Housekeeping", href: "housekeeping.html", icon: "bed", view: "housekeeping", capabilities: ["housekeeping.task.manage", "housekeeping.task.assign"], roles: ["admin", "manager", "receptionist", "housekeeping", "housekeeping_manager", "housekeeper"] },
+      { label: "Maintenance", href: "maintenance.html", icon: "settings", view: "maintenance", capabilities: ["maintenance.work_order.manage", "maintenance.work_order.assign"], roles: ["admin", "manager", "receptionist", "maintenance", "maintenance_technician"] },
+      { label: "Inventory", href: "inventory.html", icon: "inbox", view: "inventory", capabilities: ["inventory.manage", "inventory.adjust.approve"], roles: ["admin", "manager", "inventory_clerk", "storekeeper"] },
+      { label: "Procurement", href: "procurement.html", icon: "receipt", view: "procurement", capabilities: ["procurement.manage", "procurement.approve"], roles: ["admin", "manager", "inventory_clerk", "storekeeper", "procurement_officer"] },
     ]},
     { group: "Finance", items: [
-      { label: "Payments", href: "payments.html", icon: "creditCard", view: "payments" },
-      { label: "Receipts", href: "receipts.html", icon: "receipt", view: "receipts" },
+      { label: "Payments", href: "payments.html", icon: "creditCard", view: "payments", capabilities: ["payment.read"], roles: ["admin", "manager", "receptionist", "front_desk_supervisor", "general_manager", "accounts_manager", "accountant"] },
+      { label: "Receipts", href: "receipts.html", icon: "receipt", view: "receipts", capabilities: ["payment.read"], roles: ["admin", "manager", "receptionist", "front_desk_supervisor", "general_manager", "accounts_manager", "accountant"] },
       { label: "Reports", href: "reports.html", icon: "barChart", view: "reports", minRole: "manager" },
+      { label: "Payroll", href: "payroll.html", icon: "creditCard", view: "payroll", capabilities: ["payroll.view", "payroll.manage", "payroll.approve", "payroll.rules.manage", "payroll.rules.review"], roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant", "hr_manager"] },
     ]},
     { group: "Content", items: [
       { label: "Facilities", href: "facilities.html", icon: "building", view: "facilities", minRole: "manager" },
@@ -49,10 +51,23 @@
     ]},
     { group: "Administration", items: [
       { label: "Staff", href: "staff.html", icon: "users", view: "staff", role: "admin" },
+      { label: "Workstations", href: "terminals.html", icon: "grid", view: "terminals", capabilities: ["terminal.manage"], roles: ["admin", "manager", "general_manager"] },
       { label: "Audit Logs", href: "audit-logs.html", icon: "fileText", view: "audit-logs", role: "admin" },
       { label: "Settings", href: "settings.html", icon: "settings", view: "settings", role: "admin" },
     ]},
   ];
+
+  function navItemAllowed(it) {
+    const auth = window.Auth;
+    if (!auth) return false;
+    if (it.capabilities && auth.state && auth.state.capabilitiesLoaded) {
+      return !!(auth.hasAnyCapability && auth.hasAnyCapability(it.capabilities));
+    }
+    if (it.role && !(auth.hasRole && auth.hasRole(it.role))) return false;
+    if (it.minRole && !(auth.hasRole && auth.hasRole(it.minRole))) return false;
+    if (it.roles && !(auth.hasAnyRole && auth.hasAnyRole(it.roles))) return false;
+    return true;
+  }
 
   function renderSidebar(containerSel) {
     const container = document.querySelector(containerSel);
@@ -60,12 +75,7 @@
     const current = location.pathname;
     let html = "";
     NAV.forEach((g) => {
-      const items = g.items.filter((it) => {
-        if (it.role && !(window.Auth && window.Auth.hasRole && window.Auth.hasRole(it.role))) return false;
-        if (it.minRole && !(window.Auth && window.Auth.hasRole && window.Auth.hasRole(it.minRole))) return false;
-        if (it.roles && !(window.Auth && window.Auth.hasAnyRole && window.Auth.hasAnyRole(it.roles))) return false;
-        return true;
-      });
+      const items = g.items.filter(navItemAllowed);
       if (!items.length) return;
       html += '<div class="dash-nav-group"><div class="dash-nav-label">' + JONE.esc(g.group).toUpperCase() + '</div>';
       items.forEach((it) => {
@@ -352,9 +362,9 @@
      for admins — role comes from the authenticated profile and the backend
      enforces authorization regardless. */
   const BOTTOM_NAV = [
-    { label: "Dashboard", href: "index.html", icon: "layout" },
-    { label: "Bookings", href: "bookings.html", icon: "calendar" },
-    { label: "Availability", href: "availability.html", icon: "grid" },
+    { label: "Dashboard", href: "index.html", icon: "layout", roles: ["admin", "manager", "receptionist"] },
+    { label: "Bookings", href: "bookings.html", icon: "calendar", roles: ["admin", "manager", "receptionist"] },
+    { label: "Availability", href: "availability.html", icon: "grid", roles: ["admin", "manager", "receptionist"] },
     { label: "Notifications", href: "notifications.html", icon: "bell", badge: true },
     { label: "Settings", href: "settings.html", icon: "settings", role: "admin" },
   ];
@@ -377,9 +387,7 @@
   function renderBottomNav() {
     if (document.querySelector(".dash-bottom-nav")) return;   // once per page
     const page = (location.pathname.split("/").pop() || "index.html");
-    const items = BOTTOM_NAV.filter((it) =>
-      !it.role || (window.Auth && window.Auth.hasRole && window.Auth.hasRole(it.role))
-    );
+    const items = BOTTOM_NAV.filter(navItemAllowed);
     const nav = document.createElement("nav");
     nav.className = "dash-bottom-nav";
     nav.setAttribute("aria-label", "Dashboard quick navigation");
@@ -617,6 +625,45 @@
     if (a && actionsHTML) a.innerHTML = actionsHTML;
   }
 
+  /* Visibility-aware near-real-time refresh for operational queues. Polling is
+     bounded, single-flight, skipped offline/while hidden, and always removable.
+     It only re-reads the authoritative API; it never stores business state. */
+  function startLiveRefresh(callback, intervalMs, options) {
+    options = options || {};
+    if (typeof callback !== "function") return function () {};
+    const interval = Math.min(120000, Math.max(5000, Number(intervalMs) || 15000));
+    let stopped = false;
+    let inFlight = false;
+    const visible = () => !document.visibilityState || document.visibilityState === "visible";
+    const tick = () => {
+      if (stopped || inFlight || !visible() || (navigator && navigator.onLine === false)) return;
+      inFlight = true;
+      let result;
+      try { result = callback(); }
+      catch (error) {
+        inFlight = false;
+        if (typeof options.onError === "function") options.onError(error);
+        return;
+      }
+      Promise.resolve(result).catch((error) => {
+        if (typeof options.onError === "function") options.onError(error);
+      }).finally(() => { inFlight = false; });
+    };
+    const timer = setInterval(tick, interval);
+    const onVisibility = () => { if (visible() && options.refreshOnVisible) tick(); };
+    const onOnline = () => { if (options.refreshOnVisible) tick(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    if (window.addEventListener) window.addEventListener("online", onOnline);
+    if (options.runImmediately) tick();
+    return function stopLiveRefresh() {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (window.removeEventListener) window.removeEventListener("online", onOnline);
+    };
+  }
+
   /* Boot a dashboard page: guard auth, render sidebar + user, mark active.
      Production ALWAYS requires real authentication — there is no demo bypass.
      If a backend-less visual preview is ever required during development it must
@@ -633,6 +680,13 @@
     renderBottomNav();
     window.JONE.nav && window.JONE.nav.initDashboardNav();
     if (window.JONE.nav) window.JONE.nav.markActive(document);
+    if (window.Auth && typeof window.Auth.loadCapabilities === "function") {
+      window.Auth.loadCapabilities().then(() => {
+        renderSidebar("[data-dash-nav]");
+        window.JONE.nav && window.JONE.nav.initDashboardNav();
+        if (window.JONE.nav) window.JONE.nav.markActive(document);
+      }).catch(() => { /* role-filtered navigation remains a safe UX fallback */ });
+    }
     // Most pages need one badge request, fanned out to every badge target.
     // A page that already fetches an authoritative unread count can defer this
     // and call notifBadge.set(count), avoiding a duplicate API round trip.
@@ -1641,6 +1695,13 @@
     return g;
   }
 
+  function canOpenPaymentBooking() {
+    const auth = window.Auth;
+    return !!(auth && auth.hasCapability && auth.hasAnyRole &&
+      auth.hasAnyRole(["admin", "manager", "receptionist"]) &&
+      (auth.hasCapability("booking.read") || auth.hasCapability("booking.manage")));
+  }
+
   /* ----------------------------------------------------------------------
      Payment detail panel (the payments table's "View" action).
 
@@ -1692,7 +1753,7 @@
         ? paymentDetailBody(initial)
         : '<div class="loading-block"><div class="spinner" role="status"></div></div>',
       '<button class="btn btn-sm btn-ghost" data-pd-close>Close</button>' +
-      (initial.booking_reference
+      (initial.booking_reference && canOpenPaymentBooking()
         ? ' <a class="btn btn-sm btn-outline" href="booking-details.html?ref=' +
           encodeURIComponent(initial.booking_reference) + '">Open booking</a>'
         : "")
@@ -1773,7 +1834,7 @@
   window.JONE = window.JONE || {};
   window.JONE.dashboard = {
     renderSidebar, renderUser, setupSidebar, setupStickyTopbar, renderTopbarBell, renderBottomNav,
-    notifBadge, statusPill, boot, topbar, NAV, badge, DATA, formModal,
+    navItemAllowed, notifBadge, statusPill, boot, startLiveRefresh, topbar, NAV, badge, DATA, formModal,
     /* Test-only seeds: pure sidebar-collapse state mappers (Node harness). */
     _test: {
       sidebarPrefState: (v) => (v === "collapsed" ? "collapsed" : "expanded"),

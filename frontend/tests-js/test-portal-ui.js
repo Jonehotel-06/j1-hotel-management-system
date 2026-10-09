@@ -56,16 +56,26 @@ test("portal UI consumes a magic-link token without durable browser storage", ()
   assert.doesNotMatch(portal, /js\/(?:pwa|update-checker|version)\.js/);
 });
 
-test("portal pages are excluded from page caching and release reload controllers", () => {
+test("portal and bearer-link pages avoid cacheable shells and reload controllers", () => {
   const build = fs.readFileSync(path.join(FRONTEND, "build.py"), "utf8");
   const worker = fs.readFileSync(path.join(FRONTEND, "sw.js"), "utf8");
-  const staticHost = fs.readFileSync(path.join(FRONTEND, "vercel.json"), "utf8");
+  const staticHost = JSON.parse(fs.readFileSync(path.join(FRONTEND, "vercel.json"), "utf8"));
+  const qrPage = fs.readFileSync(path.join(FRONTEND, "qr-service.html"), "utf8");
   assert.match(build, /PORTAL_PAGES = \["portal\/login\.html", "portal\/index\.html"\]/);
-  assert.match(build, /if not is_portal:\n        raw = _ensure_pwa/);
+  assert.match(build, /QR_SERVICE_PAGES = \["qr-service\.html"\]/);
+  assert.match(build, /if not is_memory_only_page:\n        raw = _ensure_pwa/);
+  assert.doesNotMatch(qrPage, /js\/(?:pwa|update-checker|version)\.js|localStorage|sessionStorage/);
   assert.match(worker, /url\.pathname\.startsWith\("\/portal\/"\)/);
+  assert.match(worker, /url\.pathname === "\/qr-service\.html"/);
   assert.match(worker, /protectedNavigationHandler/);
-  assert.match(staticHost, /"source": "\/portal\/\(\.\*\)"/);
-  assert.match(staticHost, /"Cache-Control", "value": "no-store"/);
+  for (const route of ["/dashboard/(.*)", "/portal/(.*)", "/qr-service.html"]) {
+    const rule = staticHost.headers.find((entry) => entry.source === route);
+    assert.ok(rule, `missing protected static-host header rule for ${route}`);
+    assert.ok(rule.headers.some((header) => header.key === "Cache-Control" && header.value.includes("no-store")));
+    assert.ok(rule.headers.some((header) => header.key === "X-Robots-Tag" && header.value === "noindex, nofollow"));
+  }
+  const qrRule = staticHost.headers.find((entry) => entry.source === "/qr-service.html");
+  assert.ok(qrRule.headers.some((header) => header.key === "Referrer-Policy" && header.value === "no-referrer"));
 });
 
 test("portal dashboard consumes bounded authoritative reads, lazy statements, and controlled service actions", () => {

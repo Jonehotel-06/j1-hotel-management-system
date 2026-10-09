@@ -38,7 +38,9 @@ class InitializePaymentView(APIView):
         booking = booking_service.get_booking_by_reference_or_id(
             serializer.validated_data["booking_reference"]
         )
-        if booking is None or not can_access_booking(request, booking):
+        if booking is None or not can_access_booking(
+            request, booking, staff_required_capabilities=("booking.manage", "payment.capture")
+        ):
             # 404 (not 403) so references alone cannot probe other bookings.
             raise NotFound("Booking not found.")
         payload = payment_service.initialize_booking_payment(
@@ -59,7 +61,9 @@ class VerifyPaymentView(APIView):
         from apps.payments.models import Payment
 
         payment = Payment.objects.select_related("booking", "booking__guest").filter(reference=reference).first()
-        if payment is None or not can_access_booking(request, payment.booking):
+        if payment is None or not can_access_booking(
+            request, payment.booking, staff_required_capabilities=("booking.manage", "payment.capture")
+        ):
             # 404 (not 403) so payment references alone expose nothing.
             raise NotFound("Payment not found.")
         result = payment_service.process_verification(reference=reference, request=request)

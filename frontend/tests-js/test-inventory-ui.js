@@ -85,6 +85,7 @@ test("inventory views use bounded pagination, skeleton/error states, idempotency
 
 test("navigation exposes stock and purchasing only to the inventory operational roles", () => {
   const nav = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
-  assert.match(nav, /Inventory[\s\S]*roles: \["admin", "manager", "inventory_clerk"\]/);
-  assert.match(nav, /Procurement[\s\S]*roles: \["admin", "manager", "inventory_clerk"\]/);
+  assert.match(nav, /Inventory[\s\S]*capabilities: \["inventory\.manage", "inventory\.adjust\.approve"\]/);
+  assert.match(nav, /Procurement[\s\S]*capabilities: \["procurement\.manage", "procurement\.approve"\]/);
+  assert.match(nav, /storekeeper[\s\S]*procurement_officer/);
 });

@@ -76,6 +76,11 @@ function makeContext({ hostname = "www.jonehotel.test", pathname = "/index.html"
     querySelector() { return null; },
     getElementById() { return null; },
     addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); },
+    removeEventListener(t, fn) {
+      const list = this.listeners[t] || [];
+      const index = list.indexOf(fn);
+      if (index >= 0) list.splice(index, 1);
+    },
     listeners: {},
     _created: created,
   };

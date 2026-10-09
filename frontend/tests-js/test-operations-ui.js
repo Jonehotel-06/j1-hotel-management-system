@@ -51,7 +51,7 @@ test("shared operation helpers omit unset optional picker values and create retr
   assert.equal(JSON.stringify(picker.getValue()), "{}");
 });
 
-test("operational queue pages use server pagination, skeletons, retryable errors, and no polling", () => {
+test("operational queues use server pagination and visibility-aware live refresh without direct timers", () => {
   const contracts = [
     ["service-requests.html", "__serviceRequestsAllowed", "serviceRequests", "guest request"],
     ["housekeeping.html", "__housekeepingAllowed", "housekeepingTasks", "housekeeping"],
@@ -66,6 +66,8 @@ test("operational queue pages use server pagination, skeletons, retryable errors
     assert.match(page, /DATA\.error\(rowsEl,/);
     assert.match(page, /page_size:JONE\.dashboard\.pageSize\(\)/);
     assert.match(page, /resourceAction/);
+    assert.match(page, /dashboard\.startLiveRefresh/);
+    assert.match(page, /load\(undefined,true\)/);
     assert.doesNotMatch(page, /setInterval\s*\(/);
     assert.match(page.toLowerCase(), new RegExp(keyword));
   });
@@ -74,6 +76,7 @@ test("operational queue pages use server pagination, skeletons, retryable errors
 test("navigation shows each specialist queue only to its operational roles", () => {
   const nav = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
   assert.match(nav, /Guest Requests[\s\S]*housekeeping[\s\S]*maintenance/);
-  assert.match(nav, /Housekeeping[\s\S]*roles: \["admin", "manager", "receptionist", "housekeeping"\]/);
-  assert.match(nav, /Maintenance[\s\S]*roles: \["admin", "manager", "receptionist", "maintenance"\]/);
+  assert.match(nav, /Housekeeping[\s\S]*capabilities: \["housekeeping\.task\.manage", "housekeeping\.task\.assign"\]/);
+  assert.match(nav, /Maintenance[\s\S]*capabilities: \["maintenance\.work_order\.manage", "maintenance\.work_order\.assign"\]/);
+  assert.match(nav, /housekeeping_manager[\s\S]*maintenance_technician/);
 });

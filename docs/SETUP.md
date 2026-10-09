@@ -83,6 +83,7 @@ configuration.
 | `DATABASE_URL` or `DB_*` | MySQL 8+ connection. Production refuses SQLite. |
 | `FRONTEND_URL` | Exact public booking-site origin; used by public email/callback defaults. |
 | `PORTAL_FRONTEND_URL` | Exact portal origin used in magic links. Blank intentionally falls back to `FRONTEND_URL`. |
+| `SERVICE_QR_FRONTEND_URL` | Exact static frontend origin for printed room/table service QR URLs. Blank falls back to `FRONTEND_URL`; the frontend must serve `/qr-service.html`. |
 | `PAYMENT_CALLBACK_URL` | Exact public Paystack callback URL; defaults to `{FRONTEND_URL}/payment-verify.html`. |
 
 A split-origin deployment might use these literal values:
@@ -149,6 +150,37 @@ X-Robots-Tag: noindex, nofollow
 
 The frontend service worker independently treats `/portal/` as network-only;
 these HTTP headers protect the page even before a service worker is installed.
+
+### Guest-service QR links
+
+Set `SERVICE_QR_FRONTEND_URL` to the origin that actually serves
+`qr-service.html` (it can equal `FRONTEND_URL`). The staff-only
+`/dashboard/service-qr.html` page issues room or table links and downloadable
+self-contained SVG codes. The browser-visible bearer is placed after `#` in the
+URL so it is not included in the page request or ordinary referrer; the guest
+page removes it from the address bar and sends it only in
+`X-Service-QR-Token`. Configure your edge/APM/proxy not to record this header or
+issuance response bodies.
+
+Return the following headers for `/qr-service.html` on **every** static host:
+
+```text
+Cache-Control: no-store
+X-Robots-Tag: noindex, nofollow
+Referrer-Policy: no-referrer
+```
+
+Django marks every `/api/` response—including QR context, request creation,
+issuance, rotation, and revocation—`private, no-store`; the guest page also uses
+`fetch(..., {cache: "no-store"})`, and the service worker treats its navigation
+as network-only. Allow the frontend origin in the exact
+`CORS_ALLOWED_ORIGINS` list and retain the configured `x-service-qr-token`
+request header. QR tokens are stored as digests, returned only when a code is
+issued/rotated, and rotation invalidates every old print. Room requests are
+accepted only when exactly one current in-house stay occupies the room; table
+requests are anonymous and go only to Food & Beverage. The QR feature creates
+service requests, **not** orders or charges; actual priced orders continue to
+use the established POS workflow.
 
 ### Database, payments, email, and media
 
@@ -256,9 +288,10 @@ Then:
 
 `build.py` is the only supported frontend release mechanism. It synchronizes
 `version.json`, `js/version.js`, and the service-worker cache namespace and
-stamps local CSS/JS assets. It includes portal pages for asset stamping but
-deliberately does not inject reload-capable PWA/update-controller scripts into
-them, because doing so could discard their memory-only session.
+stamps local CSS/JS assets. It includes portal pages and `qr-service.html` for asset stamping but
+deliberately does not inject persistent theme bootstrap or reload-capable
+PWA/update-controller scripts into these credential-bearing shells, because a
+reload could discard an in-memory portal session or a newly issued QR code.
 
 ## 6. Troubleshooting
 

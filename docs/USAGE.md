@@ -65,22 +65,70 @@ emailed as a statement attachment without the hotel's approved process, or used
 to identify another guest. A guest may comment on or cancel only a request the
 backend says remains eligible.
 
+## Room and table service QR codes
+
+Authorized managers/admins open `/dashboard/service-qr.html` to issue, rotate,
+and revoke links, then print the downloaded SVG at the matching room or table.
+Rotation invalidates the old print immediately; take it out of service and
+replace it. A revoked link is retained for audit/history and can be reissued
+with a fresh token.
+
+- A room QR creates a normal guest-service request for the room's **single
+  current in-house occupant**. The backend derives guest, stay, and room; an
+  empty or ambiguous occupancy is rejected. The guest may choose a supported
+  service category, and the request routes into the same department queue as
+  staff/portal requests.
+- A table QR never invents a guest and is restricted to Food & Beverage. It
+  creates an anonymous service request, not a public order or payment. When the
+  guest is ready to order, an authorized waiter/bartender can choose **Create POS
+  draft** from that request, select the actual menu items, and review the
+  server-priced draft. Restaurant QR labels should be issued using the exact
+  registered table code so staff can attach the draft to the right open session;
+  bar/pickup QR labels stay free text.
+- This handoff does not import guest-entered request text as menu lines, submit
+  the order, or post a charge. The ordinary POS submit/delivery workflow remains
+  the controlled point at which production and financial effects can occur. The
+  request and linked order remain associated in their respective timelines.
+- The public page keeps the bearer in the URL fragment only long enough to
+  submit a request, removes it from the address bar, and sends it to the API in
+  a header. Never copy the raw bearer into logs, screenshots, tickets, or
+  general chat. Revoke a code immediately if a print is lost or exposed.
+- QR submissions are idempotent during retries. The request queue, service
+  history, SLA, team permissions, and guest-visible/internal comment rules are
+  the existing service-request workflow.
+
 ## Staff console
 
 Sign in at `/login.html`. Roles are resolved server-side from the database —
 the browser cannot grant itself privileges.
 
-| Role | Can do |
+| Role family | Day-to-day surface |
 |---|---|
-| Receptionist | Bookings, check-in/out, availability, guests, enquiries, payments |
-| Manager | The above, plus rooms, offers, reports, refunds and guest discounts |
-| Admin | Everything, plus staff accounts, hotel settings and audit logs |
+| Receptionist / front-desk supervisor | Reservation and stay workflows, guest folios, payments, enquiries, dispatch, and permitted team queues. |
+| Cashier | Permitted POS orders, tender collection, drawer sessions, and controlled expenses; cashier scope is not general financial administration. |
+| Restaurant manager / waiter | Restaurant managers maintain the registered dining-table list; restaurant staff open service sessions and create authorized checks. Server-made charges still use existing POS/ledger rules. |
+| Bar manager / bartender | Bar-category orders, bar menu (manager), and assigned bar tickets. Bartenders can create a server-priced bar draft from an eligible table QR request while preserving its free-text location. |
+| Kitchen manager / chef | Assigned kitchen production tickets and controlled status progression, not financial order editing. |
+| Housekeeping manager / housekeeper | Role-scoped task assignment/inspection or own task execution. |
+| Maintenance technician | Assigned work orders and authorized maintenance actions; outage approval remains a separate permission. |
+| Accounts manager / accountant | Folios, ledger/financial reporting, expenses, payroll surfaces, and maker-checker duties according to the seeded capability matrix. |
+| HR manager | Staff operational profiles, shifts, attendance, leave review, and payroll operations. |
+| Procurement officer / storekeeper | Purchase workflow or inventory/receipt movement scope, with independent procurement/count approvers. |
+| Security | Limited guest-request and audit visibility; no general account, booking, or money authority. |
+| Manager / general manager | Broad operational oversight; the seeded matrix still applies and dangerous actions keep separate approval controls. |
+| Admin | Staff accounts, hotel settings, audit and full administrative operations. |
 
-The older role labels remain compatible for reservation work. Operational
-screens additionally enforce server-side capabilities and team scope; a visible
-menu item is never proof that a staff member may perform its action. Managers
-must assign the least-privileged operational capability rather than sharing an
-administrator account.
+Legacy role labels remain compatible for reservation work. Each staff member
+uses an individual account; the database-backed capability matrix and object/team
+scope are enforced by the API. A visible menu item, browser-side role, or
+workstation label is never permission. Create only the role needed for the job;
+do not share administrator credentials. Current role grants are seeded by
+migration and reviewed server-side—changing a frontend menu does not change
+access. The **Workstations** registry lets an authorized manager label a shared
+desktop and optionally select it in that browser. The reference is sent only as
+audit metadata with the authenticated user's API request; it is not a sign-in,
+permission, presence lock, or verified proof of who is at the device. Clear it
+when the browser is being repurposed.
 
 ### Operations, finance, and workforce
 
@@ -91,10 +139,10 @@ states rather than invented records.
 | Area | Day-to-day rule |
 |---|---|
 | Stays, folios, and cashier | Charges, collections, refunds/reversals, expenses, and cash movements are separate immutable evidence. Never delete or overwrite a posted financial record; correct it with the approved linked reversal/adjustment workflow. |
-| POS / room service | Create orders from the live catalog, progress them through the controlled kitchen/service state, and charge a room only after the authoritative stay/folio validation succeeds. |
+| POS / room service | Create orders from the live catalog and progress them through the controlled kitchen/service state. Restaurant managers register tables; waiters open a table session before dine-in orders and can attach split checks to it. Eligible table QR requests can launch a linked POS draft; staff still select menu items and submit through the existing workflow. Close is rejected while an order is unfinished or a delivered check is unpaid. Room-service charges still require the authoritative in-house stay/folio validation. |
 | Guest requests, housekeeping, maintenance | Work only in the authorized team queue. Record status/event evidence and use guest-visible comments deliberately; do not expose internal notes through the portal. |
 | Inventory and procurement | Issue/receive stock through append-only movements. Use suppliers and purchase-order approvals; never silently edit a historical goods receipt or stock balance. |
-| Workforce | Schedule shifts, clock attendance through source-keyed events, and review leave with a different authorized approver where required. Attendance and leave evidence are append-only/auditable. |
+| Workforce and payroll | Schedule shifts, clock attendance through source-keyed events, and review leave independently. Compensation terms include effective-dated basic/housing/transport amounts and recorded pension/minimum-wage applicability. For 2026 Nigeria payroll, record the employee Tax ID and retained evidence first; TIN changes must be reported within 30 days, and raw IDs stay out of general staff profiles/list responses. Propose statutory bands/rates with official-source citations; a different authorized legal/compliance reviewer must approve the immutable ruleset before use. Supply actual NHF/NHIS, owner-occupied mortgage interest, preceding-year life-insurance premium, rent and benefit-in-kind inputs with retained evidence. Owned assets, hired assets, accommodation caps and statutory exemptions are calculated from the approved ruleset. If earlier current-year payroll was processed elsewhere, provide verified opening YTD totals and pay-period count. When opening gross includes non-cash benefits, specify `cash_emoluments` separately; if omitted, it defaults to opening gross for backward compatibility. The server otherwise requires approved in-system history. PAYE uses progressive bands and cumulative calendar-year snapshots; rent relief is prorated across covered calendar days and capped. Approval posts cash wages, employer pension expense and separate payables to the ledger. Pre-2026 manual runs retain prior calculation behavior; bank payout/reconciliation/provider integration is deferred. Corrections are replacement runs, never edits to historical snapshots. |
 | Reports | Read charges/revenue, collections, refunds/reversals, expenses, and cash variance as distinct measures. Legacy payment totals are compatibility information, not a substitute for the financial ledger. |
 
 ### Arrivals and check-in
@@ -132,11 +180,18 @@ fee and the Paystack refund record stay in one place.
 
 Online payments are confirmed by Paystack verification or a signed webhook —
 never by the browser redirect. Staff can also record manual payments (cash,
-transfer, POS).
+transfer, POS) when their account has both `booking.manage` and
+`payment.capture`; POS collection authority alone does not permit room-booking
+payments. Staff-initiated Paystack initialization and verification use the same
+combined capability scope; guest owner/token checkout behavior is unchanged.
 
-Every successful payment emails a receipt with a PDF attachment. Staff can
-re-send it from the receipt screen; the system will not send a duplicate
-automatic receipt for the same payment.
+The Payments and Receipts screens require `payment.read` (front desk,
+management and accounting roles). Accounting users can read the staff receipt
+projection without receiving full booking-management access. Receipt sending
+is separately gated by `payment.receipt.send`; the guest-owned public receipt
+route remains owner/token-scoped. Every successful payment emails a receipt
+with a PDF attachment. Authorized staff can re-send it; the system will not
+send a duplicate automatic receipt for the same payment.
 
 ### Settings
 
@@ -159,8 +214,8 @@ python3 validate.py
 
 `build.py` updates `version.json`, regenerates `js/version.js`, syncs the
 service worker's `CACHE_VERSION`, and stamps every local `js/` and `css/`
-reference—including `/portal/` assets—with `?v=<version>` so a deploy can never
-serve stale JavaScript beside new HTML.
+reference—including `/portal/` and `/qr-service.html` assets—with
+`?v=<version>` so a deploy can never serve stale JavaScript beside new HTML.
 
 Returning public/staff visitors are handled by `js/update-checker.js`: it
 compares the loaded version against `version.json` (fetched `no-store`, at most
@@ -169,12 +224,13 @@ version is available"* modal with **Refresh now** and **Not now** when safe.
 It never auto-reloads, never clears booking drafts or authentication, and
 defers around active booking/payment work or dirty forms.
 
-The memory-session portal deliberately omits reload-capable PWA/update scripts.
-A portal release still receives fresh stamped assets, but a guest is never
-silently reloaded and stripped of an opaque in-memory session. Before release,
-confirm that `/portal/**` retains `Cache-Control: no-store` and
-`X-Robots-Tag: noindex, nofollow`, and test request-link, consume, portal read,
-logout, and refresh/reopen-link behavior in staging.
+The memory-session portal and QR guest form deliberately omit reload-capable
+PWA/update scripts. Their releases still receive fresh stamped assets, but a
+guest is never silently reloaded and stripped of an opaque session or bearer.
+Before release, confirm `/portal/**` and `/qr-service.html` retain
+`Cache-Control: no-store` and `X-Robots-Tag: noindex, nofollow` (the QR page
+also uses `Referrer-Policy: no-referrer`), then test the portal lifecycle and
+issue/scan/revoke/reissue QR behavior in staging.
 
 ## Notifications
 

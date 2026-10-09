@@ -19,8 +19,27 @@ const API = (() => {
 
   const AUTH_KEY = (window.APP_CONFIG && window.APP_CONFIG.STORAGE.AUTH) || "jone.auth";
   const SESSION_KEY = (window.APP_CONFIG && window.APP_CONFIG.STORAGE.SESSION) || "jone.session";
+  const TERMINAL_KEY = (window.APP_CONFIG && window.APP_CONFIG.STORAGE.TERMINAL) || "jone.terminal.reference";
 
   const TOKEN_RE = /token|jwt|authorization|bearer/i;
+
+  function newRequestId() {
+    try { if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID(); } catch (_) {}
+    return "req-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 14);
+  }
+
+  function getWorkstationReference() {
+    try { return String(localStorage.getItem(TERMINAL_KEY) || "").trim().slice(0, 48); } catch (_) { return ""; }
+  }
+
+  function setWorkstationReference(value) {
+    const reference = String(value || "").trim().slice(0, 48);
+    try {
+      if (reference) localStorage.setItem(TERMINAL_KEY, reference);
+      else localStorage.removeItem(TERMINAL_KEY);
+    } catch (_) {}
+    return reference;
+  }
 
   /* Grab the stored access token (kept outside localStorage entirely if possible). */
   function getToken() {
@@ -136,6 +155,8 @@ const API = (() => {
       headers = {},
       auth = true,
       timeout = DEFAULT_TIMEOUT,
+      cache,
+      responseType = "json",
       signal
     } = opts;
 
@@ -150,13 +171,19 @@ const API = (() => {
     }
 
     const out = { method, headers: { Accept: "application/json", ...headers } };
+    if (cache) out.cache = cache;
     if (body !== undefined) {
       out.body = body instanceof FormData ? body : JSON.stringify(body);
       if (!(body instanceof FormData)) out.headers["Content-Type"] = "application/json";
     }
 
     const token = tokenProvider();
-    if (auth && token) out.headers.Authorization = `Bearer ${token}`;
+    if (auth && token) {
+      out.headers.Authorization = `Bearer ${token}`;
+      out.headers["X-Request-ID"] = out.headers["X-Request-ID"] || newRequestId();
+      const terminalReference = getWorkstationReference();
+      if (terminalReference) out.headers["X-JONE-Terminal"] = terminalReference;
+    }
 
     const ctrl = new AbortController();
     // Distinguishes OUR timeout abort from a CALLER-initiated abort so the
@@ -186,6 +213,16 @@ const API = (() => {
       };
 
       const contentType = res.headers.get("content-type") || "";
+      if (responseType === "blob" && res.ok) {
+        return {
+          status: res.status,
+          ok: true,
+          data: await res.blob(),
+          pagination: null,
+          response: res,
+          headers: res.headers
+        };
+      }
       let data = null;
       let parseFailed = false;
       if (contentType.includes("application/json")) {
@@ -305,6 +342,7 @@ const API = (() => {
 
   /* ------------------------------ Verbs ------------------------------------ */
   const get = (path, opts = {}) => request(path, { ...opts, method: "GET" });
+  const getBlob = (path, opts = {}) => request(path, { ...opts, method: "GET", responseType: "blob" });
   const post = (path, body, opts = {}) => request(path, { ...opts, method: "POST", body });
   const put = (path, body, opts = {}) => request(path, { ...opts, method: "PUT", body });
   const patch = (path, body, opts = {}) => request(path, { ...opts, method: "PATCH", body });
@@ -453,6 +491,12 @@ const API = (() => {
   /* Receipt for a booking (auth + owner) — renders the confirmation page. */
   function getBookingReceipt(lookup, opts = {}) {
     return get(`/api/bookings/${encodeURIComponent(lookup)}/receipt/`, opts);
+  }
+
+  /* Staff payment workspace: separate capability-gated route. This does not
+     weaken the guest-owned public booking/receipt endpoint above. */
+  function getStaffBookingReceipt(lookup, opts = {}) {
+    return get(`/api/admin/bookings/${encodeURIComponent(lookup)}/receipt/`, opts);
   }
 
   /* --------------------------- PAYMENTS (Paystack) -------------------------
@@ -624,6 +668,11 @@ const API = (() => {
   const submitPosOrder = (reference, payload, opts = {}) => posOrderAction(reference, "submit", payload || {}, opts);
   const updatePosOrderStatus = (reference, status, opts = {}) => posOrderAction(reference, "status", { status }, opts);
   const capturePosTender = (reference, payload, opts = {}) => posOrderAction(reference, "tenders", payload, opts);
+  function updatePosKitchenTicketStatus(id, status, opts = {}) {
+    const base = resourceEp("posKitchenTickets");
+    if (!base) throw notConfigured("posKitchenTickets");
+    return post(`${base}/${encodeURIComponent(id)}/status/`, { status }, opts);
+  }
   function openPosCashSession(payload, opts = {}) {
     const base = resourceEp("posCashSessions");
     if (!base) throw notConfigured("posCashSessions");
@@ -701,7 +750,7 @@ const API = (() => {
   }
 
   return {
-    get, post, put, patch, del, request,
+    get, getBlob, post, put, patch, del, request,
     // Public site
     getHotelInfo, getPolicies, getRooms, getRoom, checkAvailability, getUnavailableDates,
     getOffers, getFacilities, getGallery, submitEnquiry, submitCancellationRequest, getCancellationStatus,
@@ -715,16 +764,16 @@ const API = (() => {
     // Notifications
     getNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead, getNotification,
     // Staff resources + actions
-    list, getOne, create, update, remove, resourceAction,
+    list, getOne, getStaffBookingReceipt, create, update, remove, resourceAction,
     rescheduleBooking, getOccupancyCalendar, listMissedBookings, listLateArrivals,
     listGuestDiscounts, createGuestDiscount, updateGuestDiscount, deactivateGuestDiscount,
     confirmBooking, staffCancelBooking, checkInBooking, checkOutBooking,
     noShowBooking, assignRoom, recordPayment, searchBookings, searchCheckout,
-    submitPosOrder, updatePosOrderStatus, capturePosTender, openPosCashSession, closePosCashSession,
+    submitPosOrder, updatePosOrderStatus, capturePosTender, updatePosKitchenTicketStatus, openPosCashSession, closePosCashSession,
     reviewCancellationRequest, approveCancellationRequest, rejectCancellationRequest, processCancellationRefund, closeCancellationRequest, listRefunds,
     getStaffProfile, sendReceipt, getEmailLog, listEmailLogs, getRoomTypeRooms,
     // Helpers
-    setTokenProvider, setRefreshProvider, APIError, BASE,
+    setTokenProvider, setRefreshProvider, setWorkstationReference, getWorkstationReference, APIError, BASE,
     normalizeList, unwrap, safe
   };
 })();

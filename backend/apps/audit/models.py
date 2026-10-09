@@ -15,6 +15,12 @@ class AuditLog(models.Model):
         on_delete=models.SET_NULL,
         related_name="audit_events",
     )
+    terminal = models.ForeignKey(
+        "accounts.Workstation", null=True, blank=True, on_delete=models.SET_NULL, related_name="audit_events"
+    )
+    actor_role = models.CharField(max_length=32, blank=True, default="")
+    actor_department = models.CharField(max_length=120, blank=True, default="")
+    request_id = models.CharField(max_length=80, blank=True, default="", db_index=True)
     action = models.CharField(max_length=60, db_index=True)
     object_type = models.CharField(max_length=120, db_index=True, blank=True, default="")
     object_id = models.CharField(max_length=64, blank=True, default="")

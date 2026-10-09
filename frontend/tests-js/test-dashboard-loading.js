@@ -54,3 +54,31 @@ test("legacy loading blocks are visually converted to skeletons", () => {
   assert.match(css, /\.loading-block \.spinner\s*\{/);
   assert.match(css, /clip:\s*rect\(0, 0, 0, 0\)/);
 });
+
+test("live refresh is single-flight, visibility-aware, and stops cleanly", async () => {
+  const ctx = makeContext();
+  loadScript(ctx, "js/config.js");
+  loadScript(ctx, "js/utils.js");
+  loadScript(ctx, "js/dashboard.js");
+  let calls = 0;
+  let settle;
+  let pending = Promise.resolve();
+  const stop = ctx.window.JONE.dashboard.startLiveRefresh(() => {
+    calls += 1;
+    pending = new Promise((resolve) => { settle = resolve; });
+    return pending;
+  }, 5000, { runImmediately: true, refreshOnVisible: true });
+
+  assert.equal(calls, 1);
+  ctx.document.listeners.visibilitychange.forEach((fn) => fn());
+  assert.equal(calls, 1, "overlapping refreshes are suppressed");
+  settle();
+  await pending;
+  await new Promise((resolve) => setImmediate(resolve));
+  ctx.document.listeners.visibilitychange.slice().forEach((fn) => fn());
+  assert.equal(calls, 2, "a later visible refresh runs after the prior request completes");
+  stop();
+  const stoppedAt = calls;
+  ctx.document.listeners.visibilitychange.slice().forEach((fn) => fn());
+  assert.equal(calls, stoppedAt, "stopped refresh listeners do not run");
+});

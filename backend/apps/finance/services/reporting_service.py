@@ -93,6 +93,11 @@ def _metrics() -> dict[str, Q]:
             direction=FinancialLine.Direction.DEBIT,
             account_code=accounting.OPERATING_EXPENSE,
         ),
+        "payroll_expenses": Q(
+            transaction__type=FinancialTransaction.Type.PAYROLL_ACCRUAL,
+            direction=FinancialLine.Direction.DEBIT,
+            account_code__in=[accounting.PAYROLL_EXPENSE, accounting.PAYROLL_PENSION_EXPENSE],
+        ),
         "inventory_acquisitions": Q(
             transaction__type=FinancialTransaction.Type.EXPENSE,
             direction=FinancialLine.Direction.DEBIT,
@@ -145,9 +150,9 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
     The bounded query plan is deliberately stable: one indexed transaction
     count, one conditional aggregate across ledger lines, and one conditional
     aggregate grouped by business date.  No legacy mutable projection is used.
-    ``gross_operating_result`` is recognized revenue less operating expense;
-    discounts, refunds, inventory acquisitions, and cash paid-outs stay visible
-    as distinct measures rather than being silently netted into that KPI.
+    ``gross_operating_result`` is recognized revenue less non-payroll operating
+    expense and accrued payroll; discounts, refunds, inventory acquisitions,
+    and cash paid-outs stay visible as distinct measures.
     """
     start_date, end_date = _validate_range(start_date, end_date)
     currency = _validate_currency(currency)
@@ -179,12 +184,13 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
         refunds = _amount(row.get("refunds"))
         revenue = _amount(row.get("recognized_revenue"))
         operating_expenses = _amount(row.get("operating_expenses"))
+        payroll_expenses = _amount(row.get("payroll_expenses"))
         serialized_days.append(
             {
                 "date": row["transaction__business_date"].isoformat(),
                 **row_payload,
                 "net_collections": money(collections - refunds),
-                "gross_operating_result": money(revenue - operating_expenses),
+                "gross_operating_result": money(revenue - operating_expenses - payroll_expenses),
             }
         )
 
@@ -192,6 +198,7 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
     refunds = _amount(totals.get("refunds"))
     revenue = _amount(totals.get("recognized_revenue"))
     operating_expenses = _amount(totals.get("operating_expenses"))
+    payroll_expenses = _amount(totals.get("payroll_expenses"))
     return {
         "basis": "posted_immutable_ledger_business_date",
         "start_date": start_date.isoformat(),
@@ -200,6 +207,6 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
         "ledger_transactions": transactions.count(),
         **totals_payload,
         "net_collections": money(collections - refunds),
-        "gross_operating_result": money(revenue - operating_expenses),
+        "gross_operating_result": money(revenue - operating_expenses - payroll_expenses),
         "by_day": serialized_days,
     }

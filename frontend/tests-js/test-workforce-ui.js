@@ -67,8 +67,15 @@ test("workforce navigation serves every staff role while planning controls remai
   assert.match(page, /data-wf-manager/);
 });
 
-test("admin staff management exposes every operational role instead of hiding specialist accounts", () => {
+test("admin staff management can create, filter, and list every supported operational role", () => {
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "staff.html"), "utf8");
-  ["CASHIER", "HOUSEKEEPING", "MAINTENANCE", "INVENTORY_CLERK"].forEach((role) => assert.match(page, new RegExp('value: "' + role + '"')));
-  assert.match(page, /role__in: "ADMIN,MANAGER,RECEPTIONIST,CASHIER,HOUSEKEEPING,MAINTENANCE,INVENTORY_CLERK"/);
+  const roles = [
+    "ADMIN", "MANAGER", "GENERAL_MANAGER", "FRONT_DESK_SUPERVISOR", "RECEPTIONIST", "CASHIER",
+    "RESTAURANT_MANAGER", "WAITER", "BAR_MANAGER", "BARTENDER", "KITCHEN_MANAGER", "CHEF",
+    "HOUSEKEEPING_MANAGER", "HOUSEKEEPER", "HOUSEKEEPING", "MAINTENANCE_TECHNICIAN", "MAINTENANCE",
+    "ACCOUNTS_MANAGER", "ACCOUNTANT", "HR_MANAGER", "SECURITY", "PROCUREMENT_OFFICER", "STOREKEEPER", "INVENTORY_CLERK",
+  ];
+  roles.forEach((role) => assert.match(page, new RegExp('value: "' + role + '"')));
+  roles.forEach((role) => assert.match(page, new RegExp('option value="' + role + '"')));
+  assert.match(page, /role__in: "ADMIN,MANAGER,GENERAL_MANAGER,FRONT_DESK_SUPERVISOR,[^"]*INVENTORY_CLERK"/);
 });

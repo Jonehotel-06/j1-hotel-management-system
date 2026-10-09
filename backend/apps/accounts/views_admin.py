@@ -15,7 +15,7 @@ from apps.core.pagination import StandardPagination
 from apps.core.permissions import CanViewStaffProfile, HasCapability, IsAdminRole
 from apps.core.responses import success_response
 
-from .models import User
+from .models import User, Workstation
 from .serializers import (
     AdminStaffProfileSerializer,
     OperationalStaffDirectorySerializer,
@@ -23,6 +23,7 @@ from .serializers import (
     AdminUserListSerializer,
     AdminUserUpdateSerializer,
     UserSerializer,
+    WorkstationSerializer,
 )
 
 logger = logging.getLogger("apps")
@@ -40,12 +41,13 @@ class OperationalStaffDirectoryView(APIView):
 
     permission_classes = [HasCapability]
     required_capabilities = (
-        "guest_request.assign", "housekeeping.task.assign", "maintenance.work_order.assign", "shift.manage", "staff.profile.manage",
+        "guest_request.assign", "housekeeping.task.assign", "maintenance.work_order.assign", "shift.manage",
+        "staff.profile.manage", "payroll.manage",
     )
     require_any_capability = True
 
     def get(self, request):
-        queryset = User.objects.filter(is_active=True).exclude(role=User.Role.GUEST)
+        queryset = User.objects.filter(is_active=True).exclude(role=User.Role.GUEST).select_related("staff_profile")
         roles_raw = request.query_params.get("roles") or request.query_params.get("role") or ""
         if roles_raw:
             valid_roles = set(User.Role.values) - {User.Role.GUEST}
@@ -56,10 +58,75 @@ class OperationalStaffDirectoryView(APIView):
                 Q(first_name__icontains=search)
                 | Q(last_name__icontains=search)
                 | Q(email__icontains=search)
+                | Q(staff_profile__employee_code__icontains=search)
             )
         paginator = StandardPagination()
         page = paginator.paginate_queryset(queryset.order_by("first_name", "last_name", "email", "pk"), request, view=self)
         return paginator.get_paginated_response(OperationalStaffDirectorySerializer(page, many=True).data)
+
+
+class WorkstationListCreateView(APIView):
+    """Register or list workstation labels; the generated reference is attribution only."""
+
+    permission_classes = [HasCapability]
+    required_capability = "terminal.manage"
+    pagination_class = StandardPagination
+
+    def get(self, request):
+        queryset = Workstation.objects.select_related("current_staff").order_by("department", "name", "pk")
+        if active := (request.query_params.get("active") or "").strip().lower():
+            if active not in {"true", "false", "1", "0"}:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({"active": "Use true or false."})
+            queryset = queryset.filter(is_active=active in {"true", "1"})
+        if department := (request.query_params.get("department") or "").strip().upper():
+            queryset = queryset.filter(department=department)
+        if search := (request.query_params.get("search") or "").strip():
+            queryset = queryset.filter(
+                Q(reference__icontains=search)
+                | Q(name__icontains=search)
+                | Q(location__icontains=search)
+                | Q(department__icontains=search)
+                | Q(current_staff__email__icontains=search)
+                | Q(current_staff__first_name__icontains=search)
+                | Q(current_staff__last_name__icontains=search)
+            )
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        return paginator.get_paginated_response(WorkstationSerializer(page, many=True).data)
+
+    def post(self, request):
+        serializer = WorkstationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        terminal = serializer.save(created_by=request.user, updated_by=request.user)
+        log_action(
+            actor=request.user, action="WORKSTATION_REGISTERED", instance=terminal, request=request,
+            metadata={"reference": terminal.reference, "department": terminal.department},
+        )
+        return success_response(
+            WorkstationSerializer(terminal).data,
+            message="Workstation registered. Its reference is optional attribution, not a login credential.",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class WorkstationDetailView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "terminal.manage"
+
+    def patch(self, request, pk):
+        terminal = Workstation.objects.select_related("current_staff").filter(pk=pk).first()
+        if terminal is None:
+            from rest_framework.exceptions import NotFound
+            raise NotFound("Workstation not found.")
+        serializer = WorkstationSerializer(terminal, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        terminal = serializer.save(updated_by=request.user)
+        log_action(
+            actor=request.user, action="WORKSTATION_UPDATED", instance=terminal, request=request,
+            metadata={"reference": terminal.reference, "is_active": terminal.is_active},
+        )
+        return success_response(WorkstationSerializer(terminal).data, message="Workstation updated.")
 
 
 class AdminUserQuerysetMixin:

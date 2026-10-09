@@ -123,6 +123,28 @@ test("success envelope is unwrapped exactly once", async () => {
   assert.equal(out.data.total_amount, "340000.00");
 });
 
+test("authenticated binary downloads preserve Blob bodies and no-store request options", async () => {
+  const pdf = { type: "application/pdf", marker: "binary-pdf" };
+  let captured;
+  const ctx = bootApi({
+    fetchImpl: (url, init) => {
+      captured = { url, init };
+      return Promise.resolve({
+        status: 200, ok: true,
+        headers: { get: (key) => key === "content-type" ? "application/pdf" : null },
+        blob: () => Promise.resolve(pdf),
+      });
+    },
+  });
+  ctx.sessionStorage.setItem("jone.session", JSON.stringify({ access: "payroll-access-token" }));
+  const out = await ctx.window.API.getBlob("/api/admin/staff-operations/payroll/payslips/PAY-TEST/", { cache: "no-store" });
+  assert.equal(out.status, 200);
+  assert.equal(out.data, pdf);
+  assert.equal(captured.init.cache, "no-store");
+  assert.equal(captured.init.method, "GET");
+  assert.equal(captured.init.headers.Authorization, "Bearer payroll-access-token");
+});
+
 test("HTTP 500 / 502 / 503 map to distinct friendly messages", async () => {
   const cases = [
     [500, /trouble completing/i],

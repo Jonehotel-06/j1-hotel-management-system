@@ -5,7 +5,7 @@
   <meta name="robots" content="noindex, nofollow"><title>Workforce | J-ONE Staff</title><meta name="theme-color" content="#373435">
   <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32"><link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png"><link rel="manifest" href="/manifest.webmanifest">
   <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
-  <link rel="stylesheet" href="../css/main.css?v=1.1.6">
+  <link rel="stylesheet" href="../css/main.css?v=1.1.11">
   <style>
     .op-tabs{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}.op-tabs .is-active{background:var(--color-primary);color:#fff;border-color:var(--color-primary)}
     .wf-summary{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;margin-bottom:1rem;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface-alt)}
@@ -49,7 +49,7 @@
     <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Operational staff profiles"><table class="table"><thead><tr><th>Staff</th><th>Employee code</th><th>Department</th><th>Title</th><th>Status</th><th></th></tr></thead><tbody data-wf-profile-rows></tbody></table></div><div class="pagination" data-wf-profile-pagination></div></div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.6"></script><script src="../js/config.js?v=1.1.6"></script><script src="../js/utils.js?v=1.1.6"></script><script src="../js/icons.js?v=1.1.6"></script><script src="../js/api.js?v=1.1.6"></script><script src="../js/theme.js?v=1.1.6"></script><script src="../js/ui.js?v=1.1.6"></script><script src="../js/auth.js?v=1.1.6"></script><script src="../js/navigation.js?v=1.1.6"></script><script src="../js/dashboard.js?v=1.1.6"></script><script src="../js/operations.js?v=1.1.6"></script>
+<script src="../js/runtime-config.js?v=1.1.11"></script><script src="../js/config.js?v=1.1.11"></script><script src="../js/utils.js?v=1.1.11"></script><script src="../js/icons.js?v=1.1.11"></script><script src="../js/api.js?v=1.1.11"></script><script src="../js/theme.js?v=1.1.11"></script><script src="../js/ui.js?v=1.1.11"></script><script src="../js/auth.js?v=1.1.11"></script><script src="../js/navigation.js?v=1.1.11"></script><script src="../js/dashboard.js?v=1.1.11"></script><script src="../js/operations.js?v=1.1.11"></script>
 <script>
 JONE.ui.initChrome();
 var __workforceAllowed=JONE.dashboard.boot(["admin","manager","receptionist","cashier","housekeeping","maintenance","inventory_clerk"]);
@@ -95,5 +95,5 @@ document.querySelectorAll("[data-wf-tab]").forEach(function(button){button.addEv
 attendanceRows.addEventListener("click",function(event){var button=event.target.closest("button");if(button&&button.dataset.wfAttendanceView)viewAttendance(button.dataset.wfAttendanceView);});leaveRows.addEventListener("click",function(event){var button=event.target.closest("button");if(!button)return;if(button.dataset.wfLeaveView)viewLeave(button.dataset.wfLeaveView);else if(button.dataset.wfLeaveReview)reviewLeave(button.dataset.wfLeaveReview);else if(button.dataset.wfLeaveCancel)cancelLeave(button.dataset.wfLeaveCancel);});shiftRows.addEventListener("click",function(event){var button=event.target.closest("button");if(!button)return;if(button.dataset.wfShiftView)viewShift(button.dataset.wfShiftView);else if(button.dataset.wfShiftCancel)cancelShift(button.dataset.wfShiftCancel);});templateRows.addEventListener("click",function(event){var button=event.target.closest("button");if(button&&button.dataset.wfTemplateEdit)editTemplate(button.dataset.wfTemplateEdit);});profileRows.addEventListener("click",function(event){var button=event.target.closest("button");if(button&&button.dataset.wfProfileEdit)editProfile(button.dataset.wfProfileEdit);});
 document.getElementById("wf-attendance-date").value=hotelToday();loadAttendance(1);
 })();
-</script><script src="../js/pwa.js?v=1.1.6"></script><script src="../js/version.js?v=1.1.6"></script><script src="../js/update-checker.js?v=1.1.6"></script>
+</script><script src="../js/pwa.js?v=1.1.11"></script><script src="../js/version.js?v=1.1.11"></script><script src="../js/update-checker.js?v=1.1.11"></script>
 </body></html>

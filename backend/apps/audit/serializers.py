@@ -7,12 +7,15 @@ from .models import AuditLog
 class AuditLogSerializer(serializers.ModelSerializer):
     actor_email = serializers.SerializerMethodField()
     actor_name = serializers.SerializerMethodField()
+    terminal_reference = serializers.CharField(source="terminal.reference", read_only=True, allow_null=True)
+    terminal_name = serializers.CharField(source="terminal.name", read_only=True, allow_null=True)
 
     class Meta:
         model = AuditLog
         fields = [
-            "id", "actor_email", "actor_name", "action", "object_type", "object_id",
-            "summary", "changes", "metadata", "ip_address", "created_at",
+            "id", "actor_email", "actor_name", "actor_role", "actor_department", "terminal_reference",
+            "terminal_name", "request_id", "action", "object_type", "object_id", "summary", "changes",
+            "metadata", "ip_address", "created_at",
         ]
         read_only_fields = fields
 

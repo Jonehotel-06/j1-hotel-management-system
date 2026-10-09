@@ -35,7 +35,7 @@ else { /* body.code, body.message, body.errors? */ }
 `ROOM_UNAVAILABLE`, `BOOKING_EXPIRED`, `INVALID_BOOKING_STATE`,
 `CANCELLATION_NOT_ALLOWED`, `OFFER_NOT_APPLICABLE`, `OUTSTANDING_BALANCE`,
 `PAYMENT_NOT_CONFIGURED`, `PAYMENT_FAILED`, `PAYMENT_ALREADY_COMPLETED`,
-`PAYMENT_AMOUNT_MISMATCH`, `PAYMENT_GATEWAY_ERROR`, `STORAGE_UPLOAD_FAILED`
+`PAYMENT_AMOUNT_MISMATCH`, `PAYMENT_GATEWAY_ERROR`, `TABLE_SESSION_CONFLICT`, `STORAGE_UPLOAD_FAILED`
 (502 — the media bucket rejected the upload; show the message and let the user retry).
 
 `errors` (when present) maps field → message list:
@@ -629,6 +629,19 @@ PATCH accepts contact + identification fields.
 
 ## 22. Payments — `GET /api/admin/payments/` · `GET …/payments/{id|ref}/` · `POST …/payments/record/`
 
+Payment and refund list/detail routes require the `payment.read` capability.
+The staff receipt screen uses `GET /api/admin/bookings/{id|ref}/receipt/`, also
+`payment.read`-gated; it is separate from the guest-owned
+`GET /api/bookings/{id|ref}/receipt/` route. Receipt email delivery requires
+`payment.receipt.send`. Recording an offline room-booking payment and staff-
+initiated online payment initialization/verification each require both
+`booking.manage` and `payment.capture`. Guest-owner and guest-token checkout
+flows are unchanged. A `payment.capture` capability by itself does not grant
+access to the booking payment APIs. The frontend awaits capability resolution
+before loading the Receipts list or deriving its links/actions, and hides
+read-only/send/record controls from roles without their respective
+capabilities; the API remains authoritative.
+
 Row: `{ id, reference, booking_reference, guest_name, staff_email, provider:
 PAYSTACK|CASH|POS|BANK_TRANSFER, amount, currency, status: PENDING|SUCCESS|
 FAILED|PARTIALLY_REFUNDED|REFUNDED, channel, gateway_response, transaction_id,
@@ -804,6 +817,31 @@ operational projections below for bookings and occupancy.
   "by_payment_status": [ { "payment_status", "count" } ],
   "by_room_type": [ { "room_type", "bookings", "revenue" } ] }
 ```
+
+## 26b. Restaurant table register and service sessions — POS
+
+These endpoints extend the existing shared POS workflow; table sessions do not
+create a separate order total, ledger, or payment record. Table configuration is
+manager-controlled (`restaurant.table.manage`). Restaurant order staff
+(`restaurant.order.manage`) can see active tables, open sessions, and attach
+multiple checks to one open session.
+
+| Method & path | Body / query | Result and rules |
+|---|---|---|
+| `GET /api/admin/pos/restaurant-tables/` | `active=true\|false\|all` (default `true`), `search`, `page`, `page_size` | Paginated `{id, code, name, section, seats, is_active, created_at, updated_at}`. |
+| `POST /api/admin/pos/restaurant-tables/` | `{code, name?, section?, seats}` | Creates an active table; code is trimmed and uppercased. Codes use letters/numbers/dot/underscore/hyphen; seat capacity is 1–60. |
+| `PATCH /api/admin/pos/restaurant-tables/{id}/` | Any mutable table fields; `{is_active:false}` deactivates without deleting history. | While a session is open, no table edits are allowed. After the first session, code/name/section/capacity are frozen to preserve historical context; only activation changes remain. |
+| `GET /api/admin/pos/restaurant-table-sessions/` | `status=OPEN\|CLOSED\|ALL` (default `OPEN`), optional `table_id`, pagination | Paginated table/session state and bounded counts for linked, in-progress, and unpaid orders. |
+| `POST /api/admin/pos/restaurant-table-sessions/` | `{table_id, covers?, notes?, idempotency_key}` | Opens one session on an active table if covers fit its capacity. Same key + same payload returns the original session; changed payload is rejected. A table can have only one open session. |
+| `GET /api/admin/pos/restaurant-table-sessions/{reference}/` | — | One session snapshot with its table identity and counts. |
+| `POST /api/admin/pos/restaurant-table-sessions/{reference}/close/` | `{close_note?}` | Closes idempotently only when every linked order is terminal and every delivered direct-sale order is fully settled. Otherwise returns `409 TABLE_SESSION_CONFLICT`. |
+| `POST /api/admin/pos/orders/` (additive fields) | Existing POS order body plus optional `table_session_reference` and `service_request_reference` | `table_session_reference` is accepted only for `mode=RESTAURANT`; the server verifies the session is open and derives `table_number` from the registered table. An optional `service_request_reference` requires the caller to have both `guest_request.manage` and the mode's POS capability; it links one eligible anonymous table QR Food & Beverage request to one draft. Restaurant mode requires the QR label to equal the exact registered table code and a matching open session; bar mode preserves its free-text table/pickup label. The request remains open, the order is not submitted automatically, and no charge is posted until the existing delivery workflow. Legacy requests without either field remain supported. |
+
+A table session is operational grouping only. Each POS check keeps its existing
+server-calculated line snapshots, kitchen ticket, ledger charge and tender. Bar,
+takeaway, and room-service contracts are unchanged. Multi-table merge/split and
+a bar-specific table registry remain out of scope; table QR intake itself still
+accepts no menu lines or payment details.
 
 ## 27. User administration (ADMIN only) — `GET/POST /api/admin/users/` · `GET/PATCH …/{id}/`
 

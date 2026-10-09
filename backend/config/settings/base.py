@@ -68,6 +68,7 @@ LOCAL_APPS = [
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
+    "apps.core.request_middleware.RequestContextMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
@@ -155,7 +156,7 @@ REST_FRAMEWORK = {
         "rest_framework.parsers.MultiPartParser",
     ),
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "apps.accounts.authentication.WorkstationJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.AllowAny",),
     "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.StandardPagination",
@@ -180,6 +181,10 @@ REST_FRAMEWORK = {
         # per-email service limit adds a second protection layer.
         "portal_access_request": "10/hour",
         "portal_access_consume": "20/hour",
+        # Public bearer links are scoped to one room/table, but still need
+        # conservative per-client request limits against QR-form abuse.
+        "service_qr_context": "60/min",
+        "service_qr_submit": "8/min",
     },
 }
 
@@ -341,6 +346,7 @@ MEDIA_ROOT = BASE_DIR / "media"
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="", cast=Csv())
 CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
 CORS_ALLOW_CREDENTIALS = False  # JWT travels in Authorization headers, not cookies
+CORS_EXPOSE_HEADERS = ["X-Request-ID"]
 # Custom request headers the independently hosted frontend sends. Keeping this
 # list explicit (instead of CORS_ALLOW_ALL_HEADERS) matters: a browser rejects
 # the ENTIRE request when a sent header is not allowed by the preflight —
@@ -354,7 +360,10 @@ CORS_ALLOW_HEADERS = (
     "x-guest-access-token",
     "x-cancellation-access-token",
     "x-portal-session",
+    "x-service-qr-token",
     "idempotency-key",
+    "x-jone-terminal",
+    "x-request-id",
 )
 
 # ---------------------------------------------------------------------------
@@ -364,6 +373,9 @@ FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:8080").rstrip("/
 # An independently hosted guest portal may override this public origin. It
 # falls back to FRONTEND_URL for same-origin/public-site deployments.
 PORTAL_FRONTEND_URL = (config("PORTAL_FRONTEND_URL", default="") or FRONTEND_URL).rstrip("/")
+# Printed service QR links are public frontend URLs; never point them at the API
+# origin unless the frontend is actually served there.
+SERVICE_QR_FRONTEND_URL = (config("SERVICE_QR_FRONTEND_URL", default="") or FRONTEND_URL).rstrip("/")
 PAYMENT_CALLBACK_URL = (
     config("PAYMENT_CALLBACK_URL", default="") or f"{FRONTEND_URL}/payment-verify.html"
 )

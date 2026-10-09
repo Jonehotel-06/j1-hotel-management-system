@@ -29,14 +29,19 @@ Standard codes: `VALIDATION_ERROR` (400) · `UNAUTHORIZED` (401) · `FORBIDDEN` 
 `RESOURCE_NOT_FOUND` (404) · `RATE_LIMITED` (429) · `SERVER_ERROR` (500) plus
 domain codes: `INVALID_DATES`, `CAPACITY_EXCEEDED`, `ROOM_UNAVAILABLE` (409),
 `BOOKING_EXPIRED` (409), `INVALID_BOOKING_STATE` (409), `CANCELLATION_NOT_ALLOWED`,
-`OFFER_NOT_APPLICABLE`, `OUTSTANDING_BALANCE`, `PAYMENT_NOT_CONFIGURED` (503),
+`OFFER_NOT_APPLICABLE`, `OUTSTANDING_BALANCE`, `TABLE_SESSION_CONFLICT` (409), `PAYMENT_NOT_CONFIGURED` (503),
 `PAYMENT_FAILED`, `PAYMENT_ALREADY_COMPLETED` (409), `PAYMENT_AMOUNT_MISMATCH`,
 `PAYMENT_GATEWAY_ERROR` (502).
 
 Conventions: dates `YYYY-MM-DD` · datetimes ISO 8601 · money as strings
 (`"25000.00"`) · IDs are integers · references are strings
 (`J1-YYYYMMDD-XXXXXXXX`, payments `J1P-…`). Pagination params everywhere:
-`page`, `page_size` (max 100).
+`page`, `page_size` (max 100). Every `/api/` response is `private, no-store`.
+Authenticated staff requests may include `X-JONE-Terminal: <registered-reference>`
+for best-effort workstation attribution; an absent/unknown/inactive terminal never
+grants or denies account permissions. The server assigns an `X-Request-ID` and
+captures actor role, department, and terminal snapshots in audit evidence where
+available. Do not use a workstation reference as an account credential.
 
 ---
 
@@ -60,6 +65,7 @@ Conventions: dates `YYYY-MM-DD` · datetimes ISO 8601 · money as strings
 | `POST /token/refresh/` | 🔓 | refresh → `{tokens.access(, refresh)}` | Rotation: old refresh is blacklisted. |
 | `POST /logout/` | 🔑 | refresh | Blacklists the refresh token. |
 | `GET /profile/` | 🔑 | → user | |
+| `GET /capabilities/` | 🔑 staff | Server-resolved role capability codes for current-user UI hints; the API still enforces every request. |
 | `PATCH /profile/` | 🔑 | first_name?, last_name?, phone?, profile_image? → user | Role/active flags NOT editable. |
 | `POST /password/change/` | 🔑 | current_password, new_password, new_password_confirm | |
 | `POST /password/reset/` | 🔓 | email | Generic response (no account-existence leak). |
@@ -90,20 +96,38 @@ Conventions: dates `YYYY-MM-DD` · datetimes ISO 8601 · money as strings
 | `POST /quote/` | 🔓 | room_type, check_in, check_out, rooms?, adults?, children?, offer_code? → full price breakdown + policies + hold info (nothing persisted) |
 | `GET /` | 🔑 | my bookings (paginated; `?status=`) |
 | `POST /` | 🔓 guest / 🔑 optional | stay fields + `guest{}`? + special_requests? → 201 booking (PENDING, inventory held, `expires_at` set). Throttled. |
-| `GET /<id or reference>/` | 🔑 (owner/staff) | full booking detail with `can_pay`; public `can_cancel` is always false |
-| `POST /<id or ref>/cancel/` | 🔑 (owner/staff) | Legacy non-destructive endpoint: returns `CANCELLATION_NOT_ALLOWED`; guests must submit Contact cancellation/refund requests. |
-| `GET /<id or ref>/receipt/` | 🔑 (owner/staff) | hotel + guest + stay + payment lines receipt |
+| `GET /<id or reference>/` | 🔑 owner/token; staff `booking.read` or `booking.manage` | full booking detail with `can_pay`; public `can_cancel` is always false |
+| `POST /<id or ref>/cancel/` | 🔑 owner/token; staff `booking.read` or `booking.manage` | Legacy non-destructive endpoint: returns `CANCELLATION_NOT_ALLOWED`; guests must submit Contact cancellation/refund requests. |
+| `GET /<id or ref>/receipt/` | 🔑 owner/token; staff `booking.read` or `booking.manage` | hotel + guest + stay + payment lines receipt |
 
-Ownership is enforced **object-level** — another guest's booking reference/id
-returns `404` to avoid confirming that the object exists.
+Ownership and staff capability are enforced **object-level** — another guest's
+booking reference/id returns `404` to avoid confirming that the object exists.
+Staff status by itself is not a booking-access grant; cashier, housekeeping,
+maintenance, and finance roles without a booking capability cannot use these
+routes to read full booking records.
+
+The staff finance workspace uses a separate receipt projection:
+`GET /api/admin/bookings/<id or ref>/receipt/` requires `payment.read` and does
+not grant access to booking detail/actions. Sending a receipt uses
+`POST /api/admin/bookings/<id or ref>/send-receipt/` and requires
+`payment.receipt.send`.
 
 ## Payments (`/api/payments/`)
 
 | Method & path | Auth | Notes |
 |---|---|---|
-| `POST /initialize/` | guest token or owner/staff JWT | `{booking_reference}` → `{reference, authorization_url, amount, currency}`. Amount is computed server-side; retries reuse the pending attempt. |
-| `GET /verify/<reference>/` | guest token or owner/staff JWT | Server verifies directly with Paystack; **idempotent**; confirms booking on success. |
+| `POST /initialize/` | guest token or owner JWT; staff requires `booking.manage` + `payment.capture` | `{booking_reference}` → `{reference, authorization_url, amount, currency}`. Amount is computed server-side; retries reuse the pending attempt. |
+| `GET /verify/<reference>/` | guest token or owner JWT; staff requires `booking.manage` + `payment.capture` | Server verifies directly with Paystack; **idempotent**; confirms booking on success. |
 | `POST /webhook/` | 🔓 signed | Paystack → `x-paystack-signature` HMAC-SHA512 validated before parsing. Handles `charge.success` plus `refund.pending/processing/processed/failed/needs-attention` idempotently. |
+
+### Staff payment ledger (`/api/admin/payments/`)
+
+`GET /` and `GET /<id|reference>/`, plus read-only `GET /refunds/` and
+`GET /refunds/<id>/`, require `payment.read`. Read access is seeded for front
+desk/management and accounting roles. `POST /record/` requires both
+`booking.manage` and `payment.capture`; a capture capability alone (for example
+on a cashier/POS role) is not enough to charge a room booking. Manual amounts
+remain server-validated against the locked booking balance.
 
 ## Notifications (`/api/notifications/`)
 
@@ -132,6 +156,28 @@ token or staff JWT.
 
 ---
 
+## Guest-service QR (`/api/service-qr/`)
+
+Printed codes use a high-entropy bearer stored only as a SHA-256 digest. The
+raw token is embedded in the **URL fragment** (not sent to the web server in the
+page request), removed from the address bar at page boot, and sent to Django
+only as `X-Service-QR-Token`. Staff issuance and rotation responses contain the
+printable SVG and bearer URL once and are explicitly `no-store`; never log or
+persist those raw values. Table QR submissions remain anonymous and accept no menu,
+price, payment, or POS-order fields. Authorized staff can launch a linked,
+server-priced POS draft from a table F&B request; this never auto-submits or
+charges an order. Restaurant drafts must match an open registered table session;
+bar drafts preserve the request's free-text table/pickup label.
+
+| Method & path | Access | Description |
+|---|---|---|
+| `GET /context/` | Public QR bearer header | No-store room/table label and permitted request categories |
+| `POST /requests/` | Public QR bearer header + idempotency key | Creates a routed guest-service request. A room link requires exactly one current in-house room occupant; a table link forces a guestless Food & Beverage request. |
+
+QR submissions accept only `category`, `summary`, `detail`, and `idempotency_key`; the caller cannot supply guest, room, stay, team, priority, staff assignee, menu lines, or financial/POS values. Room requests derive the guest, stay, and room server-side; table requests remain anonymous. For restaurant session handoff, issue a table QR using the exact registered table code; free-text bar/pickup labels remain supported. Both reuse the normal event log, SLA and staff team queue.
+
+---
+
 ## Staff API (`/api/admin/`)
 
 Legacy staff endpoints retain their established `ADMIN`/`MANAGER`/`RECEPTIONIST`
@@ -148,10 +194,12 @@ shown in the middle column, including additive operational roles.
 | `POST /bookings/<id\|ref>/check-in/` ↪ `check-out/` ↪ `no-show/` `assign-room/` | 🛎 | Front-desk actions (checkout guards `OUTSTANDING_BALANCE` unless `allow_balance_due`) |
 | `GET /guests/` · `GET/PATCH /guests/<id>/` | 🛎 | Guest CRM + stay history |
 | `GET /payments/` · `GET /payments/<id\|ref>/` | 🛎 | Payment records (sanitized) |
-| `GET/POST /service-requests/` · `GET /service-requests/<ref>/` | 🔐 `guest_request.manage` | Paginated team-scoped queue, request creation, and full staff event timeline |
+| `GET/POST /service-requests/` · `GET /service-requests/<ref>/` | 🔐 `guest_request.manage` | Paginated team-scoped queue, request creation, full staff event timeline, and linked POS-order reference when present |
 | `POST /service-requests/<ref>/assign/` | 🔐 `guest_request.assign` | Dispatcher-only assignment, re-routing, and SLA due-time updates |
 | `POST /service-requests/<ref>/claim/` · `status/` · `comments/` | 🔐 `guest_request.manage` | Team-worker claim, controlled progression, and immutable internal/guest-visible comments |
 | `POST /service-requests/<ref>/housekeeping-task/` · `maintenance-work-order/` | 🔐 source + task capability | Idempotently route a room-linked service request into its one operational task/work order |
+| `GET/POST /service-qr-links/` | 🔐 `service_qr.manage` | List links or issue/reactivate a room/table QR. Raw token, fragment URL, and SVG are returned only in this no-store issuance response. |
+| `POST /service-qr-links/<ref>/rotate/` · `revoke/` | 🔐 `service_qr.manage` | Rotation immediately invalidates prior prints; revocation retains the link and request history. |
 | `GET/POST /housekeeping/` · `GET /housekeeping/<ref>/` | 🔐 `housekeeping.task.manage` | Paginated role-scoped room-readiness queue and immutable task timeline |
 | `POST /housekeeping/<ref>/assign/` · `claim/` · `status/` | 🔐 dispatch / task capability | Dispatcher assignment, housekeeper claim, controlled clean/inspect lifecycle; only inspected completion marks a room clean |
 | `GET/POST /maintenance/` · `GET /maintenance/<ref>/` | 🔐 `maintenance.work_order.manage` | Paginated role-scoped work-order queue and immutable timeline |
@@ -162,9 +210,12 @@ shown in the middle column, including additive operational roles.
 | `GET /finance/reports/summary/?start=YYYY-MM-DD&end=YYYY-MM-DD&currency=NGN` | 🔐 `reports.financial.view` | Bounded, ledger-authoritative business-date report that keeps guest charges, recognized revenue, collections, refunds, expenses, inventory acquisitions, and cash paid-outs distinct. |
 | `GET/POST /finance/control-policies/` | 🔐 `finance.controls.manage` | Effective-dated refund, discount, cash-variance, and expense approval thresholds (create successor; no historical edit) |
 | `GET /finance/approvals/` · `POST /finance/approvals/<ref>/review/` | 🔐 `payment.refund.approve` | Maker-checker approval evidence |
-| `GET /pos/menu/` · `GET/POST /pos/orders/` | 🔐 `pos.order.manage` | Available menu; bounded order list/create with server price snapshots |
-| `POST /pos/orders/<ref>/submit/` · `status/` · `tenders/` | 🔐 POS/payment capability | Kitchen workflow, delivered room charge, or direct tender collection |
-| `GET /pos/kitchen-tickets/` | 🔐 `pos.order.manage` | Paginated active kitchen queue |
+| `GET /pos/menu/` · `GET/POST /pos/orders/` | 🔐 POS / `restaurant.order.manage` / `bar.order.manage` | Available menu; bounded department-scoped orders with server price snapshots and idempotency. Restaurant dine-in orders may join an open registered table session; the session's table code is authoritative. Optional `service_request_reference` requires both the relevant POS-mode capability and `guest_request.manage`, and links one eligible table F&B QR request to one draft. Restaurant mode verifies the QR label equals the registered table code and requires that table's open session; bar mode retains the free-text location. The request remains open and no financial charge is posted until the normal POS delivery workflow. |
+| `GET/POST /pos/restaurant-tables/` · `PATCH /pos/restaurant-tables/<id>/` | 🔐 `restaurant.order.manage` read · `restaurant.table.manage` write | Bounded table register (`active=true|false|all`, `search`); tables deactivate instead of delete. Table identity/layout freezes after its first service session; activation can still change after closure. |
+| `GET/POST /pos/restaurant-table-sessions/` · `GET /pos/restaurant-table-sessions/<ref>/` · `POST .../<ref>/close/` | 🔐 `restaurant.order.manage` | Open one idempotent table service session, attach multiple checks, and close only after orders are terminal and delivered orders are fully settled. A portable unique active-table key prevents two open sessions for one table. |
+| `GET/POST /pos/menu/categories/` · `items/` · `modifiers/` | 🔐 matching menu capability | Controlled catalog management; restaurant and bar menu permissions are separate from general POS administration. |
+| `POST /pos/orders/<ref>/submit/` · `status/` · `tenders/` | 🔐 POS/department + payment capability | Kitchen/bar ticket routing, delivered room charge, or direct tender collection; all prices, folio links, table-session state, and ledger effects are server-validated. Drafts can be cancelled with retained event evidence and no charge. |
+| `GET /pos/kitchen-tickets/` · `POST /pos/kitchen-tickets/<id>/status/` | 🔐 `kitchen.queue.view` / `kitchen.ticket.manage` or matching order capability | Station-filtered kitchen/bar production queue and controlled ticket lifecycle; staff see only permitted stations. |
 | `GET/POST /inventory/locations/` · `PATCH /inventory/locations/<id>/` | 🔐 `inventory.manage` | Bounded stock-location catalog |
 | `GET/POST /inventory/items/` · `PATCH /inventory/items/<id>/` | 🔐 `inventory.manage` | Bounded stock-item catalog; source-of-truth stock is never edited here |
 | `GET /inventory/balances/` · `GET /inventory/movements/` | 🔐 `inventory.manage` | Paginated balance projection and immutable stock ledger; movement dates use hotel-local half-open timestamp ranges |
@@ -177,6 +228,8 @@ shown in the middle column, including additive operational roles.
 | `GET/POST /inventory/purchase-orders/` · `GET /inventory/purchase-orders/<ref>/` | 🔐 `procurement.manage` | Purchase-order drafts and immutable line snapshots |
 | `POST /inventory/purchase-orders/<ref>/submit/` · `ordered/` · `receipts/` | 🔐 `procurement.manage` | PO lifecycle and source-keyed partial/full goods receipts; receipts append `RECEIPT` movements and reject over-receipt |
 | `POST /inventory/purchase-orders/<ref>/approve/` | 🔐 `procurement.approve` | Separate maker-checker approval; requester self-approval is rejected |
+| `GET/POST /users/terminals/` · `PATCH /users/terminals/<id>/` | 🔐 `terminal.manage` | Register, label, list (`active`, `department`, `search`), or deactivate optional workstation metadata; current-user presence is informational, not a session lock. |
+| `GET /users/directory/` | 🔐 dispatch/profile/shift/`payroll.manage` capability | Minimal active-staff picker projection without account-management data; supports employee-code search for authorized payroll preparers. |
 | `GET/POST /staff-operations/profiles/` · `PATCH /staff-operations/profiles/<id>/` | 🔐 `staff.profile.manage` | Non-sensitive operational staff profiles; user accounts and roles remain separately controlled |
 | `GET/POST /staff-operations/shift-templates/` · `PATCH /staff-operations/shift-templates/<id>/` | 🔐 `shift.manage` | Reusable shift definitions, inactive rather than silently deleted |
 | `GET/POST /staff-operations/shifts/` · `GET /staff-operations/shifts/<ref>/` | 🔐 `shift.manage` | Bounded scheduled-shift queue; creation locks the worker, rejects overlapping shifts and approved-leave conflicts |
@@ -186,6 +239,14 @@ shown in the middle column, including additive operational roles.
 | `GET/POST /staff-operations/leave-requests/` · `GET /staff-operations/leave-requests/<ref>/` | 🔐 `leave.request` / `leave.approve` | Workers create/read only their own leave; approvers can view the queue |
 | `POST /staff-operations/leave-requests/<ref>/review/` | 🔐 `leave.approve` | Independent approve/reject control. Self-review and approved-leave/shift conflicts are rejected. |
 | `POST /staff-operations/leave-requests/<ref>/cancel/` | 🔐 owner / `leave.approve` | Cancels a future pending or approved request with append-only evidence |
+| `GET/POST /staff-operations/payroll/compensation/` | 🔐 `payroll.view` / `payroll.manage` | Read salary terms or append effective-dated NGN compensation, including basic, housing/transport, pension applicability and documented minimum-wage applicability; historical terms cannot be rewritten. |
+| `GET/POST /staff-operations/payroll/tax-identities/` | 🔐 `payroll.manage` | Confidential TIN registration history; list responses expose only a masked ID. Statutory runs require a registered effective TIN. Changed particulars require the tax-authority report date within 30 days; no government verification provider is connected. |
+| `GET/POST /staff-operations/payroll/statutory-rules/` · `GET /staff-operations/payroll/statutory-rules/<ref>/` | 🔐 payroll view/manage/approve or `payroll.rules.manage` / `payroll.rules.review` | Reviewable effective-dated Nigeria rule proposals with cited legal sources and immutable review history; rules cannot be used while pending. |
+| `POST /staff-operations/payroll/statutory-rules/<ref>/review/` | 🔐 independent `payroll.rules.review` | Approve/reject with a substantive legal/compliance note; proposer self-review is prohibited. |
+| `GET/POST /staff-operations/payroll/periods/` · `GET /staff-operations/payroll/periods/<ref>/` | 🔐 `payroll.view` / `payroll.manage` / `payroll.approve` | Paginated confidential runs or idempotent preparation from locked compensation and approved profiles. From 2026, the server selects the approved effective ruleset, calculates progressive annualized PAYE, employee/employer pension, evidenced NHF/NHIS/mortgage/life-insurance claims, prorated capped rent relief, and benefit-in-kind valuations (owned assets at the configured acquisition/market rate, hired assets at annual rent, accommodation subject to the configured annual-gross cap, and listed statutory exemptions). It carries verified in-system or evidence-backed opening YTD; external openings may separately supply `cash_emoluments` when gross includes non-cash benefits (otherwise it defaults to gross). Pre-2026 manual calculations remain unchanged. |
+| `POST /staff-operations/payroll/periods/<ref>/submit/` · `review/` | 🔐 preparer / independent `payroll.approve` | Maker-checker submission/review; approval posts gross wages, employer pension expense, net pay and separate statutory/other deduction liabilities into the existing double-entry ledger. |
+| `POST /staff-operations/payroll/periods/<ref>/pay/` | 🔐 `payroll.manage` | Records settlement to the existing ledger; cash requires an open assigned drawer. Bank settlement is manual-reference-only; no payout/reconciliation provider is integrated. Corrections use replacement runs, not edits. |
+| `GET /staff-operations/payroll/payslips/<ref>/` | 🔑 own finalized line or `payroll.view` | Private, no-store PDF payslip after approval; payroll viewers can request another employee line by `staff_id`. |
 | `POST /pos/cash-sessions/open/` · `close/` | 🔐 `cash_session.open` / `cash_session.close` | Controlled cashier drawer opening/count close |
 | `POST /finance/cash-sessions/<ref>/variance-review/` | 🔐 `payment.refund.approve` | Completes manager review of a material drawer variance; generic approval review is intentionally blocked |
 | `GET /finance/expenses/` · `GET /finance/expenses/<ref>/` | 🔐 `expense.manage` / `expense.approve` | Paginated controlled expenses; requesters see their own while financial managers and dedicated approvers can reconcile the full queue. |
@@ -223,7 +284,7 @@ shown in the middle column, including additive operational roles.
 
 login 5/min · register 20/h · password reset 10/h · enquiry 10/h ·
 booking create 30/h · availability 240/h · payment init 20/h · payment verify 60/h ·
-review verify 20/h · review submit 5/h ·
+review verify 20/h · review submit 5/h · QR context 60/min · QR submit 8/min ·
 **paystack webhook 300/min** (per IP; deliberately generous so legitimate Paystack
 retries/bursts are never dropped, while abuse floods are blunted)
 (per user for authenticated scopes, per IP otherwise).

@@ -1,13 +1,14 @@
 # tests/test_guest_access.py
-"""Guest access-token security: expiry, cross-booking isolation, staff JWT
-compatibility, and the production CORS preflight contract.
+"""Guest access-token security: expiry, cross-booking isolation, capability-scoped
+staff JWT access, and the production CORS preflight contract.
 
 These lock in the guest-checkout authorization architecture:
 
 * the raw token is returned exactly once at booking creation;
 * an expired token is worthless (404, nothing leaked);
 * guest A's token can never act on guest B's booking (bookings OR payments);
-* staff JWTs keep working on the same guest-facing endpoints;
+* staff JWTs need an explicit booking-read/manage capability on guest-facing endpoints;
+* a generic staff account alone never bypasses booking-level authorization;
 * a guest token grants nothing on staff endpoints;
 * the browser preflight from a deployed frontend origin must be allowed to
   send X-Guest-Access-Token (the production failure this suite guards).
@@ -119,11 +120,24 @@ class GuestAccessTokenSecurityTests(BaseAPITestCase):
                             HTTP_X_GUEST_ACCESS_TOKEN=token_a).status_code, 404)
 
     # --- staff JWT keeps working on guest endpoints -------------------------------
-    def test_staff_jwt_reads_any_booking_without_guest_token(self):
+    def test_staff_jwt_with_booking_capability_reads_booking_without_guest_token(self):
         staff = make_staff("frontdesk@staff.test", role=User.Role.RECEPTIONIST)
         self.auth(staff)
         response = self.client.get(f"/api/bookings/{self.booking_a['booking_reference']}/")
         self.assertEqual(response.status_code, 200)
+
+    def test_department_staff_without_booking_capability_cannot_read_guest_records(self):
+        for role, email in (
+            (User.Role.CASHIER, "cashier-no-booking@staff.test"),
+            (User.Role.HOUSEKEEPING, "housekeeping-no-booking@staff.test"),
+            (User.Role.MAINTENANCE, "maintenance-no-booking@staff.test"),
+        ):
+            with self.subTest(role=role):
+                staff = make_staff(email, role=role)
+                self.auth(staff)
+                reference = self.booking_a["booking_reference"]
+                self.assertEqual(self.client.get(f"/api/bookings/{reference}/").status_code, 404)
+                self.assertEqual(self.client.get(f"/api/bookings/{reference}/receipt/").status_code, 404)
 
     @override_settings(PAYSTACK_SECRET_KEY="sk_test_mock")
     @patch("apps.payments.services.paystack.initialize_transaction")
@@ -142,11 +156,14 @@ class GuestAccessTokenSecurityTests(BaseAPITestCase):
 
     # --- guest token grants nothing on staff endpoints ---------------------------
     def test_guest_token_is_rejected_on_staff_endpoints(self):
-        response = self.client.get(
-            "/api/admin/bookings/",
-            HTTP_X_GUEST_ACCESS_TOKEN=self.booking_a["guest_access_token"],
-        )
+        token = self.booking_a["guest_access_token"]
+        response = self.client.get("/api/admin/bookings/", HTTP_X_GUEST_ACCESS_TOKEN=token)
         self.assertIn(response.status_code, (401, 403))
+        staff_receipt = self.client.get(
+            f"/api/admin/bookings/{self.booking_a['booking_reference']}/receipt/",
+            HTTP_X_GUEST_ACCESS_TOKEN=token,
+        )
+        self.assertIn(staff_receipt.status_code, (401, 403))
 
     # --- CORS: production-like preflight -----------------------------------------
     def test_preflight_from_frontend_origin_allows_guest_header(self):

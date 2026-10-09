@@ -26,7 +26,16 @@ class OperationalStaffDirectoryApiTests(BaseAPITestCase):
         self.assertEqual(rows[0]["role"], User.Role.HOUSEKEEPING)
         self.assertEqual(set(rows[0]), {"id", "full_name", "email", "role"})
 
-    def test_non_dispatching_role_cannot_list_operational_staff(self):
+    def test_payroll_manager_gets_only_the_minimal_picker_projection(self):
+        accounts = make_staff("directory.accounts@staff.dev", role=User.Role.ACCOUNTS_MANAGER)
+        self.auth(accounts)
+        response = self.client.get("/api/admin/users/directory/", {"search": "directory-housekeeper"})
+        self.assertEqual(response.status_code, 200, response.content)
+        rows = response.json()["data"]
+        self.assertEqual([row["id"] for row in rows], [self.housekeeper.pk])
+        self.assertEqual(set(rows[0]), {"id", "full_name", "email", "role"})
+
+    def test_non_dispatching_or_payroll_role_cannot_list_operational_staff(self):
         cashier = make_staff("directory-cashier@staff.dev", role=User.Role.CASHIER)
         self.auth(cashier)
         response = self.client.get("/api/admin/users/directory/")

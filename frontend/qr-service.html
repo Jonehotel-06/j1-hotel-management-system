@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow"><meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#373435"><title>Guest service request | J-ONE Hotel</title>
+  <link rel="icon" href="favicon/favicon-32.png" sizes="32x32"><link rel="stylesheet" href="css/main.css?v=1.1.11">
+  <style>
+    body{background:var(--color-background);min-height:100vh}.qr-guest-shell{width:min(680px,calc(100% - 2rem));margin:clamp(2rem,8vh,5rem) auto}.qr-guest-brand{display:flex;align-items:center;gap:.7rem;margin-bottom:1.25rem}.qr-guest-brand img{width:30px;height:42px}.qr-guest-card{border:1px solid var(--color-border);border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-sm);overflow:hidden}.qr-guest-head{padding:1.35rem 1.4rem;border-bottom:1px solid var(--color-border)}.qr-guest-body{padding:1.4rem}.qr-guest-location{color:var(--color-text-muted);margin:.35rem 0 0}.qr-guest-fields{display:grid;gap:.9rem}.qr-guest-actions{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem}.qr-guest-notice{padding:.8rem 1rem;margin:0 0 1rem;border-radius:var(--radius-sm);background:var(--color-surface-alt);color:var(--color-text-muted)}.qr-guest-result{padding:1rem;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface-alt)}.qr-guest-error{color:var(--color-danger,#a32e2e);font-weight:600}.qr-guest-footer{margin-top:1rem;text-align:center;color:var(--color-text-muted);font-size:.875rem}
+  </style>
+</head>
+<body>
+<main class="qr-guest-shell">
+  <div class="qr-guest-brand"><img src="assets/icons/logo-official.svg" alt=""><div><strong class="brand-word">J-ONE</strong><div class="brand-sub">Hotel guest services</div></div></div>
+  <p class="qr-guest-notice">This secure QR link is for sending a service request to the hotel team. Do not submit payment-card details or other sensitive information.</p>
+  <section class="qr-guest-card" aria-labelledby="qr-title">
+    <header class="qr-guest-head"><h1 id="qr-title">Request hotel service</h1><p class="qr-guest-location" data-qr-location>Checking this service link…</p></header>
+    <div class="qr-guest-body">
+      <div class="empty-state" data-qr-loading><p>Connecting securely to the hotel…</p></div>
+      <div class="empty-state" data-qr-unavailable hidden><h2>This service link is unavailable</h2><p data-qr-error>Please scan a current QR code or contact the front desk.</p></div>
+      <form data-qr-form hidden>
+        <div class="qr-guest-fields">
+          <div class="field" data-qr-category-wrap><label class="field-label" for="qr-category">Request type</label><select class="select" id="qr-category" name="category" required></select></div>
+          <div class="field"><label class="field-label" for="qr-summary">What do you need?</label><input class="input" id="qr-summary" name="summary" type="text" maxlength="255" required placeholder="For example: Please send a server"></div>
+          <div class="field"><label class="field-label" for="qr-detail">Additional details <span class="caption">(optional)</span></label><textarea class="textarea" id="qr-detail" name="detail" rows="4" maxlength="1000" placeholder="Add anything the team should know"></textarea></div>
+        </div>
+        <div class="qr-guest-actions"><button class="btn btn-accent" type="submit" data-qr-submit>Send request</button></div>
+      </form>
+      <div class="qr-guest-result" data-qr-success hidden><strong>Request sent</strong><p data-qr-success-message></p><button class="btn btn-sm btn-outline" type="button" data-qr-new>Send another request</button></div>
+      <p class="qr-guest-error" data-qr-submit-error role="alert" hidden></p>
+    </div>
+  </section>
+  <p class="qr-guest-footer">If this is urgent, please call or visit the front desk.</p>
+</main>
+<script src="js/runtime-config.js?v=1.1.11"></script><script src="js/config.js?v=1.1.11"></script><script src="js/utils.js?v=1.1.11"></script><script src="js/api.js?v=1.1.11"></script><script src="js/operations.js?v=1.1.11"></script>
+<script>
+(function(){
+  "use strict";
+  var match=String(location.hash||"").match(/(?:^#|&)token=([A-Za-z0-9_-]{32,128})(?:&|$)/),token=match?match[1]:"";
+  if(window.history&&window.history.replaceState)window.history.replaceState(null,document.title,location.pathname+location.search);
+  var loading=document.querySelector("[data-qr-loading]"),unavailable=document.querySelector("[data-qr-unavailable]"),error=document.querySelector("[data-qr-error]"),form=document.querySelector("[data-qr-form]"),categoryWrap=document.querySelector("[data-qr-category-wrap]"),categorySelect=document.getElementById("qr-category"),success=document.querySelector("[data-qr-success]"),successMessage=document.querySelector("[data-qr-success-message]"),submitError=document.querySelector("[data-qr-submit-error]"),locationLabel=document.querySelector("[data-qr-location]"),context=null,pendingKey="",pendingBody="";
+  function showUnavailable(message){loading.hidden=true;form.hidden=true;unavailable.hidden=false;error.textContent=message||"Please scan a current QR code or contact the front desk.";}
+  function showCategoryChoices(categories){categorySelect.innerHTML="";(categories||[]).forEach(function(row){var option=document.createElement("option");option.value=row.value;option.textContent=row.label;categorySelect.appendChild(option);});categoryWrap.hidden=(categories||[]).length<=1;if(categorySelect.options.length===1)categorySelect.value=categorySelect.options[0].value;}
+  async function loadContext(){if(!token){showUnavailable("This link is missing its security token. Scan a current room or table QR code.");return;}try{var endpoint=window.APP_CONFIG.API_ENDPOINTS.serviceQrContext,response=await window.API.get(endpoint,{auth:false,cache:"no-store",headers:{"X-Service-QR-Token":token}});context=response.data||{};locationLabel.textContent=(context.label||"Hotel service")+(context.location?" · "+(context.target_type==="ROOM"?"Room ":"Table ")+context.location:"");showCategoryChoices(context.categories);loading.hidden=true;form.hidden=false;}catch(err){showUnavailable((err&&err.status===404)?"This QR link is no longer active. Please contact the hotel team.":"The service link could not be reached. Please reconnect or contact the front desk.");}}
+  function requestBody(){return {category:categorySelect.value,summary:document.getElementById("qr-summary").value.trim(),detail:document.getElementById("qr-detail").value.trim()};}
+  form.addEventListener("submit",async function(event){event.preventDefault();if(!context)return;submitError.hidden=true;var body=requestBody(),fingerprint=JSON.stringify(body);if(pendingKey&&pendingBody!==fingerprint){submitError.textContent="A previous submission may have reached the team. Retry it unchanged before starting another request.";submitError.hidden=false;return;}if(!pendingKey){pendingKey=JONE.operations.newIdempotencyKey("service-qr");pendingBody=fingerprint;}var button=form.querySelector("[data-qr-submit]");if(!JONE.guardSubmit(button))return;try{var endpoint=window.APP_CONFIG.API_ENDPOINTS.serviceQrRequests,response=await window.API.post(endpoint,{...body,idempotency_key:pendingKey},{auth:false,cache:"no-store",headers:{"X-Service-QR-Token":token}}),data=response.data||{};pendingKey="";pendingBody="";form.hidden=true;successMessage.textContent="Reference "+(data.reference||"recorded")+" · "+String(data.status||"OPEN").replace(/_/g," ");success.hidden=false;}catch(err){JONE.releaseGuard(button);submitError.textContent=(err&&err.message)||"Your request couldn't be sent. Please try again.";submitError.hidden=false;if(err&&err.status>0&&err.status<500&&err.status!==429){pendingKey="";pendingBody="";}}});
+  document.querySelector("[data-qr-new]").addEventListener("click",function(){success.hidden=true;form.hidden=false;submitError.hidden=true;document.getElementById("qr-summary").value="";document.getElementById("qr-detail").value="";pendingKey="";pendingBody="";});
+  loadContext();
+})();
+</script>
+</body>
+</html>

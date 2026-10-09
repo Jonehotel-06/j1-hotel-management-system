@@ -133,6 +133,8 @@ class FinancialTransaction(TimeStampedModel, ImmutableFinancialModel):
         CASH_OPEN = "CASH_OPEN", "Cash drawer opening"
         CASH_CLOSE = "CASH_CLOSE", "Cash drawer closing"
         CASH_MOVEMENT = "CASH_MOVEMENT", "Cash movement"
+        PAYROLL_ACCRUAL = "PAYROLL_ACCRUAL", "Payroll accrual"
+        PAYROLL_PAYMENT = "PAYROLL_PAYMENT", "Payroll payment"
         ADJUSTMENT = "ADJUSTMENT", "Controlled adjustment"
 
     class Status(models.TextChoices):
@@ -631,6 +633,18 @@ class FinancialEvent(ImmutableFinancialModel):
     def save(self, *args, **kwargs):
         if self.pk:
             raise ValidationError("Financial events are append-only and cannot be updated.")
+        from apps.core.request_context import get_request_context
+
+        context = get_request_context()
+        details = dict(self.details or {})
+        if context.get("request_id"):
+            details.setdefault("request_id", context["request_id"])
+        terminal = context.get("terminal")
+        if terminal is not None:
+            details.setdefault("terminal_reference", terminal.reference)
+        if self.actor_id:
+            details.setdefault("actor_role", self.actor.role)
+        self.details = details
         return super().save(*args, **kwargs)
 
     def __str__(self):

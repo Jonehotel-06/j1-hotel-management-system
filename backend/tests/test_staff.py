@@ -95,6 +95,16 @@ class RoleGateTests(StaffBase):
         self.assertEqual(new_user.role, "RECEPTIONIST")
         self.assertTrue(AuditLog.objects.filter(action="USER_CREATED").exists())
 
+        specialist = self.client.post("/api/admin/users/", {
+            "email": "hrlead@staff.dev", "first_name": "People", "last_name": "Lead",
+            "role": "HR_MANAGER", "password": "Str0ng!Pass",
+        })
+        self.assertEqual(specialist.status_code, 201, specialist.json())
+        self.assertEqual(User.objects.get(email="hrlead@staff.dev").role, User.Role.HR_MANAGER)
+        roles = self.client.get("/api/admin/users/?role__in=HR_MANAGER,RESTAURANT_MANAGER")
+        self.assertEqual(roles.status_code, 200, roles.content)
+        self.assertEqual({row["role"] for row in roles.json()["data"]}, {"HR_MANAGER"})
+
         patch = self.client.patch(f"/api/admin/users/{new_user.pk}/", {"role": "MANAGER"}, format="json")
         self.assertEqual(patch.status_code, 200)
         new_user.refresh_from_db()

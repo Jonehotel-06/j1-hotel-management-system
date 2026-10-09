@@ -120,3 +120,11 @@ class PaymentGatewayError(JOneAPIError):
 class OutstandingBalanceError(JOneAPIError):
     default_detail = "The booking has an outstanding balance."
     default_code = "OUTSTANDING_BALANCE"
+
+
+class RestaurantTableSessionConflictError(JOneAPIError):
+    """The table/session state changed or still has work preventing closure."""
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "The restaurant table session conflicts with current table/order state."
+    default_code = "TABLE_SESSION_CONFLICT"

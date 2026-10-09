@@ -8,10 +8,10 @@
       cached, read from cache, or answered from cache. All /api/ traffic is
       passed straight through to the network (network-only, no fallback that
       could look like a successful response).
-     2. Nothing authenticated or sensitive is stored. The dashboard (/dashboard/)
-      and verified guest portal (/portal/) are network-only for navigations, so
-      neither staff nor guest information can be replayed from shared Cache
-      Storage.
+     2. Nothing authenticated or sensitive is stored. The dashboard (/dashboard/),
+      verified guest portal (/portal/), and bearer-link QR request page are
+      network-only for navigations, so private/staff data or bearer-bearing
+      forms are never replayed from shared Cache Storage.
    3. Only immutable-ish, public, static assets are cached: our own CSS, JS,
       icons and a small set of local images — plus previously visited public
       HTML pages (network-first) and the offline fallback page.
@@ -27,7 +27,7 @@
 
 "use strict";
 
-const CACHE_VERSION = "jone-v1.1.6";
+const CACHE_VERSION = "jone-v1.1.11";
 const PRECACHE = `${CACHE_VERSION}-precache`;
 const PAGES_CACHE = `${CACHE_VERSION}-pages`;
 const IMAGES_CACHE = `${CACHE_VERSION}-images`;
@@ -79,6 +79,7 @@ const PAGES_CACHE_LIMIT = 25;
      /media/      backend-served uploads proxied on the same origin
      /dashboard/  the authenticated staff console (network-only)
      /portal/     verified-email guest portal pages (network-only)
+     /qr-service.html bearer-link guest form (network-only; API always needs connectivity)
    These are enforced explicitly in the fetch handler below. */
 
 /* ------------------------------- Install --------------------------------- */
@@ -268,14 +269,15 @@ self.addEventListener("fetch", (event) => {
   // must never point a freshly deployed frontend at the wrong API.
   if (url.pathname === "/version.json" || url.pathname === "/js/runtime-config.js") return;
 
-  // Authenticated staff console and verified guest portal: network-only.
-  // Navigations get the branded offline page when unavailable; neither route
-  // family is ever written to nor read from cache.
+  // Staff, verified portal, and bearer-link QR navigations are network-only.
+  // They are never written to nor read from shared Cache Storage.
   const isDashboardPath = url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/");
   const isPortalPath = url.pathname === "/portal" || url.pathname.startsWith("/portal/");
-  if (isDashboardPath || isPortalPath) {
+  const isQrServicePath = url.pathname === "/qr-service.html";
+  if (isDashboardPath || isPortalPath || isQrServicePath) {
     if (request.mode === "navigate") {
-      event.respondWith(protectedNavigationHandler(event, isPortalPath ? "guest portal" : "staff console"));
+      const area = isDashboardPath ? "staff console" : isPortalPath ? "guest portal" : "guest-service QR form";
+      event.respondWith(protectedNavigationHandler(event, area));
     }
     return;
   }

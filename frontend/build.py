@@ -16,7 +16,7 @@ Responsibilities
          version: version.json, js/version.js and the service-worker
          CACHE_VERSION are updated together.
        * EVERY local .js/.css reference in every HTML page (public, dashboard,
-         and portal) is stamped `?v=<version>` so a release can never serve
+         portal, and bearer-link QR guest page) is stamped `?v=<version>` so a release can never serve
          stale cached assets next to fresh HTML.
        * js/version.js + js/update-checker.js are injected into every page so
          visitors on an older cached deployment are told a new version is
@@ -91,10 +91,11 @@ PUBLIC_PAGES = [
     "cancellation-result.html", "offline.html", "404.html", "403.html", "500.html",
 ]
 
-# The portal is intentionally not a public-chrome page. These pages use the
-# same release/version machinery but retain their purpose-built verified-email
-# shell and only load the narrow portal client flow.
+# The portal and bearer-link guest pages are intentionally isolated from
+# public chrome, persistent browser storage, and reload-capable PWA/update
+# scripts. They still receive release asset stamps.
 PORTAL_PAGES = ["portal/login.html", "portal/index.html"]
+QR_SERVICE_PAGES = ["qr-service.html"]
 
 PWA_HEAD = (
     '<link rel="manifest" href="/manifest.webmanifest">\n'
@@ -213,15 +214,16 @@ def build(path, version):
         return False
     raw = f.read_text(encoding="utf-8")
     is_portal = path.startswith("portal/")
+    is_memory_only_page = is_portal or path in QR_SERVICE_PAGES
     depth = "../" if path.startswith(("dashboard/", "portal/")) else ""
 
     # --- Re-inject shared chrome idempotently -------------------------------
     # After the first build the page has chrome baked in and no <!--HEADER-->
     # markers remain, so edits to components/ wouldn't propagate. We instead
     # anchor on stable boundaries and swap the chrome region each run. Portal
-    # pages are intentionally excluded: their smaller, purpose-built shell is
-    # part of the verified-email access boundary.
-    if not is_portal and 'class="site-footer"' in raw:
+    # and bearer-link guest pages are intentionally excluded: their smaller,
+    # purpose-built shells are part of the credential-handling boundary.
+    if not is_memory_only_page and 'class="site-footer"' in raw:
         # Header region: everything between <body> and <main id="main">.
         def repl_head(m):
             return m.group(1) + "\n" + HEADER + "\n" + m.group(3)
@@ -243,7 +245,7 @@ def build(path, version):
             flags=re.S,
         )
 
-    if not is_portal:
+    if not is_memory_only_page:
         # Also handle freshly-authored public pages that still use markers.
         raw = raw.replace("<!--HEADER-->", HEADER)
         raw = raw.replace("<!--FOOTER-->", FOOTER)
@@ -270,11 +272,10 @@ def build(path, version):
             raw = re.sub(r'(<link rel="stylesheet" href="css/main\.css(?:\?[^"]*)?">)', r'\1' + "\n" + THEME_BOOT, raw, count=1)
         raw = re.sub(r"<!--JS-->", JS_BLOCK, raw)
 
-    # Portal pages retain their deliberate minimal shell. In particular, do not
-    # inject pwa.js or update-checker.js there: either can reload the page and
-    # must never silently discard the portal's intentionally memory-only
-    # opaque session. They still receive release asset stamps below.
-    if not is_portal:
+    # Portal/QR pages retain deliberate minimal shells. Do not inject pwa.js,
+    # localStorage theme boot, or update-checker there: a reload could discard
+    # an opaque portal session or an issued QR bearer before it is printed.
+    if not is_memory_only_page:
         raw = _ensure_pwa(raw, depth=depth)
         raw = _ensure_version_scripts(raw, depth)
 
@@ -316,7 +317,7 @@ def main():
     # their own shells. Every intentional page gets asset stamps; public and
     # dashboard pages also get version/update-checker wiring.
     built = []
-    pages = list(PUBLIC_PAGES) + list(PORTAL_PAGES) + sorted(
+    pages = list(PUBLIC_PAGES) + list(PORTAL_PAGES) + list(QR_SERVICE_PAGES) + sorted(
         str(p.relative_to(ROOT)) for p in (ROOT / "dashboard").glob("*.html")
     )
     for p in pages:

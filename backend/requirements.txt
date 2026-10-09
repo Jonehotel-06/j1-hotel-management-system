@@ -22,6 +22,7 @@ mysqlclient>=2.2
 
 # --- Media / files ---------------------------------------------------------
 Pillow>=10.0                         # ImageField support + upload validation
+qrcode>=7.4,<9                       # Self-hosted SVG QR codes for room/table service links
 # Pure-Python PDF generation for server-side receipt attachments (no system
 # libraries required — runs identically on the web service and Celery worker).
 reportlab>=4.0

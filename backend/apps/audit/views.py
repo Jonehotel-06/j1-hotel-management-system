@@ -17,7 +17,7 @@ class AuditLogListView(generics.ListAPIView):
     serializer_class = AuditLogSerializer
 
     def get_queryset(self):
-        qs = AuditLog.objects.select_related("actor")
+        qs = AuditLog.objects.select_related("actor", "terminal")
         params = self.request.query_params
         if action := params.get("action"):
             qs = qs.filter(action=action)
@@ -36,7 +36,7 @@ class AuditLogListView(generics.ListAPIView):
 class AuditLogDetailView(generics.RetrieveAPIView):
     permission_classes = [IsAdminRole]
     serializer_class = AuditLogSerializer
-    queryset = AuditLog.objects.select_related("actor")
+    queryset = AuditLog.objects.select_related("actor", "terminal")
 
 
 def humanise_action(action: str) -> str:

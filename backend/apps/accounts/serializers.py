@@ -10,7 +10,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from apps.core.storage import absolute_media_url
 
 from .capabilities import capability_codes_for_user
-from .models import User
+from .models import User, Workstation
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -262,6 +262,19 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
         role = validated_data.get("role", User.Role.RECEPTIONIST)
         validated_data["is_staff"] = role in (User.Role.ADMIN,)
         return User.objects.create_user(**validated_data)
+
+
+class WorkstationSerializer(serializers.ModelSerializer):
+    current_staff_email = serializers.CharField(source="current_staff.email", read_only=True, allow_null=True)
+    current_staff_name = serializers.CharField(source="current_staff.full_name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = Workstation
+        fields = [
+            "id", "reference", "name", "department", "location", "is_active", "last_seen_at",
+            "current_staff_email", "current_staff_name", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "reference", "last_seen_at", "current_staff_email", "current_staff_name", "created_at", "updated_at"]
 
 
 class AdminUserUpdateSerializer(serializers.ModelSerializer):

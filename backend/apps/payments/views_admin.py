@@ -7,7 +7,7 @@ from rest_framework.exceptions import NotFound
 from rest_framework.views import APIView
 
 from apps.bookings.services import booking_service
-from apps.core.permissions import IsStaffRole
+from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
 from apps.core.utils import money
 
@@ -18,7 +18,8 @@ from .services import payment_service
 
 @extend_schema(tags=["Admin · Payments"])
 class AdminPaymentListView(generics.ListAPIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [HasCapability]
+    required_capability = "payment.read"
     serializer_class = PaymentSerializer
 
     def get_queryset(self):
@@ -50,7 +51,8 @@ class AdminPaymentListView(generics.ListAPIView):
 
 @extend_schema(tags=["Admin · Payments"])
 class AdminPaymentDetailView(generics.RetrieveAPIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [HasCapability]
+    required_capability = "payment.read"
     serializer_class = PaymentSerializer
 
     def get_queryset(self):
@@ -71,7 +73,8 @@ class AdminPaymentDetailView(generics.RetrieveAPIView):
 
 @extend_schema(tags=["Admin · Payments"], summary="List refunds and their Paystack reconciliation status")
 class AdminRefundListView(generics.ListAPIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [HasCapability]
+    required_capability = "payment.read"
     serializer_class = RefundSerializer
 
     def get_queryset(self):
@@ -100,7 +103,8 @@ class AdminRefundListView(generics.ListAPIView):
 
 @extend_schema(tags=["Admin · Payments"], summary="Retrieve a refund")
 class AdminRefundDetailView(generics.RetrieveAPIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [HasCapability]
+    required_capability = "payment.read"
     serializer_class = RefundSerializer
 
     def get_queryset(self):
@@ -112,7 +116,8 @@ class AdminRefundDetailView(generics.RetrieveAPIView):
 
 @extend_schema(tags=["Admin · Payments"], summary="Record a cash/POS/transfer payment")
 class AdminRecordOfflinePaymentView(APIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [HasCapability]
+    required_capabilities = ("booking.manage", "payment.capture")
     serializer_class = RecordOfflinePaymentSerializer
 
     def post(self, request):

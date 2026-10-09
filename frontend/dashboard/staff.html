@@ -13,7 +13,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
-<link rel="stylesheet" href="../css/main.css?v=1.1.6">
+<link rel="stylesheet" href="../css/main.css?v=1.1.11">
 
 </head>
 <body>
@@ -62,7 +62,7 @@
   </div>
   <div class="filter-bar">
     <div class="field"><label class="field-label" for="q">Search</label><input class="input" id="q" placeholder="Name, email, phone"></div>
-    <div class="field"><label class="field-label" for="role">Role</label><select class="select" id="role"><option value="">All staff</option><option value="ADMIN">Administrators</option><option value="MANAGER">Managers</option><option value="RECEPTIONIST">Receptionists</option><option value="CASHIER">Cashiers</option><option value="HOUSEKEEPING">Housekeeping</option><option value="MAINTENANCE">Maintenance</option><option value="INVENTORY_CLERK">Inventory clerks</option></select></div>
+    <div class="field"><label class="field-label" for="role">Role</label><select class="select" id="role"><option value="">All staff</option><optgroup label="Management and front desk"><option value="ADMIN">Administrators</option><option value="MANAGER">Managers</option><option value="GENERAL_MANAGER">General managers</option><option value="FRONT_DESK_SUPERVISOR">Front-desk supervisors</option><option value="RECEPTIONIST">Receptionists</option><option value="CASHIER">Cashiers</option></optgroup><optgroup label="Restaurant, bar, and kitchen"><option value="RESTAURANT_MANAGER">Restaurant managers</option><option value="WAITER">Waiters / servers</option><option value="BAR_MANAGER">Bar managers</option><option value="BARTENDER">Bartenders</option><option value="KITCHEN_MANAGER">Kitchen managers</option><option value="CHEF">Chefs / kitchen staff</option></optgroup><optgroup label="Hotel operations"><option value="HOUSEKEEPING_MANAGER">Housekeeping managers</option><option value="HOUSEKEEPER">Housekeepers</option><option value="HOUSEKEEPING">Legacy housekeeping</option><option value="MAINTENANCE_TECHNICIAN">Maintenance technicians</option><option value="MAINTENANCE">Legacy maintenance</option><option value="SECURITY">Security</option></optgroup><optgroup label="Finance, people, and stock"><option value="ACCOUNTS_MANAGER">Accounts managers</option><option value="ACCOUNTANT">Accountants</option><option value="HR_MANAGER">HR managers</option><option value="PROCUREMENT_OFFICER">Procurement officers</option><option value="STOREKEEPER">Storekeepers</option><option value="INVENTORY_CLERK">Legacy inventory clerks</option></optgroup></select></div>
     <div class="field"><label class="field-label" for="active">Status</label><select class="select" id="active"><option value="">All statuses</option><option value="true">Active</option><option value="false">Inactive</option></select></div>
   </div>
   <div class="panel-body no-pad">
@@ -83,16 +83,16 @@
     </div>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.6"></script>
-<script src="../js/config.js?v=1.1.6"></script>
-<script src="../js/utils.js?v=1.1.6"></script>
-<script src="../js/icons.js?v=1.1.6"></script>
-<script src="../js/api.js?v=1.1.6"></script>
-<script src="../js/theme.js?v=1.1.6"></script>
-<script src="../js/ui.js?v=1.1.6"></script>
-<script src="../js/auth.js?v=1.1.6"></script>
-<script src="../js/navigation.js?v=1.1.6"></script>
-<script src="../js/dashboard.js?v=1.1.6"></script>
+<script src="../js/runtime-config.js?v=1.1.11"></script>
+<script src="../js/config.js?v=1.1.11"></script>
+<script src="../js/utils.js?v=1.1.11"></script>
+<script src="../js/icons.js?v=1.1.11"></script>
+<script src="../js/api.js?v=1.1.11"></script>
+<script src="../js/theme.js?v=1.1.11"></script>
+<script src="../js/ui.js?v=1.1.11"></script>
+<script src="../js/auth.js?v=1.1.11"></script>
+<script src="../js/navigation.js?v=1.1.11"></script>
+<script src="../js/dashboard.js?v=1.1.11"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("admin");
@@ -167,7 +167,7 @@
     if (page != null) state.page = Math.max(1, page);
     JONE.dashboard.DATA.loading(rows);
     try {
-      var params = { page: state.page, page_size: JONE.dashboard.pageSize(), role__in: "ADMIN,MANAGER,RECEPTIONIST,CASHIER,HOUSEKEEPING,MAINTENANCE,INVENTORY_CLERK" };
+      var params = { page: state.page, page_size: JONE.dashboard.pageSize(), role__in: "ADMIN,MANAGER,GENERAL_MANAGER,FRONT_DESK_SUPERVISOR,RECEPTIONIST,CASHIER,RESTAURANT_MANAGER,WAITER,BAR_MANAGER,BARTENDER,KITCHEN_MANAGER,CHEF,HOUSEKEEPING_MANAGER,HOUSEKEEPER,HOUSEKEEPING,MAINTENANCE_TECHNICIAN,MAINTENANCE,ACCOUNTS_MANAGER,ACCOUNTANT,HR_MANAGER,SECURITY,PROCUREMENT_OFFICER,STOREKEEPER,INVENTORY_CLERK" };
       if (q && q.value.trim()) params.search = q.value.trim();
       if (role && role.value) params.role = role.value;
       if (active && active.value !== "") params.is_active = active.value;
@@ -232,11 +232,28 @@
       { name: "role", label: "Role", type: "select", required: true, options: [
         { value: "ADMIN", label: "Administrator" },
         { value: "MANAGER", label: "Manager" },
+        { value: "GENERAL_MANAGER", label: "General manager" },
+        { value: "FRONT_DESK_SUPERVISOR", label: "Front-desk supervisor" },
         { value: "RECEPTIONIST", label: "Receptionist" },
         { value: "CASHIER", label: "Cashier" },
-        { value: "HOUSEKEEPING", label: "Housekeeping" },
-        { value: "MAINTENANCE", label: "Maintenance" },
-        { value: "INVENTORY_CLERK", label: "Inventory clerk" },
+        { value: "RESTAURANT_MANAGER", label: "Restaurant manager" },
+        { value: "WAITER", label: "Waiter / server" },
+        { value: "BAR_MANAGER", label: "Bar manager" },
+        { value: "BARTENDER", label: "Bartender" },
+        { value: "KITCHEN_MANAGER", label: "Kitchen manager" },
+        { value: "CHEF", label: "Chef / kitchen staff" },
+        { value: "HOUSEKEEPING_MANAGER", label: "Housekeeping manager" },
+        { value: "HOUSEKEEPER", label: "Housekeeper" },
+        { value: "HOUSEKEEPING", label: "Legacy housekeeping" },
+        { value: "MAINTENANCE_TECHNICIAN", label: "Maintenance technician" },
+        { value: "MAINTENANCE", label: "Legacy maintenance" },
+        { value: "ACCOUNTS_MANAGER", label: "Accounts manager" },
+        { value: "ACCOUNTANT", label: "Accountant" },
+        { value: "HR_MANAGER", label: "HR manager" },
+        { value: "SECURITY", label: "Security" },
+        { value: "PROCUREMENT_OFFICER", label: "Procurement officer" },
+        { value: "STOREKEEPER", label: "Storekeeper" },
+        { value: "INVENTORY_CLERK", label: "Legacy inventory clerk" },
       ] },
       { name: "is_active", label: "Active account", type: "checkbox" },
       { name: "profile_image", label: "Profile photo", type: "imagefile",
@@ -260,8 +277,8 @@
   }
 })();
 </script>
-<script src="../js/pwa.js?v=1.1.6"></script>
-<script src="../js/version.js?v=1.1.6"></script>
-<script src="../js/update-checker.js?v=1.1.6"></script>
+<script src="../js/pwa.js?v=1.1.11"></script>
+<script src="../js/version.js?v=1.1.11"></script>
+<script src="../js/update-checker.js?v=1.1.11"></script>
 </body>
 </html>

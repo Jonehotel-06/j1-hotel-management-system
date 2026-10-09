@@ -93,6 +93,7 @@ class PortalAccessTests(BaseAPITestCase):
 
         response = self.client.get("/api/portal/me/", HTTP_X_PORTAL_SESSION=session_token)
         self.assertEqual(response.status_code, 200, response.content)
+        self.assertIn("no-store", response["Cache-Control"])
         data = response.json()["data"]
         references = {row["booking_reference"] for row in data["bookings"]}
         self.assertIn(self.booking.booking_reference, references)

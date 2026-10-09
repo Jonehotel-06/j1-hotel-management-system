@@ -96,8 +96,9 @@ class StaffProfileListCreateView(APIView):
         staff = User.objects.filter(pk=data["user_id"]).first()
         if staff is None: raise NotFound("Staff user not found.")
         profile, created = ensure_staff_profile(staff=staff)
-        if created or any(field in data for field in ("department", "job_title", "employment_start", "notes")):
-            for field in ("department", "job_title", "employment_start", "notes"):
+        profile_fields = ("department", "job_title", "employment_start", "emergency_contact_name", "emergency_contact_phone", "notes")
+        if created or any(field in data for field in profile_fields):
+            for field in profile_fields:
                 if field in data: setattr(profile, field, data[field])
             profile.save()
         if created: log_action(actor=request.user, action="STAFF_PROFILE_CREATED", instance=profile, request=request, metadata={"employee_code": profile.employee_code})

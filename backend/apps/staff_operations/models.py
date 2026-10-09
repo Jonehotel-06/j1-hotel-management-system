@@ -1,4 +1,6 @@
 """Operational workforce records with immutable attendance/leave evidence."""
+from decimal import Decimal
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
@@ -24,6 +26,8 @@ class StaffProfile(TimeStampedModel):
     job_title = models.CharField(max_length=120, blank=True, default="")
     employment_status = models.CharField(max_length=16, choices=EmploymentStatus.choices, default=EmploymentStatus.ACTIVE, db_index=True)
     employment_start = models.DateField(null=True, blank=True)
+    emergency_contact_name = models.CharField(max_length=160, blank=True, default="")
+    emergency_contact_phone = models.CharField(max_length=40, blank=True, default="")
     notes = models.TextField(blank=True, default="")
 
     class Meta:
@@ -240,3 +244,11 @@ class LeaveRequestEvent(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("Leave-request events are append-only and cannot be deleted.")
+
+
+# Kept in a focused module because compensation and payroll evidence have
+# different privacy and lifecycle rules from ordinary workforce records.
+from .payroll_models import (  # noqa: E402,F401
+    PayrollEvent, PayrollLine, PayrollPeriod, PayrollStatutoryRuleEvent,
+    PayrollStatutoryRuleSet, PayrollTaxIdentity, StaffCompensation,
+)

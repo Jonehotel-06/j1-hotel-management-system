@@ -91,6 +91,7 @@ api_patterns = [
     path("portal/", include("apps.portal.urls", namespace="portal")),
     path("portal/", include("apps.finance.portal_urls", namespace="portal-finance")),
     path("portal/requests/", include((guest_services_urls.portal_urlpatterns, "guest_services"), namespace="portal-service-requests")),
+    path("service-qr/", include((guest_services_urls.qr_public_urlpatterns, "guest_services_qr"), namespace="service-qr-public")),
     # Guest review flow: verification-gated submit only — reviews are NEVER
     # listed publicly; management lives under /api/admin/reviews/ (admin-only).
     path("reviews/", include("apps.reviews.urls", namespace="reviews")),
@@ -104,6 +105,7 @@ api_patterns = [
     path("admin/pos/", include("apps.pos.urls", namespace="admin-pos")),
     path("admin/finance/", include("apps.finance.urls", namespace="admin-finance")),
     path("admin/service-requests/", include((guest_services_urls.staff_urlpatterns, "guest_services"), namespace="admin-service-requests")),
+    path("admin/service-qr-links/", include((guest_services_urls.qr_admin_urlpatterns, "guest_services_qr"), namespace="admin-service-qr-links")),
     path("admin/housekeeping/", include("apps.housekeeping.urls", namespace="admin-housekeeping")),
     path("admin/maintenance/", include("apps.maintenance.urls", namespace="admin-maintenance")),
     path("admin/inventory/", include("apps.inventory.urls", namespace="admin-inventory")),

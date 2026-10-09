@@ -4,23 +4,30 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Iterable, Mapping
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
 from apps.core.utils import hotel_today
 from apps.finance.models import CashMovement, CashSession, FinancialLine, FinancialTransaction, Folio, FolioPosting
+from apps.guest_services.models import ServiceRequest, ServiceRequestEvent
+from apps.guest_services.services.request_service import service_request_queryset_for_staff
 from apps.finance.services import accounting
 from apps.finance.services.folio_service import get_or_create_main_folio_for_stay
 from apps.finance.services.ledger_service import create_posted_transaction
 from apps.finance.services.references import generate_finance_reference
 from apps.stays.models import Stay
 
-from ..models import KitchenTicket, MenuItem, MenuModifier, PosOrder, PosOrderEvent, PosOrderLine, PosTender
+from ..models import KitchenTicket, MenuCategory, MenuItem, MenuModifier, PosOrder, PosOrderEvent, PosOrderLine, PosTender
+from .table_service import lock_open_table_session, record_order_added
 
 CENT = Decimal("0.01")
 MAX_ORDER_LINES = 100
 MAX_LINE_QUANTITY = 100
+
+
+def _normalise_table_label(value: str) -> str:
+    return " ".join(str(value or "").split()).casefold()
 
 
 def _money(value, *, field="amount", positive=False) -> Decimal:
@@ -41,7 +48,7 @@ def _new_reference(prefix, model, *, field="reference") -> str:
     raise RuntimeError(f"Could not allocate a unique {prefix} reference.")
 
 
-def _snapshot_line(*, raw_line: Mapping, currency: str) -> dict:
+def _snapshot_line(*, raw_line: Mapping, currency: str, service_areas=None) -> dict:
     try:
         menu_item_id = int(raw_line.get("menu_item_id"))
         quantity = int(raw_line.get("quantity"))
@@ -51,11 +58,14 @@ def _snapshot_line(*, raw_line: Mapping, currency: str) -> dict:
         raise ValidationError({"lines": f"Line quantity must be between 1 and {MAX_LINE_QUANTITY}."})
     menu_item = (
         MenuItem.objects.select_for_update()
-        .filter(pk=menu_item_id, is_active=True, is_available=True)
+        .select_related("category")
+        .filter(pk=menu_item_id, is_active=True, is_available=True, category__is_active=True)
         .first()
     )
     if menu_item is None:
         raise ValidationError({"lines": "One or more menu items are not currently available."})
+    if service_areas is not None and menu_item.category.service_area not in service_areas:
+        raise ValidationError({"lines": "One or more menu items are outside this order's service area."})
     if menu_item.currency.upper() != currency.upper():
         raise ValidationError({"lines": "All menu items must use the order currency."})
 
@@ -124,18 +134,73 @@ def create_order(
     folio=None,
     guest_name="",
     table_number="",
+    table_session_reference="",
     delivery_location="",
     notes="",
     idempotency_key=None,
+    service_request=None,
 ) -> tuple[PosOrder, bool]:
     """Create a price-snapshotted draft. Client totals are never accepted."""
     if mode not in PosOrder.Mode.values:
         raise ValidationError({"mode": "Invalid POS order mode."})
     idempotency_key = (idempotency_key or "").strip() or None
+    qr_request = None
+    if service_request is not None:
+        qr_request = (
+            ServiceRequest.objects.select_for_update()
+            .select_related("qr_link")
+            .filter(pk=service_request.pk)
+            .first()
+        )
+        if qr_request is None:
+            raise ValidationError({"service_request_reference": "The guest service request was not found."})
+        if not service_request_queryset_for_staff(actor).filter(pk=qr_request.pk).exists():
+            raise PermissionDenied("This QR request is no longer in the caller's permitted guest-service queue.")
+        if (
+            qr_request.channel != ServiceRequest.Channel.QR
+            or qr_request.category != ServiceRequest.Category.FOOD_BEVERAGE
+            or qr_request.qr_link_id is None
+            or qr_request.qr_link.target_type != "TABLE"
+            or not qr_request.table_number
+        ):
+            raise ValidationError({"service_request_reference": "Only a table QR food-and-beverage request can be linked to a POS draft."})
+        if qr_request.status in {
+            ServiceRequest.Status.RESOLVED, ServiceRequest.Status.CLOSED, ServiceRequest.Status.CANCELLED,
+        }:
+            raise ValidationError({"service_request_reference": "A resolved, closed, or cancelled request cannot create a POS draft."})
+        if mode not in {PosOrder.Mode.RESTAURANT, PosOrder.Mode.BAR}:
+            raise ValidationError({"mode": "Table QR requests can create only restaurant or bar drafts."})
+
     if idempotency_key:
         existing = PosOrder.objects.select_for_update().filter(idempotency_key=idempotency_key).first()
         if existing:
+            if existing.service_request_id != getattr(qr_request, "pk", None):
+                raise ValidationError({"idempotency_key": "This key was already used for a different POS order request."})
             return existing, False
+    if qr_request is not None:
+        linked_order = PosOrder.objects.select_for_update().filter(service_request=qr_request).first()
+        if linked_order:
+            return linked_order, False
+
+    table_session_reference = str(table_session_reference or "").strip()
+    table_session = None
+    if qr_request is not None and mode == PosOrder.Mode.RESTAURANT and not table_session_reference:
+        raise ValidationError({"table_session_reference": "Restaurant orders from a table QR request require its open registered table session."})
+    if table_session_reference:
+        if mode != PosOrder.Mode.RESTAURANT:
+            raise ValidationError({"table_session_reference": "Registered table sessions are for restaurant dine-in orders only."})
+        table_session = lock_open_table_session(table_session_reference)
+        table_number = table_session.table.code
+    if qr_request is not None:
+        request_table_label = _normalise_table_label(qr_request.table_number)
+        if mode == PosOrder.Mode.RESTAURANT:
+            if request_table_label != _normalise_table_label(table_session.table.code):
+                raise ValidationError({"table_session_reference": "The QR request must use the exact registered table code for the selected open session."})
+        else:  # BAR keeps the request's optional free-text table/pickup context.
+            if table_session_reference:
+                raise ValidationError({"table_session_reference": "Bar orders do not use restaurant table sessions."})
+            table_number = qr_request.table_number
+
     supplied_lines = list(lines or ())
     if not 1 <= len(supplied_lines) <= MAX_ORDER_LINES:
         raise ValidationError({"lines": f"An order must have between 1 and {MAX_ORDER_LINES} lines."})
@@ -153,7 +218,16 @@ def create_order(
     elif stay or folio:
         raise ValidationError("Only room-service orders may attach a stay or folio in this workflow.")
 
-    snapshotted_lines = [_snapshot_line(raw_line=raw_line, currency=currency) for raw_line in supplied_lines]
+    if mode == PosOrder.Mode.BAR:
+        service_areas = {MenuCategory.ServiceArea.BAR}
+    elif mode == PosOrder.Mode.ROOM_SERVICE:
+        service_areas = {MenuCategory.ServiceArea.RESTAURANT, MenuCategory.ServiceArea.BAR}
+    else:
+        service_areas = {MenuCategory.ServiceArea.RESTAURANT}
+    snapshotted_lines = [
+        _snapshot_line(raw_line=raw_line, currency=currency, service_areas=service_areas)
+        for raw_line in supplied_lines
+    ]
     subtotal = sum((item["line_total"] for item in snapshotted_lines), Decimal("0.00")).quantize(CENT)
     tax_amount = sum((item["tax_amount"] for item in snapshotted_lines), Decimal("0.00")).quantize(CENT)
     total_amount = (subtotal + tax_amount).quantize(CENT)
@@ -171,6 +245,8 @@ def create_order(
         folio=order_folio,
         guest_name=snapshot_guest,
         table_number=(table_number or "")[:40],
+        table_session=table_session,
+        service_request=qr_request,
         delivery_location=(delivery_location or "")[:160],
         notes=notes or "",
         currency=currency,
@@ -200,8 +276,26 @@ def create_order(
         order=order,
         type=PosOrderEvent.Type.CREATED,
         actor=actor,
-        details={"line_count": len(snapshotted_lines), "total_amount": str(total_amount), "mode": mode},
+        details={
+            "line_count": len(snapshotted_lines),
+            "total_amount": str(total_amount),
+            "mode": mode,
+            "service_request_reference": qr_request.reference if qr_request else "",
+        },
     )
+    if qr_request:
+        ServiceRequestEvent.objects.create(
+            request=qr_request,
+            type=ServiceRequestEvent.Type.POS_ORDER_LINKED,
+            actor=actor,
+            message=f"POS draft {order.reference} created from this QR request.",
+            guest_visible=False,
+            previous_status=qr_request.status,
+            new_status=qr_request.status,
+            details={"pos_order_reference": order.reference, "pos_order_status": order.status},
+        )
+    if table_session:
+        record_order_added(table_session=table_session, order=order, actor=actor)
     return order, True
 
 
@@ -219,7 +313,8 @@ def submit_order(*, order, actor, priority=0) -> PosOrder:
     order.status = PosOrder.Status.SUBMITTED
     order.submitted_at = now
     order.save(update_fields=["status", "submitted_at", "updated_at"])
-    KitchenTicket.objects.create(order=order, priority=max(0, int(priority or 0)), notes=order.notes)
+    station = KitchenTicket.Station.BAR if order.mode == PosOrder.Mode.BAR else KitchenTicket.Station.KITCHEN
+    KitchenTicket.objects.create(order=order, station=station, priority=max(0, int(priority or 0)), notes=order.notes)
     PosOrderEvent.objects.create(order=order, type=PosOrderEvent.Type.SUBMITTED, actor=actor)
     return order
 
@@ -313,6 +408,7 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
     if target_status == order.status:
         return order
     allowed = {
+        PosOrder.Status.DRAFT: {PosOrder.Status.CANCELLED},
         PosOrder.Status.SUBMITTED: {PosOrder.Status.PREPARING, PosOrder.Status.CANCELLED},
         PosOrder.Status.PREPARING: {PosOrder.Status.READY, PosOrder.Status.CANCELLED},
         PosOrder.Status.READY: {PosOrder.Status.DELIVERED, PosOrder.Status.CANCELLED},
@@ -341,8 +437,9 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
         order.delivered_at = now
         event_type = PosOrderEvent.Type.DELIVERED
     else:  # CANCELLED only — paid/delivered orders deliberately cannot reach here.
-        ticket.status = KitchenTicket.Status.CANCELLED
-        ticket.save(update_fields=["status", "updated_at"])
+        if ticket is not None:
+            ticket.status = KitchenTicket.Status.CANCELLED
+            ticket.save(update_fields=["status", "updated_at"])
         order.cancelled_at = now
         event_type = PosOrderEvent.Type.CANCELLED
     order.status = target_status

@@ -15,6 +15,17 @@ staff_urlpatterns = [
     path("<str:reference>/comments/", views.ServiceRequestCommentView.as_view(), name="request-comments"),
 ]
 
+qr_admin_urlpatterns = [
+    path("", views.ServiceQRLinkListCreateView.as_view(), name="service-qr-links"),
+    path("<str:reference>/rotate/", views.ServiceQRLinkRotateView.as_view(), name="service-qr-rotate"),
+    path("<str:reference>/revoke/", views.ServiceQRLinkRevokeView.as_view(), name="service-qr-revoke"),
+]
+
+qr_public_urlpatterns = [
+    path("context/", views.PublicServiceQRContextView.as_view(), name="service-qr-context"),
+    path("requests/", views.PublicServiceQRRequestView.as_view(), name="service-qr-requests"),
+]
+
 portal_urlpatterns = [
     path("", views.PortalServiceRequestListCreateView.as_view(), name="portal-requests"),
     path("<str:reference>/", views.PortalServiceRequestDetailView.as_view(), name="portal-request-detail"),

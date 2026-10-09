@@ -11,6 +11,7 @@ bookings_urlpatterns = [
     path("calendar/", views_admin.AdminOccupancyCalendarView.as_view(), name="booking-calendar"),
     path("missed/", views_admin.AdminMissedBookingListView.as_view(), name="booking-missed"),
     path("late-arrivals/", views_admin.AdminLateArrivalBookingListView.as_view(), name="booking-late-arrivals"),
+    path("<str:lookup>/receipt/", views_admin.AdminBookingReceiptView.as_view(), name="booking-receipt"),
     path("<str:lookup>/", views_admin.AdminBookingDetailView.as_view(), name="booking-detail"),
     path("<str:lookup>/confirm/", views_admin.AdminBookingConfirmView.as_view(), name="booking-confirm"),
     path("<str:lookup>/cancel/", views_admin.AdminBookingCancelView.as_view(), name="booking-cancel"),

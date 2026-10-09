@@ -5,7 +5,10 @@ from rest_framework import serializers
 
 from apps.stays.models import Stay
 
-from .models import KitchenTicket, MenuCategory, MenuItem, MenuModifier, PosOrder, PosOrderEvent, PosOrderLine, PosTender
+from .models import (
+    KitchenTicket, MenuCategory, MenuItem, MenuModifier, PosOrder, PosOrderEvent, PosOrderLine, PosTender,
+    RestaurantTable, RestaurantTableSession,
+)
 
 
 class MenuModifierSerializer(serializers.ModelSerializer):
@@ -33,7 +36,7 @@ class MenuCategoryMenuSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MenuCategory
-        fields = ["id", "name", "slug", "description", "sort_order", "items"]
+        fields = ["id", "name", "slug", "service_area", "description", "sort_order", "items"]
         read_only_fields = fields
 
     def get_items(self, obj):
@@ -113,13 +116,81 @@ class KitchenTicketSerializer(serializers.ModelSerializer):
     order_mode = serializers.CharField(source="order.mode", read_only=True)
     order_delivery_location = serializers.CharField(source="order.delivery_location", read_only=True)
     order_table_number = serializers.CharField(source="order.table_number", read_only=True)
+    order_lines = serializers.SerializerMethodField()
+
+    def get_order_lines(self, obj):
+        return [
+            {
+                "item_name": line.item_name,
+                "quantity": line.quantity,
+                "notes": line.notes,
+                "modifiers": line.modifiers_snapshot,
+            }
+            for line in obj.order.lines.all()
+        ]
 
     class Meta:
         model = KitchenTicket
         fields = [
-            "id", "status", "priority", "queued_at", "started_at", "ready_at", "completed_at",
+            "id", "station", "status", "priority", "queued_at", "started_at", "ready_at", "completed_at",
             "assigned_to_email", "notes", "order_reference", "order_guest_name", "order_mode",
-            "order_delivery_location", "order_table_number",
+            "order_delivery_location", "order_table_number", "order_lines",
+        ]
+        read_only_fields = fields
+
+
+class KitchenTicketStatusSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=[KitchenTicket.Status.PREPARING, KitchenTicket.Status.READY])
+
+
+class RestaurantTableSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RestaurantTable
+        fields = ["id", "code", "name", "section", "seats", "is_active", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_code(self, value):
+        value = str(value or "").strip().upper()
+        allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
+        if not value or len(value) > 32 or any(char not in allowed for char in value):
+            raise serializers.ValidationError("Use up to 32 letters, numbers, dots, underscores, or hyphens.")
+        matches = RestaurantTable.objects.filter(code=value)
+        if self.instance is not None:
+            matches = matches.exclude(pk=self.instance.pk)
+        if matches.exists():
+            raise serializers.ValidationError("A restaurant table with this code already exists.")
+        return value
+
+
+class RestaurantTableSessionCreateSerializer(serializers.Serializer):
+    table_id = serializers.IntegerField(min_value=1)
+    covers = serializers.IntegerField(min_value=1, max_value=60, default=1)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
+    idempotency_key = serializers.CharField(min_length=8, max_length=96, trim_whitespace=True)
+
+
+class RestaurantTableSessionCloseSerializer(serializers.Serializer):
+    close_note = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
+
+
+class RestaurantTableSessionSerializer(serializers.ModelSerializer):
+    table_id = serializers.IntegerField(source="table.id", read_only=True)
+    table_code = serializers.CharField(source="table.code", read_only=True)
+    table_name = serializers.CharField(source="table.name", read_only=True)
+    table_section = serializers.CharField(source="table.section", read_only=True)
+    table_seats = serializers.IntegerField(source="table.seats", read_only=True)
+    opened_by_email = serializers.CharField(source="opened_by.email", read_only=True, allow_null=True)
+    closed_by_email = serializers.CharField(source="closed_by.email", read_only=True, allow_null=True)
+    order_count = serializers.IntegerField(read_only=True)
+    active_order_count = serializers.IntegerField(read_only=True)
+    unpaid_order_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = RestaurantTableSession
+        fields = [
+            "reference", "table_id", "table_code", "table_name", "table_section", "table_seats", "covers",
+            "status", "opened_at", "opened_by_email", "closed_at", "closed_by_email", "notes", "close_note",
+            "order_count", "active_order_count", "unpaid_order_count",
         ]
         read_only_fields = fields
 
@@ -129,12 +200,16 @@ class PosOrderListSerializer(serializers.ModelSerializer):
     folio_reference = serializers.CharField(source="folio.reference", read_only=True)
     created_by_email = serializers.CharField(source="created_by.email", read_only=True)
     line_count = serializers.IntegerField(read_only=True)
+    table_session_reference = serializers.CharField(source="table_session.reference", read_only=True, allow_null=True)
+    table_session_code = serializers.CharField(source="table_session.table.code", read_only=True, allow_null=True)
+    service_request_reference = serializers.CharField(source="service_request.reference", read_only=True, allow_null=True)
 
     class Meta:
         model = PosOrder
         fields = [
             "id", "reference", "mode", "status", "settlement_status", "stay_reference", "folio_reference",
-            "guest_name", "table_number", "delivery_location", "currency", "subtotal", "tax_amount",
+            "guest_name", "table_number", "table_session_reference", "table_session_code", "service_request_reference",
+            "delivery_location", "currency", "subtotal", "tax_amount",
             "total_amount", "submitted_at", "delivered_at", "created_at", "created_by_email", "line_count",
         ]
         read_only_fields = fields
@@ -168,6 +243,8 @@ class PosOrderCreateSerializer(serializers.Serializer):
     folio_id = serializers.IntegerField(min_value=1, required=False)
     guest_name = serializers.CharField(required=False, allow_blank=True, max_length=200, default="")
     table_number = serializers.CharField(required=False, allow_blank=True, max_length=40, default="")
+    table_session_reference = serializers.CharField(required=False, allow_blank=True, max_length=64, default="")
+    service_request_reference = serializers.CharField(required=False, allow_blank=True, max_length=64, default="")
     delivery_location = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
     notes = serializers.CharField(required=False, allow_blank=True, default="")
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=96, default="")
@@ -179,6 +256,10 @@ class PosOrderCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError({"stay_id": "Room-service orders require a stay."})
         if mode != PosOrder.Mode.ROOM_SERVICE and (attrs.get("stay_id") or attrs.get("folio_id")):
             raise serializers.ValidationError("Only room-service orders can attach a stay or folio.")
+        if attrs.get("table_session_reference") and mode != PosOrder.Mode.RESTAURANT:
+            raise serializers.ValidationError({"table_session_reference": "Registered table sessions are for restaurant dine-in orders only."})
+        if attrs.get("service_request_reference") and mode not in {PosOrder.Mode.RESTAURANT, PosOrder.Mode.BAR}:
+            raise serializers.ValidationError({"service_request_reference": "Table QR requests can create only restaurant or bar drafts."})
         return attrs
 
 
@@ -220,7 +301,7 @@ class CashSessionCloseSerializer(serializers.Serializer):
 class MenuCategoryManageSerializer(serializers.ModelSerializer):
     class Meta:
         model = MenuCategory
-        fields = ["id", "name", "slug", "description", "sort_order", "is_active"]
+        fields = ["id", "name", "slug", "service_area", "description", "sort_order", "is_active"]
 
 
 class MenuItemManageSerializer(serializers.ModelSerializer):

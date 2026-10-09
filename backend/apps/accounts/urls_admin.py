@@ -7,6 +7,8 @@ app_name = "accounts_admin"
 
 urlpatterns = [
     path("", views_admin.AdminUserListCreateView.as_view(), name="user-list"),
+    path("terminals/", views_admin.WorkstationListCreateView.as_view(), name="workstation-list"),
+    path("terminals/<int:pk>/", views_admin.WorkstationDetailView.as_view(), name="workstation-detail"),
     # Assignment-picker projection is capability-gated separately from the
     # administrator-only account management collection.
     path("directory/", views_admin.OperationalStaffDirectoryView.as_view(), name="operational-staff-directory"),

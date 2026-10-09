@@ -96,6 +96,15 @@ class Handler(ProxyMixin, http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=str(ROOT), **kw)
 
+    def end_headers(self):
+        path = urllib.parse.urlsplit(self.path).path
+        if path == "/qr-service.html" or path == "/dashboard" or path.startswith("/dashboard/") or path == "/portal" or path.startswith("/portal/"):
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Robots-Tag", "noindex, nofollow")
+        if path == "/qr-service.html":
+            self.send_header("Referrer-Policy", "no-referrer")
+        super().end_headers()
+
     def do_GET(self):
         if self.path.startswith(PROXY_PREFIXES):
             return self._proxy()
