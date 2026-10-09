@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<title>Reports | J-ONE Staff</title>
+<title>Accounting | J-ONE Staff</title>
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
@@ -39,7 +39,7 @@
       <div class="dash-topbar-left">
         <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
         <div class="dash-title" data-dash-title>
-          <h1>Reports</h1>
+          <h1>Accounting</h1>
         </div>
       </div>
       <div class="dash-topbar-right">
@@ -55,7 +55,7 @@
 <section class="panel">
   <div class="filter-bar">
     <label class="field-label" style="align-self:center;">Period:</label>
-    <div class="field"><select class="select" id="rp-range"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 12 months</option><option value="custom">Custom</option></select></div>
+    <div class="field"><select class="select" id="rp-range"><option value="1" selected>Today</option><option value="yesterday">Yesterday</option><option value="7">This week (7 days)</option><option value="30">This month (30 days)</option><option value="365">This year</option><option value="custom">Custom dates</option></select></div>
     <div class="field"><label class="field-label" for="rp-from">From</label><input class="input" type="date" id="rp-from" data-allow-past></div>
     <div class="field"><label class="field-label" for="rp-to">To</label><input class="input" type="date" id="rp-to" data-allow-past></div>
     <div class="field"><button class="btn btn-sm" id="rp-apply" type="button">Apply</button></div>
@@ -66,6 +66,8 @@
       <div class="kpi"><div class="kpi-label">Collections</div><div class="kpi-value" data-rp="collections">--</div><div class="kpi-sub" data-rp="collections-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Operating expenses</div><div class="kpi-value" data-rp="operating-expenses">--</div><div class="kpi-sub" data-rp="operating-expenses-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Refunds</div><div class="kpi-value" data-rp="refunds">--</div><div class="kpi-sub" data-rp="refunds-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Payments made</div><div class="kpi-value" data-rp="payments-made">--</div><div class="kpi-sub">Cash paid-out + net salaries</div></div>
+      <div class="kpi"><div class="kpi-label">Operating result</div><div class="kpi-value" data-rp="operating-result">--</div><div class="kpi-sub">Revenue − expenses − payroll</div></div>
     </section>
     <p class="caption" data-finance-basis style="margin:0.85rem 0 0;">Posted immutable ledger · Business date · NGN</p>
 
@@ -78,14 +80,45 @@
         </table></div></div>
       </section>
       <section class="panel" style="border:1px solid var(--color-border);">
-        <div class="panel-head"><h3>Bookings &amp; occupancy</h3><div class="panel-actions"><span class="caption" data-rp="operational-summary">Loading operational summary…</span></div></div>
+        <div class="panel-head"><h3>Revenue by department</h3><div class="panel-actions"><span class="caption">Recognized revenue only — not cash collected</span></div></div>
         <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-          <thead><tr><th>Status</th><th>Count</th></tr></thead>
-          <tbody data-tbody="report-bookings"></tbody>
+          <thead><tr><th>Department</th><th>Amount</th><th class="hide-sm">Share</th></tr></thead>
+          <tbody data-tbody="report-departments"></tbody>
         </table></div></div>
       </section>
     </div>
-    <div style="margin-top:1.5rem;display:flex;gap:0.75rem;">
+    <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
+      <div class="panel-head"><h3>Posted ledger transactions</h3></div>
+      <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
+        <thead><tr><th>Date</th><th>Reference</th><th>Type</th><th>Description</th><th>Status</th></tr></thead>
+        <tbody data-tbody="ledger-tx"></tbody>
+      </table></div></div>
+    </section>
+    
+    <div class="panel-grid" style="margin-top:1.5rem;">
+      <section class="panel" style="border:1px solid var(--color-border);">
+        <div class="panel-head"><h3>Expenses</h3></div>
+        <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
+          <thead><tr><th>Reference</th><th>Payee</th><th>Amount</th><th>Status</th></tr></thead>
+          <tbody data-tbody="acct-expenses"></tbody>
+        </table></div></div>
+      </section>
+      <section class="panel" style="border:1px solid var(--color-border);">
+        <div class="panel-head"><h3>Cash drawers</h3></div>
+        <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
+          <thead><tr><th>Reference</th><th>Cashier</th><th>Expected</th><th>Counted</th><th>Variance</th><th>Status</th></tr></thead>
+          <tbody data-tbody="acct-cash"></tbody>
+        </table></div></div>
+      </section>
+    </div>
+    <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
+      <div class="panel-head"><h3>Pending financial approvals</h3></div>
+      <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
+        <thead><tr><th>Reference</th><th>Type</th><th>Amount</th><th>Status</th><th>Requester</th></tr></thead>
+        <tbody data-tbody="acct-approvals"></tbody>
+      </table></div></div>
+    </section>
+<div style="margin-top:1.5rem;display:flex;gap:0.75rem;">
       <button class="btn btn-sm btn-outline" id="export-csv" type="button"><span data-icon="download" data-size="16"></span> Export CSV</button>
       <button class="btn btn-sm btn-outline" id="export-xlsx" type="button">Export Excel</button>
       <button class="btn btn-sm btn-outline" id="export-pdf" type="button">Export PDF</button>
@@ -112,7 +145,7 @@
   // boot() redirects receptionists to 403.html. If a navigation is ever
   // blocked (or the redirect races), the page must still never request or
   // render financial data — the backend is the real gate, this is the belt.
-  var __reportsAllowed = JONE.dashboard.boot("manager");
+  var __reportsAllowed = JONE.dashboard.boot("manager"); // Accounting uses the same manager/admin gate as Reports.
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
 
 
@@ -121,7 +154,11 @@
 
   var DATA=JONE.dashboard.DATA;
   var ft=document.querySelector("[data-tbody=report-finance]");
-  var bt=document.querySelector("[data-tbody=report-bookings]");
+  var dt=document.querySelector("[data-tbody=report-departments]");
+  var tx=document.querySelector("[data-tbody=ledger-tx]");
+  var ex=document.querySelector("[data-tbody=acct-expenses]");
+  var cash=document.querySelector("[data-tbody=acct-cash]");
+  var ap=document.querySelector("[data-tbody=acct-approvals]");
   var financeKpis=document.querySelector("[data-finance-kpis]");
   var financeBasis=document.querySelector("[data-finance-basis]");
   var range=document.getElementById("rp-range");
@@ -145,7 +182,8 @@
     { label:"Payroll payments", key:"payroll_payments" },
     { label:"Payroll payment reversals", key:"payroll_payment_reversals" },
     { label:"Net salary paid", key:"net_payroll_payments" },
-    { label:"Gross operating result", key:"gross_operating_result" }
+    { label:"Gross operating result", key:"gross_operating_result" },
+    { label:"Actual payments made", key:"actual_payments_made" }
   ];
 
   function setKpi(name,val){
@@ -168,8 +206,11 @@
   }
 
   function defaultDates(){
-    var days=Number((range&&range.value)||30);
     var to=(JONE.hotelTodayISO && JONE.hotelTodayISO()) || localDateISO();
+    var val=(range&&range.value)||"1";
+    if(val==="yesterday"){ var y=addDays(to,-1); return { from:y, to:y }; }
+    var days=Number(val);
+    if(!Number.isFinite(days) || days<1) days=1;
     return { from:addDays(to,-(days-1)), to:to };
   }
 
@@ -252,7 +293,7 @@
   }
 
   function resetFinanceKpis(){
-    ["recognized-revenue","collections","operating-expenses","refunds"].forEach(function(name){
+    ["recognized-revenue","collections","operating-expenses","refunds","payments-made","operating-result"].forEach(function(name){
       setKpi(name,"--");
       setKpi(name+"-sub","");
     });
@@ -266,7 +307,9 @@
       { name:"recognized-revenue", key:"recognized_revenue" },
       { name:"collections", key:"collections" },
       { name:"operating-expenses", key:"operating_expenses" },
-      { name:"refunds", key:"refunds" }
+      { name:"refunds", key:"refunds" },
+      { name:"payments-made", key:"actual_payments_made" },
+      { name:"operating-result", key:"gross_operating_result" }
     ];
     kpis.forEach(function(item){
       setKpi(item.name,formatMoney(metricAmount(latest.financial,item.key),currency));
@@ -274,6 +317,12 @@
     });
     if(financeBasis){
       financeBasis.textContent="Posted immutable ledger · Business date · "+currency+" · "+String(latest.financial.ledger_transactions||0)+" ledger transaction"+((latest.financial.ledger_transactions||0)===1?"":"s");
+    }
+    if(dt){
+      var depts=latest.financial.by_department||[];
+      dt.innerHTML=depts.length ? depts.map(function(row){
+        return "<tr><td>"+JONE.esc(row.label||row.account_code||"—")+"</td><td class=\\\"num\\\">"+JONE.esc(formatMoney(row.amount,currency))+"</td><td class=\\\"hide-sm num\\\">"+JONE.esc((row.percent_of_recognized_revenue||"0")+"%")+"</td></tr>";
+      }).join("") : "<tr><td colspan=\\\"3\\\"><div class=\\\"empty-state\\\"><h3>No recognized revenue in this period</h3></div></td></tr>";
     }
     if(!ft) return;
     ft.innerHTML=FINANCE_MEASURES.map(function(item){
@@ -291,37 +340,13 @@
     if(ft) DATA.error(ft,"Financial summary couldn't be loaded",financeErrorMessage(err),3,false);
   }
 
-  function updateOperationalSummary(){
-    var bookingText=operationalPending.bookings ? "Loading bookings…" : "Bookings unavailable";
-    var occupancyText=operationalPending.occupancy ? "Loading occupancy…" : "Occupancy unavailable";
-    if(latest.bookings){
-      var total=latest.bookings.total_bookings;
-      bookingText=String(total==null?0:total)+" booking"+(total===1?"":"s");
-    }
-    if(latest.occupancy){
-      var average=latest.occupancy.average_occupancy_percent;
-      occupancyText=(average!=null?average+"% avg occupancy":"Occupancy unavailable")+
-        " · "+String(latest.occupancy.active_rooms||0)+" active rooms"+
-        " · "+String(latest.occupancy.occupied_room_nights||0)+" occupied room-nights";
-    }
-    setKpi("operational-summary",bookingText+" · "+occupancyText);
-  }
-
-  function renderBookings(report){
-    latest.bookings=report||{};
-    operationalPending.bookings=false;
-    updateOperationalSummary();
-    if(!bt) return;
-    var byStatus=latest.bookings.by_status||[];
-    bt.innerHTML=byStatus.length ? byStatus.map(function(item){
-      return "<tr><td>"+JONE.esc(String(item.status||"—").toLowerCase().replace(/_/g," "))+"</td><td class=\"num\">"+JONE.esc(item.count!=null?item.count:"—")+"</td></tr>";
-    }).join("") : "<tr><td colspan=\"2\"><div class=\"empty-state\"><h3>No bookings in this period</h3></div></td></tr>";
-  }
-
-  function renderOccupancy(report){
-    latest.occupancy=report||{};
-    operationalPending.occupancy=false;
-    updateOperationalSummary();
+  function renderTransactions(payload){
+    if(!tx) return;
+    var rows=(payload&&payload.results)||[];
+    if(!Array.isArray(rows)) rows=[];
+    tx.innerHTML=rows.length ? rows.map(function(row){
+      return "<tr><td>"+JONE.esc(row.business_date||"—")+"</td><td>"+JONE.esc(row.reference||row.source_reference||"—")+"</td><td>"+JONE.esc(String(row.type||"").toLowerCase().replace(/_/g," "))+"</td><td>"+JONE.esc(row.narrative||"—")+"</td><td>"+JONE.esc(row.status||"—")+"</td></tr>";
+    }).join("") : "<tr><td colspan=\"5\"><div class=\"empty-state\"><h3>No posted ledger transactions in this period</h3></div></td></tr>";
   }
 
   /* Ledger data is authoritative for money measures. Booking and occupancy
@@ -349,8 +374,8 @@
     setFinanceKpisLoading(true);
     if(financeBasis) financeBasis.textContent="Loading posted immutable ledger financial measures…";
     if(ft) DATA.loading(ft,3);
-    if(bt) DATA.loading(bt,2);
-    setKpi("operational-summary","Loading operational summary…");
+    if(dt) DATA.loading(dt,3);
+    if(tx) DATA.loading(tx,5);
 
     // Each independent response renders as soon as it arrives. Starting and
     // consuming these requests independently avoids both a network and a UI
@@ -360,25 +385,30 @@
     },function(err){
       if(requestId===loadSequence) renderFinanceError(err);
     });
-    getReport(window.APP_CONFIG.API_ENDPOINTS.reportsBookings,operationalParams).then(function(response){
-      if(requestId===loadSequence) renderBookings(response.data||{});
+    getReport(window.APP_CONFIG.API_ENDPOINTS.financeTransactions,financialParams).then(function(response){
+      if(requestId===loadSequence) renderTransactions(response.data||response||{});
     },function(err){
-      if(requestId===loadSequence){
-        latest.bookings=null;
-        operationalPending.bookings=false;
-        updateOperationalSummary();
-        if(bt) DATA.error(bt,"Bookings report couldn't be loaded",(err&&err.status===403?"Reports require a manager or admin account.":(err&&err.message)||"Please try again in a moment."),2);
-      }
+      if(requestId===loadSequence && tx) DATA.error(tx,"Ledger transactions couldn't be loaded",financeErrorMessage(err),5);
     });
-    getReport(window.APP_CONFIG.API_ENDPOINTS.reportsOccupancy,operationalParams).then(function(response){
-      if(requestId===loadSequence) renderOccupancy(response.data||{});
-    },function(err){
-      if(requestId===loadSequence){
-        latest.occupancy=null;
-        operationalPending.occupancy=false;
-        updateOperationalSummary();
-      }
-    });
+    function rowsOf(payload){var d=payload&&payload.data?payload.data:payload; return (d&&d.results)||d||[];}
+    function moneyCell(v){return formatMoney(v, reportCurrency(latest.financial));}
+    getReport(window.APP_CONFIG.API_ENDPOINTS.financeExpenses,{start:dates.from,end:dates.to}).then(function(response){
+      if(requestId!==loadSequence||!ex) return;
+      var rows=rowsOf(response);
+      if(!Array.isArray(rows)) rows=[];
+      ex.innerHTML=rows.length?rows.map(function(row){return "<tr><td>"+JONE.esc(row.reference||"—")+"</td><td>"+JONE.esc(row.payee||"—")+"</td><td class=\"num\">"+JONE.esc(moneyCell(row.amount))+"</td><td>"+JONE.esc(row.status||"—")+"</td></tr>";}).join(""):"<tr><td colspan=\"4\"><div class=\"empty-state\"><h3>No expenses in this period</h3></div></td></tr>";
+    },function(err){ if(requestId===loadSequence&&ex) DATA.error(ex,"Expenses couldn't be loaded",financeErrorMessage(err),4); });
+    getReport(window.APP_CONFIG.API_ENDPOINTS.financeCashSessions,{}).then(function(response){
+      if(requestId!==loadSequence||!cash) return;
+      var rows=rowsOf(response); if(!Array.isArray(rows)) rows=[];
+      cash.innerHTML=rows.length?rows.map(function(row){return "<tr><td>"+JONE.esc(row.reference||"—")+"</td><td>"+JONE.esc(row.cashier_email||"—")+"</td><td class=\"num\">"+JONE.esc(moneyCell(row.expected_cash))+"</td><td class=\"num\">"+JONE.esc(moneyCell(row.counted_cash))+"</td><td class=\"num\">"+JONE.esc(moneyCell(row.variance))+"</td><td>"+JONE.esc(row.status||"—")+"</td></tr>";}).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No cash sessions</h3></div></td></tr>";
+    },function(err){ if(requestId===loadSequence&&cash) DATA.error(cash,"Cash sessions couldn't be loaded",financeErrorMessage(err),6); });
+    getReport(window.APP_CONFIG.API_ENDPOINTS.financeApprovals,{status:"PENDING"}).then(function(response){
+      if(requestId!==loadSequence||!ap) return;
+      var rows=rowsOf(response); if(!Array.isArray(rows)) rows=[];
+      ap.innerHTML=rows.length?rows.map(function(row){return "<tr><td>"+JONE.esc(row.reference||"—")+"</td><td>"+JONE.esc(row.type||"—")+"</td><td class=\"num\">"+JONE.esc(moneyCell(row.amount))+"</td><td>"+JONE.esc(row.status||"—")+"</td><td>"+JONE.esc(row.requester_email||"—")+"</td></tr>";}).join(""):"<tr><td colspan=\"5\"><div class=\"empty-state\"><h3>No pending approvals</h3></div></td></tr>";
+    },function(err){ if(requestId===loadSequence&&ap) DATA.error(ap,"Approvals couldn't be loaded",financeErrorMessage(err),5); });
+
   }
 
   load();

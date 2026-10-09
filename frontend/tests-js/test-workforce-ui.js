@@ -44,6 +44,9 @@ test("workforce endpoints are centralized and preserve controlled action referen
 test("workforce page uses bounded lists, skeleton errors, idempotency, and no polling", () => {
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "workforce.html"), "utf8");
   assert.match(page, /__workforceAllowed/);
+  assert.match(page, /\"chef\"/);
+  assert.match(page, /myPayslips/);
+  assert.match(page, /My salary/);
   assert.match(page, /operations\.js/);
   ["attendance", "leaveRequests", "shifts", "shiftTemplates", "staffProfiles"].forEach((resource) => {
     assert.match(page, new RegExp('API\\.list\\("' + resource + '"'));

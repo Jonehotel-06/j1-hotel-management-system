@@ -26,6 +26,7 @@ qrcode>=7.4,<9                       # Self-hosted SVG QR codes for room/table s
 # Pure-Python PDF generation for server-side receipt attachments (no system
 # libraries required — runs identically on the web service and Celery worker).
 reportlab>=4.0
+openpyxl>=3.1                     # Excel (.xlsx) financial report exports
 # Backblaze B2 is S3-compatible; django-storages provides the storage backend.
 # The [s3] extra pulls in boto3/botocore. django-storages 1.14.4+ is required
 # for the Django 4.2+ STORAGES setting and the AWS_S3_CLIENT_CONFIG option used

@@ -26,7 +26,7 @@
     <div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,.2);"><span data-icon="logOut" data-size="16"></span> Sign out</button></div>
   </aside>
   <div class="dash-main">
-    <div class="dash-topbar"><div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title"><h1>Barcode Label Printing</h1><p>Standardized barcode labels for POS menu items and stock inventory.</p></div></div><div class="dash-topbar-right"><button class="btn btn-sm btn-primary" onclick="window.print()"><span data-icon="printer"></span> Print labels</button></div></div>
+    <div class="dash-topbar"><div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title"><h1>Barcode Label Printing</h1><p>Standardized barcode labels for POS menu items and stock inventory.</p></div></div><div class="dash-topbar-right"><button class="btn btn-sm btn-primary" type="button" id="print-labels"><span data-icon="printer"></span> Print labels</button></div></div>
     <main class="dash-content">
       <section class="panel">
         <div class="panel-head"><h2>Product & Stock Barcode Labels</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" id="load-pos-items">Load POS items</button><button class="btn btn-sm btn-outline" id="load-inv-items">Load inventory items</button></div></div>
@@ -54,6 +54,7 @@
   JONE.ui.initChrome();
   JONE.dashboard.boot("receptionist");
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+  document.getElementById("print-labels") && document.getElementById("print-labels").addEventListener("click", function(){ window.print(); });
 
   var container = document.getElementById("label-container");
 

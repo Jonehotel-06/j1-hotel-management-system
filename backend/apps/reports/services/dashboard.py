@@ -160,6 +160,16 @@ def build_dashboard(user):
 
     # Financial visibility: managers & admins only (receptionists see operations).
     if user.is_manager_or_admin:
+        from apps.finance.services.reporting_service import financial_summary as ledger_financial_summary
+
+        try:
+            data["ledger"] = ledger_financial_summary(start_date=today, end_date=today, currency="NGN")
+        except Exception:
+            import logging
+            logging.getLogger("apps").exception("Owner dashboard ledger summary failed")
+            data["ledger"] = None
+            data["ledger_error"] = "Ledger financial summary could not be loaded."
+
         today_revenue = (
             Payment.objects.filter(
                 status=Payment.Status.SUCCESS, paid_at__gte=today_start, paid_at__lt=tomorrow_start
@@ -233,4 +243,25 @@ def _operational_alerts(today, now, include_financial=True):
             "type": "HOUSEKEEPING",
             "message": f"{dirty_rooms} room(s) are marked dirty and need housekeeping.",
         })
+    if include_financial:
+        from apps.finance.models import ApprovalRequest, CashSession, Expense
+
+        pending_variance = CashSession.objects.filter(status=CashSession.Status.PENDING_REVIEW).count()
+        if pending_variance:
+            alerts.append({
+                "type": "CASH_VARIANCE",
+                "message": f"{pending_variance} cash drawer(s) have unresolved counted-cash differences. This is a prompt to investigate, not proof of theft.",
+            })
+        pending_expenses = Expense.objects.filter(status=Expense.Status.SUBMITTED).count()
+        if pending_expenses:
+            alerts.append({
+                "type": "EXPENSE_APPROVAL",
+                "message": f"{pending_expenses} expense(s) are waiting for independent approval.",
+            })
+        pending_approvals = ApprovalRequest.objects.filter(status=ApprovalRequest.Status.PENDING).count()
+        if pending_approvals:
+            alerts.append({
+                "type": "FINANCIAL_APPROVAL",
+                "message": f"{pending_approvals} financially sensitive request(s) await review.",
+            })
     return alerts

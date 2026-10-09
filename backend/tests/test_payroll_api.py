@@ -755,3 +755,12 @@ class PayrollApiTests(BaseAPITestCase):
         self.assertEqual(Decimal(line["transport_pay"]), Decimal("0.00"))
         self.assertEqual(Decimal(line["paye_tax"]), Decimal("0.00"))
         self.assertEqual(Decimal(line["employee_pension"]), Decimal("0.00"))
+
+    def test_employee_my_payslips_are_private(self):
+        self.auth(self.employee)
+        response = self.client.get("/api/admin/staff-operations/payroll/my-payslips/")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertIn("no-store", response["Cache-Control"])
+        payload = response.json()
+        rows = payload.get("data") or payload.get("results") or []
+        self.assertTrue(isinstance(rows, list) or "results" in payload)

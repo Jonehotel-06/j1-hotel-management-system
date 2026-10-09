@@ -64,6 +64,11 @@ test("payroll page uses private no-store reads and controlled maker-checker/ledg
   assert.match(page, /API\.create\("payrollStatutoryRules"/);
   assert.match(page, /resourceAction\("payrollStatutoryRules",reference,"review"/);
   assert.match(page, /prior_ytd/);
+  assert.doesNotMatch(page, /allowances_json/);
+  assert.doesNotMatch(page, /deductions_json/);
+  assert.doesNotMatch(page, /benefits_json/);
+  assert.doesNotMatch(page, /tax_claims_json/);
+  assert.doesNotMatch(page, /paye_bands_json/);
   assert.match(page, /API\.create\("payrollTaxIdentities"/);
   assert.match(page, /Nigeria 2026 PAYE and pension rules/);
   assert.match(page, /independent legal\/compliance reviewer/);

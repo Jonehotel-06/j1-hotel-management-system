@@ -81,8 +81,10 @@
         <div class="hint">Used by the public contact page&rsquo;s embedded map. A place URL is enough — the site converts it to an embed automatically.</div></div>
       <div class="field"><label class="field-label" for="st-greview">Google review URL</label><input class="input" id="st-greview" name="google_review_url" placeholder="https://g.page/r/&hellip;/review">
         <div class="hint">Direct &ldquo;write a review&rdquo; link for the hotel&rsquo;s Google Business profile. When set, guests are offered a Google review after submitting website feedback. Leave blank to hide that button.</div></div>
-      <div class="field"><label class="field-label" for="st-social">Social links (JSON)</label><textarea class="textarea" id="st-social" name="social_links" rows="2" placeholder='[{"platform":"Instagram","url":"https://instagram.com/…"}]'></textarea>
-        <div class="hint">A JSON list of {"platform","url"} objects. Leave empty for none.</div></div>
+      <div class="field"><span class="field-label">Social links</span>
+        <div id="st-social-rows"></div>
+        <button class="btn btn-sm btn-outline" type="button" id="st-social-add">Add social link</button>
+        <div class="hint">Platform name and URL. Leave empty if the hotel has no social profiles.</div></div>
 
       <h3 style="font-size:var(--fs-md);margin:1.4rem 0 0.9rem;">Stay rules</h3>
       <div class="form-grid fg-4">
@@ -187,13 +189,46 @@
     return (u && u.role) || null;
   }
 
+  function renderSocial(list){
+    var mount = $("st-social-rows");
+    if(!mount) return;
+    mount.innerHTML = "";
+    (list && list.length ? list : [{platform:"", url:""}]).forEach(function(item){
+      addSocialRow(item.platform || "", item.url || "");
+    });
+  }
+  function addSocialRow(platform, url){
+    var mount = $("st-social-rows");
+    if(!mount) return;
+    var row = document.createElement("div");
+    row.className = "form-grid fg-2 st-social-row";
+    row.style.marginBottom = "0.5rem";
+    row.innerHTML = '<div class="field"><label class="field-label">Platform</label><input class="input" data-social-platform value=""></div>' +
+      '<div class="field"><label class="field-label">URL</label><input class="input" data-social-url type="url" placeholder="https://"></div>';
+    row.querySelector("[data-social-platform]").value = platform || "";
+    row.querySelector("[data-social-url]").value = url || "";
+    mount.appendChild(row);
+  }
+  function collectSocial(){
+    var out = [];
+    document.querySelectorAll(".st-social-row").forEach(function(row){
+      var platform = (row.querySelector("[data-social-platform]") || {}).value || "";
+      var url = (row.querySelector("[data-social-url]") || {}).value || "";
+      platform = platform.trim(); url = url.trim();
+      if(platform || url) out.push({platform: platform, url: url});
+    });
+    return out;
+  }
+  document.getElementById("st-social-add") && document.getElementById("st-social-add").addEventListener("click", function(){ addSocialRow("", ""); });
+
   function fill(){
+    renderSocial(current.social_links || []);
     FIELDS.forEach(function(k){
+      if(k === "social_links") return;
       var el = document.getElementsByName(k)[0];
       if(!el) return;
       var v = current[k];
-      if(k === "social_links") el.value = (v && v.length) ? JSON.stringify(v, null, 0) : "";
-      else if(el.type === "checkbox") el.checked = !!v;
+      if(el.type === "checkbox") el.checked = !!v;
       else if(v != null) el.value = v;
     });
     var updatedEl = document.querySelector("[data-updated-at]");
@@ -236,25 +271,13 @@
 
     // Send only the fields that actually changed.
     var payload = {};
+    var social = collectSocial();
+    if(JSON.stringify(social) !== JSON.stringify(current.social_links || [])) payload.social_links = social;
     FIELDS.forEach(function(k){
+      if(k === "social_links") return;
       var el = document.getElementsByName(k)[0];
       if(!el) return;
       var v = el.value;
-      if(k === "social_links"){
-        var old = JSON.stringify(current.social_links || []);
-        if(v.trim() === ""){ if(old !== "[]") payload.social_links = []; }
-        else {
-          try{
-            var parsed = JSON.parse(v);
-            if(!Array.isArray(parsed)) throw new Error("not a list");
-            payload.social_links = parsed;
-          }catch(_){
-            errBox.textContent = "Social links must be a valid JSON list."; errBox.style.display = "block";
-            JONE.releaseGuard(btn); return;
-          }
-        }
-        return;
-      }
       if(el.type === "checkbox"){
         if(el.checked !== !!current[k]) payload[k] = el.checked;
         return;

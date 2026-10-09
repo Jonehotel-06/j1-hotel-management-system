@@ -407,6 +407,24 @@ class PayrollLineSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class MyPayslipSerializer(serializers.ModelSerializer):
+    period_reference = serializers.CharField(source="period.reference", read_only=True)
+    period_starts_on = serializers.DateField(source="period.starts_on", read_only=True)
+    period_ends_on = serializers.DateField(source="period.ends_on", read_only=True)
+    period_status = serializers.CharField(source="period.status", read_only=True)
+    salary_amount_paid = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
+    salary_balance = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = PayrollLine
+        fields = [
+            "id", "period_reference", "period_starts_on", "period_ends_on", "period_status", "currency",
+            "basic_pay", "housing_pay", "transport_pay", "overtime_pay", "bonus", "gross_pay",
+            "deductions_total", "net_pay", "salary_amount_paid", "salary_balance",
+        ]
+        read_only_fields = fields
+
+
 class PayrollPeriodListSerializer(serializers.ModelSerializer):
     created_by_email = serializers.EmailField(source="created_by.email", read_only=True)
     reviewed_by_email = serializers.EmailField(source="reviewed_by.email", read_only=True, allow_null=True)

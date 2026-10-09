@@ -41,6 +41,7 @@ from .payroll_serializers import (
     PayrollTaxIdentitySerializer,
     StaffCompensationCreateSerializer,
     StaffCompensationSerializer,
+    MyPayslipSerializer,
 )
 from .services.payroll_service import (
     create_compensation,
@@ -539,6 +540,28 @@ class PayrollSalaryPaymentReverseView(APIView):
             message="Salary-payment reversal recorded." if created else "Existing salary-payment reversal returned.",
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         ))
+
+
+class MyPayslipListView(APIView):
+    """Authenticated staff see only their own approved payroll lines."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        queryset = (
+            _payroll_line_queryset()
+            .filter(
+                staff=request.user,
+                period__status__in=(
+                    PayrollPeriod.Status.APPROVED,
+                    PayrollPeriod.Status.PARTIALLY_PAID,
+                    PayrollPeriod.Status.PAID,
+                ),
+            )
+            .select_related("period")
+            .order_by("-period__ends_on", "-pk")
+        )
+        return _page(self, request, queryset, MyPayslipSerializer)
 
 
 class PayrollPayslipView(APIView):

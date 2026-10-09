@@ -35,6 +35,7 @@
     { group: "Finance", items: [
       { label: "Payments", href: "payments.html", icon: "creditCard", view: "payments", capabilities: ["payment.read"], roles: ["admin", "manager", "receptionist", "front_desk_supervisor", "general_manager", "accounts_manager", "accountant"] },
       { label: "Receipts", href: "receipts.html", icon: "receipt", view: "receipts", capabilities: ["payment.read"], roles: ["admin", "manager", "receptionist", "front_desk_supervisor", "general_manager", "accounts_manager", "accountant"] },
+      { label: "Accounting", href: "accounting.html", icon: "wallet", view: "accounting", capabilities: ["reports.financial.view"], roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant"] },
       { label: "Reports", href: "reports.html", icon: "barChart", view: "reports", minRole: "manager" },
       { label: "Payroll", href: "payroll.html", icon: "creditCard", view: "payroll", capabilities: ["payroll.view", "payroll.manage", "payroll.approve", "payroll.rules.manage", "payroll.rules.review"], roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant", "hr_manager"] },
     ]},

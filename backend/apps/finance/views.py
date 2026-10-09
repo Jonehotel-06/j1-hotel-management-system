@@ -1,4 +1,5 @@
 """Bounded, read-first finance operations API."""
+from django.http import HttpResponse
 from django.db.models import Count, Prefetch, Q
 from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema
@@ -31,7 +32,7 @@ from .services.approval_service import review_approval
 from .services.cash_session_service import review_cash_variance
 from .services.expense_service import create_expense, post_expense, review_expense, submit_expense
 from .services.folio_service import folio_balance_queryset
-from .services.reporting_service import financial_summary
+from .services.reporting_service import financial_summary, summary_pdf_bytes, summary_xlsx_bytes
 
 
 def _paginate(view, request, queryset, serializer_class):
@@ -142,6 +143,24 @@ class FinancialSummaryReportView(APIView):
             end_date=_parse_query_date(request.query_params.get("end"), "end"),
             currency=request.query_params.get("currency", "NGN"),
         )
+        export = (request.query_params.get("export") or "").lower()
+        if export == "xlsx":
+            payload = summary_xlsx_bytes(data)
+            response = HttpResponse(
+                payload,
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            response["Content-Disposition"] = (
+                f'attachment; filename="jone-ledger-{data["start_date"]}_{data["end_date"]}.xlsx"'
+            )
+            return response
+        if export == "pdf":
+            payload = summary_pdf_bytes(data)
+            response = HttpResponse(payload, content_type="application/pdf")
+            response["Content-Disposition"] = (
+                f'attachment; filename="jone-ledger-{data["start_date"]}_{data["end_date"]}.pdf"'
+            )
+            return response
         return success_response(data)
 
 

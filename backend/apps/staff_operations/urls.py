@@ -38,5 +38,6 @@ urlpatterns = [
     path("payroll/periods/<str:reference>/lines/<int:line_id>/payments/", payroll_views.PayrollSalaryPaymentListCreateView.as_view(), name="payroll-salary-payments"),
     path("payroll/periods/<str:reference>/lines/<int:line_id>/payments/<str:payment_reference>/reverse/", payroll_views.PayrollSalaryPaymentReverseView.as_view(), name="payroll-salary-payment-reverse"),
     path("payroll/periods/<str:reference>/", payroll_views.PayrollPeriodDetailView.as_view(), name="payroll-period-detail"),
+    path("payroll/my-payslips/", payroll_views.MyPayslipListView.as_view(), name="my-payslips"),
     path("payroll/payslips/<str:reference>/", payroll_views.PayrollPayslipView.as_view(), name="payroll-payslip"),
 ]

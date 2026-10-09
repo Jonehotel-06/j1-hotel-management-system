@@ -58,7 +58,8 @@
   <div class="kpi"><div class="kpi-label">Guests in-house</div><div class="kpi-value" data-kpi="in_house">--</div><div class="kpi-sub">among <span data-kpi="occupied">--</span> occupied rooms</div></div>
   <div class="kpi"><div class="kpi-label">Available rooms</div><div class="kpi-value" data-kpi="available_rooms">--</div><div class="kpi-sub">of <span data-kpi="total_rooms">--</span> total</div></div>
   <div class="kpi"><div class="kpi-label">Pending bookings</div><div class="kpi-value" data-kpi="pending_bookings">--</div><div class="kpi-sub">awaiting confirmation</div></div>
-  <div class="kpi"><div class="kpi-label">Today's revenue</div><div class="kpi-value" data-kpi="today_revenue">--</div><div class="kpi-sub">incl. <span data-kpi="outstanding">--</span> outstanding</div></div>
+  <div class="kpi"><div class="kpi-label">Today's recognized revenue</div><div class="kpi-value" data-kpi="today_revenue">--</div><div class="kpi-sub">earned, not necessarily collected</div></div>
+  <div class="kpi"><div class="kpi-label">Today's collections</div><div class="kpi-value" data-kpi="today_collections">--</div><div class="kpi-sub">money actually received</div></div>
 </section>
 
 <section class="panel">
@@ -71,6 +72,7 @@
       <a class="quick-action" href="guests.html"><span data-icon="search"></span> Search guest</a>
       <a class="quick-action" href="bookings.html"><span data-icon="search"></span> Search booking</a>
       <a class="quick-action" href="payments.html"><span data-icon="wallet"></span> Record payment</a>
+      <a class="quick-action" href="accounting.html"><span data-icon="barChart"></span> Accounting</a>
     </div>
   </div>
 </section>
@@ -205,13 +207,18 @@
     setKpi("available_rooms", rooms.available);
     setKpi("total_rooms", rooms.total);
     setKpi("pending_bookings", bk.pending);
-    if(d.revenue){
+    if(d.ledger && d.ledger.recognized_revenue){
+      var rec = d.ledger.recognized_revenue.amount != null ? d.ledger.recognized_revenue.amount : d.ledger.recognized_revenue;
+      setKpi("today_revenue", JONE.formatNaira(rec));
+      var collected = d.ledger.collections && d.ledger.collections.amount;
+      setKpi("today_collections", collected != null ? JONE.formatNaira(collected) : "--");
+    } else if(d.revenue){
       if(d.revenue.today != null) setKpi("today_revenue", JONE.formatNaira(d.revenue.today));
       if(d.revenue.outstanding_total != null) setKpi("outstanding", JONE.formatNaira(d.revenue.outstanding_total));
     } else {
       // Revenue is MANAGER+ only — receptionists see an honest "n/a".
       setKpi("today_revenue", "n/a");
-      setKpi("outstanding", "n/a");
+      setKpi("today_collections", "n/a");
     }
   }
 

@@ -101,7 +101,7 @@ class FinancialSummaryReportTests(BaseAPITestCase):
         )
 
     def test_summary_uses_posted_ledger_lines_without_conflating_measures(self):
-        with self.assertNumQueries(3):
+        with self.assertNumQueries(4):
             report = financial_summary(start_date=self.today, end_date=self.today)
 
         self.assertEqual(report["basis"], "posted_immutable_ledger_business_date")
@@ -116,6 +116,9 @@ class FinancialSummaryReportTests(BaseAPITestCase):
         self.assertEqual(report["cash_paid_out"], {"amount": "45.00", "transactions": 2})
         self.assertEqual(report["net_collections"], "90.00")
         self.assertEqual(report["gross_operating_result"], "85.00")
+        self.assertEqual(report["actual_payments_made"], "45.00")
+        self.assertEqual(report["by_department"][0]["account_code"], accounting.ACCOMMODATION_REVENUE)
+        self.assertEqual(report["by_department"][0]["amount"], "100.00")
         self.assertEqual(len(report["by_day"]), 1)
         self.assertEqual(report["by_day"][0]["date"], self.today.isoformat())
         self.assertEqual(report["by_day"][0]["cash_paid_out"], {"amount": "45.00"})
@@ -185,3 +188,16 @@ class FinancialSummaryReportTests(BaseAPITestCase):
             ).status_code,
             400,
         )
+
+    def test_summary_excel_and_pdf_exports_use_the_same_ledger_totals(self):
+        self.auth(self.manager)
+        params = {"start": self.today.isoformat(), "end": self.today.isoformat(), "export": "xlsx"}
+        xlsx = self.client.get("/api/admin/finance/reports/summary/", params)
+        self.assertEqual(xlsx.status_code, 200, xlsx.content)
+        self.assertIn("spreadsheetml", xlsx["Content-Type"])
+        self.assertGreater(len(xlsx.content), 100)
+        params["export"] = "pdf"
+        pdf = self.client.get("/api/admin/finance/reports/summary/", params)
+        self.assertEqual(pdf.status_code, 200, pdf.content)
+        self.assertEqual(pdf["Content-Type"], "application/pdf")
+        self.assertTrue(pdf.content.startswith(b"%PDF"))
