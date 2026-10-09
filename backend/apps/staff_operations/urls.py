@@ -28,6 +28,8 @@ urlpatterns = [
     path("payroll/periods/<str:reference>/submit/", payroll_views.PayrollSubmitView.as_view(), name="payroll-submit"),
     path("payroll/periods/<str:reference>/review/", payroll_views.PayrollReviewView.as_view(), name="payroll-review"),
     path("payroll/periods/<str:reference>/pay/", payroll_views.PayrollPayView.as_view(), name="payroll-pay"),
+    path("payroll/periods/<str:reference>/lines/<int:line_id>/payments/", payroll_views.PayrollSalaryPaymentListCreateView.as_view(), name="payroll-salary-payments"),
+    path("payroll/periods/<str:reference>/lines/<int:line_id>/payments/<str:payment_reference>/reverse/", payroll_views.PayrollSalaryPaymentReverseView.as_view(), name="payroll-salary-payment-reverse"),
     path("payroll/periods/<str:reference>/", payroll_views.PayrollPeriodDetailView.as_view(), name="payroll-period-detail"),
     path("payroll/payslips/<str:reference>/", payroll_views.PayrollPayslipView.as_view(), name="payroll-payslip"),
 ]

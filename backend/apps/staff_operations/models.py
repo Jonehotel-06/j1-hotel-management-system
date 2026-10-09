@@ -249,6 +249,6 @@ class LeaveRequestEvent(models.Model):
 # Kept in a focused module because compensation and payroll evidence have
 # different privacy and lifecycle rules from ordinary workforce records.
 from .payroll_models import (  # noqa: E402,F401
-    PayrollEvent, PayrollLine, PayrollPeriod, PayrollStatutoryRuleEvent,
+    PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment, PayrollStatutoryRuleEvent,
     PayrollStatutoryRuleSet, PayrollTaxIdentity, StaffCompensation,
 )

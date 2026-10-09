@@ -4,7 +4,7 @@ from decimal import Decimal, InvalidOperation
 from rest_framework import serializers
 
 from .payroll_models import (
-    PayrollEvent, PayrollLine, PayrollPeriod, PayrollStatutoryRuleEvent,
+    PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment, PayrollStatutoryRuleEvent,
     PayrollStatutoryRuleSet, PayrollTaxIdentity, StaffCompensation,
 )
 
@@ -328,6 +328,57 @@ class PayrollPaymentSerializer(serializers.Serializer):
     cash_session_reference = serializers.CharField(required=False, allow_blank=True, max_length=64, default="")
 
 
+class PayrollSalaryPaymentCreateSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(
+        max_digits=12, decimal_places=2, min_value=Decimal("0.01"),
+    )
+    method = serializers.ChoiceField(choices=PayrollSalaryPayment.Method.choices)
+    payment_date = serializers.DateField(required=False)
+    external_reference = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
+    evidence_reference = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
+    cash_session_reference = serializers.CharField(required=False, allow_blank=True, max_length=64, default="")
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=1000, default="")
+    idempotency_key = serializers.CharField(min_length=8, max_length=160, allow_blank=False)
+
+
+class PayrollSalaryPaymentReversalSerializer(serializers.Serializer):
+    correction_reason = serializers.CharField(min_length=5, max_length=500, allow_blank=False)
+    payment_date = serializers.DateField(required=False)
+    external_reference = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
+    evidence_reference = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
+    cash_session_reference = serializers.CharField(required=False, allow_blank=True, max_length=64, default="")
+    idempotency_key = serializers.CharField(min_length=8, max_length=160, allow_blank=False)
+
+
+class PayrollSalaryPaymentSerializer(serializers.ModelSerializer):
+    line_id = serializers.IntegerField(read_only=True)
+    recorded_by_email = serializers.EmailField(source="recorded_by.email", read_only=True, allow_null=True)
+    financial_reference = serializers.CharField(source="financial_transaction.reference", read_only=True, allow_null=True)
+    cash_session_reference = serializers.CharField(source="cash_session.reference", read_only=True, allow_null=True)
+    reversal_of_reference = serializers.CharField(source="reversal_of.reference", read_only=True, allow_null=True)
+    reversed_by_reference = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PayrollSalaryPayment
+        fields = [
+            "reference", "line_id", "amount", "currency", "payment_date", "method",
+            "external_reference", "evidence_reference", "notes", "recorded_by_email",
+            "financial_reference", "cash_session_reference", "reversal_of_reference",
+            "reversed_by_reference", "correction_reason", "is_legacy_import", "status", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_reversed_by_reference(self, obj):
+        reversal = getattr(obj, "reversed_by", None)
+        return reversal.reference if reversal else None
+
+    def get_status(self, obj):
+        if obj.reversal_of_id:
+            return "REVERSAL"
+        return "REVERSED" if getattr(obj, "reversed_by", None) else "RECORDED"
+
+
 class PayrollEventSerializer(serializers.ModelSerializer):
     actor_email = serializers.EmailField(source="actor.email", read_only=True, allow_null=True)
 
@@ -340,6 +391,8 @@ class PayrollEventSerializer(serializers.ModelSerializer):
 class PayrollLineSerializer(serializers.ModelSerializer):
     staff_id = serializers.IntegerField(read_only=True)
     tax_identity_reference = serializers.CharField(source="tax_identity.reference", read_only=True, allow_null=True)
+    salary_amount_paid = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
+    salary_balance = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
 
     class Meta:
         model = PayrollLine
@@ -349,7 +402,7 @@ class PayrollLineSerializer(serializers.ModelSerializer):
             "allowances", "bonus", "benefits_in_kind", "taxable_benefits", "taxable_gross_pay", "deductions", "pensionable_pay", "employee_pension", "employer_pension",
             "paye_tax", "nhf_contribution", "nhis_contribution", "mortgage_interest_claim",
             "life_insurance_premium_claim", "rent_paid_attributable", "rent_relief", "tax_claims", "tax_snapshot",
-            "gross_pay", "deductions_total", "net_pay", "created_at",
+            "gross_pay", "deductions_total", "net_pay", "salary_amount_paid", "salary_balance", "created_at",
         ]
         read_only_fields = fields
 
@@ -363,6 +416,8 @@ class PayrollPeriodListSerializer(serializers.ModelSerializer):
     statutory_rules_reference = serializers.CharField(source="statutory_rules.reference", read_only=True, allow_null=True)
     total_employer_cost = serializers.SerializerMethodField()
     line_count = serializers.IntegerField(read_only=True)
+    salary_amount_paid = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
+    salary_balance = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
 
     def get_total_employer_cost(self, obj):
         return str(obj.total_employer_cost)
@@ -372,6 +427,7 @@ class PayrollPeriodListSerializer(serializers.ModelSerializer):
         fields = [
             "id", "reference", "starts_on", "ends_on", "department", "currency", "statutory_rules_reference",
             "status", "replaces_reference", "line_count", "total_gross", "total_deductions", "total_net",
+            "salary_amount_paid", "salary_balance",
             "total_paye", "total_employer_pension", "total_employer_cost", "created_by_email", "submitted_at",
             "reviewed_by_email", "reviewed_at", "review_note", "approved_by_email", "approved_at", "paid_by_email",
             "paid_at", "payment_method", "external_reference", "created_at", "updated_at",

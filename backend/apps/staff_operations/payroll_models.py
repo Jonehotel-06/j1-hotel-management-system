@@ -256,6 +256,7 @@ class PayrollPeriod(TimeStampedModel):
         DRAFT = "DRAFT", "Draft"
         SUBMITTED = "SUBMITTED", "Submitted for review"
         APPROVED = "APPROVED", "Approved / accrued"
+        PARTIALLY_PAID = "PARTIALLY_PAID", "Partially paid"
         REJECTED = "REJECTED", "Rejected"
         PAID = "PAID", "Paid"
 
@@ -323,11 +324,30 @@ class PayrollPeriod(TimeStampedModel):
                         "status", "paid_by_id", "paid_at", "payment_method", "external_reference",
                         "cash_session_id", "payment_transaction_id",
                     },
+                    self.Status.PARTIALLY_PAID: {
+                        "status", "paid_by_id", "paid_at", "payment_method", "external_reference",
+                        "cash_session_id", "payment_transaction_id",
+                    },
+                    # A paid run may be reopened only by the payroll service
+                    # after it appends an immutable payment-reversal record.
+                    self.Status.PAID: {"status"},
                 }.get(prior.status, set())
                 if not changes.issubset(allowed):
                     raise ValidationError("Submitted or finalized payroll evidence cannot be rewritten.")
-                if prior.status in {self.Status.REJECTED, self.Status.PAID}:
-                    raise ValidationError("Rejected and paid payroll runs are immutable.")
+                if prior.status == self.Status.APPROVED and self.status not in {
+                    self.Status.APPROVED, self.Status.PARTIALLY_PAID, self.Status.PAID,
+                }:
+                    raise ValidationError("An approved payroll run can only advance to partial or full payment.")
+                if prior.status == self.Status.PARTIALLY_PAID and self.status not in {
+                    self.Status.PARTIALLY_PAID, self.Status.APPROVED, self.Status.PAID,
+                }:
+                    raise ValidationError("A partially paid run can only be reopened by reversal or completed.")
+                if prior.status == self.Status.PAID and self.status not in {
+                    self.Status.PARTIALLY_PAID, self.Status.APPROVED,
+                }:
+                    raise ValidationError("A paid run can only be reopened by an audited payment reversal.")
+                if prior.status == self.Status.REJECTED:
+                    raise ValidationError("Rejected payroll runs are immutable.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
@@ -399,6 +419,69 @@ class PayrollLine(models.Model):
         return f"{self.period.reference} · {self.employee_code} · {self.net_pay} {self.currency}"
 
 
+class PayrollSalaryPayment(models.Model):
+    """Append-only evidence of a manually completed employee salary payment.
+
+    This record never initiates a payout. A correction is another record whose
+    ``reversal_of`` points to the original, with a compensating ledger entry.
+    """
+
+    class Method(models.TextChoices):
+        CASH = PayrollPeriod.PaymentMethod.CASH, "Cash"
+        BANK_TRANSFER = PayrollPeriod.PaymentMethod.BANK_TRANSFER, "Bank transfer"
+
+    reference = models.CharField(max_length=64, unique=True, db_index=True)
+    idempotency_key = models.CharField(max_length=160, unique=True)
+    idempotency_fingerprint = models.CharField(max_length=64, blank=True, default="")
+    line = models.ForeignKey(PayrollLine, on_delete=models.PROTECT, related_name="salary_payments")
+    amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))])
+    currency = models.CharField(max_length=3, default="NGN")
+    payment_date = models.DateField(db_index=True)
+    method = models.CharField(max_length=20, choices=Method.choices)
+    external_reference = models.CharField(max_length=160, blank=True, default="", db_index=True)
+    evidence_reference = models.CharField(max_length=160, blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="payroll_salary_payments_recorded",
+    )
+    financial_transaction = models.ForeignKey(
+        "finance.FinancialTransaction", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="payroll_salary_payments",
+    )
+    cash_session = models.ForeignKey(
+        "finance.CashSession", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="payroll_salary_payments",
+    )
+    reversal_of = models.OneToOneField(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="reversed_by",
+    )
+    correction_reason = models.CharField(max_length=500, blank=True, default="")
+    is_legacy_import = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["-payment_date", "-created_at", "-pk"]
+        constraints = [
+            models.CheckConstraint(condition=Q(amount__gt=ZERO), name="payroll_salary_payment_positive"),
+        ]
+        indexes = [
+            models.Index(fields=["line", "payment_date"]),
+            models.Index(fields=["method", "payment_date"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Salary payment evidence is immutable; create an auditable reversal instead.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Salary payment evidence cannot be deleted.")
+
+    def __str__(self):
+        return f"{self.reference} · {self.amount} {self.currency} · {self.method}"
+
+
 class PayrollEvent(models.Model):
     class Type(models.TextChoices):
         CREATED = "CREATED", "Created"
@@ -406,6 +489,8 @@ class PayrollEvent(models.Model):
         APPROVED = "APPROVED", "Approved / accrued"
         REJECTED = "REJECTED", "Rejected"
         PAID = "PAID", "Paid"
+        PAYMENT_RECORDED = "PAYMENT_RECORDED", "Salary payment recorded"
+        PAYMENT_REVERSED = "PAYMENT_REVERSED", "Salary payment reversed"
 
     period = models.ForeignKey(PayrollPeriod, on_delete=models.PROTECT, related_name="events")
     type = models.CharField(max_length=16, choices=Type.choices, db_index=True)

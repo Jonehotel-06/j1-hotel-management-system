@@ -125,6 +125,39 @@ class FinancialSummaryReportTests(BaseAPITestCase):
         self.assertEqual(usd_report["ledger_transactions"], 1)
         self.assertEqual(usd_report["collections"], {"amount": "77.00", "transactions": 1})
 
+    def test_salary_payment_report_nets_immutable_reversals(self):
+        debit = FinancialLine.Direction.DEBIT
+        credit = FinancialLine.Direction.CREDIT
+        payment, _ = self._post(
+            suffix="salary-payment",
+            transaction_type=FinancialTransaction.Type.PAYROLL_PAYMENT,
+            lines=[
+                self._line(accounting.PAYROLL_PAYABLE, debit, "50000.00"),
+                self._line(accounting.BANK_CLEARING, credit, "50000.00"),
+            ],
+        )
+        create_posted_transaction(
+            transaction_type=FinancialTransaction.Type.PAYROLL_PAYMENT,
+            source_key="financial-summary:salary-payment-reversal",
+            idempotency_key="financial-summary:salary-payment-reversal",
+            actor=self.manager,
+            source_reference="SAL-TEST-REVERSAL",
+            narrative="Authorized salary-payment reversal fixture",
+            currency="NGN",
+            business_date=self.today,
+            reversal_of=payment,
+            lines=[
+                self._line(accounting.BANK_CLEARING, debit, "15000.00"),
+                self._line(accounting.PAYROLL_PAYABLE, credit, "15000.00"),
+            ],
+        )
+
+        report = financial_summary(start_date=self.today, end_date=self.today)
+        self.assertEqual(report["payroll_payments"], {"amount": "50000.00", "transactions": 1})
+        self.assertEqual(report["payroll_payment_reversals"], {"amount": "15000.00", "transactions": 1})
+        self.assertEqual(report["net_payroll_payments"], "35000.00")
+        self.assertEqual(report["by_day"][0]["net_payroll_payments"], "35000.00")
+
     def test_summary_range_index_is_declared_for_posted_currency_business_date_filter(self):
         indexes = [tuple(index.fields) for index in FinancialTransaction._meta.indexes]
         self.assertIn(("status", "currency", "business_date"), indexes)

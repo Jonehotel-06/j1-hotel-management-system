@@ -101,6 +101,9 @@ function bootReportController() {
     operating_expenses: reportMetric("15.00", 1),
     inventory_acquisitions: reportMetric("30.00", 1),
     cash_paid_out: reportMetric("45.00", 2),
+    payroll_payments: reportMetric("50000.00", 1),
+    payroll_payment_reversals: reportMetric("15000.00", 1),
+    net_payroll_payments: "35000.00",
     gross_operating_result: "85.00",
   };
   const requests = [];
@@ -159,6 +162,7 @@ test("reports dashboard requests ledger finance and operational projections conc
   assert.match(booted.financeBasis.textContent, /Posted immutable ledger/);
   assert.match(booted.financeBody.innerHTML, /Gross operating result/);
   assert.match(booted.financeBody.innerHTML, /Cash paid-out/);
+  assert.match(booted.financeBody.innerHTML, /Net salary paid/);
   assert.match(booted.bookingBody.innerHTML, /confirmed/);
   assert.match(booted.rp["operational-summary"].textContent, /3 bookings/);
   assert.match(booted.rp["operational-summary"].textContent, /75% avg occupancy/);

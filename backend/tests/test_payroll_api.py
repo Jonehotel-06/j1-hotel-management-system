@@ -5,10 +5,12 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 
 from apps.accounts.models import User
+from apps.audit.models import AuditLog
 from apps.core.utils import hotel_today
-from apps.finance.models import FinancialLine, FinancialTransaction
+from apps.finance.models import CashMovement, CashSession, FinancialLine, FinancialTransaction
 from apps.finance.services import accounting
-from apps.staff_operations.models import PayrollPeriod, PayrollStatutoryRuleSet, PayrollTaxIdentity, StaffCompensation, StaffProfile
+from apps.finance.services.cash_session_service import open_cash_session
+from apps.staff_operations.models import PayrollPeriod, PayrollSalaryPayment, PayrollStatutoryRuleSet, PayrollTaxIdentity, StaffCompensation, StaffProfile
 from apps.staff_operations.services.payroll_service import progressive_tax
 from apps.staff_operations.services.staff_operations_service import ensure_staff_profile
 from tests.base import BaseAPITestCase
@@ -127,6 +129,23 @@ class PayrollApiTests(BaseAPITestCase):
         self.assertIn(response.status_code, (200, 201), response.content)
         return response
 
+    def _create_approved_run(self, payload=None):
+        created = self._create_period(payload)
+        data = created.json()["data"]
+        reference = data["reference"]
+        self.auth(self.creator)
+        submitted = self.client.post(
+            f"/api/admin/staff-operations/payroll/periods/{reference}/submit/", {}, format="json"
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.content)
+        self.auth(self.approver)
+        approved = self.client.post(
+            f"/api/admin/staff-operations/payroll/periods/{reference}/review/",
+            {"approved": True, "review_note": "Independent approval for payment test."}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.content)
+        return reference, approved.json()["data"]["lines"][0]
+
     def test_payroll_uses_private_salary_snapshots_maker_checker_and_immutable_ledger(self):
         created = self._create_period()
         self.assertEqual(created.status_code, 201)
@@ -199,6 +218,13 @@ class PayrollApiTests(BaseAPITestCase):
         self.assertEqual(period.payment_transaction.type, FinancialTransaction.Type.PAYROLL_PAYMENT)
         self.assertEqual(period.payment_transaction.lines.get(direction=FinancialLine.Direction.DEBIT).amount, Decimal("61700.00"))
         self.assertEqual(period.payment_transaction.lines.get(direction=FinancialLine.Direction.CREDIT).account_code, accounting.BANK_CLEARING)
+        self.assertEqual(PayrollSalaryPayment.objects.filter(line__period=period).count(), 1)
+        full_run_record = PayrollSalaryPayment.objects.get(line__period=period)
+        self.assertFalse(full_run_record.is_legacy_import)
+        self.assertTrue(full_run_record.reference.startswith("SAL-FULLRUN-"))
+        self.assertEqual(paid.json()["data"]["salary_amount_paid"], "61700.00")
+        self.assertEqual(paid.json()["data"]["salary_balance"], "0.00")
+        self.assertEqual(paid.json()["data"]["lines"][0]["salary_balance"], "0.00")
 
         # Approved/paid employees can fetch only their own payslip; it is not
         # publicly cacheable, and payroll viewers can audit a requested line.
@@ -216,6 +242,228 @@ class PayrollApiTests(BaseAPITestCase):
         self.compensation.basic_salary = Decimal("99999.00")
         with self.assertRaises(ValidationError):
             self.compensation.save()
+
+    def test_employee_salary_payments_support_partial_full_history_and_balances(self):
+        reference, line = self._create_approved_run()
+        url = f"/api/admin/staff-operations/payroll/periods/{reference}/lines/{line['id']}/payments/"
+        payload = {
+            "amount": "20000.00",
+            "method": "BANK_TRANSFER",
+            "payment_date": self.today.isoformat(),
+            "external_reference": "BANK-SALARY-001",
+            "evidence_reference": "PAYROLL-ADVICE-001",
+            "notes": "First manual instalment",
+            "idempotency_key": "salary-payment-partial-001",
+        }
+
+        self.auth(self.employee)
+        self.assertEqual(self.client.get(url).status_code, 403)
+        self.assertEqual(self.client.post(url, payload, format="json").status_code, 403)
+
+        self.auth(self.creator)
+        first = self.client.post(url, payload, format="json")
+        self.assertEqual(first.status_code, 201, first.content)
+        self.assertIn("no-store", first["Cache-Control"])
+        payment_reference = first.json()["data"]["reference"]
+        payment = PayrollSalaryPayment.objects.get(reference=payment_reference)
+        self.assertEqual(payment.amount, Decimal("20000.00"))
+        self.assertEqual(payment.financial_transaction.type, FinancialTransaction.Type.PAYROLL_PAYMENT)
+        self.assertEqual(payment.financial_transaction.lines.get(direction=FinancialLine.Direction.DEBIT).account_code, accounting.PAYROLL_PAYABLE)
+        self.assertEqual(payment.financial_transaction.lines.get(direction=FinancialLine.Direction.CREDIT).account_code, accounting.BANK_CLEARING)
+        self.assertFalse(payment.is_legacy_import)
+
+        duplicate = self.client.post(url, payload, format="json")
+        self.assertEqual(duplicate.status_code, 200, duplicate.content)
+        self.assertEqual(duplicate.json()["data"]["reference"], payment_reference)
+        self.assertEqual(PayrollSalaryPayment.objects.filter(line_id=line["id"]).count(), 1)
+
+        mismatch = {**payload, "amount": "21000.00"}
+        self.assertEqual(self.client.post(url, mismatch, format="json").status_code, 400)
+        overpayment = {
+            **payload, "amount": "42000.00", "external_reference": "BANK-SALARY-OVER",
+            "idempotency_key": "salary-payment-over-001",
+        }
+        self.assertEqual(self.client.post(url, overpayment, format="json").status_code, 400)
+        missing_bank_reference = {
+            **payload, "external_reference": "", "idempotency_key": "salary-payment-ref-001",
+        }
+        self.assertEqual(self.client.post(url, missing_bank_reference, format="json").status_code, 400)
+
+        period_detail = self.client.get(f"/api/admin/staff-operations/payroll/periods/{reference}/").json()["data"]
+        self.assertEqual(period_detail["status"], PayrollPeriod.Status.PARTIALLY_PAID)
+        self.assertEqual(period_detail["salary_amount_paid"], "20000.00")
+        self.assertEqual(period_detail["salary_balance"], "41700.00")
+        self.assertEqual(period_detail["lines"][0]["salary_amount_paid"], "20000.00")
+        self.assertEqual(period_detail["lines"][0]["salary_balance"], "41700.00")
+        listing = self.client.get("/api/admin/staff-operations/payroll/periods/", {"status": "PARTIALLY_PAID"})
+        self.assertEqual(listing.status_code, 200, listing.content)
+        self.assertEqual(listing.json()["data"][0]["salary_balance"], "41700.00")
+
+        history = self.client.get(url)
+        self.assertEqual(history.status_code, 200, history.content)
+        self.assertEqual(history.json()["data"][0]["reference"], payment_reference)
+        self.assertEqual(history.json()["data"][0]["status"], "RECORDED")
+        self.assertEqual(history.json()["data"][0]["financial_reference"], payment.financial_transaction.reference)
+
+        second = {
+            "amount": "41700.00", "method": "BANK_TRANSFER", "payment_date": self.today.isoformat(),
+            "external_reference": "BANK-SALARY-002", "idempotency_key": "salary-payment-final-001",
+        }
+        completed = self.client.post(url, second, format="json")
+        self.assertEqual(completed.status_code, 201, completed.content)
+        final = self.client.get(f"/api/admin/staff-operations/payroll/periods/{reference}/").json()["data"]
+        self.assertEqual(final["status"], PayrollPeriod.Status.PAID)
+        self.assertEqual(final["salary_amount_paid"], "61700.00")
+        self.assertEqual(final["salary_balance"], "0.00")
+        self.assertEqual(PayrollSalaryPayment.objects.filter(line_id=line["id"]).count(), 2)
+        self.assertEqual(PayrollPeriod.objects.get(reference=reference).events.filter(type="PAYMENT_RECORDED").count(), 2)
+
+    def test_salary_payment_reversal_is_separate_authorized_and_auditable(self):
+        reference, line = self._create_approved_run()
+        url = f"/api/admin/staff-operations/payroll/periods/{reference}/lines/{line['id']}/payments/"
+        original_payload = {
+            "amount": "20000.00", "method": "BANK_TRANSFER", "payment_date": self.today.isoformat(),
+            "external_reference": "BANK-SALARY-REVERSAL-TEST", "idempotency_key": "salary-payment-reversible-001",
+        }
+        self.auth(self.creator)
+        recorded = self.client.post(url, original_payload, format="json")
+        self.assertEqual(recorded.status_code, 201, recorded.content)
+        original = PayrollSalaryPayment.objects.get(reference=recorded.json()["data"]["reference"])
+        reversal_url = url + original.reference + "/reverse/"
+        reversal_payload = {
+            "correction_reason": "Bank transfer was returned to the hotel account.",
+            "payment_date": self.today.isoformat(),
+            "external_reference": "BANK-RETURN-001",
+            "evidence_reference": "BANK-STATEMENT-001",
+            "idempotency_key": "salary-reversal-audit-001",
+        }
+        # The payment recorder cannot authorize their own correction.
+        self.assertEqual(self.client.post(reversal_url, reversal_payload, format="json").status_code, 403)
+        self.auth(self.approver)
+        reversed_response = self.client.post(reversal_url, reversal_payload, format="json")
+        self.assertEqual(reversed_response.status_code, 201, reversed_response.content)
+        reversal = PayrollSalaryPayment.objects.get(reference=reversed_response.json()["data"]["reference"])
+        self.assertEqual(reversal.reversal_of_id, original.pk)
+        self.assertEqual(reversal.amount, original.amount)
+        self.assertEqual(reversal.financial_transaction.reversal_of_id, original.financial_transaction_id)
+        self.assertEqual(reversal.financial_transaction.lines.get(direction=FinancialLine.Direction.DEBIT).account_code, accounting.BANK_CLEARING)
+        self.assertEqual(reversal.financial_transaction.lines.get(direction=FinancialLine.Direction.CREDIT).account_code, accounting.PAYROLL_PAYABLE)
+        self.assertEqual(reversed_response.json()["data"]["status"], "REVERSAL")
+
+        duplicate = self.client.post(reversal_url, reversal_payload, format="json")
+        self.assertEqual(duplicate.status_code, 200, duplicate.content)
+        self.assertEqual(duplicate.json()["data"]["reference"], reversal.reference)
+        self.assertEqual(self.client.post(
+            reversal_url,
+            {**reversal_payload, "correction_reason": "Different request, same key."},
+            format="json",
+        ).status_code, 400)
+        self.assertEqual(self.client.post(
+            reversal_url,
+            {**reversal_payload, "idempotency_key": "salary-reversal-duplicate-002"},
+            format="json",
+        ).status_code, 400)
+
+        original.refresh_from_db()
+        period = PayrollPeriod.objects.get(reference=reference)
+        self.assertEqual(period.status, PayrollPeriod.Status.APPROVED)
+        self.assertEqual(period.events.filter(type="PAYMENT_REVERSED").count(), 1)
+        self.assertEqual(period.lines.get(pk=line["id"]).salary_payments.filter(reversal_of__isnull=True).count(), 1)
+        history = self.client.get(url).json()["data"]
+        original_record = next(row for row in history if row["reference"] == original.reference)
+        self.assertEqual(original_record["status"], "REVERSED")
+        self.assertEqual(original_record["reversed_by_reference"], reversal.reference)
+        self.assertTrue(AuditLog.objects.filter(
+            action="PAYROLL_SALARY_PAYMENT_REVERSED", object_id=str(reversal.pk), actor=self.approver,
+        ).exists())
+
+    def test_full_run_employee_reversal_preserves_other_employees_paid_records(self):
+        second_employee, _ = self._create_tax_employee(
+            department="Housekeeping", salary="1000000.00", housing="100000.00", transport="50000.00",
+        )
+        profile = second_employee.staff_profile
+        profile.department = "Housekeeping"
+        profile.save(update_fields=["department", "updated_at"])
+
+        reference, line = self._create_approved_run()
+        period_url = f"/api/admin/staff-operations/payroll/periods/{reference}/"
+        self.auth(self.creator)
+        paid = self.client.post(
+            f"/api/admin/staff-operations/payroll/periods/{reference}/pay/",
+            {"method": "BANK_TRANSFER", "external_reference": "BANK-FULLRUN-MULTI-001"}, format="json",
+        )
+        self.assertEqual(paid.status_code, 200, paid.content)
+        records = list(PayrollSalaryPayment.objects.filter(line__period__reference=reference, reversal_of__isnull=True))
+        self.assertEqual(len(records), 2)
+        target = next(record for record in records if record.line_id == line["id"])
+        other = next(record for record in records if record.line.staff_id == second_employee.pk)
+        self.assertEqual(target.financial_transaction_id, other.financial_transaction_id)
+        self.assertFalse(target.is_legacy_import)
+
+        self.auth(self.approver)
+        reversal = self.client.post(
+            f"/api/admin/staff-operations/payroll/periods/{reference}/lines/{line['id']}/payments/{target.reference}/reverse/",
+            {
+                "correction_reason": "The individual salary transfer was returned after full-run recording.",
+                "payment_date": self.today.isoformat(),
+                "external_reference": "BANK-FULLRUN-RETURN-001",
+                "idempotency_key": "full-run-employee-reversal-001",
+            },
+            format="json",
+        )
+        self.assertEqual(reversal.status_code, 201, reversal.content)
+        target.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual(target.reversed_by.amount, target.amount)
+        self.assertFalse(PayrollSalaryPayment.objects.filter(reversal_of=other).exists())
+        self.assertEqual(other.financial_transaction_id, target.financial_transaction_id)
+        self.assertEqual(PayrollPeriod.objects.get(reference=reference).status, PayrollPeriod.Status.PARTIALLY_PAID)
+        details = self.client.get(period_url).json()["data"]
+        self.assertEqual(details["salary_balance"], str(target.amount))
+
+    def test_cash_salary_entries_reconcile_open_drawers_and_cash_reversals(self):
+        reference, line = self._create_approved_run()
+        cashier = self.approver
+        cashier_session = open_cash_session(cashier=cashier, actor=cashier, opening_float="80000.00")
+        foreign_session = open_cash_session(cashier=self.creator, actor=self.creator, opening_float="50000.00")
+        url = f"/api/admin/staff-operations/payroll/periods/{reference}/lines/{line['id']}/payments/"
+        payload = {
+            "amount": "20000.00", "method": "CASH", "payment_date": self.today.isoformat(),
+            "cash_session_reference": foreign_session.reference, "idempotency_key": "cash-salary-owner-check-001",
+        }
+        self.auth(cashier)
+        self.assertEqual(self.client.post(url, payload, format="json").status_code, 403)
+        payload["cash_session_reference"] = cashier_session.reference
+        payload["idempotency_key"] = "cash-salary-payment-valid-001"
+        recorded = self.client.post(url, payload, format="json")
+        self.assertEqual(recorded.status_code, 201, recorded.content)
+        original = PayrollSalaryPayment.objects.get(reference=recorded.json()["data"]["reference"])
+        cashier_session.refresh_from_db()
+        self.assertEqual(cashier_session.expected_cash, Decimal("60000.00"))
+        self.assertTrue(CashMovement.objects.filter(
+            transaction=original.financial_transaction, type=CashMovement.Type.PAID_OUT,
+        ).exists())
+
+        corrector = make_staff("payroll.cash-corrector@staff.dev", role=User.Role.MANAGER)
+        return_session = open_cash_session(cashier=corrector, actor=corrector, opening_float="0.00")
+        self.auth(corrector)
+        reversal = self.client.post(url + original.reference + "/reverse/", {
+            "correction_reason": "Cash returned to the controlled hotel drawer.",
+            "payment_date": self.today.isoformat(),
+            "cash_session_reference": return_session.reference,
+            "idempotency_key": "cash-salary-reversal-001",
+        }, format="json")
+        self.assertEqual(reversal.status_code, 201, reversal.content)
+        return_session.refresh_from_db()
+        cashier_session.refresh_from_db()
+        self.assertEqual(return_session.expected_cash, Decimal("20000.00"))
+        self.assertEqual(cashier_session.expected_cash, Decimal("60000.00"))
+        self.assertTrue(CashMovement.objects.filter(
+            transaction__reversal_of=original.financial_transaction,
+            cash_session=return_session,
+            type=CashMovement.Type.CASH_IN,
+        ).exists())
+        self.assertEqual(PayrollPeriod.objects.get(reference=reference).status, PayrollPeriod.Status.APPROVED)
 
     def test_rejected_run_is_corrected_by_a_new_replacement_record(self):
         run = self._create_period()

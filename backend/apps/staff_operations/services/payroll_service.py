@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Q, Sum
 from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
@@ -18,7 +19,7 @@ from apps.finance.services import accounting
 from apps.finance.services.ledger_service import create_posted_transaction
 
 from ..models import (
-    PayrollEvent, PayrollLine, PayrollPeriod, PayrollStatutoryRuleEvent,
+    PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment, PayrollStatutoryRuleEvent,
     PayrollStatutoryRuleSet, PayrollTaxIdentity, StaffCompensation, StaffProfile,
 )
 
@@ -515,7 +516,7 @@ def create_payroll_period(
     if statutory_rules:
         active_statuses = [
             PayrollPeriod.Status.DRAFT, PayrollPeriod.Status.SUBMITTED,
-            PayrollPeriod.Status.APPROVED, PayrollPeriod.Status.PAID,
+            PayrollPeriod.Status.APPROVED, PayrollPeriod.Status.PARTIALLY_PAID, PayrollPeriod.Status.PAID,
         ]
         for staff_id in user_ids:
             same_month = PayrollLine.objects.select_for_update().filter(
@@ -610,7 +611,9 @@ def create_payroll_period(
             prior_lines = list(PayrollLine.objects.select_for_update().filter(
                 staff_id=staff_id, period__ends_on__year=tax_year,
                 period__ends_on__lt=starts_on,
-                period__status__in=[PayrollPeriod.Status.APPROVED, PayrollPeriod.Status.PAID],
+                period__status__in=[
+                    PayrollPeriod.Status.APPROVED, PayrollPeriod.Status.PARTIALLY_PAID, PayrollPeriod.Status.PAID,
+                ],
             ).select_related("period").order_by("period__ends_on", "pk"))
             opening = inputs.get("prior_ytd")
             if prior_lines and opening:
@@ -953,15 +956,460 @@ def review_payroll_period(*, period, reviewer, approved: bool, review_note=""):
     return period
 
 
+def _salary_payment_fingerprint(payload):
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _effective_salary_paid(*, line=None, period=None):
+    records = PayrollSalaryPayment.objects.all()
+    if line is not None:
+        records = records.filter(line_id=line.pk)
+    elif period is not None:
+        records = records.filter(line__period_id=period.pk)
+    else:
+        raise ValueError("A payroll line or period is required.")
+    totals = records.aggregate(
+        recorded=Sum("amount", filter=Q(reversal_of__isnull=True)),
+        reversed=Sum("amount", filter=Q(reversal_of__isnull=False)),
+    )
+    return (Decimal(totals["recorded"] or ZERO) - Decimal(totals["reversed"] or ZERO)).quantize(CENT)
+
+
+def _idempotent_salary_payment(*, key, fingerprint):
+    existing = PayrollSalaryPayment.objects.select_for_update().filter(idempotency_key=key).first()
+    if existing and existing.idempotency_fingerprint != fingerprint:
+        raise ValidationError({"idempotency_key": "This key was already used for a different salary-payment request."})
+    return existing
+
+
+def _locked_salary_cash_session(*, reference, actor, amount, cash_in=False):
+    reference = str(reference or "").strip()
+    if not reference:
+        raise ValidationError({"cash_session_reference": "An open cash-session reference is required for cash payroll."})
+    session = CashSession.objects.select_for_update().filter(reference=reference).first()
+    if session is None:
+        raise ValidationError({"cash_session_reference": "Cash session not found."})
+    if session.status != CashSession.Status.OPEN:
+        raise ValidationError({"cash_session_reference": "Cash salary entries require an open cash session."})
+    if session.cashier_id != actor.pk:
+        raise PermissionDenied("Use your own open cash session for a salary payment or cash return.")
+    if not cash_in and Decimal(session.expected_cash) < amount:
+        raise ValidationError({"cash_session_reference": "Cash session expected balance is insufficient for this payment."})
+    return session
+
+
+def _require_posted_payroll_accrual(period):
+    if period.accrual_transaction_id is None:
+        raise ValidationError("The approved payroll run has no linked accrual transaction.")
+    if period.accrual_transaction.status != FinancialTransaction.Status.POSTED:
+        raise ValidationError("The payroll accrual is not posted; reconcile the approved run before recording payment.")
+
+
+def _sync_payroll_payment_status(*, period, actor):
+    """Reconcile run status from immutable salary-payment and reversal rows."""
+    total_net = Decimal(period.total_net).quantize(CENT)
+    paid = _effective_salary_paid(period=period)
+    if paid < ZERO or paid > total_net:
+        raise ValidationError("Recorded salary payments do not reconcile to the approved run total.")
+    if total_net <= ZERO:
+        new_status = PayrollPeriod.Status.APPROVED if period.status != PayrollPeriod.Status.PAID else PayrollPeriod.Status.PAID
+    elif paid == total_net:
+        new_status = PayrollPeriod.Status.PAID
+    elif paid > ZERO:
+        new_status = PayrollPeriod.Status.PARTIALLY_PAID
+    else:
+        new_status = PayrollPeriod.Status.APPROVED
+    if period.status != new_status:
+        period.status = new_status
+        update_fields = ["status", "updated_at"]
+        if new_status == PayrollPeriod.Status.PAID:
+            period.paid_by = actor
+            period.paid_at = timezone.now()
+            update_fields.extend(["paid_by", "paid_at"])
+        period.save(update_fields=update_fields)
+    return new_status, paid, (total_net - paid).quantize(CENT)
+
+
+def _record_period_salary_payment_lines(*, period, payment, actor, method, external_reference, cash_session, recorded_at):
+    """Project the newly posted full-run settlement into employee payment rows."""
+    line_net_total = PayrollLine.objects.filter(period=period).aggregate(total=Sum("net_pay"))["total"] or ZERO
+    if Decimal(line_net_total).quantize(CENT) != Decimal(period.total_net).quantize(CENT):
+        raise ValidationError("Employee payroll lines do not reconcile to the full-run settlement total.")
+    payment_date = timezone.localdate(recorded_at)
+    for line in PayrollLine.objects.select_for_update().filter(period=period).order_by("pk"):
+        amount = Decimal(line.net_pay).quantize(CENT)
+        if amount <= ZERO:
+            continue
+        key = f"payroll-full-run-salary-payment:{period.reference}:{line.pk}"
+        fingerprint = _salary_payment_fingerprint({
+            "period": period.reference, "line_id": line.pk, "amount": str(amount),
+            "method": method, "external_reference": external_reference or "",
+            "cash_session": getattr(cash_session, "reference", ""), "payment_date": payment_date.isoformat(),
+        })
+        PayrollSalaryPayment.objects.create(
+            reference=f"SAL-FULLRUN-{line.pk}",
+            idempotency_key=key,
+            idempotency_fingerprint=fingerprint,
+            line=line,
+            amount=amount,
+            currency=period.currency,
+            payment_date=payment_date,
+            method=method,
+            external_reference=(external_reference or "")[:160],
+            notes=f"Employee allocation from full-run settlement {period.reference}.",
+            recorded_by=actor,
+            financial_transaction=payment,
+            cash_session=cash_session,
+            is_legacy_import=False,
+        )
+
+
+@transaction.atomic
+def record_payroll_salary_payment(
+    *, period, line, actor, amount, method, payment_date, external_reference="",
+    evidence_reference="", notes="", idempotency_key="", cash_session_reference="",
+):
+    """Record an already completed employee payment; never initiates a payout."""
+    if not has_capability(actor, "payroll.manage"):
+        raise PermissionDenied("This user cannot record salary payments.")
+    key = str(idempotency_key or "").strip()
+    if not key:
+        raise ValidationError({"idempotency_key": "A salary-payment idempotency key is required."})
+    amount = _decimal(amount, "amount", maximum=Decimal("9999999999.99"))
+    if amount <= ZERO:
+        raise ValidationError({"amount": "Salary payment amount must be greater than zero."})
+    method = str(method or "").upper()
+    if method not in PayrollSalaryPayment.Method.values:
+        raise ValidationError({"method": "Choose CASH or BANK_TRANSFER."})
+    payment_date = payment_date or hotel_today()
+    if payment_date > hotel_today():
+        raise ValidationError({"payment_date": "A salary payment cannot be dated in the future."})
+    external_reference = str(external_reference or "").strip()[:160]
+    evidence_reference = str(evidence_reference or "").strip()[:160]
+    notes = str(notes or "").strip()[:1000]
+    if method == PayrollSalaryPayment.Method.BANK_TRANSFER:
+        if not external_reference:
+            raise ValidationError({"external_reference": "A bank/payment reference is required for a bank transfer."})
+        if cash_session_reference:
+            raise ValidationError({"cash_session_reference": "A cash session is only valid for CASH payments."})
+    fingerprint_payload = {
+        "operation": "record", "period": period.reference, "line_id": line.pk,
+        "amount": str(amount), "method": method, "payment_date": payment_date.isoformat(),
+        "external_reference": external_reference, "evidence_reference": evidence_reference,
+        "notes": notes, "cash_session_reference": str(cash_session_reference or "").strip(),
+        "actor_id": actor.pk,
+    }
+    fingerprint = _salary_payment_fingerprint(fingerprint_payload)
+    existing = _idempotent_salary_payment(key=key, fingerprint=fingerprint)
+    if existing:
+        if existing.line_id != line.pk or existing.reversal_of_id is not None:
+            raise ValidationError({"idempotency_key": "This key belongs to a different payroll operation."})
+        return existing, False
+
+    period = PayrollPeriod.objects.select_for_update().select_related("accrual_transaction").get(pk=period.pk)
+    line = PayrollLine.objects.select_for_update().get(pk=line.pk, period=period)
+    # Recheck after taking the period lock so concurrent retries converge to one
+    # record before checking the now-updated run balance.
+    existing = _idempotent_salary_payment(key=key, fingerprint=fingerprint)
+    if existing:
+        if existing.line_id != line.pk or existing.reversal_of_id is not None:
+            raise ValidationError({"idempotency_key": "This key belongs to a different payroll operation."})
+        return existing, False
+    if period.status not in {PayrollPeriod.Status.APPROVED, PayrollPeriod.Status.PARTIALLY_PAID}:
+        raise ValidationError(f"Salary payments cannot be recorded for a payroll run in {period.status}.")
+    _require_posted_payroll_accrual(period)
+    outstanding = (Decimal(line.net_pay) - _effective_salary_paid(line=line)).quantize(CENT)
+    if outstanding <= ZERO:
+        raise ValidationError({"amount": "This employee has no outstanding salary balance."})
+    if amount > outstanding:
+        raise ValidationError({"amount": f"Payment exceeds the employee's outstanding balance of {outstanding}."})
+
+    session = None
+    credit_account = accounting.BANK_CLEARING
+    if method == PayrollSalaryPayment.Method.CASH:
+        session = _locked_salary_cash_session(
+            reference=cash_session_reference, actor=actor, amount=amount,
+        )
+        credit_account = accounting.CASH_ON_HAND
+
+    from apps.finance.services.references import generate_finance_reference
+    payment_reference = generate_finance_reference("SAL")
+    finance_key = "payroll-salary-payment:" + hashlib.sha256(key.encode("utf-8")).hexdigest()
+    financial_payment, created = create_posted_transaction(
+        transaction_type=FinancialTransaction.Type.PAYROLL_PAYMENT,
+        lines=[
+            {
+                "account_code": accounting.PAYROLL_PAYABLE,
+                "direction": FinancialLine.Direction.DEBIT,
+                "amount": amount,
+                "description": f"Salary payment for {line.employee_code or line.employee_name}",
+            },
+            {
+                "account_code": credit_account,
+                "direction": FinancialLine.Direction.CREDIT,
+                "amount": amount,
+                "description": f"Manually recorded salary payment via {method}",
+            },
+        ],
+        actor=actor,
+        source_key=finance_key,
+        idempotency_key=finance_key,
+        source_reference=payment_reference,
+        external_reference=external_reference,
+        narrative=f"Manual salary payment for {line.employee_code or line.employee_name} · {period.reference}",
+        currency=period.currency,
+        business_date=payment_date,
+        metadata={
+            "payroll_period": period.reference, "payroll_line_id": line.pk,
+            "salary_payment_reference": payment_reference, "method": method,
+        },
+    )
+    try:
+        with transaction.atomic():
+            salary_payment = PayrollSalaryPayment.objects.create(
+                reference=payment_reference,
+                idempotency_key=key,
+                idempotency_fingerprint=fingerprint,
+                line=line,
+                amount=amount,
+                currency=period.currency,
+                payment_date=payment_date,
+                method=method,
+                external_reference=external_reference,
+                evidence_reference=evidence_reference,
+                notes=notes,
+                recorded_by=actor,
+                financial_transaction=financial_payment,
+                cash_session=session,
+            )
+    except IntegrityError:
+        existing = _idempotent_salary_payment(key=key, fingerprint=fingerprint)
+        if existing:
+            return existing, False
+        raise
+
+    if session:
+        CashMovement.objects.create(
+            cash_session=session,
+            transaction=financial_payment,
+            type=CashMovement.Type.PAID_OUT,
+            amount=amount,
+            currency=period.currency,
+            actor=actor,
+            source_reference=salary_payment.reference,
+            notes=f"Manually recorded salary payment {salary_payment.reference}",
+            metadata={"payroll_period": period.reference, "salary_payment_reference": salary_payment.reference},
+        )
+        session.expected_cash = (Decimal(session.expected_cash) - amount).quantize(CENT)
+        session.save(update_fields=["expected_cash", "updated_at"])
+
+    previous_status = period.status
+    new_status, cumulative_paid, balance = _sync_payroll_payment_status(period=period, actor=actor)
+    # Keep the run timeline bounded to payment-state transitions; every record
+    # remains available in the paginated employee history and audit log.
+    if previous_status != new_status:
+        _event(period, PayrollEvent.Type.PAYMENT_RECORDED, actor, {
+            "payment_reference": salary_payment.reference,
+            "financial_reference": financial_payment.reference,
+            "line_id": line.pk,
+            "amount": str(amount),
+            "method": method,
+            "payment_date": payment_date.isoformat(),
+            "cumulative_paid": str(cumulative_paid),
+            "outstanding": str(balance),
+            "period_status": new_status,
+        })
+    if new_status == PayrollPeriod.Status.PAID and previous_status != PayrollPeriod.Status.PAID:
+        _event(period, PayrollEvent.Type.PAID, actor, {
+            "settlement_mode": "employee_level_manual_records",
+            "cumulative_paid": str(cumulative_paid),
+            "financial_reference": financial_payment.reference,
+        })
+    return salary_payment, True
+
+
+@transaction.atomic
+def reverse_payroll_salary_payment(
+    *, payment, actor, correction_reason, idempotency_key, payment_date=None,
+    external_reference="", evidence_reference="", cash_session_reference="",
+):
+    """Append an independently authorized full reversal and ledger correction."""
+    if not has_capability(actor, "payroll.approve"):
+        raise PermissionDenied("This user cannot authorize salary-payment corrections.")
+    key = str(idempotency_key or "").strip()
+    if not key:
+        raise ValidationError({"idempotency_key": "A reversal idempotency key is required."})
+    correction_reason = str(correction_reason or "").strip()[:500]
+    if len(correction_reason) < 5:
+        raise ValidationError({"correction_reason": "Provide a correction reason of at least five characters."})
+    payment_date = payment_date or hotel_today()
+    if payment_date > hotel_today():
+        raise ValidationError({"payment_date": "A payment reversal cannot be dated in the future."})
+    external_reference = str(external_reference or "").strip()[:160]
+    evidence_reference = str(evidence_reference or "").strip()[:160]
+    cash_session_reference = str(cash_session_reference or "").strip()
+    fingerprint_payload = {
+        "operation": "reverse", "payment_reference": payment.reference,
+        "correction_reason": correction_reason, "payment_date": payment_date.isoformat(),
+        "external_reference": external_reference, "evidence_reference": evidence_reference,
+        "cash_session_reference": cash_session_reference, "actor_id": actor.pk,
+    }
+    fingerprint = _salary_payment_fingerprint(fingerprint_payload)
+    existing = _idempotent_salary_payment(key=key, fingerprint=fingerprint)
+    if existing:
+        if existing.reversal_of_id != payment.pk:
+            raise ValidationError({"idempotency_key": "This key belongs to a different payroll operation."})
+        return existing, False
+
+    payment = PayrollSalaryPayment.objects.select_for_update().select_related(
+        "line", "line__period", "financial_transaction", "cash_session",
+    ).get(pk=payment.pk)
+    period = PayrollPeriod.objects.select_for_update().get(pk=payment.line.period_id)
+    existing = _idempotent_salary_payment(key=key, fingerprint=fingerprint)
+    if existing:
+        if existing.reversal_of_id != payment.pk:
+            raise ValidationError({"idempotency_key": "This key belongs to a different payroll operation."})
+        return existing, False
+    reversal = PayrollSalaryPayment.objects.select_for_update().filter(reversal_of=payment).first()
+    if reversal:
+        raise ValidationError({"payment_reference": "This salary payment has already been reversed."})
+    if payment.reversal_of_id is not None:
+        raise ValidationError({"payment_reference": "A reversal entry cannot itself be reversed; contact finance to correct a reversal."})
+    if payment.recorded_by_id == actor.pk:
+        raise PermissionDenied("A salary-payment correction must be authorized by someone other than its recorder.")
+    if payment.financial_transaction_id is None or payment.financial_transaction.status != FinancialTransaction.Status.POSTED:
+        raise ValidationError("This salary payment has no posted financial transaction to reverse; use a separately reviewed finance adjustment.")
+    if (
+        payment.financial_transaction.type != FinancialTransaction.Type.PAYROLL_PAYMENT
+        or payment.financial_transaction.currency != payment.currency
+    ):
+        raise ValidationError("The linked ledger transaction does not match this salary payment; reconcile it before reversal.")
+    if period.status not in {
+        PayrollPeriod.Status.APPROVED, PayrollPeriod.Status.PARTIALLY_PAID, PayrollPeriod.Status.PAID,
+    }:
+        raise ValidationError(f"Salary payments cannot be corrected for a payroll run in {period.status}.")
+    if payment_date < payment.payment_date:
+        raise ValidationError({"payment_date": "A payment correction cannot predate the original salary payment."})
+
+    if payment.method not in PayrollSalaryPayment.Method.values:
+        raise ValidationError("The original salary-payment method is missing or invalid; reconcile it before reversal.")
+    session = None
+    account = accounting.BANK_CLEARING
+    if payment.method == PayrollSalaryPayment.Method.CASH:
+        session = _locked_salary_cash_session(
+            reference=cash_session_reference, actor=actor, amount=Decimal(payment.amount), cash_in=True,
+        )
+        account = accounting.CASH_ON_HAND
+    elif cash_session_reference:
+        raise ValidationError({"cash_session_reference": "A cash session is only valid when returning cash."})
+
+    from apps.finance.services.references import generate_finance_reference
+    reversal_reference = generate_finance_reference("SALREV")
+    finance_key = "payroll-salary-reversal:" + hashlib.sha256(key.encode("utf-8")).hexdigest()
+    amount = Decimal(payment.amount).quantize(CENT)
+    financial_reversal, _ = create_posted_transaction(
+        transaction_type=FinancialTransaction.Type.PAYROLL_PAYMENT,
+        lines=[
+            {
+                "account_code": account,
+                "direction": FinancialLine.Direction.DEBIT,
+                "amount": amount,
+                "description": f"Reverse salary payment {payment.reference}",
+            },
+            {
+                "account_code": accounting.PAYROLL_PAYABLE,
+                "direction": FinancialLine.Direction.CREDIT,
+                "amount": amount,
+                "description": f"Restore payroll payable for {payment.reference}",
+            },
+        ],
+        actor=actor,
+        source_key=finance_key,
+        idempotency_key=finance_key,
+        source_reference=payment.reference,
+        external_reference=external_reference,
+        narrative=f"Authorized salary-payment reversal {payment.reference} · {period.reference}",
+        currency=payment.currency,
+        business_date=payment_date,
+        metadata={
+            "payroll_period": period.reference, "salary_payment_reversal_of": payment.reference,
+            "salary_payment_reversal_reference": reversal_reference,
+            "correction_reason": correction_reason, "method": payment.method,
+        },
+        reversal_of=payment.financial_transaction,
+    )
+    try:
+        with transaction.atomic():
+            reversal_record = PayrollSalaryPayment.objects.create(
+                reference=reversal_reference,
+                idempotency_key=key,
+                idempotency_fingerprint=fingerprint,
+                line=payment.line,
+                amount=amount,
+                currency=payment.currency,
+                payment_date=payment_date,
+                method=payment.method,
+                external_reference=external_reference,
+                evidence_reference=evidence_reference,
+                notes=f"Reversal of {payment.reference}.",
+                recorded_by=actor,
+                financial_transaction=financial_reversal,
+                cash_session=session,
+                reversal_of=payment,
+                correction_reason=correction_reason,
+            )
+    except IntegrityError:
+        existing = _idempotent_salary_payment(key=key, fingerprint=fingerprint)
+        if existing and existing.reversal_of_id == payment.pk:
+            return existing, False
+        raise
+
+    if session:
+        CashMovement.objects.create(
+            cash_session=session,
+            transaction=financial_reversal,
+            type=CashMovement.Type.CASH_IN,
+            amount=amount,
+            currency=payment.currency,
+            actor=actor,
+            source_reference=payment.reference,
+            notes=f"Returned cash for salary-payment reversal {payment.reference}",
+            metadata={
+                "payroll_period": period.reference, "salary_payment_reference": payment.reference,
+                "salary_payment_reversal_reference": reversal_record.reference,
+            },
+        )
+        session.expected_cash = (Decimal(session.expected_cash) + amount).quantize(CENT)
+        session.save(update_fields=["expected_cash", "updated_at"])
+
+    previous_status = period.status
+    new_status, cumulative_paid, balance = _sync_payroll_payment_status(period=period, actor=actor)
+    if previous_status != new_status:
+        _event(period, PayrollEvent.Type.PAYMENT_REVERSED, actor, {
+            "payment_reference": payment.reference,
+            "reversal_reference": reversal_record.reference,
+            "financial_reference": financial_reversal.reference,
+            "amount": str(amount),
+            "correction_reason": correction_reason,
+            "cumulative_paid": str(cumulative_paid),
+            "outstanding": str(balance),
+            "period_status": new_status,
+        })
+    return reversal_record, True
+
+
 @transaction.atomic
 def pay_payroll_period(*, period, actor, method, external_reference="", cash_session=None):
     if not has_capability(actor, "payroll.manage"):
         raise PermissionDenied("This user cannot settle payroll.")
-    period = PayrollPeriod.objects.select_for_update().get(pk=period.pk)
+    period = PayrollPeriod.objects.select_for_update().select_related("accrual_transaction").get(pk=period.pk)
     if period.status == PayrollPeriod.Status.PAID:
         return period
     if period.status != PayrollPeriod.Status.APPROVED:
         raise ValidationError(f"Payroll run cannot be paid from {period.status}.")
+    _require_posted_payroll_accrual(period)
     if method not in PayrollPeriod.PaymentMethod.values:
         raise ValidationError({"method": "Choose CASH or BANK_TRANSFER."})
     if method == PayrollPeriod.PaymentMethod.BANK_TRANSFER and not str(external_reference or "").strip():
@@ -1033,9 +1481,19 @@ def pay_payroll_period(*, period, actor, method, external_reference="", cash_ses
         "status", "paid_by", "paid_at", "payment_method", "external_reference", "cash_session",
         "payment_transaction", "updated_at",
     ])
+    _record_period_salary_payment_lines(
+        period=period,
+        payment=payment,
+        actor=actor,
+        method=method,
+        external_reference=external_reference,
+        cash_session=session,
+        recorded_at=now,
+    )
     _event(period, PayrollEvent.Type.PAID, actor, {
         "financial_reference": payment.reference,
         "method": method,
         "external_reference": (external_reference or "")[:160],
+        "employee_payment_records_created": True,
     })
     return period

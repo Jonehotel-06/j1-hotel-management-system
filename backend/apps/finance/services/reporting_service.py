@@ -98,6 +98,16 @@ def _metrics() -> dict[str, Q]:
             direction=FinancialLine.Direction.DEBIT,
             account_code__in=[accounting.PAYROLL_EXPENSE, accounting.PAYROLL_PENSION_EXPENSE],
         ),
+        "payroll_payments": Q(
+            transaction__type=FinancialTransaction.Type.PAYROLL_PAYMENT,
+            direction=FinancialLine.Direction.DEBIT,
+            account_code=accounting.PAYROLL_PAYABLE,
+        ),
+        "payroll_payment_reversals": Q(
+            transaction__type=FinancialTransaction.Type.PAYROLL_PAYMENT,
+            direction=FinancialLine.Direction.CREDIT,
+            account_code=accounting.PAYROLL_PAYABLE,
+        ),
         "inventory_acquisitions": Q(
             transaction__type=FinancialTransaction.Type.EXPENSE,
             direction=FinancialLine.Direction.DEBIT,
@@ -185,11 +195,14 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
         revenue = _amount(row.get("recognized_revenue"))
         operating_expenses = _amount(row.get("operating_expenses"))
         payroll_expenses = _amount(row.get("payroll_expenses"))
+        payroll_payments = _amount(row.get("payroll_payments"))
+        payroll_payment_reversals = _amount(row.get("payroll_payment_reversals"))
         serialized_days.append(
             {
                 "date": row["transaction__business_date"].isoformat(),
                 **row_payload,
                 "net_collections": money(collections - refunds),
+                "net_payroll_payments": money(payroll_payments - payroll_payment_reversals),
                 "gross_operating_result": money(revenue - operating_expenses - payroll_expenses),
             }
         )
@@ -199,6 +212,8 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
     revenue = _amount(totals.get("recognized_revenue"))
     operating_expenses = _amount(totals.get("operating_expenses"))
     payroll_expenses = _amount(totals.get("payroll_expenses"))
+    payroll_payments = _amount(totals.get("payroll_payments"))
+    payroll_payment_reversals = _amount(totals.get("payroll_payment_reversals"))
     return {
         "basis": "posted_immutable_ledger_business_date",
         "start_date": start_date.isoformat(),
@@ -207,6 +222,7 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
         "ledger_transactions": transactions.count(),
         **totals_payload,
         "net_collections": money(collections - refunds),
+        "net_payroll_payments": money(payroll_payments - payroll_payment_reversals),
         "gross_operating_result": money(revenue - operating_expenses - payroll_expenses),
         "by_day": serialized_days,
     }

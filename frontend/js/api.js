@@ -658,6 +658,26 @@ const API = (() => {
     return post(base + "/record/", payload, opts);
   }
 
+  /* Payroll salary movements are manual records, never payout instructions. */
+  function payrollLinePaymentsPath(periodReference, lineId) {
+    const base = resourceEp("payrollPeriods");
+    if (!base) throw notConfigured("payrollPeriods");
+    return `${base}/${encodeURIComponent(periodReference)}/lines/${encodeURIComponent(lineId)}/payments/`;
+  }
+  function listPayrollSalaryPayments(periodReference, lineId, params = {}, opts = {}) {
+    return get(payrollLinePaymentsPath(periodReference, lineId), { params, ...opts });
+  }
+  function recordPayrollSalaryPayment(periodReference, lineId, payload, opts = {}) {
+    return post(payrollLinePaymentsPath(periodReference, lineId), payload || {}, opts);
+  }
+  function reversePayrollSalaryPayment(periodReference, lineId, paymentReference, payload, opts = {}) {
+    return post(
+      `${payrollLinePaymentsPath(periodReference, lineId)}${encodeURIComponent(paymentReference)}/reverse/`,
+      payload || {},
+      opts,
+    );
+  }
+
   /* ----------------------- POS / room-service actions ---------------------- */
   const POS_ORDERS_EP = () => resourceEp("posOrders");
   function posOrderAction(reference, action, payload, opts = {}) {
@@ -768,7 +788,8 @@ const API = (() => {
     rescheduleBooking, getOccupancyCalendar, listMissedBookings, listLateArrivals,
     listGuestDiscounts, createGuestDiscount, updateGuestDiscount, deactivateGuestDiscount,
     confirmBooking, staffCancelBooking, checkInBooking, checkOutBooking,
-    noShowBooking, assignRoom, recordPayment, searchBookings, searchCheckout,
+    noShowBooking, assignRoom, recordPayment, listPayrollSalaryPayments,
+    recordPayrollSalaryPayment, reversePayrollSalaryPayment, searchBookings, searchCheckout,
     submitPosOrder, updatePosOrderStatus, capturePosTender, updatePosKitchenTicketStatus, openPosCashSession, closePosCashSession,
     reviewCancellationRequest, approveCancellationRequest, rejectCancellationRequest, processCancellationRefund, closeCancellationRequest, listRefunds,
     getStaffProfile, sendReceipt, getEmailLog, listEmailLogs, getRoomTypeRooms,

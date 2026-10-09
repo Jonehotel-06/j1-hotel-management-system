@@ -3,7 +3,8 @@ from decimal import Decimal
 from html import escape
 from io import BytesIO
 
-from django.db.models import Count, Prefetch, Q
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, OuterRef, Prefetch, Q, Subquery, Sum, Value
+from django.db.models.functions import Coalesce
 from django.http import HttpResponse
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
@@ -20,7 +21,7 @@ from apps.core.responses import success_response
 from apps.finance.models import CashSession
 
 from .models import (
-    PayrollEvent, PayrollLine, PayrollPeriod, PayrollStatutoryRuleEvent,
+    PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment, PayrollStatutoryRuleEvent,
     PayrollStatutoryRuleSet, PayrollTaxIdentity, StaffCompensation, StaffProfile,
 )
 from .payroll_serializers import (
@@ -29,6 +30,9 @@ from .payroll_serializers import (
     PayrollPeriodListSerializer,
     PayrollPaymentSerializer,
     PayrollReviewSerializer,
+    PayrollSalaryPaymentCreateSerializer,
+    PayrollSalaryPaymentReversalSerializer,
+    PayrollSalaryPaymentSerializer,
     PayrollStatutoryRuleReviewSerializer,
     PayrollStatutoryRuleSetCreateSerializer,
     PayrollStatutoryRuleSetDetailSerializer,
@@ -44,20 +48,58 @@ from .services.payroll_service import (
     create_payroll_tax_identity,
     create_statutory_rule_set,
     pay_payroll_period,
+    record_payroll_salary_payment,
+    reverse_payroll_salary_payment,
     review_payroll_period,
     review_statutory_rule_set,
     submit_payroll_period,
 )
 
 
+PAYROLL_MONEY = DecimalField(max_digits=16, decimal_places=2)
+
+
+def _payroll_line_queryset():
+    recorded = (
+        PayrollSalaryPayment.objects.filter(line_id=OuterRef("pk"), reversal_of__isnull=True)
+        .order_by().values("line_id").annotate(total=Sum("amount")).values("total")[:1]
+    )
+    reversed_amount = (
+        PayrollSalaryPayment.objects.filter(line_id=OuterRef("pk"), reversal_of__isnull=False)
+        .order_by().values("line_id").annotate(total=Sum("amount")).values("total")[:1]
+    )
+    return PayrollLine.objects.select_related("staff", "compensation", "tax_identity").annotate(
+        _salary_recorded=Coalesce(Subquery(recorded, output_field=PAYROLL_MONEY), Value(Decimal("0.00"), output_field=PAYROLL_MONEY), output_field=PAYROLL_MONEY),
+        _salary_reversed=Coalesce(Subquery(reversed_amount, output_field=PAYROLL_MONEY), Value(Decimal("0.00"), output_field=PAYROLL_MONEY), output_field=PAYROLL_MONEY),
+    ).annotate(
+        salary_amount_paid=ExpressionWrapper(F("_salary_recorded") - F("_salary_reversed"), output_field=PAYROLL_MONEY),
+        salary_balance=ExpressionWrapper(F("net_pay") - F("salary_amount_paid"), output_field=PAYROLL_MONEY),
+    )
+
+
 def _payroll_queryset(*, detail=False):
+    recorded = (
+        PayrollSalaryPayment.objects.filter(line__period_id=OuterRef("pk"), reversal_of__isnull=True)
+        .order_by().values("line__period_id").annotate(total=Sum("amount")).values("total")[:1]
+    )
+    reversed_amount = (
+        PayrollSalaryPayment.objects.filter(line__period_id=OuterRef("pk"), reversal_of__isnull=False)
+        .order_by().values("line__period_id").annotate(total=Sum("amount")).values("total")[:1]
+    )
     queryset = PayrollPeriod.objects.select_related(
         "created_by", "reviewed_by", "approved_by", "paid_by", "replaces", "cash_session", "statutory_rules",
         "accrual_transaction", "payment_transaction",
-    ).annotate(line_count=Count("lines"))
+    ).annotate(
+        line_count=Count("lines"),
+        _salary_recorded=Coalesce(Subquery(recorded, output_field=PAYROLL_MONEY), Value(Decimal("0.00"), output_field=PAYROLL_MONEY), output_field=PAYROLL_MONEY),
+        _salary_reversed=Coalesce(Subquery(reversed_amount, output_field=PAYROLL_MONEY), Value(Decimal("0.00"), output_field=PAYROLL_MONEY), output_field=PAYROLL_MONEY),
+    ).annotate(
+        salary_amount_paid=ExpressionWrapper(F("_salary_recorded") - F("_salary_reversed"), output_field=PAYROLL_MONEY),
+        salary_balance=ExpressionWrapper(F("total_net") - F("salary_amount_paid"), output_field=PAYROLL_MONEY),
+    )
     if detail:
         queryset = queryset.prefetch_related(
-            Prefetch("lines", queryset=PayrollLine.objects.select_related("staff", "compensation", "tax_identity")),
+            Prefetch("lines", queryset=_payroll_line_queryset()),
             Prefetch("events", queryset=PayrollEvent.objects.select_related("actor")),
         )
     return queryset
@@ -376,6 +418,129 @@ class PayrollPayView(APIView):
         return _private_response(success_response(PayrollPeriodDetailSerializer(_period(reference, detail=True)).data, message="Payroll settlement posted to the immutable ledger."))
 
 
+@extend_schema(tags=["Admin · Payroll"], summary="View payment history or record a manual salary payment")
+class PayrollSalaryPaymentListCreateView(APIView):
+    """Private per-employee history and entry point for manual salary records."""
+
+    permission_classes = [HasCapability]
+    required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve")
+    require_any_capability = True
+    pagination_class = StandardPagination
+
+    def _line(self, reference, line_id):
+        period = _period(reference)
+        line = PayrollLine.objects.filter(pk=line_id, period_id=period.pk).first()
+        if line is None:
+            raise NotFound("Payroll employee line not found.")
+        return period, line
+
+    def get(self, request, reference, line_id):
+        _, line = self._line(reference, line_id)
+        queryset = PayrollSalaryPayment.objects.filter(line=line).select_related(
+            "line", "recorded_by", "financial_transaction", "cash_session", "reversal_of",
+            "reversal_of__recorded_by", "reversal_of__financial_transaction", "reversed_by",
+        ).order_by("-payment_date", "-created_at", "-pk")
+        return _page(self, request, queryset, PayrollSalaryPaymentSerializer)
+
+    def post(self, request, reference, line_id):
+        serializer = PayrollSalaryPaymentCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        period, line = self._line(reference, line_id)
+        payment, created = record_payroll_salary_payment(
+            period=period,
+            line=line,
+            actor=request.user,
+            amount=data["amount"],
+            method=data["method"],
+            payment_date=data.get("payment_date"),
+            external_reference=data["external_reference"],
+            evidence_reference=data["evidence_reference"],
+            notes=data["notes"],
+            idempotency_key=data["idempotency_key"],
+            cash_session_reference=data["cash_session_reference"],
+        )
+        if created:
+            log_action(
+                actor=request.user,
+                action="PAYROLL_SALARY_PAYMENT_RECORDED",
+                instance=payment,
+                request=request,
+                metadata={
+                    "reference": payment.reference,
+                    "period_reference": period.reference,
+                    "line_id": line.pk,
+                    "amount": str(payment.amount),
+                    "method": payment.method,
+                    "financial_reference": payment.financial_transaction.reference,
+                },
+            )
+        payment = PayrollSalaryPayment.objects.select_related(
+            "line", "recorded_by", "financial_transaction", "cash_session", "reversal_of", "reversed_by",
+        ).get(pk=payment.pk)
+        return _private_response(success_response(
+            PayrollSalaryPaymentSerializer(payment).data,
+            message="Manual salary payment recorded." if created else "Existing salary payment returned.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        ))
+
+
+@extend_schema(tags=["Admin · Payroll"], summary="Independently authorize a salary-payment reversal")
+class PayrollSalaryPaymentReverseView(APIView):
+    """Independent, append-only correction of one employee payment record."""
+
+    permission_classes = [HasCapability]
+    required_capability = "payroll.approve"
+
+    def post(self, request, reference, line_id, payment_reference):
+        period = _period(reference)
+        payment = PayrollSalaryPayment.objects.select_related(
+            "line", "line__period", "recorded_by", "financial_transaction", "cash_session",
+        ).filter(
+            reference=payment_reference, line_id=line_id, line__period_id=period.pk,
+            reversal_of__isnull=True,
+        ).first()
+        if payment is None:
+            raise NotFound("Original salary payment not found.")
+        serializer = PayrollSalaryPaymentReversalSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        reversal, created = reverse_payroll_salary_payment(
+            payment=payment,
+            actor=request.user,
+            correction_reason=data["correction_reason"],
+            idempotency_key=data["idempotency_key"],
+            payment_date=data.get("payment_date"),
+            external_reference=data["external_reference"],
+            evidence_reference=data["evidence_reference"],
+            cash_session_reference=data["cash_session_reference"],
+        )
+        if created:
+            log_action(
+                actor=request.user,
+                action="PAYROLL_SALARY_PAYMENT_REVERSED",
+                instance=reversal,
+                request=request,
+                metadata={
+                    "reference": reversal.reference,
+                    "original_reference": payment.reference,
+                    "period_reference": period.reference,
+                    "line_id": line_id,
+                    "amount": str(reversal.amount),
+                    "correction_reason": reversal.correction_reason,
+                    "financial_reference": reversal.financial_transaction.reference,
+                },
+            )
+        reversal = PayrollSalaryPayment.objects.select_related(
+            "line", "recorded_by", "financial_transaction", "cash_session", "reversal_of", "reversed_by",
+        ).get(pk=reversal.pk)
+        return _private_response(success_response(
+            PayrollSalaryPaymentSerializer(reversal).data,
+            message="Salary-payment reversal recorded." if created else "Existing salary-payment reversal returned.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        ))
+
+
 class PayrollPayslipView(APIView):
     """Private PDF: employee may see their own finalized payslip; payroll roles may audit it."""
 
@@ -395,7 +560,9 @@ class PayrollPayslipView(APIView):
             )
         if line is None:
             raise NotFound("Payslip not found.")
-        if line.period.status not in {PayrollPeriod.Status.APPROVED, PayrollPeriod.Status.PAID}:
+        if line.period.status not in {
+            PayrollPeriod.Status.APPROVED, PayrollPeriod.Status.PARTIALLY_PAID, PayrollPeriod.Status.PAID,
+        }:
             raise NotFound("Payslip is not available until payroll is approved.")
 
         from reportlab.lib import colors
