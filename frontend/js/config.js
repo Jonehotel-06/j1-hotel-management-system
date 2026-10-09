@@ -16,9 +16,27 @@
     return typeof value === "string" ? value.trim().replace(/\/+$/, "") : "";
   }
 
-  // Empty is intentional: /api/... stays on the current origin unless a
-  // deployment's public runtime configuration supplies a separate API origin.
-  var API_BASE_URL = normalizeApiBase(runtimeConfig.API_BASE_URL);
+  // True when the frontend is opened on the dev machine (e.g. Live Server :5500).
+  function isLocalHost() {
+    return ["localhost", "127.0.0.1", ""].indexOf(window.location.hostname) !== -1;
+  }
+
+  // Django dev server used when running locally and nothing else is configured.
+  var LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
+
+  // Deployed Django backend used when the frontend runs anywhere but localhost.
+  var PRODUCTION_API_BASE_URL = "https://j1-hotel-management-system-production.up.railway.app";
+
+  // Resolution order:
+  //   1. API_BASE_URL from runtime-config.js (if non-empty)
+  //   2. Local dev server when running on localhost / 127.0.0.1 / file://
+  //   3. Production backend on Render
+  function resolveApiBase(value) {
+    return normalizeApiBase(value) ||
+      (isLocalHost() ? LOCAL_API_BASE_URL : PRODUCTION_API_BASE_URL);
+  }
+
+  var API_BASE_URL = resolveApiBase(runtimeConfig.API_BASE_URL);
 
   window.APP_CONFIG = {
     API_BASE_URL: API_BASE_URL,
@@ -160,7 +178,11 @@
   Object.keys(runtimeConfig).forEach(function (key) {
     if (key !== "API_ENDPOINTS") window.APP_CONFIG[key] = runtimeConfig[key];
   });
-  window.APP_CONFIG.API_BASE_URL = normalizeApiBase(window.APP_CONFIG.API_BASE_URL);
+
+  // Re-resolve after the override merge so an empty API_BASE_URL in
+  // runtime-config.js can't wipe out the localhost dev fallback.
+  window.APP_CONFIG.API_BASE_URL = resolveApiBase(window.APP_CONFIG.API_BASE_URL);
+
   if (runtimeConfig.API_ENDPOINTS && typeof runtimeConfig.API_ENDPOINTS === "object") {
     Object.assign(window.APP_CONFIG.API_ENDPOINTS, runtimeConfig.API_ENDPOINTS);
   }
