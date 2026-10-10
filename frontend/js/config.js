@@ -24,8 +24,7 @@
   // Django dev server used when running locally and nothing else is configured.
   var LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
 
-  var PRODUCTION_API_BASE_URL = "j1-hotel-management-system-production.up.railway.app";
-
+  var PRODUCTION_API_BASE_URL = "https://j1-hotel-management-system-production.up.railway.app";
 
   function resolveApiBase(value) {
     return normalizeApiBase(value) ||
