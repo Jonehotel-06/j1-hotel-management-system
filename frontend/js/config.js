@@ -24,11 +24,23 @@
   // Django dev server used when running locally and nothing else is configured.
   var LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
 
-  var PRODUCTION_API_BASE_URL = "https://j1-hotel-management-system-production.up.railway.app";
+  /* Resolution order (no deployment host is EVER hard-coded in this file):
+       1. API_BASE_URL supplied by the deployment — runtime-config.js, or
+          window.__APP_CONFIG__ set earlier in the document.
+       2. The local Django dev server when the page is opened on
+          localhost / 127.0.0.1 / file://.
+       3. Same-origin "/api/..." requests — the reverse-proxy / single-host
+          deployment. This is the checked-in default and the reason the
+          deployed frontend reaches the API through its own origin (see the
+          /api rewrite in vercel.json).
 
+     A previous revision hard-coded the production Railway hostname here.
+     That broke the deployment-neutral contract the project's own tests
+     enforce (tests-js/test-runtime-config.js) and pinned the checked-in
+     frontend to one environment. Deployment-specific origins belong in
+     deployment configuration, never in source. */
   function resolveApiBase(value) {
-    return normalizeApiBase(value) ||
-      (isLocalHost() ? LOCAL_API_BASE_URL : PRODUCTION_API_BASE_URL);
+    return normalizeApiBase(value) || (isLocalHost() ? LOCAL_API_BASE_URL : "");
   }
 
   var API_BASE_URL = resolveApiBase(runtimeConfig.API_BASE_URL);
@@ -88,6 +100,8 @@
     users:         "/api/admin/users/",           // ADMIN
     workstations:  "/api/admin/users/terminals/", // capability-gated; attribution only
     staffCapabilities: "/api/auth/capabilities/", // current account's server-resolved UI capability hints
+    authProfile:   "/api/auth/profile/",          // read/update the signed-in account
+    passwordChange:"/api/auth/password/change/",  // change the signed-in account's password
     settings:      "/api/admin/settings/",        // GET manager+, PATCH admin-only
     stats:         "/api/admin/dashboard/",       // dashboard KPIs
     facilities:    "/api/admin/facilities/",
@@ -105,6 +119,15 @@
     posRoomServiceStays: "/api/admin/pos/room-service-stays/",
     posOrders:           "/api/admin/pos/orders/",
     posKitchenTickets:   "/api/admin/pos/kitchen-tickets/",
+    /* Cash sessions have ONE model (apps.finance.models.CashSession) with two
+       distinct route surfaces on the backend, so both keys are deliberate:
+         posCashSessions      → the cashier ACTIONS (open / {ref}/close/)
+                                mounted under the POS namespace;
+         financeCashSessions  → the canonical LISTING/reconciliation
+                                collection mounted under the finance namespace.
+       The bare `GET /api/admin/pos/cash-sessions/` collection does not exist
+       and is intentionally retired (D12) — nothing may list from
+       `posCashSessions`. Always read sessions through `financeCashSessions`. */
     posCashSessions:     "/api/admin/pos/cash-sessions/",
     financeCashSessions: "/api/admin/finance/cash-sessions/",
 
@@ -117,6 +140,17 @@
     maintenanceWorkOrders: "/api/admin/maintenance/",
     staffDirectory:        "/api/admin/users/directory/",
     staffProfiles:         "/api/admin/staff-operations/profiles/",
+    /* Biometric enrollment is workstation-scoped: the desktop terminal key is
+       the credential, and the server refuses the request without it. The paths
+       used to be hard-coded inside js/biometrics.js, which bypassed the single
+       endpoint map (D1 sweep). */
+    fingerprintEnrollment: "/api/admin/staff-operations/fingerprint/enrollment/",
+    fingerprintEnrollments:"/api/admin/staff-operations/fingerprint/enrollments/",
+    faceEnrollment:        "/api/admin/staff-operations/face/enrollment/",
+    faceEnrollments:       "/api/admin/staff-operations/face/enrollments/",
+    temporaryCredential:   "/api/admin/staff-operations/biometrics/temporary-credential/",
+    attendanceClock:       "/api/admin/staff-operations/attendance/clock/",
+    leaveRequests:         "/api/admin/staff-operations/leave-requests/",
     shiftTemplates:        "/api/admin/staff-operations/shift-templates/",
     shifts:                "/api/admin/staff-operations/shifts/",
     attendance:            "/api/admin/staff-operations/attendance/",
@@ -126,7 +160,9 @@
     payrollTaxIdentities:  "/api/admin/staff-operations/payroll/tax-identities/",
     payrollStatutoryRules: "/api/admin/staff-operations/payroll/statutory-rules/",
     payrollPeriods:       "/api/admin/staff-operations/payroll/periods/",
+    /* Payroll (client) — the signed-in user's OWN approved payslips. */
     payrollPayslips:      "/api/admin/staff-operations/payroll/payslips/",
+    myPayslips:           "/api/admin/staff-operations/payroll/my-payslips/",
 
     /* Inventory and procurement (capability-gated server-side). */
     inventoryLocations:           "/api/admin/inventory/locations/",
@@ -142,11 +178,19 @@
     purchaseOrders:               "/api/admin/inventory/purchase-orders/",
 
     /* Reports (MANAGER+) — financial ledger summary stays separate from
-       legacy booking/occupancy compatibility projections. */
-    financeSummary:    "/api/admin/finance/reports/summary/",
-    reportsRevenue:    "/api/admin/reports/revenue/", // retained for legacy consumers
-    reportsOccupancy:  "/api/admin/reports/occupancy/",
-    reportsBookings:   "/api/admin/reports/bookings/",
+       legacy booking/occupancy compatibility projections.
+
+       The Accounting page reads four independent finance collections plus the
+       ledger summary. Every key below MUST resolve to a real backend route
+       (apps/finance/urls.py) — a missing key used to produce requests ending
+       in "/undefined" and permanently blank accounting panels (D1). */
+    financeSummary:      "/api/admin/finance/reports/summary/",
+    financeTransactions: "/api/admin/finance/transactions/",   // immutable posted ledger headers
+    financeExpenses:     "/api/admin/finance/expenses/",       // controlled expense drafts/submissions
+    financeApprovals:    "/api/admin/finance/approvals/",      // sensitive-money approval requests
+    reportsRevenue:      "/api/admin/reports/revenue/", // retained for legacy consumers
+    reportsOccupancy:    "/api/admin/reports/occupancy/",
+    reportsBookings:     "/api/admin/reports/bookings/",
 
     /* Authoritative availability search (public; used by staff too) */
     availability:  "/api/rooms/availability/",
