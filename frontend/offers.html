@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
-<link rel="stylesheet" href="css/main.css?v=1.1.11">
+<link rel="stylesheet" href="css/main.css?v=1.1.12">
 <script>(function(){var t;try{t=JSON.parse(localStorage.getItem("jone.theme"))}catch(e){}if(t!=="dark"&&t!=="light"){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"}document.documentElement.setAttribute("data-theme",t);})();</script>
 
 
@@ -25,6 +25,10 @@
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
+<script>
+/* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
+(function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
+</script>
   <div class="container header-inner">
     <a href="index.html" class="brand" aria-label="J-ONE Hotel &amp; Lodge — home">
       <span class="brand-mark-badge">
@@ -100,7 +104,7 @@
       </div>
 
       <div class="footer-col">
-        <h2 class="h5">Explore</h2>
+        <h5>Explore</h5>
         <a href="index.html#rooms">Rooms &amp; Suites</a>
         <a href="facilities.html">Facilities</a>
         <a href="gallery.html">Gallery</a>
@@ -110,7 +114,7 @@
       </div>
 
       <div class="footer-col">
-        <h2 class="h5">Booking</h2>
+        <h5>Booking</h5>
         <a href="booking.html">Book Your Stay</a>
         <a href="my-bookings.html">Your stays</a>
         <a href="portal/login.html">Guest portal</a>
@@ -121,7 +125,7 @@
       </div>
 
       <div class="footer-col">
-        <h2 class="h5">Contact</h2>
+        <h5>Contact</h5>
         <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
         <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
         <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
@@ -166,18 +170,18 @@
   </div>
 </div>
 
-<script src="js/runtime-config.js?v=1.1.11"></script>
-<script src="js/config.js?v=1.1.11"></script>
-<script src="js/utils.js?v=1.1.11"></script>
-<script src="js/icons.js?v=1.1.11"></script>
-<script src="js/api.js?v=1.1.11"></script>
-<script src="js/theme.js?v=1.1.11"></script>
-<script src="js/ui.js?v=1.1.11"></script>
-<script src="js/hotel-data.js?v=1.1.11"></script>
-<script src="js/contact.js?v=1.1.11"></script>
-<script src="js/navigation.js?v=1.1.11"></script>
+<script src="js/runtime-config.js?v=1.1.12"></script>
+<script src="js/config.js?v=1.1.12"></script>
+<script src="js/utils.js?v=1.1.12"></script>
+<script src="js/icons.js?v=1.1.12"></script>
+<script src="js/api.js?v=1.1.12"></script>
+<script src="js/theme.js?v=1.1.12"></script>
+<script src="js/ui.js?v=1.1.12"></script>
+<script src="js/hotel-data.js?v=1.1.12"></script>
+<script src="js/contact.js?v=1.1.12"></script>
+<script src="js/navigation.js?v=1.1.12"></script>
 <script>JONE.ui.initChrome(); JONE.nav.init();</script>
-<script src="js/site.js?v=1.1.11"></script>
+<script src="js/site.js?v=1.1.12"></script>
 <script>
 (function () {
   "use strict";
@@ -230,8 +234,8 @@
   load();
 })();
 </script>
-<script src="js/pwa.js?v=1.1.11"></script>
-<script src="js/version.js?v=1.1.11"></script>
-<script src="js/update-checker.js?v=1.1.11"></script>
+<script src="js/pwa.js?v=1.1.12"></script>
+<script src="js/version.js?v=1.1.12"></script>
+<script src="js/update-checker.js?v=1.1.12"></script>
 </body>
 </html>
