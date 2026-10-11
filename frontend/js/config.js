@@ -24,21 +24,12 @@
   // Django dev server used when running locally and nothing else is configured.
   var LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
 
-  /* Resolution order (no deployment host is EVER hard-coded in this file):
-       1. API_BASE_URL supplied by the deployment — runtime-config.js, or
-          window.__APP_CONFIG__ set earlier in the document.
-       2. The local Django dev server when the page is opened on
-          localhost / 127.0.0.1 / file://.
-       3. Same-origin "/api/..." requests — the reverse-proxy / single-host
-          deployment. This is the checked-in default and the reason the
-          deployed frontend reaches the API through its own origin (see the
-          /api rewrite in vercel.json).
+  var PRODUCTION_API_BASE_URL = "https://j1-hotel-management-system-production.up.railway.app";
 
-     A previous revision hard-coded the production Railway hostname here.
-     That broke the deployment-neutral contract the project's own tests
-     enforce (tests-js/test-runtime-config.js) and pinned the checked-in
-     frontend to one environment. Deployment-specific origins belong in
-     deployment configuration, never in source. */
+  function resolveApiBase(value) {
+    return normalizeApiBase(value) ||
+      (isLocalHost() ? LOCAL_API_BASE_URL : PRODUCTION_API_BASE_URL);
+  }
   function resolveApiBase(value) {
     return normalizeApiBase(value) || (isLocalHost() ? LOCAL_API_BASE_URL : "");
   }
