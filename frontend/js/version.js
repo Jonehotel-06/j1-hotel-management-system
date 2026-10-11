@@ -5,4 +5,4 @@
    it by hand. js/update-checker.js compares window.JONE_VERSION against
    the live version.json to detect that a newer deployment is available.
    ========================================================================== */
-window.JONE_VERSION = "1.1.12";
+window.JONE_VERSION = "1.1.13";
