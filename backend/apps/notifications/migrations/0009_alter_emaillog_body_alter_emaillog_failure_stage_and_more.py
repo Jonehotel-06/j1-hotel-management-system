@@ -3,6 +3,27 @@
 from django.db import migrations, models
 
 
+class AlterTextFieldDefaultSkipMySQL(migrations.AlterField):
+    """AlterField that leaves the database untouched on MySQL.
+
+    MySQL cannot put a literal DEFAULT on a TEXT/BLOB column, so applying
+    ``db_default=''`` to a TextField fails there with error 1101. The Python-side
+    ``default=''`` still fills the value on every ORM insert, and the migration
+    *state* still records ``db_default`` so ``makemigrations --check`` stays clean.
+    Every other database (SQLite in development, PostgreSQL) behaves as before.
+    """
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        if schema_editor.connection.vendor == "mysql":
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+    def database_backwards(self, app_label, schema_editor, from_state, to_state):
+        if schema_editor.connection.vendor == "mysql":
+            return
+        super().database_backwards(app_label, schema_editor, from_state, to_state)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,7 +31,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
+        AlterTextFieldDefaultSkipMySQL(
             model_name='emaillog',
             name='body',
             field=models.TextField(blank=True, db_default='', default=''),
@@ -20,7 +41,7 @@ class Migration(migrations.Migration):
             name='failure_stage',
             field=models.CharField(blank=True, choices=[('', '—'), ('RENDER', 'Rendering the receipt'), ('ATTACHMENT', 'Generating the PDF attachment'), ('SMTP', 'Submitting to the mail server')], db_default='', default='', max_length=16),
         ),
-        migrations.AlterField(
+        AlterTextFieldDefaultSkipMySQL(
             model_name='emaillog',
             name='html_body',
             field=models.TextField(blank=True, db_default='', default=''),
