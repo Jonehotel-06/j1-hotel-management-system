@@ -59,12 +59,14 @@ class HotelSettingsAdminSerializer(serializers.ModelSerializer):
             "country", "phone", "email", "google_maps_url", "google_review_url",
             "social_links",
             "check_in_time", "check_out_time", "min_stay_nights", "max_stay_nights",
-            "currency", "tax_rate_percent", "service_fee", "deposit_percent",
+            "currency", "tax_rate_percent", "statutory_tax_enabled",
+            "statutory_tax_rate_percent", "statutory_tax_basis",
+            "service_fee", "deposit_percent",
             "pending_booking_minutes", "cancellation_deadline_hours",
             "cancellation_fee_percent", "restrict_check_in_to_booked_date",
             "updated_at",
         ]
-        read_only_fields = ["updated_at"]
+        read_only_fields = ["updated_at", "tax_rate_percent"]
 
     def validate_social_links(self, value):
         if not isinstance(value, list):

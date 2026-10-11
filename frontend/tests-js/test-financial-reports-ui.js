@@ -94,6 +94,7 @@ function bootReportController() {
     guest_charges: reportMetric("110.00", 1),
     recognized_revenue: reportMetric("100.00", 1),
     tax_accrued: reportMetric("10.00", 1),
+    statutory_tax_accrued: reportMetric("7.50", 1),
     collections: reportMetric("110.00", 1),
     refunds: reportMetric("20.00", 1),
     net_collections: "90.00",

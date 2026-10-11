@@ -93,10 +93,11 @@ class PosWorkflowTests(BaseAPITestCase):
         self.assertTrue(created)
         self.assertFalse(repeat_created)
         self.assertEqual(repeated.pk, order.pk)
-        # (2,500 + 1,000) × 2 = 7,000; tax = 525; total = 7,525.
+        # (2,500 + 1,000) × 2 = 7,000. Customer-billing tax removal: the guest
+        # pays the approved selling prices only — no appended tax.
         self.assertEqual(order.subtotal, Decimal("7000.00"))
-        self.assertEqual(order.tax_amount, Decimal("525.00"))
-        self.assertEqual(order.total_amount, Decimal("7525.00"))
+        self.assertEqual(order.tax_amount, Decimal("0.00"))
+        self.assertEqual(order.total_amount, Decimal("7000.00"))
 
         delivered = self._deliver(order)
         delivered.refresh_from_db()
@@ -105,7 +106,7 @@ class PosWorkflowTests(BaseAPITestCase):
         self.assertEqual(delivered.charge_transaction.type, FinancialTransaction.Type.POS_CHARGE)
         self.assertEqual(
             folio_balance_queryset().get(pk=delivered.folio_id).balance,
-            Decimal("7525"),
+            Decimal("7000"),
         )
         self.assertEqual(PosOrderEvent.objects.filter(order=order, type=PosOrderEvent.Type.CHARGED).count(), 1)
         consumption = StockConsumptionRequest.objects.get(pos_order=order)
@@ -153,7 +154,8 @@ class PosWorkflowTests(BaseAPITestCase):
         )
         session.refresh_from_db()
         self.assertEqual(tender.cash_session_id, session.pk)
-        self.assertEqual(session.expected_cash, Decimal("3862.50"))
+        # Opening float ₦100 + tax-free sale ₦3,500 = ₦3,600.
+        self.assertEqual(session.expected_cash, Decimal("3600.00"))
 
     def test_material_cash_variance_requires_manager_review_then_completes_session(self):
         manager = make_staff("pos-cash-variance-manager@staff.dev", role=User.Role.MANAGER)

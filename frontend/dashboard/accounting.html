@@ -2,6 +2,10 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
+<script>
+/* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
+(function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>Accounting | J-ONE Staff</title>
@@ -171,7 +175,8 @@
   var FINANCE_MEASURES=[
     { label:"Guest charges", key:"guest_charges" },
     { label:"Recognized revenue", key:"recognized_revenue" },
-    { label:"Tax accrued", key:"tax_accrued" },
+    { label:"Historical tax collected (pre-removal)", key:"tax_accrued" },
+    { label:"Statutory tax accrued (not billed to guests)", key:"statutory_tax_accrued" },
     { label:"Collections", key:"collections" },
     { label:"Refunds", key:"refunds" },
     { label:"Net collections", key:"net_collections" },

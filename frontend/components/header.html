@@ -1,5 +1,9 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
+<script>
+/* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
+(function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
+</script>
   <div class="container header-inner">
     <a href="index.html" class="brand" aria-label="J-ONE Hotel &amp; Lodge — home">
       <span class="brand-mark-badge">

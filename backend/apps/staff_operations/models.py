@@ -258,5 +258,6 @@ from .face_models import FaceTemplate, FaceVerificationAttempt  # noqa: E402,F40
 
 # Fingerprint biometrics and temporary credentials.
 from .biometric_models import (  # noqa: E402,F401
-    FingerprintTemplate, FingerprintVerificationAttempt, TemporaryWorkstationCredential
+    FingerprintTemplate, FingerprintVerificationAttempt, TemporaryWorkstationCredential,
+    FingerprintDevice, FingerprintDeviceEvent,
 )

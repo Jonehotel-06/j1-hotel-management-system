@@ -10,6 +10,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from apps.core.exceptions import CapacityExceededError, InvalidDatesError, OfferNotApplicableError
 from apps.core.utils import money
+from apps.finance.services.tax_policy import customer_tax_amount
 from apps.hotel.models import HotelSettings
 from apps.offers import services as offer_services
 
@@ -153,7 +154,13 @@ def calculate_quote(*, room_type, check_in, check_out, rooms, adults, children,
 
     extra_guest_fee = q((room_type.extra_guest_fee or Decimal("0.00")) * extra_guests * nights)
     taxable = q(subtotal - discount + extra_guest_fee)
-    tax = q(taxable * (settings_obj.tax_rate_percent or Decimal("0.00")) / _HUNDRED)
+    # CUSTOMER-BILLING TAX REMOVAL (owner policy 2026-10-11): new quotations
+    # never carry an appended tax, regardless of any legacy tax_rate_percent
+    # value in settings. tax_policy.customer_tax_amount() is the single source
+    # of truth so the charge cannot creep back in through a side path. The
+    # hotel's own statutory exposure is accrued separately (and invisibly to
+    # guests) by apps.finance.services.tax_policy — see that module.
+    tax = customer_tax_amount()
     service_fee = q(settings_obj.service_fee or Decimal("0.00"))
     total = q(taxable + tax + service_fee)
     required = q(total * (settings_obj.deposit_percent or _HUNDRED) / _HUNDRED)

@@ -57,6 +57,43 @@ class HotelSettings(models.Model):
     tax_rate_percent = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal("0.00"),
         validators=[MinValueValidator(Decimal("0.00")), MaxValueValidator(Decimal("100.00"))],
+        help_text=(
+            "DEPRECATED for customer billing. Owner policy (2026-10-11): new customer "
+            "transactions are never charged an additional tax, so this value no longer "
+            "affects quotations, bookings, POS totals, receipts or checkout balances. "
+            "Kept only so historical records and reports that reference it remain "
+            "interpretable. See apps.finance.services.tax_policy."
+        ),
+    )
+    statutory_tax_enabled = models.BooleanField(
+        default=True,
+        help_text=(
+            "Accrue the hotel's own statutory tax exposure (NOT billed to guests) so the "
+            "liability stays visible for remittance review. Disabling stops new accruals "
+            "only; history is preserved. Owner/accountant must confirm the hotel's "
+            "registration status before changing this."
+        ),
+    )
+    statutory_tax_rate_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal("7.50"),
+        validators=[MinValueValidator(Decimal("0.00")), MaxValueValidator(Decimal("100.00"))],
+        help_text=(
+            "Statutory tax rate used for the separate (not-guest-billed) accrual. "
+            "Baseline: Nigeria VAT at 7.5% (VAT Act as amended by Finance Act 2019; "
+            "retained by the Nigeria Tax Act 2025 effective 2026-01-01)."
+        ),
+    )
+    statutory_tax_basis = models.CharField(
+        max_length=12,
+        choices=[("EXCLUSIVE", "Compute on the net selling amount (tax-exclusive prices)"),
+                 ("INCLUSIVE", "Extract from the customer total (tax-inclusive prices)")],
+        default="EXCLUSIVE",
+        help_text=(
+            "How the statutory (not-guest-billed) tax is computed. EXCLUSIVE preserves "
+            "the previous price semantics: approved prices are unchanged and the exposure "
+            "sits with the hotel. INCLUSIVE must only be set after an explicit owner or "
+            "accountant decision — never switch bases silently."
+        ),
     )
     service_fee = models.DecimalField(
         max_digits=10, decimal_places=2, default=Decimal("0.00"),

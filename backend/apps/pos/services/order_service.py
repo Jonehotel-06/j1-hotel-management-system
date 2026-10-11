@@ -16,6 +16,7 @@ from apps.finance.services import accounting
 from apps.finance.services.folio_service import get_or_create_main_folio_for_stay
 from apps.finance.services.ledger_service import create_posted_transaction
 from apps.finance.services.references import generate_finance_reference
+from apps.finance.services.tax_policy import customer_tax_amount, statutory_ledger_lines
 from apps.stays.models import Stay
 
 from ..models import KitchenTicket, MenuCategory, MenuItem, MenuModifier, PosOrder, PosOrderEvent, PosOrderLine, PosTender
@@ -90,9 +91,13 @@ def _snapshot_line(*, raw_line: Mapping, currency: str, service_areas=None) -> d
     if unit_price <= Decimal("0.00"):
         raise ValidationError({"lines": "The configured item/modifier price must be positive."})
     line_subtotal = (unit_price * quantity).quantize(CENT)
-    tax_amount = (line_subtotal * Decimal(menu_item.tax_rate_percent or 0) / Decimal("100")).quantize(
-        CENT, rounding=ROUND_HALF_UP
-    )
+    # CUSTOMER-BILLING TAX REMOVAL (owner policy 2026-10-11): POS lines never
+    # carry an appended tax, regardless of any legacy MenuItem.tax_rate_percent
+    # value. The approved selling price is the price the guest pays. The
+    # hotel's statutory exposure is accrued separately and invisibly to guests
+    # (apps.finance.services.tax_policy). Historical order lines keep their
+    # stored tax snapshots untouched.
+    tax_amount = customer_tax_amount()
     return {
         "menu_item": menu_item,
         "item_name": menu_item.name,
@@ -354,6 +359,8 @@ def _post_order_charge(*, order, actor):
         },
     ]
     if order.tax_amount > Decimal("0.00"):
+        # HISTORICAL orders only: tax actually billed to the guest before the
+        # customer-billing tax removal is recognised as collected tax payable.
         lines.append(
             {
                 "account_code": accounting.TAX_PAYABLE,
@@ -361,6 +368,25 @@ def _post_order_charge(*, order, actor):
                 "amount": order.tax_amount,
                 "description": f"POS tax {order.reference}",
             }
+        )
+    else:
+        # New customer transactions carry no billed tax. The hotel's own
+        # statutory exposure (if any) is accrued on the net sale through a
+        # separate expense/liability pair that never touches guest balances.
+        lines.extend(
+            {
+                "account_code": line["account_code"],
+                "direction": (
+                    FinancialLine.Direction.DEBIT
+                    if line["direction"] == "DEBIT"
+                    else FinancialLine.Direction.CREDIT
+                ),
+                "amount": line["amount"],
+                "description": line["description"],
+            }
+            for line in statutory_ledger_lines(
+                net_amount=order.subtotal, reference=order.reference
+            )
         )
     postings = []
     if folio:

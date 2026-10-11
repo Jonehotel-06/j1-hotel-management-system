@@ -8,6 +8,7 @@ Standards:
 - Successful verification can issue temporary, scoped workstation sign-in credentials.
 """
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 
@@ -83,3 +84,88 @@ class TemporaryWorkstationCredential(TimeStampedModel):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class FingerprintDevice(TimeStampedModel):
+    """Physical fingerprint reader bound to a workstation.
+
+    This is the software integration boundary for attendance hardware: a
+    vendor SDK or local capture service on the workstation submits captures
+    under this device's identity. Raw fingerprint images are never stored —
+    only ISO/IEC 19794-2 minutiae probes are processed, matched, and logged
+    as outcomes. Device rows carry status/availability for supervisors; the
+    binding to a Workstation preserves the approved workstation restrictions.
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active / available"
+        DISABLED = "DISABLED", "Disabled by management"
+        FAULT = "FAULT", "Fault reported"
+
+    serial_number = models.CharField(max_length=80, unique=True, db_index=True)
+    label = models.CharField(max_length=120)
+    workstation = models.ForeignKey(
+        "accounts.Workstation", on_delete=models.PROTECT, related_name="fingerprint_devices"
+    )
+    vendor = models.CharField(max_length=80, blank=True, default="")
+    model_name = models.CharField(max_length=80, blank=True, default="")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.ACTIVE, db_index=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_error = models.CharField(max_length=255, blank=True, default="")
+    registered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="fingerprint_devices_registered",
+    )
+    notes = models.CharField(max_length=500, blank=True, default="")
+
+    class Meta:
+        ordering = ["serial_number"]
+
+    def __str__(self):
+        return f"{self.serial_number} · {self.label}"
+
+
+class FingerprintDeviceEvent(models.Model):
+    """Append-only capture event from a bound reader (mocked or physical).
+
+    Records who the device identified, what happened and when — the audit
+    history for attendance hardware. ``event_nonce`` makes replayed or
+    duplicated submissions detectable; no raw fingerprint image is stored.
+    """
+
+    device = models.ForeignKey(
+        FingerprintDevice, on_delete=models.PROTECT, related_name="events"
+    )
+    event_nonce = models.CharField(max_length=80)
+    staff = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="fingerprint_device_events",
+    )
+    action = models.CharField(max_length=30, blank=True, default="")
+    captured_at = models.DateTimeField()
+    received_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    outcome = models.CharField(max_length=30, db_index=True)
+    match_score = models.FloatField(null=True, blank=True)
+    attendance_reference = models.CharField(max_length=64, blank=True, default="")
+    source_key = models.CharField(max_length=160, unique=True)
+    details = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-received_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["device", "event_nonce"], name="unique_fingerprint_device_event_nonce"
+            )
+        ]
+        indexes = [models.Index(fields=["device", "received_at"])]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Fingerprint device events are append-only and cannot be updated.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Fingerprint device events are append-only and cannot be deleted.")
+
+    def __str__(self):
+        return f"{self.device.serial_number} · {self.event_nonce} · {self.outcome}"

@@ -2,6 +2,10 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
+<script>
+/* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
+(function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>Hotel Settings | J-ONE Staff</title>
@@ -95,14 +99,19 @@
       </div>
 
       <h3 style="font-size:var(--fs-md);margin:1.4rem 0 0.9rem;">Pricing &amp; booking</h3>
+      <p class="form-note" style="margin:0 0 0.8rem;font-size:var(--fs-sm);color:var(--text-muted,inherit);">Customers are charged from approved prices plus permitted charges less discounts — no tax is added to guest bills.</p>
       <div class="form-grid fg-4">
         <div class="field"><label class="field-label" for="st-currency">Currency</label><input class="input" id="st-currency" name="currency" placeholder="NGN" maxlength="3"></div>
-        <div class="field"><label class="field-label" for="st-tax">Tax %</label><input class="input" id="st-tax" name="tax_rate_percent" type="number" step="0.01" min="0"></div>
         <div class="field"><label class="field-label" for="st-fee">Service fee</label><input class="input" id="st-fee" name="service_fee" type="number" step="0.01" min="0"></div>
         <div class="field"><label class="field-label" for="st-deposit">Deposit %</label><input class="input" id="st-deposit" name="deposit_percent" type="number" step="0.01" min="0" max="100"></div>
+        <div class="field"><label class="field-label" for="st-stat-enabled">Statutory tax accrual (hotel cost, never billed to guests)</label><select class="input" id="st-stat-enabled" name="statutory_tax_enabled"><option value="true">Accrue (visible for remittance review)</option><option value="false">Do not accrue</option></select></div>
       </div>
       <div class="form-grid fg-3">
+        <div class="field"><label class="field-label" for="st-stat-rate">Statutory tax rate % (e.g. VAT 7.5)</label><input class="input" id="st-stat-rate" name="statutory_tax_rate_percent" type="number" step="0.01" min="0" max="100"></div>
+        <div class="field"><label class="field-label" for="st-stat-basis">Statutory tax basis</label><select class="input" id="st-stat-basis" name="statutory_tax_basis"><option value="EXCLUSIVE">Compute on net selling amount (default)</option><option value="INCLUSIVE">Extract from guest total (accountant decision)</option></select></div>
         <div class="field"><label class="field-label" for="st-pending">Pending window (min)</label><input class="input" id="st-pending" name="pending_booking_minutes" type="number" min="5"></div>
+      </div>
+      <div class="form-grid fg-3">
         <div class="field"><label class="field-label" for="st-cancelh">Cancellation deadline (h)</label><input class="input" id="st-cancelh" name="cancellation_deadline_hours" type="number" min="0"></div>
         <div class="field"><label class="field-label" for="st-cancelf">Cancellation fee %</label><input class="input" id="st-cancelf" name="cancellation_fee_percent" type="number" step="0.01" min="0" max="100"></div>
       </div>
@@ -179,7 +188,8 @@
 
   var FIELDS = ["hotel_name","tagline","description","address","city","state","country",
     "phone","email","google_maps_url","google_review_url","social_links","check_in_time","check_out_time",
-    "min_stay_nights","max_stay_nights","currency","tax_rate_percent","service_fee",
+    "min_stay_nights","max_stay_nights","currency","statutory_tax_enabled",
+    "statutory_tax_rate_percent","statutory_tax_basis","service_fee",
     "deposit_percent","pending_booking_minutes","cancellation_deadline_hours",
     "cancellation_fee_percent","restrict_check_in_to_booked_date","policy_text"];
 
@@ -248,7 +258,7 @@
       // silently disabled the form even for real admins.
       isAdmin = String(role() || "").toLowerCase() === "admin";
       if(!isAdmin){
-        $("st-form").querySelectorAll("input, textarea").forEach(function(el){ el.disabled = true; });
+        $("st-form").querySelectorAll("input, textarea, select").forEach(function(el){ el.disabled = true; });
         $("st-save").style.display = "none";
         show("st-readonly-note");
       }

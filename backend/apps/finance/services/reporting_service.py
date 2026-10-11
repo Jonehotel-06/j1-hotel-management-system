@@ -73,6 +73,10 @@ def _metrics() -> dict[str, Q]:
             direction=FinancialLine.Direction.CREDIT,
             account_code=accounting.TAX_PAYABLE,
         ),
+        "statutory_tax_accrued": Q(
+            direction=FinancialLine.Direction.CREDIT,
+            account_code=accounting.STATUTORY_TAX_PAYABLE,
+        ),
         "collections": Q(
             transaction__type=FinancialTransaction.Type.PAYMENT_COLLECTION,
             direction=FinancialLine.Direction.DEBIT,
@@ -273,7 +277,8 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
 MEASURE_LABELS = (
     ("guest_charges", "Guest charges"),
     ("recognized_revenue", "Recognized revenue"),
-    ("tax_accrued", "Tax accrued"),
+    ("tax_accrued", "Historical tax collected (pre-removal)"),
+    ("statutory_tax_accrued", "Statutory tax accrued (not billed to guests)"),
     ("collections", "Collections"),
     ("refunds", "Refunds"),
     ("net_collections", "Net collections"),

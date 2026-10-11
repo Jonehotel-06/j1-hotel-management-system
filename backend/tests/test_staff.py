@@ -64,15 +64,15 @@ class RoleGateTests(StaffBase):
 
     def test_settings_patch_requires_admin(self):
         self.auth(self.manager)
-        response = self.client.patch("/api/admin/settings/", {"tax_rate_percent": "7.50"}, format="json")
+        response = self.client.patch("/api/admin/settings/", {"service_fee": "1500.00"}, format="json")
         self.assertEqual(response.status_code, 403)
         self.auth(self.admin)
-        response = self.client.patch("/api/admin/settings/", {"tax_rate_percent": "7.50"}, format="json")
+        response = self.client.patch("/api/admin/settings/", {"service_fee": "1500.00"}, format="json")
         self.assertEqual(response.status_code, 200, response.json())
 
     def test_settings_change_writes_audit_log(self):
         self.auth(self.admin)
-        self.client.patch("/api/admin/settings/", {"tax_rate_percent": "7.50"}, format="json")
+        self.client.patch("/api/admin/settings/", {"service_fee": "1500.00"}, format="json")
         self.assertTrue(
             AuditLog.objects.filter(action="SETTINGS_CHANGED", actor=self.admin).exists()
         )

@@ -2,6 +2,10 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
+<script>
+/* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
+(function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>Restaurant, Bar &amp; Room Service POS | J-ONE Staff</title>
@@ -136,6 +140,7 @@
 <script src="../js/navigation.js?v=1.1.11"></script>
 <script src="../js/dashboard.js?v=1.1.11"></script><script src="../js/table-fit.js"></script>
 <script src="../js/barcode-scanner.js?v=1.1.11"></script>
+<script src="../js/thermal-receipt.js?v=1.1.11"></script>
 <script>
 JONE.ui.initChrome();
 var __posAllowed=JONE.dashboard.boot(["admin","manager","general_manager","cashier","restaurant_manager","waiter","bar_manager","bartender","kitchen_manager","chef"]);
@@ -420,6 +425,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(status==="READY")buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-action="DELIVERED" data-pos-ref="'+ref+'">Deliver</button>';
     if(["DRAFT","SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-action="CANCELLED" data-pos-ref="'+ref+'">Cancel</button>';
     if(status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&order.settlement_status!=="PAID"&&canTender())buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-tender="'+ref+'">Tender</button>';
+    if(status==="DELIVERED")buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-thermal="'+ref+'">Receipt</button>';
     return '<div class="pos-action-stack">'+buttons+'</div>';
   }
   function renderOrders(rows){
@@ -500,6 +506,34 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     }catch(err){state.drawer=null;drawer.textContent=(err&&err.message)||"Drawer status could not be loaded.";document.querySelector("[data-pos-close-drawer]").disabled=true;}
   }
 
+  async function printThermalReceipt(reference){
+    if(!window.JONE||!JONE.ThermalReceipt){JONE.ui.toast("Thermal receipt module unavailable.","error");return;}
+    var orderRes;try{orderRes=await window.API.getOne("posOrders",reference);}catch(err){JONE.ui.toast((err&&err.message)||"Order could not be loaded.","error");return;}
+    var order=orderRes.data||{};
+    var widthResult=await JONE.dashboard.formModal({title:"Thermal receipt · "+JONE.esc(reference),submitText:"Print",fields:[{name:"width",label:"Paper width",type:"select",required:true,value:JONE.ThermalReceipt.getWidth(),options:[{value:"80",label:"80 mm thermal roll"},{value:"58",label:"58 mm thermal roll"}]}],onSubmit:async function(values){JONE.ThermalReceipt.setWidth(values.width);return{message:"Preparing receipt…"};}});
+    if(!widthResult)return;
+    var width=JONE.ThermalReceipt.getWidth();
+    var tender=(order.tenders||[]).filter(function(t){return t.status==="CAPTURED";}).pop()||null;
+    var receipt={
+      hotel:{name:"J-ONE HOTEL & LODGE",address:"Plot 566 Mgbowo Street, off Ezike Street, Enugu State",phone:"+234 803 211 2874"},
+      reference:order.reference,
+      issued_at:order.delivered_at||order.created_at||new Date().toISOString(),
+      cashier:(order.created_by_email||order.created_by||""),
+      workstation:(window.APP_CONFIG&&window.APP_CONFIG.STORAGE&&window.APP_CONFIG.STORAGE.TERMINAL&&window.localStorage.getItem(window.APP_CONFIG.STORAGE.TERMINAL))||"",
+      mode:order.mode,
+      items:(order.lines||[]).map(function(line){return {name:line.item_name+(line.modifiers_snapshot&&line.modifiers_snapshot.length?" ("+line.modifiers_snapshot.map(function(m){return m.name;}).join(", ")+")":""),quantity:line.quantity,unit_price:line.unit_price,line_total:line.line_total};}),
+      subtotal:order.subtotal,
+      discount:order.discount_amount||0,
+      tax:order.tax_amount||0,
+      total:order.total_amount,
+      paid:(order.amount_paid!=null?order.amount_paid:(tender?tender.amount:order.total_amount)),
+      change:0,
+      balance_due:(order.settlement_status==="PAID"?0:order.total_amount),
+      payment_method:tender?tender.method:"",
+      payment_reference:tender?(tender.external_reference||""):""
+    };
+    JONE.ThermalReceipt.print(receipt,{width:width});
+  }
   async function viewOrder(reference){
     var body=JONE.el("div",{class:"loading-skeleton",textContent:"Loading order…"});JONE.ui.modal.open({title:"POS order "+reference,body:body,size:"modal-lg"});
     try{
@@ -562,7 +596,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   async function addMenuItem(){
     if(!state.menu.length){JONE.ui.toast("Create a category first.","warning");return;}
     var categoryOptions=state.menu.map(function(row){return{value:row.id,label:row.name};});
-    var result=await JONE.dashboard.formModal({title:"Add menu item",submitText:"Create menu item",wide:true,fields:[{name:"category",label:"Category",type:"select",required:true,options:categoryOptions},{name:"name",label:"Name",type:"text",required:true},{name:"sku",label:"SKU",type:"text",required:true},{name:"base_price",label:"Base price (NGN)",type:"number",step:"0.01",required:true},{name:"tax_rate_percent",label:"Tax rate (%)",type:"number",step:"0.01",value:"0.00"},{name:"preparation_minutes",label:"Preparation minutes",type:"number",value:"15"},{name:"description",label:"Description",type:"textarea",rows:2}],onSubmit:async function(values){await window.API.create("posMenuItems",values);return{message:"Menu item created."};}});
+    var result=await JONE.dashboard.formModal({title:"Add menu item",submitText:"Create menu item",wide:true,fields:[{name:"category",label:"Category",type:"select",required:true,options:categoryOptions},{name:"name",label:"Name",type:"text",required:true},{name:"sku",label:"SKU",type:"text",required:true},{name:"base_price",label:"Base price (NGN)",type:"number",step:"0.01",required:true},{name:"preparation_minutes",label:"Preparation minutes",type:"number",value:"15"},{name:"description",label:"Description",type:"textarea",rows:2}],onSubmit:async function(values){await window.API.create("posMenuItems",values);return{message:"Menu item created."};}});
     if(result){state.menuArea=null;updateMode();}
   }
 
@@ -604,7 +638,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   document.querySelector("[data-pos-refresh-drawer]").addEventListener("click",loadDrawer);
   document.querySelector("[data-pos-open-drawer]").addEventListener("click",openDrawer);
   document.querySelector("[data-pos-close-drawer]").addEventListener("click",closeDrawer);
-  orderBody.addEventListener("click",function(event){var view=event.target.closest("[data-pos-view]");var action=event.target.closest("[data-pos-action]");var tender=event.target.closest("[data-pos-tender]");if(view)viewOrder(view.getAttribute("data-pos-view"));else if(action)advanceOrder(action.getAttribute("data-pos-ref"),action.getAttribute("data-pos-action"),action);else if(tender)captureTender(tender.getAttribute("data-pos-tender"));});
+  orderBody.addEventListener("click",function(event){var view=event.target.closest("[data-pos-view]");var action=event.target.closest("[data-pos-action]");var tender=event.target.closest("[data-pos-tender]");var thermal=event.target.closest("[data-pos-thermal]");if(view)viewOrder(view.getAttribute("data-pos-view"));else if(action)advanceOrder(action.getAttribute("data-pos-ref"),action.getAttribute("data-pos-action"),action);else if(tender)captureTender(tender.getAttribute("data-pos-tender"));else if(thermal)printThermalReceipt(thermal.getAttribute("data-pos-thermal"));});
   document.querySelector("[data-pos-add-category]").addEventListener("click",addCategory);
   document.querySelector("[data-pos-add-item]").addEventListener("click",addMenuItem);
   // USB HID Barcode Scanner Integration for POS item addition

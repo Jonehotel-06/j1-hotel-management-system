@@ -155,14 +155,33 @@ class PricingEngineTests(BaseAPITestCase):
             )
 
     def test_tax_and_service_fee_math(self):
+        """Customer-billing tax removal (owner policy 2026-10-11).
+
+        A legacy tax_rate_percent may still exist in settings (historical
+        interpretability), but NEW quotations must never append a tax: the
+        approved price plus permitted charges less discounts is the whole bill.
+        """
         hotel_settings(tax_rate_percent=Decimal("7.50"), service_fee=Decimal("2000.00"))
         quote = calculate_quote(
             room_type=self.room_type, check_in=self.ci, check_out=self.co,
             rooms=1, adults=2, children=0,
         )
-        self.assertEqual(quote.tax, Decimal("5625.00"))  # 75000 * 7.5%
+        self.assertEqual(quote.tax, Decimal("0.00"))  # never billed to the customer
         self.assertEqual(quote.service_fee, Decimal("2000.00"))
-        self.assertEqual(quote.total, Decimal("75000.00") + Decimal("5625.00") + Decimal("2000.00"))
+        self.assertEqual(quote.total, Decimal("75000.00") + Decimal("2000.00"))
+        api = quote.to_api_dict()
+        self.assertEqual(api["tax"], "0.00")
+        self.assertEqual(api["total"], "77000.00")
+
+    def test_customer_total_excludes_tax_even_when_legacy_rate_configured(self):
+        """₦75,000 approved price stays ₦75,000 — not ₦75,000 + tax."""
+        hotel_settings(tax_rate_percent=Decimal("7.50"), service_fee=Decimal("0.00"))
+        quote = calculate_quote(
+            room_type=self.room_type, check_in=self.ci, check_out=self.co,
+            rooms=1, adults=2, children=0,
+        )
+        self.assertEqual(quote.total, Decimal("75000.00"))
+        self.assertEqual(quote.required_payment, Decimal("75000.00"))
 
     def test_partial_deposit_required_payment(self):
         hotel_settings(deposit_percent=Decimal("50"))
