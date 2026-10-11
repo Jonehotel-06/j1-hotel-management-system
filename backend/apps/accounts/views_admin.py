@@ -64,7 +64,11 @@ class OperationalStaffDirectoryView(APIView):
             )
         paginator = StandardPagination()
         page = paginator.paginate_queryset(queryset.order_by("first_name", "last_name", "email", "pk"), request, view=self)
-        return paginator.get_paginated_response(OperationalStaffDirectorySerializer(page, many=True).data)
+        # The serializer needs the request to decide whether this caller is
+        # authorized to see account fields (email); see OperationalStaffDirectorySerializer.
+        return paginator.get_paginated_response(
+            OperationalStaffDirectorySerializer(page, many=True, context={"request": request}).data
+        )
 
 
 class WorkstationListCreateView(APIView):

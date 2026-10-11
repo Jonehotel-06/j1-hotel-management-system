@@ -156,14 +156,34 @@ class LogoutView(APIView):
 
             raise ValidationError({"refresh": ["Refresh token is required."]})
         try:
-            RefreshToken(refresh).blacklist()
+            token = RefreshToken(refresh)
         except TokenError:
             # Expired or already-blacklisted token: nothing left to revoke.
             logger.info("Logout with stale refresh token: user_id=%s", request.user.id)
+            return success_response(message="Logged out successfully.")
         except Exception:
             # Malformed token: still treat as logged out — logout must never
             # trap a user in a session they are trying to leave.
             logger.info("Logout with unusable refresh token: user_id=%s", request.user.id)
+            return success_response(message="Logged out successfully.")
+
+        if str(token.get("user_id")) != str(request.user.pk):
+            # A logout may only end the caller's OWN session. Supplying somebody
+            # else's refresh token would otherwise let any authenticated account
+            # end another account's session - and, if the token had merely leaked
+            # (logs, a shared device, a copied request), to do so without ever
+            # holding a working credential of its own. The answer stays the
+            # documented idempotent success, so a confused client still clears its
+            # local state; nothing is revoked.
+            logger.warning(
+                "Logout refused for another account's refresh token: caller=%s", request.user.id
+            )
+            return success_response(message="Logged out successfully.")
+
+        try:
+            token.blacklist()
+        except TokenError:
+            logger.info("Logout with stale refresh token: user_id=%s", request.user.id)
         logger.info("User logged out: user_id=%s", request.user.id)
         return success_response(message="Logged out successfully.")
 

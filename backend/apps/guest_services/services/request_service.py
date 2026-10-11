@@ -9,7 +9,11 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.accounts.capabilities import has_capability
+from apps.accounts.capabilities import (
+    HOUSEKEEPING_WORKER_ROLES,
+    MAINTENANCE_WORKER_ROLES,
+    has_capability,
+)
 from apps.accounts.models import User
 from apps.stays.models import StayRoom
 
@@ -32,11 +36,20 @@ _SLA = {
     ServiceRequest.Priority.URGENT: timedelta(minutes=15),
 }
 _TEAM_FOR_ROLE = {
-    User.Role.HOUSEKEEPING: ServiceRequest.OwnerTeam.HOUSEKEEPING,
-    User.Role.MAINTENANCE: ServiceRequest.OwnerTeam.MAINTENANCE,
     User.Role.WAITER: ServiceRequest.OwnerTeam.FOOD_BEVERAGE,
     User.Role.BARTENDER: ServiceRequest.OwnerTeam.FOOD_BEVERAGE,
 }
+# Both spellings of each worker role route to the same team queue. An account
+# whose role is absent from this map cannot see an unassigned request and cannot
+# claim one, so a HOUSEKEEPER or MAINTENANCE_TECHNICIAN - both of which exist as
+# real accounts - would have been locked out of their own team's queue by the
+# canonical-only keys that used to be here (audit D5/N8). The alias sets are the
+# single definition in apps.accounts.capabilities.
+for _role in HOUSEKEEPING_WORKER_ROLES:
+    _TEAM_FOR_ROLE[_role] = ServiceRequest.OwnerTeam.HOUSEKEEPING
+for _role in MAINTENANCE_WORKER_ROLES:
+    _TEAM_FOR_ROLE[_role] = ServiceRequest.OwnerTeam.MAINTENANCE
+del _role
 _TERMINAL_STATUSES = {ServiceRequest.Status.CLOSED, ServiceRequest.Status.CANCELLED}
 _ALLOWED_TRANSITIONS = {
     ServiceRequest.Status.OPEN: {

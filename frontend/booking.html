@@ -60,6 +60,10 @@
   <div class="container booking-shell">
     <!-- STEPPER (rendered by js/booking-stepper.js) -->
     <nav id="booking-stepper" aria-label="Booking progress"></nav>
+    <!-- The page's one H1. The visual design does not repeat it, but a
+         page without a first-level heading is a WCAG 1.3.1 / axe
+         page-has-heading-one finding (audit N11). -->
+    <h1 class="sr-only">Book your stay</h1>
 
     <div class="booking-layout">
       <div>
@@ -77,8 +81,8 @@
             <div class="form-grid fg-2" style="margin-bottom:0.75rem;">
               <div class="field">
                 <span class="field-label" id="lbl-checkin">Check-in</span>
-                <button type="button" class="input cal-display is-empty" data-cal-display="checkin" aria-labelledby="lbl-checkin">
-                  <span class="cal-display-value">Select date</span>
+                <button type="button" class="input cal-display is-empty" data-cal-display="checkin" aria-labelledby="lbl-checkin cal-checkin-value">
+                  <span class="cal-display-value" id="cal-checkin-value">Select date</span>
                   <span data-icon="calendar" data-size="18"></span>
                 </button>
                 <!-- state-backed values (the calendar above is the user-facing picker) -->
@@ -86,8 +90,8 @@
               </div>
               <div class="field">
                 <span class="field-label" id="lbl-checkout">Check-out</span>
-                <button type="button" class="input cal-display is-empty" data-cal-display="checkout" aria-labelledby="lbl-checkout">
-                  <span class="cal-display-value">Select date</span>
+                <button type="button" class="input cal-display is-empty" data-cal-display="checkout" aria-labelledby="lbl-checkout cal-checkout-value">
+                  <span class="cal-display-value" id="cal-checkout-value">Select date</span>
                   <span data-icon="calendar" data-size="18"></span>
                 </button>
                 <input type="hidden" id="b-checkout" name="check_out" value="">
@@ -147,7 +151,7 @@
           <span data-icon="chevronUp" data-size="18"></span>
         </button>
         <div class="booking-summary-head">
-          <h3>Your stay</h3>
+          <h2>Your stay</h2>
           <div style="color:rgba(255,255,255,0.75);font-size:var(--fs-sm);" data-sum-hotel>J-ONE HOTEL &amp; LODGE</div>
         </div>
         <div class="booking-summary-body" id="summary-body">
@@ -177,7 +181,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Explore</h5>
+        <h2 class="h5">Explore</h2>
         <a href="index.html#rooms">Rooms &amp; Suites</a>
         <a href="facilities.html">Facilities</a>
         <a href="gallery.html">Gallery</a>
@@ -187,7 +191,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Booking</h5>
+        <h2 class="h5">Booking</h2>
         <a href="booking.html">Book Your Stay</a>
         <a href="my-bookings.html">Your stays</a>
         <a href="portal/login.html">Guest portal</a>
@@ -198,7 +202,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Contact</h5>
+        <h2 class="h5">Contact</h2>
         <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
         <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
         <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
@@ -858,7 +862,7 @@
       return '<label class="room-option' + (bookable ? '' : ' is-disabled') + '" data-room-opt for="' + optId + '"' + (bookable ? '' : ' aria-disabled="true"') + '>' +
         img +
         '<div class="room-option-info">' +
-          '<h4>' + JONE.esc(name) + '</h4>' +
+          '<h3 class="h4">' + JONE.esc(name) + '</h3>' +
           (desc ? '<p class="room-option-desc">' + JONE.esc(desc) + '</p>' : '') +
           '<div class="room-option-specs"><span><span data-icon="users"></span>' + JONE.esc(rt.max_guests || "\u2014") + ' guests</span>' + (rt.room_size ? '<span><span data-icon="maximize"></span>' + JONE.esc(rt.room_size) + '</span>' : '') + (rt.bed_type ? '<span><span data-icon="bed"></span>' + JONE.esc(rt.bed_type) + '</span>' : '') + '</div>' +
           note +

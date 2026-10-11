@@ -35,7 +35,7 @@
     </div>
   </aside>
   <div class="dash-main">
-    <div class="dash-topbar">
+    <header class="dash-topbar">
       <div class="dash-topbar-left">
         <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
         <div class="dash-title" data-dash-title>
@@ -49,8 +49,8 @@
           <span class="icon-sun" data-icon="sun" data-size="18"></span>
         </button>
       </div>
-    </div>
-    <div class="dash-content">
+    </header>
+    <main class="dash-content">
 
 <section class="panel">
   <div class="filter-bar">
@@ -75,14 +75,14 @@
   </details>
   <div class="panel-body no-pad">
     <div class="table-wrap table-scroll-x" tabindex="0" role="region" aria-label="Payments table, scroll sideways to see every column"><table class="table table-payments">
-      <thead><tr><th>Payment ref</th><th>Booking</th><th class="hide-sm">Guest</th><th>Method</th><th class="hide-sm">Date</th><th>Amount</th><th>Status</th><th class="hide-sm">By</th><th></th></tr></thead>
+      <thead><tr><th>Payment ref</th><th>Booking</th><th class="hide-sm">Guest</th><th>Method</th><th class="hide-sm">Date</th><th>Amount</th><th>Status</th><th class="hide-sm">By</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody data-tbody="payments"></tbody>
     </table></div>
     <div class="pagination" data-pay-pagination></div>
   </div>
 </section>
 <section class="panel" style="margin-top:1.25rem;">
-  <div class="panel-head"><h2>Refund lifecycle</h2><div class="panel-actions"><select class="select" id="r-status" style="min-width:170px;font-size:var(--fs-sm);padding:0.5em 0.8em;"><option value="">All refunds</option><option value="PENDING">Pending</option><option value="PROCESSING">Processing</option><option value="PROCESSED">Processed</option><option value="FAILED">Failed</option><option value="NEEDS_ATTENTION">Needs attention</option></select></div></div>
+  <div class="panel-head"><h2>Refund lifecycle</h2><div class="panel-actions"><select class="select" id="r-status" style="min-width:170px;font-size:var(--fs-sm);padding:0.5em 0.8em;" aria-label="Refund status"><option value="">All refunds</option><option value="PENDING">Pending</option><option value="PROCESSING">Processing</option><option value="PROCESSED">Processed</option><option value="FAILED">Failed</option><option value="NEEDS_ATTENTION">Needs attention</option></select></div></div>
   <div class="panel-body no-pad">
     <div class="table-wrap"><table class="table">
       <thead><tr><th>Refund</th><th>Booking</th><th>Payment ref</th><th>Amount</th><th>Status</th><th class="hide-sm">Submitted</th><th class="hide-sm">Paystack refund</th></tr></thead>
@@ -91,7 +91,7 @@
     <div class="pagination" data-refund-pagination></div>
   </div>
 </section>
-    </div>
+    </main>
   </div>
 </div>
 <script src="../js/runtime-config.js?v=1.1.11"></script>

@@ -87,7 +87,7 @@ ROLE_CAPABILITY_CODES = {
         "maintenance.work_order.manage", "maintenance.work_order.assign", "inventory.manage", "inventory.adjust.approve",
         "procurement.manage", "procurement.approve", "staff.profile.manage", "shift.manage", "attendance.clock",
         "attendance.manage", "leave.request", "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
-        "payroll.rules.manage", "payroll.rules.review", "reports.financial.view", "audit.view", "terminal.manage", "service_qr.manage",
+        "payroll.rules.manage", "payroll.rules.review", "reports.financial.view", "terminal.manage", "service_qr.manage",
     }),
     "RECEPTIONIST": frozenset({
         "booking.read", "booking.manage", "stay.check_in", "stay.check_out", "folio.view", "folio.charge.post",
@@ -124,7 +124,7 @@ ROLE_CAPABILITY_CODES = {
         "maintenance.work_order.assign", "inventory.manage", "inventory.adjust.approve", "procurement.manage",
         "procurement.approve", "staff.profile.manage", "shift.manage", "attendance.clock", "attendance.manage",
         "leave.request", "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
-        "payroll.rules.manage", "payroll.rules.review", "reports.financial.view", "audit.view", "terminal.manage", "service_qr.manage",
+        "payroll.rules.manage", "payroll.rules.review", "reports.financial.view", "terminal.manage", "service_qr.manage",
     }),
     "RESTAURANT_MANAGER": frozenset({
         "restaurant.order.manage", "restaurant.table.manage", "restaurant.menu.manage", "payment.capture",
@@ -159,7 +159,7 @@ ROLE_CAPABILITY_CODES = {
         "account.view", "folio.view", "folio.charge.post", "finance.controls.manage", "payment.read", "payment.capture",
         "payment.refund.request", "payment.refund.approve", "cash_session.open", "cash_session.close",
         "expense.manage", "expense.approve", "payroll.view", "payroll.manage", "payroll.approve",
-        "payroll.rules.manage", "payroll.rules.review", "reports.financial.view", "audit.view",
+        "payroll.rules.manage", "payroll.rules.review", "reports.financial.view",
     }),
     "ACCOUNTANT": frozenset({
         "folio.view", "folio.charge.post", "payment.read", "payment.capture", "payment.refund.request", "expense.manage",
@@ -169,7 +169,7 @@ ROLE_CAPABILITY_CODES = {
         "staff.profile.manage", "shift.manage", "attendance.clock", "attendance.manage", "leave.request",
         "leave.approve", "payroll.view", "payroll.manage", "payroll.approve", "payroll.rules.manage",
     }),
-    "SECURITY": frozenset({"guest_request.manage", "attendance.clock", "audit.view"}),
+    "SECURITY": frozenset({"guest_request.manage", "attendance.clock"}),
     "PROCUREMENT_OFFICER": frozenset({"procurement.manage", "attendance.clock", "leave.request"}),
     "STOREKEEPER": frozenset({"inventory.manage", "procurement.manage", "attendance.clock", "leave.request"}),
     "GUEST": frozenset(),
@@ -177,6 +177,47 @@ ROLE_CAPABILITY_CODES = {
 
 # Deliberately separate from legacy broad endpoint role allowlists.
 OPERATIONAL_STAFF_ROLES = frozenset(role for role in ROLE_CAPABILITY_CODES if role != "GUEST")
+
+# ---------------------------------------------------------------------------
+# Role compatibility mapping (audit N8)
+#
+# The accounts migration history left TWO housekeeping worker roles in
+# ``User.Role`` with IDENTICAL capability grants:
+#
+#   HOUSEKEEPING — the original role code, referenced by early workflow code
+#   HOUSEKEEPER  — added with the department capability seed
+#
+# The housekeeping workflow hard-coded ``User.Role.HOUSEKEEPING``, so a real
+# HOUSEKEEPER account could not be assigned a task (HTTP 400), could not claim
+# one, and saw an empty task list — while the capability matrix claimed both
+# roles were equivalent.
+#
+# Both identifiers must remain valid (existing accounts and JWT/API consumers
+# already reference them), so this module is the SINGLE place that maps the
+# historical alias onto the canonical operational role. Workflow code must test
+# membership here rather than comparing against one literal role code. A future
+# migration can retire HOUSEKEEPER by rewriting the accounts and deleting the
+# alias from this mapping alone.
+# ---------------------------------------------------------------------------
+CANONICAL_HOUSEKEEPING_ROLE = "HOUSEKEEPING"
+HOUSEKEEPING_ROLE_ALIASES = frozenset({"HOUSEKEEPER"})
+HOUSEKEEPING_WORKER_ROLES = frozenset({CANONICAL_HOUSEKEEPING_ROLE}) | HOUSEKEEPING_ROLE_ALIASES
+
+# The same shape for the maintenance worker pair (MAINTENANCE / MAINTENANCE_TECHNICIAN),
+# so the identical latent defect cannot appear in the maintenance workflow.
+CANONICAL_MAINTENANCE_ROLE = "MAINTENANCE"
+MAINTENANCE_ROLE_ALIASES = frozenset({"MAINTENANCE_TECHNICIAN"})
+MAINTENANCE_WORKER_ROLES = frozenset({CANONICAL_MAINTENANCE_ROLE}) | MAINTENANCE_ROLE_ALIASES
+
+
+def is_housekeeping_worker(user) -> bool:
+    """True for an account that may be assigned and work housekeeping tasks."""
+    return getattr(user, "role", None) in HOUSEKEEPING_WORKER_ROLES
+
+
+def is_maintenance_worker(user) -> bool:
+    """True for an account that may be assigned and work maintenance orders."""
+    return getattr(user, "role", None) in MAINTENANCE_WORKER_ROLES
 
 
 def capability_codes_for_user(user: "User") -> frozenset[str]:

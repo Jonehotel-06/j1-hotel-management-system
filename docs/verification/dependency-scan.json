@@ -1,0 +1,40 @@
+{
+  "what": "Backend dependency vulnerability scan (audit case SEC-005), env + requirements",
+  "method": "pip-audit 2.10.1 against the installed virtualenv (includes transitive dependencies) and against backend/requirements.txt top-level pins. Requires network access to the advisory databases; no project dependency was added - pip-audit is installed in a throwaway venv.",
+  "before": {
+    "packages_scanned": "installed virtualenv, pre-upgrade",
+    "findings": [
+      {
+        "name": "djangorestframework",
+        "version": "3.16.1",
+        "advisories": [
+          "PYSEC-2026-3827 (CVE-2026-73228 / GHSA-2m8g-3cmr-wg3w)",
+          "PYSEC-2026-3828 (CVE-2026-73229 / GHSA-g47c-3xmw-q6m2)"
+        ],
+        "fix_versions": [
+          "3.17.2"
+        ],
+        "note": "Recorded by the first scan run. The project pin `djangorestframework>=3.15,<3.17` excluded every fixed release, so the advisories were un-patchable without changing the pin. requirements.txt now pins >=3.17.2,<4.0 and the environment is on 3.18.3."
+      }
+    ]
+  },
+  "after": {
+    "environment": {
+      "packages_scanned": 76,
+      "vulnerabilities": 0,
+      "findings": []
+    },
+    "requirements_top_level": {
+      "packages_scanned": 54,
+      "vulnerabilities": 0,
+      "findings": []
+    }
+  },
+  "reproduce": [
+    "python -m venv .venv && .venv/bin/pip install pip-audit",
+    ".venv/bin/pip-audit",
+    ".venv/bin/pip-audit --no-deps -r backend/requirements.txt"
+  ],
+  "not_applicable": "Frontend: no package.json and no bundler, so there is no npm dependency surface to scan.",
+  "generated": "2026-10-11"
+}

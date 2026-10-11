@@ -35,7 +35,7 @@
     </div>
   </aside>
   <div class="dash-main">
-    <div class="dash-topbar">
+    <header class="dash-topbar">
       <div class="dash-topbar-left">
         <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
         <div class="dash-title" data-dash-title>
@@ -49,8 +49,8 @@
           <span class="icon-sun" data-icon="sun" data-size="18"></span>
         </button>
       </div>
-    </div>
-    <div class="dash-content">
+    </header>
+    <main class="dash-content">
 
 <section class="panel" style="max-width:680px;">
   <div class="panel-head"><h2>My profile</h2></div>
@@ -96,7 +96,7 @@
     </form>
   </div>
 </section>
-    </div>
+    </main>
   </div>
 </div>
 <script src="../js/runtime-config.js?v=1.1.11"></script>
@@ -169,7 +169,7 @@
     var file = $("pf-image").files[0];
     if(file) fd.append("profile_image", file, file.name);
     try{
-      var res = await window.API.patch("/api/auth/profile/", fd);
+      var res = await window.API.patch(window.APP_CONFIG.API_ENDPOINTS.authProfile, fd);
       me = res.data || me;
       JONE.ui.toast("Profile updated.","success");
       paint();  // refresh avatar/name from the server response
@@ -197,7 +197,7 @@
     }
     if(!JONE.guardSubmit(btn)) return;
     try{
-      await window.API.post("/api/auth/password/change/", {
+      await window.API.post(window.APP_CONFIG.API_ENDPOINTS.passwordChange, {
         current_password: $("pw-current").value,
         new_password: $("pw-new").value,
         new_password_confirm: $("pw-confirm").value

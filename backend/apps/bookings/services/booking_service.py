@@ -281,7 +281,7 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
     if room_id:
         requested_room = (
             Room.objects.filter(pk=room_id, is_active=True, room_type=room_type)
-            .exclude(status__in=availability.OPERATIONALLY_BLOCKED)
+            .filter(availability.room_readiness_q())
             .first()
         )
         if requested_room is None:
@@ -1158,8 +1158,13 @@ def assign_room(assignment: BookingRoom, *, new_room: Room, staff_user, request=
         raise BookingStateError("The room must match the booking's room type.")
     RoomType.objects.select_for_update().get(pk=booking.room_type_id)
     new_room.refresh_from_db()
-    if not new_room.is_active or new_room.status in availability.OPERATIONALLY_BLOCKED:
-        raise RoomUnavailableError(f"Room {new_room.room_number} is not in service.")
+    # ONE readiness rule (apps.bookings.services.availability): active, not in
+    # an operational outage, and housekeeping has released it as CLEAN. A room
+    # that is dirty or awaiting inspection must not receive a guest, even when
+    # staff drive the change directly through the API.
+    reason = availability.unready_room_reason(new_room)
+    if reason:
+        raise RoomUnavailableError(reason)
     conflicts = availability.blocked_room_ids(
         room_type_id=booking.room_type_id,
         check_in=assignment.check_in,

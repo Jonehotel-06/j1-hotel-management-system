@@ -1,0 +1,114 @@
+{
+  "baseUrl": "http://127.0.0.1:8899",
+  "pages": {
+    "403.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "404.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "500.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "about.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "booking-confirmation.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "booking-review.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "booking.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "cancellation-policy.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "cancellation-result.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "contact.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "facilities.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "gallery.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "index.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "login.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "my-bookings.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "offers.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "offline.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "payment-verify.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "policies.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "privacy.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "qr-service.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "refund-policy.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "register.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "review.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "room-details.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "rooms.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "terms.html": {
+      "desktop": [],
+      "mobile": []
+    }
+  },
+  "posMeasurements": "N2/N3 measurements live in responsive-pos-measurements.json (before = git HEAD baseline on :8898, after = repaired tree on :8899)."
+}

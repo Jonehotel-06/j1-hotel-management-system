@@ -4,6 +4,8 @@
 Money always serializes as strings ("15000.00") so exact values travel the
 wire without binary float artifacts.
 """
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from apps.core.utils import money
@@ -53,16 +55,86 @@ class BookingRoomSerializer(serializers.ModelSerializer):
         fields = ["id", "room_number", "floor", "check_in", "check_out"]
 
 
+def serializer_folio_charge_map(serializer) -> dict:
+    """Posted folio-charge balance per booking for everything a serializer renders.
+
+    Views that list bookings batch the lookup once for the page and pass it in
+    ``context["folio_charge_map"]``. When a view has not batched it, resolve the
+    map here: ONE query per serialization (all objects at once), never one query
+    per row — a per-row query turns every booking list into an N+1.
+    """
+    supplied = serializer.context.get("folio_charge_map")
+    if supplied is not None:
+        return supplied
+    cached = getattr(serializer, "_folio_charge_map_cache", None)
+    if cached is not None:
+        return cached
+    from apps.finance.services.folio_service import booking_folio_charge_map
+
+    ids = _serializer_booking_ids(serializer)
+    resolved = {} if ids is None else booking_folio_charge_map(booking_ids=ids)
+    serializer._folio_charge_map_cache = resolved
+    return resolved
+
+
+def _serializer_booking_ids(serializer):
+    """Booking pks the serializer is rendering, or None when it has no instance.
+
+    `many=True` hands the same positional argument to the child serializer, so a
+    child's ``instance`` may itself be the page list/queryset — handle the
+    single-object and the iterable case alike.
+    """
+    instance = serializer.instance
+    if instance is None and getattr(serializer, "parent", None) is not None:
+        instance = serializer.parent.instance
+    if instance is None:
+        return None
+    if hasattr(instance, "pk"):
+        return [instance.pk]
+    try:
+        return [obj.pk for obj in instance]
+    except TypeError:  # not iterable / not a model collection
+        return None
+
+
 class BookingMoneyMixin:
     money_fields = ("price_per_night", "subtotal", "discount_amount", "extra_guest_fee_amount",
                     "tax_amount", "fee_amount", "total_amount", "required_payment",
-                    "amount_paid", "amount_due", "refund_amount")
+                    "amount_paid", "amount_due", "refund_amount",
+                    "folio_charges", "outstanding_balance")
+
+    def _folio_charge_balance(self, obj):
+        cached = getattr(obj, "_folio_charge_balance", None)
+        if cached is not None:
+            return cached
+        return serializer_folio_charge_map(self).get(obj.pk, Decimal("0.00"))
+
+    def get_folio_charges(self, obj):
+        return self._folio_charge_balance(obj)
+
+    def get_outstanding_balance(self, obj):
+        """The authoritative balance the guest owes (stay + posted folio charges).
+
+        `amount_due` remains the stay-only projection for backward
+        compatibility; this is the figure guest-facing balances, the folio and
+        the checkout desk must agree on (audit D4).
+        """
+        from apps.finance.services.folio_service import booking_outstanding_balance
+
+        return booking_outstanding_balance(
+            booking=obj, folio_charge_balance=self._folio_charge_balance(obj)
+        )
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
         for field_name in self.money_fields:
-            if field_name in data and data[field_name] is not None:
-                data[field_name] = money(getattr(instance, field_name))
+            if field_name not in data or data[field_name] is None:
+                continue
+            # Model-backed money fields come from the instance; computed fields
+            # (folio_charges, outstanding_balance) only exist on the serialized
+            # representation, so fall back to the value DRF already produced.
+            raw = getattr(instance, field_name, None)
+            data[field_name] = money(data[field_name] if raw is None else raw)
         return data
 
 
@@ -70,6 +142,13 @@ class BookingMoneyMixin:
 # Guest-facing
 # ---------------------------------------------------------------------------
 class BookingListSerializer(BookingMoneyMixin, serializers.ModelSerializer):
+    # Posted folio charges not already priced into the stay (restaurant, bar,
+    # room service, other authorised guest services). Views batch the lookup for
+    # the whole page into serializer context, so rendering a page of bookings
+    # costs ONE extra query rather than one per row.
+    folio_charges = serializers.SerializerMethodField()
+    outstanding_balance = serializers.SerializerMethodField()
+
     room_type_name = serializers.CharField(source="room_type.name", read_only=True)
     room_type_slug = serializers.CharField(source="room_type.slug", read_only=True)
     nights = serializers.IntegerField(read_only=True)
@@ -81,12 +160,26 @@ class BookingListSerializer(BookingMoneyMixin, serializers.ModelSerializer):
         fields = [
             "id", "booking_reference", "room_type_name", "room_type_slug",
             "check_in", "check_out", "nights", "number_of_rooms", "number_of_guests",
-            "total_amount", "amount_paid", "amount_due", "currency", "status",
-            "payment_status", "created_at", "expires_at",
+            # The same money breakdown the detail view returns, so a list row can
+            # be reconciled on its own:
+            #   subtotal - discount + extra_guest_fee + tax + fee = total_amount
+            # Omitting discount_amount made list and detail disagree about the
+            # price of the same booking (D16). These are model columns — no
+            # extra query is added.
+            "subtotal", "discount_amount", "extra_guest_fee_amount", "tax_amount", "fee_amount",
+            "total_amount", "amount_paid", "amount_due", "folio_charges", "outstanding_balance",
+            "currency", "status", "payment_status", "created_at", "expires_at",
         ]
 
 
 class BookingDetailSerializer(BookingMoneyMixin, serializers.ModelSerializer):
+    # Posted folio charges not already priced into the stay (restaurant, bar,
+    # room service, other authorised guest services). Views batch the lookup for
+    # the whole page into serializer context, so rendering a page of bookings
+    # costs ONE extra query rather than one per row.
+    folio_charges = serializers.SerializerMethodField()
+    outstanding_balance = serializers.SerializerMethodField()
+
     guest = GuestReadSerializer(read_only=True)
     room_assignments = BookingRoomSerializer(many=True, read_only=True)
     room_type_name = serializers.CharField(source="room_type.name", read_only=True)
@@ -106,6 +199,7 @@ class BookingDetailSerializer(BookingMoneyMixin, serializers.ModelSerializer):
             "adults", "children", "number_of_guests", "price_per_night", "subtotal",
             "discount_amount", "extra_guest_fee_amount", "tax_amount", "fee_amount",
             "total_amount", "required_payment", "amount_paid", "amount_due",
+            "folio_charges", "outstanding_balance",
             "refund_amount", "currency", "offer_title", "status", "payment_status",
             "source", "special_requests", "cancellation_reason", "expires_at",
             "checked_in_at", "checked_out_at", "cancelled_at", "created_at",
@@ -234,7 +328,16 @@ class ReceiptSerializer(serializers.Serializer):
 
         from apps.hotel.models import HotelSettings
 
+        from apps.finance.services.folio_service import (
+            booking_folio_charge_balance,
+            booking_outstanding_balance,
+        )
+
         hotel = HotelSettings.get_settings()
+        folio_charge_balance = booking_folio_charge_balance(booking=booking)
+        outstanding_balance = booking_outstanding_balance(
+            booking=booking, folio_charge_balance=folio_charge_balance
+        )
         payments = list(booking.payments.filter(status="SUCCESS").order_by("paid_at", "id"))
         room_numbers = [
             a.room.room_number
@@ -291,6 +394,12 @@ class ReceiptSerializer(serializers.Serializer):
             "total": money(booking.total_amount),
             "amount_paid": money(booking.amount_paid),
             "amount_due": money(booking.amount_due),
+            # Audit D4: the receipt is the guest's document, so it must show the
+            # same money the desk and the folio show. `amount_due` stays the
+            # stay-only figure for compatibility; these two add the posted
+            # restaurant/bar/other charges and the resulting balance to settle.
+            "folio_charges": money(folio_charge_balance),
+            "outstanding_balance": money(outstanding_balance),
             "currency": booking.currency,
             "issued_at": issued_at.isoformat(),
             "receipt_reference": latest.reference if latest else booking.booking_reference,

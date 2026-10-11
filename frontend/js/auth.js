@@ -131,8 +131,14 @@
     if (state.capabilitiesLoaded && !options.force) return Promise.resolve(state.capabilities.slice());
     if (capabilityRequest) return capabilityRequest;
     if (!window.API || typeof window.API.get !== "function") return Promise.resolve([]);
+    /* One source of truth for the path. A missing key is a configuration
+       defect and must surface as such, not be papered over with a hard-coded
+       route that can drift from config/urls.py. */
     const endpoint = window.APP_CONFIG && window.APP_CONFIG.API_ENDPOINTS &&
-      window.APP_CONFIG.API_ENDPOINTS.staffCapabilities || "/api/auth/capabilities/";
+      window.APP_CONFIG.API_ENDPOINTS.staffCapabilities;
+    if (!endpoint) {
+      return Promise.reject(new Error("The capabilities endpoint is not configured."));
+    }
     capabilityRequest = window.API.get(endpoint).then((response) => {
       const payload = response && response.data || {};
       state.capabilities = Array.isArray(payload.capabilities) ? payload.capabilities.slice() : [];

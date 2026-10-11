@@ -417,7 +417,11 @@
   function stateBody(icon, title, msg, extra) {
     const ic = icon ? '<span data-icon="' + JONE.esc(icon) + '" data-size="42"></span>' : '';
     const m = msg ? '<p>' + JONE.esc(msg) + '</p>' : '';
-    return '<div class="empty-state">' + ic + '<h3>' + JONE.esc(title) + '</h3>' + m + (extra || '') + '</div>';
+    /* h2 keeps the empty state one level below the page/panel heading that is
+       already on screen; the .h3 class preserves the previous visual size.
+       An h3 here skipped a level whenever the surrounding panel had no h2
+       (audit N11, heading-order). */
+    return '<div class="empty-state">' + ic + '<h2 class="h3">' + JONE.esc(title) + '</h2>' + m + (extra || '') + '</div>';
   }
 
   function genericSkeleton() {
@@ -693,7 +697,24 @@
     // A page that already fetches an authoritative unread count can defer this
     // and call notifBadge.set(count), avoiding a duplicate API round trip.
     if (!options.deferNotificationBadge) notifBadge.refresh();
+    enhanceScrollRegions();
     return true;
+  }
+
+  /* A table that scrolls sideways must also be reachable without a pointer and
+     announced as a named region (WCAG 2.1.1 / 4.1.2). Pages that ship the
+     attributes statically (e.g. POS, terminals) are left untouched; the rest
+     are upgraded here, with the name taken from the panel heading. */
+  function enhanceScrollRegions(root) {
+    (root || document).querySelectorAll(".table-wrap").forEach(function (wrap) {
+      if (!wrap.hasAttribute("tabindex")) wrap.setAttribute("tabindex", "0");
+      if (!wrap.getAttribute("role")) wrap.setAttribute("role", "region");
+      if (wrap.getAttribute("aria-label")) return;
+      var panel = wrap.closest(".panel");
+      var head = panel && panel.querySelector(".panel-head h2, .panel-head h3");
+      var name = head && head.textContent ? head.textContent.trim() : "";
+      wrap.setAttribute("aria-label", (name ? name + " — " : "") + "table, scroll sideways to see every column");
+    });
   }
 
   /* ------------------------- Image upload field ----------------------------
@@ -1607,7 +1628,7 @@
             (r.is_active ? "" : '<div class="room-type" style="color:var(--color-danger);">Retired</div>') +
             "</div>";
         }).join("") + "</div>"
-      : '<div class="empty-state"><span data-icon="bed"></span><h3>No rooms yet</h3>' +
+      : '<div class="empty-state"><span data-icon="bed"></span><h2 class="h3">No rooms yet</h2>' +
         "<p>No physical rooms have been added to this room type yet.</p></div>";
     openPanel("Rooms — " + (rt.name || "Room type"),
       '<p class="muted" style="margin-bottom:0.9rem;">' + rooms.length + " room" +
@@ -1687,7 +1708,7 @@
               '<td class="num">' + JONE.esc(money(b.amount_paid, b.currency) || "₦0.00") + "</td>" +
               "<td>" + statusPill(b.status) + "</td>" +
             "</tr>").join("") + "</tbody></table></div>"
-        : '<div class="empty-state"><span data-icon="calendar"></span><h3>No bookings yet</h3>' +
+        : '<div class="empty-state"><span data-icon="calendar"></span><h2 class="h3">No bookings yet</h2>' +
           "<p>This guest has no recorded stays.</p></div>");
     openPanel(name, body, '<button class="btn btn-sm btn-ghost" data-gp-close>Close</button>', "modal-lg");
     const panel = lastPanel;

@@ -54,7 +54,7 @@ def build_dashboard(user):
         .distinct()
     )
     operationally_free = set(
-        rooms_qs.exclude(status__in=availability.OPERATIONALLY_BLOCKED)
+        rooms_qs.filter(availability.room_readiness_q())
         .values_list("id", flat=True)
     )
     available_rooms = len(operationally_free - blocked_tonight)

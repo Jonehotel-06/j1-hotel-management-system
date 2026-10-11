@@ -65,6 +65,7 @@
 
   <section class="section">
     <div class="container">
+      <h2 class="sr-only">Hotel facilities</h2>
       <div class="facility-grid" id="facilities-grid">
         <div class="skeleton skeleton-card" style="min-height:120px;"></div>
         <div class="skeleton skeleton-card" style="min-height:120px;"></div>
@@ -112,7 +113,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Explore</h5>
+        <h2 class="h5">Explore</h2>
         <a href="index.html#rooms">Rooms &amp; Suites</a>
         <a href="facilities.html">Facilities</a>
         <a href="gallery.html">Gallery</a>
@@ -122,7 +123,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Booking</h5>
+        <h2 class="h5">Booking</h2>
         <a href="booking.html">Book Your Stay</a>
         <a href="my-bookings.html">Your stays</a>
         <a href="portal/login.html">Guest portal</a>
@@ -133,7 +134,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Contact</h5>
+        <h2 class="h5">Contact</h2>
         <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
         <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
         <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
@@ -199,7 +200,7 @@
     if (!grid) return;
     grid.innerHTML = list.length
       ? list.map(function (f) {
-        return '<div class="facility-item"><div class="facility-icon"><span data-icon="' + (f.icon || "building") + '" data-size="22"></span></div><div><h4>' + JONE.esc(f.name || f.title) + '</h4><p>' + JONE.esc(f.description || f.desc || "") + '</p></div></div>';
+        return '<div class="facility-item"><div class="facility-icon"><span data-icon="' + (f.icon || "building") + '" data-size="22"></span></div><div><h3 class="h4">' + JONE.esc(f.name || f.title) + '</h3><p>' + JONE.esc(f.description || f.desc || "") + '</p></div></div>';
       }).join("")
       : '<div class="empty-state"><span data-icon="building" data-size="42"></span><h3>No facilities listed yet</h3><p>We\'ll publish our facilities here soon. Please contact the hotel.</p></div>';
     JONE.icons.inject(grid);

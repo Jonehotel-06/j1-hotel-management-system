@@ -91,13 +91,17 @@
       btn.className = "bk-step-btn";
       btn.innerHTML =
         '<span class="bk-step-marker"><span class="bk-step-num">' + (i + 1) + '</span>' +
-        '<span class="bk-step-check" aria-hidden="true">' + checkSvg() + '</span></span>' +
-        '<span class="bk-step-label">' + step.label + '</span>';
+        '<span class="bk-step-check" aria-hidden="true">' + checkSvg() + '</span></span> ' +
+        '<span class="bk-step-label">' + step.label + '</span>' +
+        /* State is announced as extra visible-text-safe content rather than an
+           aria-label: an overriding label that does not literally contain the
+           visible "1 Stay" would fail label-content-name-mismatch (audit N11). */
+        '<span class="sr-only bk-step-state"></span>';
       li.appendChild(btn);
       desktop.appendChild(li);
       var rec = nodes[nodes.length - 1] || {};
       // attach the step record after its (optional) preceding line
-      nodes.push({ li: li, btn: btn, step: step, index: i + 1 });
+      nodes.push({ li: li, btn: btn, step: step, index: i + 1, state: btn.querySelector(".bk-step-state") });
       btn.addEventListener("click", function () { navigate(step, i + 1); });
     });
 
@@ -137,7 +141,11 @@
         if (active) rec.btn.setAttribute("aria-current", "step");
         else rec.btn.removeAttribute("aria-current");
         var sr = done ? " (completed)" : active ? " (current step)" : " (upcoming)";
-        rec.btn.setAttribute("aria-label", "Step " + i + ": " + rec.step.label + sr);
+        /* No overriding aria-label: the accessible name is taken from the
+           button's own content ("1 Stay (current step)"), which contains the
+           visible text as required by label-content-name-mismatch. */
+        rec.btn.removeAttribute("aria-label");
+        if (rec.state) rec.state.textContent = sr;
       });
       // connector lines: done when the step AFTER them is reached
       nodes.filter(function (n) { return n.line; }).forEach(function (n, idx) {

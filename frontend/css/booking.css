@@ -200,7 +200,7 @@
   background: var(--brand-charcoal);
   color: #fff;
 }
-.booking-summary-head h3 { color: #fff; font-size: var(--fs-lg); }
+.booking-summary-head h2, .booking-summary-head h3 { color: #fff; font-size: var(--fs-lg); }
 .booking-summary-body { padding: var(--sp-5); display: grid; gap: var(--sp-4); }
 .summary-row {
   display: flex; justify-content: space-between; gap: var(--sp-4);
@@ -238,6 +238,7 @@
 }
 .room-option.is-selected,
 .room-option.is-selected h4,
+.room-option.is-selected .h4,
 .room-option.is-selected .price { color: var(--color-text); }
 .room-option .media { aspect-ratio: 4 / 3; border-radius: var(--radius); overflow: hidden; }
 .room-option .placeholder-placeholder {
@@ -245,7 +246,7 @@
   background: var(--color-surface-deep); color: var(--color-text-faint); border-radius: var(--radius);
 }
 .room-option-info { display: flex; flex-direction: column; gap: 0.5rem; color: var(--color-text); justify-content: center; }
-.room-option-info h4 { letter-spacing: 0; color: var(--color-heading); font-size: var(--fs-md); }
+.room-option-info h4, .room-option-info .h4 { letter-spacing: 0; color: var(--color-heading); font-size: var(--fs-md); }
 .room-option-desc { color: var(--color-text-muted); font-size: var(--fs-sm); line-height: 1.5; margin: 0; }
 .room-option-price .price { color: var(--color-heading); font-size: var(--fs-lg); font-weight: 600; letter-spacing: -0.01em; }
 .room-option-price .price small { font-size: var(--fs-xs); font-weight: 400; color: var(--color-text-muted); }
@@ -327,7 +328,7 @@
 .review-card { padding: var(--sp-6); }
 .review-section { padding-bottom: var(--sp-5); margin-bottom: var(--sp-5); border-bottom: 1px solid var(--color-border); }
 .review-section:last-of-type { border-bottom: 0; margin-bottom: 0; }
-.review-section h4 {
+.review-section h4, .review-section .h4 {
   letter-spacing: var(--tracking-wider); text-transform: uppercase;
   font-size: var(--fs-xs); color: var(--color-text-muted);
   margin-bottom: var(--sp-4);
@@ -349,7 +350,7 @@
   background: var(--color-surface-alt);
   border-bottom: 1px solid var(--color-border);
 }
-.review-group-head h4 {
+.review-group-head h4, .review-group-head .h4 {
   letter-spacing: var(--tracking-wider); text-transform: uppercase;
   font-size: var(--fs-xs); color: var(--color-text-muted); margin: 0;
 }

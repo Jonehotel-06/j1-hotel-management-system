@@ -250,9 +250,17 @@ python manage.py email_check                    # active provider config
 python manage.py email_check --send you@x.com   # + one real delivery
 python manage.py smtp_check you@example.com     # full SMTP conversation
 python manage.py check_media_storage            # upload/storage round trip
+python manage.py reconcile_accommodation        # report unposted room nights (read-only)
+python manage.py reconcile_accommodation --post --actor you@example.com
+                                                # re-post them through the idempotent
+                                                # accrual service (nothing changes twice)
 ```
 
-None of these ever print a credential.
+None of these ever print a credential. `reconcile_accommodation` is the supported way to
+check that every checked-out stay's room revenue and tax reached the ledger: without
+`--post` it only reports, and with `--post` the amounts come from the booking's own totals,
+so running it again is a no-op. Use `--since YYYY-MM-DD`, `--stay <reference>` and `--json`
+to narrow the report.
 
 ## Tests
 

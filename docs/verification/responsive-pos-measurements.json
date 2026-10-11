@@ -1,0 +1,325 @@
+{
+ "what": "N2 (POS topbar height / title clipping) and N3 (order-table horizontal scroll) measurements",
+ "method": "Headless Chrome 148, one page load per width, synthetic ADMIN session seeded in localStorage/sessionStorage, every /api/ request aborted so no backend or real data is involved; geometry read with getBoundingClientRect.",
+ "before": {
+  "tree": "git HEAD frontend (baseline)",
+  "measurements": {
+   "baseUrl": "http://127.0.0.1:8898",
+   "headerText": "before (git HEAD)",
+   "widths": [
+    320,
+    360,
+    390,
+    412,
+    768
+   ],
+   "pages": {
+    "dashboard/pos.html": {
+     "320": {
+      "topbarHeightPx": 124,
+      "titleClipped": true,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 294,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "POS orders, scroll sideways to see every column"
+      },
+      "pageOverflows": false
+     },
+     "360": {
+      "topbarHeightPx": 124,
+      "titleClipped": true,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 334,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "POS orders, scroll sideways to see every column"
+      },
+      "pageOverflows": false
+     },
+     "390": {
+      "topbarHeightPx": 124,
+      "titleClipped": true,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 364,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "POS orders, scroll sideways to see every column"
+      },
+      "pageOverflows": false
+     },
+     "412": {
+      "topbarHeightPx": 103,
+      "titleClipped": true,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 386,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "POS orders, scroll sideways to see every column"
+      },
+      "pageOverflows": false
+     },
+     "768": {
+      "topbarHeightPx": 87,
+      "titleClipped": false,
+      "tableScrollable": false,
+      "tableVisibleWidthPx": 718,
+      "tableContentWidthPx": 718,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "POS orders, scroll sideways to see every column"
+      },
+      "pageOverflows": false
+     }
+    },
+    "dashboard/terminals.html": {
+     "320": {
+      "topbarHeightPx": 124,
+      "titleClipped": true,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 294,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "Registered workstations"
+      },
+      "pageOverflows": false
+     },
+     "360": {
+      "topbarHeightPx": 103,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 334,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "Registered workstations"
+      },
+      "pageOverflows": false
+     },
+     "390": {
+      "topbarHeightPx": 103,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 364,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "Registered workstations"
+      },
+      "pageOverflows": false
+     },
+     "412": {
+      "topbarHeightPx": 103,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 386,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "Registered workstations"
+      },
+      "pageOverflows": false
+     },
+     "768": {
+      "topbarHeightPx": 87,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 718,
+      "tableContentWidthPx": 743,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "Registered workstations"
+      },
+      "pageOverflows": false
+     }
+    }
+   }
+  }
+ },
+ "after": {
+  "tree": "working tree after the N2/N3 fixes",
+  "measurements": {
+   "baseUrl": "http://127.0.0.1:8899",
+   "headerText": "after (repaired)",
+   "widths": [
+    320,
+    360,
+    390,
+    412,
+    768
+   ],
+   "pages": {
+    "dashboard/pos.html": {
+     "320": {
+      "topbarHeightPx": 53,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 294,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "POS orders, scroll sideways to see every column"
+      },
+      "pageOverflows": false
+     },
+     "360": {
+      "topbarHeightPx": 53,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 334,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "POS orders, scroll sideways to see every column"
+      },
+      "pageOverflows": false
+     },
+     "390": {
+      "topbarHeightPx": 55,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 364,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "POS orders, scroll sideways to see every column"
+      },
+      "pageOverflows": false
+     },
+     "412": {
+      "topbarHeightPx": 55,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 386,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "POS orders, scroll sideways to see every column"
+      },
+      "pageOverflows": false
+     },
+     "768": {
+      "topbarHeightPx": 87,
+      "titleClipped": false,
+      "tableScrollable": false,
+      "tableVisibleWidthPx": 718,
+      "tableContentWidthPx": 718,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "POS orders, scroll sideways to see every column"
+      },
+      "pageOverflows": false
+     }
+    },
+    "dashboard/terminals.html": {
+     "320": {
+      "topbarHeightPx": 53,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 294,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "Registered workstations"
+      },
+      "pageOverflows": false
+     },
+     "360": {
+      "topbarHeightPx": 53,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 334,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "Registered workstations"
+      },
+      "pageOverflows": false
+     },
+     "390": {
+      "topbarHeightPx": 55,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 364,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "Registered workstations"
+      },
+      "pageOverflows": false
+     },
+     "412": {
+      "topbarHeightPx": 55,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 386,
+      "tableContentWidthPx": 600,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "Registered workstations"
+      },
+      "pageOverflows": false
+     },
+     "768": {
+      "topbarHeightPx": 87,
+      "titleClipped": false,
+      "tableScrollable": true,
+      "tableVisibleWidthPx": 718,
+      "tableContentWidthPx": 743,
+      "tableRegion": {
+       "tabindex": "0",
+       "role": "region",
+       "label": "Registered workstations"
+      },
+      "pageOverflows": false
+     }
+    }
+   }
+  }
+ },
+ "scrollCue": {
+  "what": "Controlled fixture with the repository stylesheet, a 7-column table inside .table-wrap, sampled with a 1 px column strip at the wrapper's bottom edge (PIL, RGB 0-255).",
+  "pixels": {
+   "scrollStart": {
+    "leftEdgeDelta": 0,
+    "midDelta": 0,
+    "rightEdgeDelta": -30
+   },
+   "midScroll": {
+    "leftEdgeDelta": -31,
+    "midDelta": 0,
+    "rightEdgeDelta": -30
+   },
+   "scrollEnd": {
+    "leftEdgeDelta": -31,
+    "midDelta": 0,
+    "rightEdgeDelta": 0
+   }
+  },
+  "reading": "A non-zero edge delta is the visible scroll cue. It appears only on sides that still have content to scroll to and is 0 at the reached end, so the cue is never misleading."
+ }
+}

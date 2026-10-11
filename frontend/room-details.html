@@ -72,17 +72,17 @@
           <div class="room-facts" style="gap:1.25rem;margin-bottom:1.5rem;" id="room-facts"></div>
 
           <div class="review-section" style="border-bottom:1px solid var(--color-border);padding-bottom:1.5rem;margin-bottom:1.5rem;">
-            <h3 class="h4" style="margin-bottom:0.75rem;">About this room</h3>
+            <h2 class="h4" style="margin-bottom:0.75rem;">About this room</h2>
             <p class="prose muted" id="room-desc"></p>
           </div>
 
           <div class="review-section" style="border-bottom:1px solid var(--color-border);padding-bottom:1.5rem;margin-bottom:1.5rem;">
-            <h3 class="h4" style="margin-bottom:0.75rem;">Amenities</h3>
+            <h2 class="h4" style="margin-bottom:0.75rem;">Amenities</h2>
             <div class="room-facts" style="flex-direction:column;align-items:flex-start;gap:0.7rem;" id="room-amenities"></div>
           </div>
 
           <div class="review-section">
-            <h3 class="h4" style="margin-bottom:0.75rem;">Good to know</h3>
+            <h2 class="h4" style="margin-bottom:0.75rem;">Good to know</h2>
             <ul style="list-style:disc;padding-left:1.2rem;color:var(--color-text-muted);font-size:var(--fs-sm);line-height:1.8;">
               <li>Check-in from 2:00 PM · Check-out by 12:00 PM.</li>
               <li>Free cancellation up to 24 hours before check-in.</li>
@@ -96,14 +96,14 @@
                room. The backend re-checks availability when the booking is
                created and picks an equivalent room if that one was taken. -->
           <div class="review-section" id="room-picker-block" hidden>
-            <h3 class="h4" style="margin-bottom:0.35rem;">Choose your exact room</h3>
+            <h2 class="h4" style="margin-bottom:0.35rem;">Choose your exact room</h2>
             <p class="caption" style="margin-bottom:0.9rem;">Pick a specific room number, or leave it to us and we'll assign the best available room of this type.</p>
             <div class="room-picker" id="room-picker" role="radiogroup" aria-label="Choose a room"></div>
             <p class="caption" id="room-picker-state"></p>
           </div>
 
         <aside class="booking-summary no-print">
-          <div class="booking-summary-head"><h3 id="room-sum-name">Room</h3><div style="color:rgba(255,255,255,0.75);font-size:var(--fs-sm);">per night</div></div>
+          <div class="booking-summary-head"><h2 id="room-sum-name">Room</h2><div style="color:rgba(255,255,255,0.75);font-size:var(--fs-sm);">per night</div></div>
           <div class="booking-summary-body">
             <div class="summary-row"><span class="label">From</span><span class="value" id="room-sum-price">--</span></div>
             <div class="summary-row"><span class="label">Capacity</span><span class="value" id="room-sum-cap">--</span></div>
@@ -133,7 +133,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Explore</h5>
+        <h2 class="h5">Explore</h2>
         <a href="index.html#rooms">Rooms &amp; Suites</a>
         <a href="facilities.html">Facilities</a>
         <a href="gallery.html">Gallery</a>
@@ -143,7 +143,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Booking</h5>
+        <h2 class="h5">Booking</h2>
         <a href="booking.html">Book Your Stay</a>
         <a href="my-bookings.html">Your stays</a>
         <a href="portal/login.html">Guest portal</a>
@@ -154,7 +154,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Contact</h5>
+        <h2 class="h5">Contact</h2>
         <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
         <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
         <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
@@ -234,7 +234,7 @@
   }
 
   function showError() {
-    setState("error", '<div class="empty-state"><span data-icon="alertTriangle" data-size="42"></span><h3>We couldn\'t load this room</h3><p>Please try again in a moment, or browse our <a href="rooms.html">available rooms</a>.</p></div>');
+    setState("error", '<div class="empty-state"><span data-icon="alertTriangle" data-size="42"></span><h1 class="h2">We couldn\'t load this room</h1><p>Please try again in a moment, or browse our <a href="rooms.html">available rooms</a>.</p></div>');
   }
 
   /* Every photo of this room/room type as shared-modal items (prev/next). */

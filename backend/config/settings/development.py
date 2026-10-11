@@ -8,11 +8,53 @@ SMTP delivery can be tested locally — the Celery eager configuration is a
 fixed development contract (see the comment in this module) so a missing Redis
 server can never break local runs.
 """
+import os
+
+from django.core.exceptions import ImproperlyConfigured
 from decouple import config
 
-from .base import *  # noqa: F401,F403
+# ---------------------------------------------------------------------------
+# Guard: this module must NEVER serve a hosted deployment.
+#
+# Development settings enable DEBUG, ALLOWED_HOSTS=["*"] and wildcard CORS.
+# A committed/deployed ".env" carrying DJANGO_SETTINGS_MODULE=
+# config.settings.development (the value shipped in .env.example) therefore
+# silently turns a public API into a wildcard-CORS, debug-mode service. That is
+# exactly how the deployed API came to answer CORS preflight with
+# "Access-Control-Allow-Origin: *" (audit SEC-02).
+#
+# Rather than trusting the environment to be configured correctly, refuse to
+# boot in a managed hosting environment. Local development, CI and the test
+# suite are unaffected.
+# ---------------------------------------------------------------------------
+_HOSTING_MARKERS = (
+    "RAILWAY_ENVIRONMENT",
+    "RAILWAY_PROJECT_ID",
+    "RENDER",
+    "RENDER_SERVICE_ID",
+    "FLY_APP_NAME",
+    "DYNO",
+    "K_SERVICE",
+    "WEBSITE_SITE_NAME",
+    "HEROKU_APP_NAME",
+)
+_detected = sorted(name for name in _HOSTING_MARKERS if os.environ.get(name))
+if _detected and os.environ.get("JONE_ALLOW_DEVELOPMENT_SETTINGS") != "1":
+    raise ImproperlyConfigured(
+        "config.settings.development was selected on a hosted platform "
+        f"({', '.join(_detected)}). Development settings enable DEBUG, "
+        "ALLOWED_HOSTS='*' and wildcard CORS, which must never be exposed "
+        "publicly. Set DJANGO_SETTINGS_MODULE=config.settings.production and "
+        "restart. Override only for a deliberate, isolated staging run by "
+        "setting JONE_ALLOW_DEVELOPMENT_SETTINGS=1."
+    )
+
+from .base import *  # noqa: E402,F401,F403
 
 DEBUG = True
+# Local development only: the dev server is reached through localhost, the
+# loopback address, a LAN hostname or a forwarded sandbox host. Everything
+# here is intentionally permissive and is guarded above.
 ALLOWED_HOSTS = ["*"]
 
 # The separately hosted frontend may run on any local port during development.

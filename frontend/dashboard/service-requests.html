@@ -21,10 +21,10 @@
     <div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,.2);"><span data-icon="logOut" data-size="16"></span> Sign out</button></div>
   </aside>
   <div class="dash-main">
-    <div class="dash-topbar">
+    <header class="dash-topbar">
       <div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title" data-dash-title><h1>Guest requests</h1><p>Route, progress, and document guest needs without losing the operational trail.</p></div></div>
       <div class="dash-topbar-right"><div class="dash-topbar-actions" data-topbar-actions></div><button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false"><span class="icon-moon" data-icon="moon" data-size="18"></span><span class="icon-sun" data-icon="sun" data-size="18"></span></button></div>
-    </div>
+    </header>
     <main class="dash-content">
       <section class="panel">
         <div class="panel-head"><h2>Request queue</h2><div class="panel-actions"><span class="caption" data-sr-live-status>Connecting…</span><button class="btn btn-sm btn-outline" type="button" data-sr-refresh>Refresh</button><button class="btn btn-sm" type="button" data-sr-new><span data-icon="plus" data-size="15"></span> New request</button></div></div>
@@ -35,7 +35,7 @@
           <div class="field"><label class="field-label" for="sr-team">Team</label><select class="select" id="sr-team"><option value="">All teams</option><option value="FRONT_DESK">Front desk</option><option value="HOUSEKEEPING">Housekeeping</option><option value="MAINTENANCE">Maintenance</option><option value="FOOD_BEVERAGE">Food &amp; beverage</option><option value="MANAGEMENT">Management</option></select></div>
           <div class="field"><button class="btn btn-sm btn-outline" id="sr-apply" type="button">Apply</button></div>
         </div>
-        <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Guest service requests, scroll sideways to see every column"><table class="table"><thead><tr><th>Request</th><th>Guest / room</th><th>Type</th><th class="hide-sm">Owner</th><th class="hide-sm">Due</th><th>Status</th><th></th></tr></thead><tbody data-sr-rows></tbody></table></div><div class="pagination" data-sr-pagination></div></div>
+        <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Guest service requests, scroll sideways to see every column"><table class="table"><thead><tr><th>Request</th><th>Guest / room</th><th>Type</th><th class="hide-sm">Owner</th><th class="hide-sm">Due</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-sr-rows></tbody></table></div><div class="pagination" data-sr-pagination></div></div>
       </section>
     </main>
   </div>

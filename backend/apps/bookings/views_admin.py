@@ -11,8 +11,16 @@ from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import HasCapability, IsManagerOrAdmin, IsStaffRole
+from apps.core.permissions import (
+    BookingAccess,
+    BookingManageAccess,
+    BookingReadAccess,
+    HasCapability,
+    IsManagerOrAdmin,
+    IsStaffRole,
+)
 from apps.core.responses import success_response
+from apps.core.utils import money
 from apps.core.serializers import EmptySerializer
 from apps.core.emails import send_email_safe
 from apps.rooms.models import Room
@@ -96,7 +104,7 @@ def apply_booking_search(queryset, search):
 
 @extend_schema(tags=["Admin · Bookings"])
 class AdminBookingListCreateView(generics.ListCreateAPIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [BookingAccess]
 
     def get_serializer_class(self):
         return AdminBookingCreateSerializer if self.request.method == "POST" else AdminBookingListSerializer
@@ -135,6 +143,22 @@ class AdminBookingListCreateView(generics.ListCreateAPIView):
             qs = qs.order_by(ordering)
         return qs
 
+    def list(self, request, *args, **kwargs):
+        """List bookings, resolving guest folio charges for the page in one query."""
+        from apps.finance.services.folio_service import booking_folio_charge_map
+
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        rows = list(page) if page is not None else list(queryset)
+        context = self.get_serializer_context()
+        context["folio_charge_map"] = booking_folio_charge_map(
+            booking_ids=[booking.pk for booking in rows]
+        )
+        serializer = self.get_serializer(rows, many=True, context=context)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -171,6 +195,16 @@ class AdminBookingListCreateView(generics.ListCreateAPIView):
         )
 
 
+def _booking_detail_context(request, booking):
+    """Serializer context carrying the guest's batched folio-charge balance."""
+    from apps.finance.services.folio_service import booking_folio_charge_map
+
+    return {
+        "request": request,
+        "folio_charge_map": booking_folio_charge_map(booking_ids=[booking.pk]),
+    }
+
+
 def _get_admin_booking(lookup):
     booking = _admin_booking_queryset().filter(
         Q(booking_reference=lookup) | Q(pk=lookup if str(lookup).isdigit() else -1)
@@ -182,12 +216,14 @@ def _get_admin_booking(lookup):
 
 @extend_schema(tags=["Admin · Bookings"])
 class AdminBookingDetailView(APIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [BookingAccess]
     serializer_class = AdminBookingDetailSerializer  # for schema introspection
 
     def get(self, request, lookup):
         booking = _get_admin_booking(lookup)
-        return success_response(AdminBookingDetailSerializer(booking, context={"request": request}).data)
+        return success_response(
+            AdminBookingDetailSerializer(booking, context=_booking_detail_context(request, booking)).data
+        )
 
     def patch(self, request, lookup):
         booking = _get_admin_booking(lookup)
@@ -198,13 +234,15 @@ class AdminBookingDetailView(APIView):
         )
         booking = _get_admin_booking(booking.booking_reference)
         return success_response(
-            AdminBookingDetailSerializer(booking, context={"request": request}).data,
+            AdminBookingDetailSerializer(booking, context=_booking_detail_context(request, booking)).data,
             message="Booking updated.",
         )
 
 
 class _BookingActionView(APIView):
-    permission_classes = [IsStaffRole]
+    # confirm / cancel / check-in / check-out / no-show / assign-room.
+    # A read grant is not sufficient: these endpoints change a reservation.
+    permission_classes = [BookingManageAccess]
     # NOTE: do NOT define an `action` attribute on this class — spectacular
     # introspection reads `view.action` (ViewSet concept) and crashes when it
     # is a non-string leftover like `action = None`.
@@ -258,11 +296,28 @@ class AdminBookingCheckOutView(_BookingActionView):
             allow_balance_due=data.get("allow_balance_due", False),
             request=request,
         )
+        # Audit D4: the desk must leave checkout knowing the whole debt, not
+        # just the room part — the folio keeps restaurant/bar/other charges.
+        from apps.finance.services.folio_service import (
+            booking_folio_charge_balance,
+            booking_outstanding_balance,
+        )
+
+        folio_charge_balance = booking_folio_charge_balance(booking=booking)
         return success_response(
             {
                 "booking_reference": booking.booking_reference,
                 "status": booking.status,
                 "checked_out_at": booking.checked_out_at,
+                "amount_due": money(booking.amount_due),
+                "amount_paid": money(booking.amount_paid),
+                "folio_charges": money(folio_charge_balance),
+                "outstanding_balance": money(
+                    booking_outstanding_balance(
+                        booking=booking, folio_charge_balance=folio_charge_balance
+                    )
+                ),
+                "currency": booking.currency,
             },
             message="Guest checked out.",
         )
@@ -302,7 +357,7 @@ class AdminBookingAssignRoomView(_BookingActionView):
 # ---------------------------------------------------------------------------
 @extend_schema(tags=["Admin · Guests"])
 class AdminGuestListView(generics.ListAPIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [BookingReadAccess]
     serializer_class = AdminGuestListSerializer
 
     def get_queryset(self):
@@ -330,7 +385,7 @@ class AdminGuestListView(generics.ListAPIView):
 
 @extend_schema(tags=["Admin · Guests"])
 class AdminGuestDetailView(generics.RetrieveUpdateAPIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [BookingAccess]
     http_method_names = ["get", "patch", "head", "options"]
 
     def get_serializer_class(self):
@@ -578,7 +633,7 @@ class AdminMissedBookingListView(generics.ListAPIView):
     client could set.
     """
 
-    permission_classes = [IsStaffRole]
+    permission_classes = [BookingReadAccess]
     serializer_class = MissedBookingSerializer
 
     def get_queryset(self):
@@ -602,7 +657,7 @@ class AdminLateArrivalBookingListView(generics.ListAPIView):
     never checked in and it is longer than one night.
     """
 
-    permission_classes = [IsStaffRole]
+    permission_classes = [BookingReadAccess]
     serializer_class = LateArrivalBookingSerializer
 
     def get_queryset(self):
@@ -623,7 +678,7 @@ class AdminOccupancyCalendarView(APIView):
     Query: ?year=2026&month=9 (defaults to the current hotel month).
     """
 
-    permission_classes = [IsStaffRole]
+    permission_classes = [BookingReadAccess]
     serializer_class = EmptySerializer
 
     def get(self, request):

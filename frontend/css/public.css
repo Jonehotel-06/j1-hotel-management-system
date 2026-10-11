@@ -139,6 +139,13 @@ html[data-theme="dark"] .theme-toggle .icon-moon { opacity: 0; }
   display: flex; flex-direction: column;
 }
 .mobile-drawer.open { transform: translateX(0); }
+/* While the drawer is closed its links and buttons must not be reachable — by
+   keyboard, by a screen reader, or by Axe's aria-hidden-focus rule. Off-canvas
+   translateX alone leaves them focusable inside an aria-hidden subtree. The
+   delayed visibility keeps the slide-out animation, then removes the subtree
+   from the accessibility tree and the tab order entirely. `inert` is set by
+   js/navigation.js for the same reason in browsers that support it. */
+.mobile-drawer:not(.open) { visibility: hidden; transition: transform var(--speed-3) var(--ease), visibility 0s linear var(--speed-3); }
 .mobile-drawer-backdrop {
   position: fixed; inset: 0; z-index: 999;
   background: rgba(20, 18, 19, 0.5);
@@ -336,7 +343,7 @@ html[data-theme="dark"] .theme-toggle .icon-moon { opacity: 0; }
   color: var(--color-text-faint);
   font-variant-numeric: tabular-nums;
 }
-.feature-row h4 { letter-spacing: 0; }
+.feature-row h4, .feature-row .h4 { letter-spacing: 0; }
 .feature-row p { color: var(--color-text-muted); margin: 0.3rem 0 0; font-size: var(--fs-sm); }
 
 /* ------------------------------ Room cards ------------------------------ */
@@ -385,7 +392,7 @@ html[data-theme="dark"] .theme-toggle .icon-moon { opacity: 0; }
   background: var(--color-surface-deep);
   color: var(--color-accent);
 }
-.facility-item h4 { margin-bottom: 0.35rem; }
+.facility-item h4, .facility-item .h4 { margin-bottom: 0.35rem; }
 .facility-item p { color: var(--color-text-muted); font-size: var(--fs-sm); margin: 0; }
 
 /* ------------------------------- Gallery -------------------------------- */
@@ -514,8 +521,8 @@ html[data-theme="dark"] .theme-toggle .icon-moon { opacity: 0; }
 .footer-brand .brand-word { color: #fff; font-size: 1.02rem; }
 .footer-brand .brand-sub { color: #9AA3AF; }
 .footer-brand p { color: #ADACAA; font-size: var(--fs-sm); max-width: 38ch; line-height: 1.55; margin: 0.9rem 0 0; overflow-wrap: anywhere; }
-.footer-col a, .footer-col h5 { overflow-wrap: anywhere; }
-.footer-col h5 { font-weight: 600; letter-spacing: var(--tracking-wider); text-transform: uppercase; font-size: var(--fs-xs); color: #8f8e8c; margin-bottom: 0.75rem; }
+.footer-col a, .footer-col h5, .footer-col .h5 { overflow-wrap: anywhere; }
+.footer-col h5, .footer-col .h5 { font-weight: 600; letter-spacing: var(--tracking-wider); text-transform: uppercase; font-size: var(--fs-xs); color: #8f8e8c; margin-bottom: 0.75rem; }
 .footer-col a, .footer-col .footer-line {
   display: block; padding: 0.24rem 0; color: #CFCECC; font-size: var(--fs-sm);
   line-height: 1.45;

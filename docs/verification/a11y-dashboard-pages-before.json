@@ -1,0 +1,2344 @@
+{
+ "403.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 3,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 3,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "accounting.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 11,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     ".panel-grid:nth-child(3) > .panel:nth-child(1) > .panel-head > h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 27,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "select-name",
+    "nodes": 1,
+    "samples": [
+     "#rp-range"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "color-contrast",
+    "nodes": 4,
+    "samples": [
+     ".kpi:nth-child(1) > .kpi-label",
+     ".kpi:nth-child(2) > .kpi-label"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     ".panel-grid:nth-child(3) > .panel:nth-child(1) > .panel-head > h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 31,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "scrollable-region-focusable",
+    "nodes": 2,
+    "samples": [
+     ".panel-grid:nth-child(3) > .panel:nth-child(1) > .no-pad.panel-body > .table-wrap",
+     ".panel-grid:nth-child(3) > .panel:nth-child(2) > .no-pad.panel-body > .table-wrap"
+    ]
+   },
+   {
+    "id": "select-name",
+    "nodes": 1,
+    "samples": [
+     "#rp-range"
+    ]
+   }
+  ]
+ },
+ "audit-log-details.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 6,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 6,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "audit-logs.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 6,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 9,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "availability.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 8,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 8,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "barcode-labels.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "booking-details.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     ".review-section:nth-child(1) > h4"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 8,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "scrollable-region-focusable",
+    "nodes": 1,
+    "samples": [
+     ".table-wrap"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     ".review-section:nth-child(1) > h4"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 13,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "scrollable-region-focusable",
+    "nodes": 1,
+    "samples": [
+     ".table-wrap"
+    ]
+   }
+  ]
+ },
+ "bookings.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(9)"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     "h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 9,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(9)"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     "h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 11,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "check-in.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 2,
+    "samples": [
+     "section:nth-child(1) > .no-pad.panel-body > .table-wrap > table > thead > tr > th:nth-child(6)",
+     "section:nth-child(2) > .no-pad.panel-body > .table-wrap > table > thead > tr > th:nth-child(6)"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 9,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 2,
+    "samples": [
+     "section:nth-child(1) > .no-pad.panel-body > .table-wrap > table > thead > tr > th:nth-child(6)",
+     "section:nth-child(2) > .no-pad.panel-body > .table-wrap > table > thead > tr > th:nth-child(6)"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 11,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "scrollable-region-focusable",
+    "nodes": 1,
+    "samples": [
+     "section:nth-child(2) > .no-pad.panel-body > .table-wrap"
+    ]
+   }
+  ]
+ },
+ "check-out.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 6,
+    "samples": [
+     ".dash-title",
+     ".dash-topbar-bell"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 6,
+    "samples": [
+     ".dash-title",
+     ".dash-topbar-bell"
+    ]
+   }
+  ]
+ },
+ "enquiries.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 6,
+    "samples": [
+     ".dash-title",
+     ".dash-topbar-bell"
+    ]
+   },
+   {
+    "id": "select-name",
+    "nodes": 2,
+    "samples": [
+     "#en-type",
+     "#en-status"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 9,
+    "samples": [
+     ".dash-title",
+     ".dash-topbar-bell"
+    ]
+   },
+   {
+    "id": "select-name",
+    "nodes": 2,
+    "samples": [
+     "#en-type",
+     "#en-status"
+    ]
+   }
+  ]
+ },
+ "facilities.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 5,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 5,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "gallery.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 5,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 5,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "guests.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(5)"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     "h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 6,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     "h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 5,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "housekeeping.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "index.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 17,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 23,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "color-contrast",
+    "nodes": 12,
+    "samples": [
+     ".kpi:nth-child(1) > .kpi-label",
+     ".kpi:nth-child(1) > .kpi-sub"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 23,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "inventory.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "maintenance.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "missed-bookings.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 2,
+    "samples": [
+     "th:nth-child(9)",
+     ".table-missed > thead > tr > th:nth-child(8)"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 16,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 14,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "notification-details.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 7,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 7,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "notifications.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 5,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 5,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "occupancy.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 7,
+    "samples": [
+     ".dash-title",
+     ".dash-topbar-bell"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 7,
+    "samples": [
+     ".dash-title",
+     ".dash-topbar-bell"
+    ]
+   }
+  ]
+ },
+ "offers.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 5,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 5,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "payments.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(9)"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     "td[colspan=\"9\"] > .empty-state > h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 9,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "select-name",
+    "nodes": 1,
+    "samples": [
+     "#r-status"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(9)"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     "td[colspan=\"9\"] > .empty-state > h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 13,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "select-name",
+    "nodes": 1,
+    "samples": [
+     "#r-status"
+    ]
+   }
+  ]
+ },
+ "payroll.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "pos.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     "td > .empty-state > h3"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     "td > .empty-state > h3"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "procurement.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "profile.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 8,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 8,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "receipt-details.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 1,
+    "samples": [
+     "button[data-share-pdf=\"\"] > span:nth-child(2)"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "page-has-heading-one",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "color-contrast",
+    "nodes": 1,
+    "samples": [
+     "button[data-share-pdf=\"\"] > span:nth-child(2)"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "page-has-heading-one",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   }
+  ]
+ },
+ "receipts.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(6)"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     "h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 6,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(6)"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     "h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 8,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "reports.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 7,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     ".panel:nth-child(1) > .panel-head > h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 13,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "select-name",
+    "nodes": 1,
+    "samples": [
+     "#rp-range"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "color-contrast",
+    "nodes": 4,
+    "samples": [
+     ".kpi:nth-child(1) > .kpi-label",
+     ".kpi:nth-child(2) > .kpi-label"
+    ]
+   },
+   {
+    "id": "heading-order",
+    "nodes": 1,
+    "samples": [
+     ".panel:nth-child(1) > .panel-head > h3"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 16,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "scrollable-region-focusable",
+    "nodes": 1,
+    "samples": [
+     ".panel:nth-child(1) > .no-pad.panel-body > .table-wrap"
+    ]
+   },
+   {
+    "id": "select-name",
+    "nodes": 1,
+    "samples": [
+     "#rp-range"
+    ]
+   }
+  ]
+ },
+ "reviews.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 6,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(8)"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 7,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".kpi:nth-child(1) > .kpi-sub",
+     ".kpi:nth-child(2) > .kpi-sub"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 6,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "room-details.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 13,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 21,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "scrollable-region-focusable",
+    "nodes": 2,
+    "samples": [
+     "section:nth-child(2) > .panel-body > .table-wrap",
+     "section:nth-child(3) > .panel-body > .table-wrap"
+    ]
+   }
+  ]
+ },
+ "rooms.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 7,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "select-name",
+    "nodes": 1,
+    "samples": [
+     "#rm-filter"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 11,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   },
+   {
+    "id": "scrollable-region-focusable",
+    "nodes": 1,
+    "samples": [
+     ".table-wrap"
+    ]
+   },
+   {
+    "id": "select-name",
+    "nodes": 1,
+    "samples": [
+     "#rm-filter"
+    ]
+   }
+  ]
+ },
+ "service-qr.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "service-requests.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "settings.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 8,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 8,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "staff.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 7,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "landmark-one-main",
+    "nodes": 1,
+    "samples": [
+     "html"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 6,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "terminals.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ },
+ "workforce.html": {
+  "desktop": [
+   {
+    "id": "color-contrast",
+    "nodes": 3,
+    "samples": [
+     ".dash-nav-group:nth-child(1) > .dash-nav-label",
+     ".dash-nav-group:nth-child(2) > .dash-nav-label"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "div[aria-label=\"Attendance records\"] > table > thead > tr > th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ],
+  "mobile": [
+   {
+    "id": "aria-hidden-focus",
+    "nodes": 1,
+    "samples": [
+     ".dash-menu-toggle"
+    ]
+   },
+   {
+    "id": "empty-table-header",
+    "nodes": 1,
+    "samples": [
+     "div[aria-label=\"Attendance records\"] > table > thead > tr > th:nth-child(7)"
+    ]
+   },
+   {
+    "id": "region",
+    "nodes": 2,
+    "samples": [
+     ".dash-title",
+     ".btn-ghost"
+    ]
+   }
+  ]
+ }
+}

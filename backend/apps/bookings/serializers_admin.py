@@ -1,5 +1,7 @@
 # apps/bookings/serializers_admin.py
 """Staff serializers for booking and guest management."""
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from apps.core.utils import money
@@ -7,7 +9,11 @@ from apps.rooms.models import Room
 from apps.rooms.serializers import RoomSerializer
 
 from .models import Booking, BookingRoom, Guest
-from .serializers import BookingRoomSerializer, GuestReadSerializer
+from .serializers import (
+    BookingRoomSerializer,
+    GuestReadSerializer,
+    serializer_folio_charge_map,
+)
 
 
 class AdminBookingListSerializer(serializers.ModelSerializer):
@@ -20,6 +26,29 @@ class AdminBookingListSerializer(serializers.ModelSerializer):
     room_numbers = serializers.SerializerMethodField()
     nights = serializers.IntegerField(read_only=True)
     amount_due = serializers.SerializerMethodField()
+    # The desk must see what the guest actually owes: the stay balance PLUS the
+    # posted restaurant/bar/room-service/other charges sitting on the guest's
+    # folio. `amount_due` alone was ₦25,500 short on an audited booking (D4).
+    # The charge balance is batched per page by the view.
+    folio_charges = serializers.SerializerMethodField()
+    outstanding_balance = serializers.SerializerMethodField()
+
+    def _folio_charge_balance(self, obj):
+        # Batched per page by the view's context, or lazily resolved for the
+        # whole serialization in one query (see serializer_folio_charge_map).
+        return serializer_folio_charge_map(self).get(obj.pk, Decimal("0.00"))
+
+    def get_folio_charges(self, obj) -> str:
+        return money(self._folio_charge_balance(obj))
+
+    def get_outstanding_balance(self, obj) -> str:
+        from apps.finance.services.folio_service import booking_outstanding_balance
+
+        return money(
+            booking_outstanding_balance(
+                booking=obj, folio_charge_balance=self._folio_charge_balance(obj)
+            )
+        )
 
     class Meta:
         model = Booking
@@ -27,7 +56,8 @@ class AdminBookingListSerializer(serializers.ModelSerializer):
             "id", "booking_reference", "guest_name", "guest_phone", "guest_email",
             "room_type_name", "room_numbers", "check_in", "check_out", "nights",
             "number_of_rooms", "number_of_guests", "total_amount", "amount_paid",
-            "amount_due", "currency", "status", "payment_status", "source", "created_at",
+            "amount_due", "folio_charges", "outstanding_balance",
+            "currency", "status", "payment_status", "source", "created_at",
         ]
 
     def get_room_numbers(self, obj) -> list:

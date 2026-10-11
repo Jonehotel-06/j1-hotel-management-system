@@ -38,10 +38,10 @@
     </div>
   </aside>
   <div class="dash-main">
-    <div class="dash-topbar">
+    <header class="dash-topbar">
       <div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title" data-dash-title><h1>Restaurant, Bar &amp; Room Service POS</h1><p>Department-scoped orders, production queues, and controlled tender collection.</p></div></div>
       <div class="dash-topbar-right"><div class="dash-topbar-actions" data-topbar-actions></div><button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false"><span class="icon-moon" data-icon="moon" data-size="18"></span><span class="icon-sun" data-icon="sun" data-size="18"></span></button></div>
-    </div>
+    </header>
     <main class="dash-content">
       <section class="panel" data-pos-orders-panel>
         <div class="filter-bar">
@@ -52,7 +52,7 @@
         </div>
         <div class="panel-body no-pad">
           <div class="table-wrap" tabindex="0" role="region" aria-label="POS orders, scroll sideways to see every column"><table class="table">
-            <thead><tr><th>Order</th><th>Mode / guest</th><th class="hide-sm">Location</th><th>Total</th><th>Status</th><th class="hide-sm">Settlement</th><th></th></tr></thead>
+            <thead><tr><th>Order</th><th>Mode / guest</th><th class="hide-sm">Location</th><th>Total</th><th>Status</th><th class="hide-sm">Settlement</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody data-tbody="pos-orders"></tbody>
           </table></div>
           <div class="pagination" data-pos-pagination></div>

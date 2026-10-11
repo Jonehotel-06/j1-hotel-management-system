@@ -12,6 +12,7 @@ Matrix (as agreed):
 from datetime import timedelta
 from decimal import Decimal
 
+from apps.accounts.capabilities import has_capability
 from apps.accounts.models import User
 from apps.core.utils import hotel_today
 from apps.offers.models import GuestDiscount
@@ -117,3 +118,86 @@ class RolePermissionMatrixTests(BaseAPITestCase):
             expected = 200 if role == User.Role.ADMIN else 403
             self.assertEqual(self.client.get("/api/admin/audit-logs/actions/").status_code,
                              expected, f"{role} audit access")
+
+
+class AuditProbeContractGapTests(BaseAPITestCase):
+    """The audit's own probe register recorded six capability/route gaps.
+
+    ``ROLE_PERMISSION_PROBE_REGISTER.csv`` flagged exactly six of its 391
+    probes as contract gaps - four where ``audit.view`` was granted while the
+    audit-log route answered 403, and two where booking capabilities were
+    granted while the booking list answered 403. Each row is pinned here as
+    *agreement*: the grant and the route now say the same thing, so the matrix a
+    manager reads can no longer describe a permission the API refuses.
+    """
+
+    # (role, expected capability grant, expected route status)
+    AUDIT_LOG_ROWS = (
+        (User.Role.MANAGER, False, 403),
+        (User.Role.GENERAL_MANAGER, False, 403),
+        (User.Role.ACCOUNTS_MANAGER, False, 403),
+        (User.Role.SECURITY, False, 403),
+    )
+    BOOKING_LIST_ROWS = (
+        (User.Role.GENERAL_MANAGER, True, 200),
+        (User.Role.FRONT_DESK_SUPERVISOR, True, 200),
+    )
+
+    def test_audit_log_grants_and_the_route_agree_for_every_flagged_role(self):
+        for index, (role, expected_grant, expected_status) in enumerate(self.AUDIT_LOG_ROWS):
+            with self.subTest(role=role):
+                staff = make_staff(f"probe.audit{index}@staff.dev", role=role)
+                self.auth(staff)
+                self.assertEqual(
+                    has_capability(staff, "audit.view"), expected_grant,
+                    f"{role}: the capability matrix and the enforced policy disagree",
+                )
+                response = self.client.get("/api/admin/audit-logs/")
+                self.assertEqual(response.status_code, expected_status, response.content)
+
+    def test_booking_grants_and_the_reservation_desk_agree_for_every_flagged_role(self):
+        for index, (role, expected_grant, expected_status) in enumerate(self.BOOKING_LIST_ROWS):
+            with self.subTest(role=role):
+                staff = make_staff(f"probe.booking{index}@staff.dev", role=role)
+                self.auth(staff)
+                self.assertEqual(has_capability(staff, "booking.read"), expected_grant)
+                response = self.client.get("/api/admin/bookings/")
+                self.assertEqual(response.status_code, expected_status, response.content)
+
+    def test_the_register_rows_are_the_only_gaps_and_they_are_closed(self):
+        """A role that holds no audit grant must not reach the audit route."""
+        for index, role in enumerate(
+            (User.Role.RECEPTIONIST, User.Role.CASHIER, User.Role.HOUSEKEEPING, User.Role.STOREKEEPER)
+        ):
+            with self.subTest(role=role):
+                staff = make_staff(f"probe.other{index}@staff.dev", role=role)
+                self.auth(staff)
+                self.assertFalse(has_capability(staff, "audit.view"))
+                self.assertEqual(self.client.get("/api/admin/audit-logs/").status_code, 403)
+
+
+class AuditViewPersistenceTests(BaseAPITestCase):
+    """N9: the persisted grant must match the enforced policy.
+
+    The audit-log endpoint is administrator-only. Migration 0014 had seeded
+    `audit.view` onto MANAGER / GENERAL_MANAGER / ACCOUNTS_MANAGER / SECURITY,
+    so the capability matrix advertised a permission the API refused.
+    `0019_audit_view_is_administrator_only` reconciles the stored grants; this
+    test pins the result (and would fail if a later seed re-introduced them).
+    """
+
+    def test_only_admin_holds_the_audit_view_grant(self):
+        from apps.accounts.models import RoleCapability
+
+        holders = set(
+            RoleCapability.objects.filter(capability__code="audit.view")
+            .values_list("role", flat=True)
+        )
+        self.assertEqual(holders, {"ADMIN"})
+
+    def test_non_admin_audit_holder_gets_403_from_the_audit_endpoint(self):
+        from .factories import make_staff
+
+        self.auth(make_staff("n9.manager@staff.dev", role=User.Role.MANAGER))
+        response = self.client.get("/api/admin/audit-logs/")
+        self.assertEqual(response.status_code, 403, response.content)

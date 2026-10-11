@@ -1,15 +1,20 @@
 # tests/test_auth.py
 """AUTHENTICATION tests (spec §93): registration, login, refresh, logout,
 passwords, permissions, role-escalation prevention."""
+from datetime import timedelta
+
 from django.contrib.auth.tokens import default_token_generator
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.models import User
 
 from .base import BaseAPITestCase
-from .factories import make_user
+from .factories import make_staff, make_user
 
 
 class AuthTests(BaseAPITestCase):
@@ -143,3 +148,96 @@ class AuthTests(BaseAPITestCase):
             response = self.client.get(url)
             self.assertEqual(response.status_code, 403, url)
             self.assertEqual(response.json()["code"], "FORBIDDEN")
+
+
+class LogoutContractTests(BaseAPITestCase):
+    """The audit's role sweep could not confirm three of 23 logout responses.
+
+    Nothing was broken: logout is deliberately idempotent. A refresh token that
+    is already blacklisted, expired or malformed still answers 200, because the
+    session is dead server-side either way and a user must never be trapped in a
+    session they are trying to leave. Only a missing token is a client error.
+    These tests pin all of those answer paths, for every staff role, so the
+    contract is evidence rather than an assumption.
+
+    Tokens are minted directly instead of by logging in, because the login
+    endpoint is throttled to 5/min by design (covered in ``test_security_guards``)
+    and a role sweep must not be defeated by the rate limiter.
+    """
+
+    def _staff_roles(self):
+        return [role for role in User.Role.values if role != User.Role.GUEST]
+
+    def test_every_staff_role_can_log_out_and_its_refresh_token_dies(self):
+        for index, role in enumerate(self._staff_roles()):
+            with self.subTest(role=role):
+                user = make_staff(f"logout.role{index}@staff.dev", role=role)
+                refresh = str(RefreshToken.for_user(user))
+                self.auth(user)
+                response = self.client.post("/api/auth/logout/", {"refresh": refresh}, format="json")
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertTrue(response.json()["success"])
+
+                self.unauth()
+                reuse = self.client.post("/api/auth/token/refresh/", {"refresh": refresh}, format="json")
+                self.assertEqual(reuse.status_code, 401, "the refresh token survived logout")
+
+    def test_logout_is_idempotent_when_the_same_token_is_replayed(self):
+        user = make_staff("logout.replay@staff.dev")
+        refresh = str(RefreshToken.for_user(user))
+        self.auth(user)
+        first = self.client.post("/api/auth/logout/", {"refresh": refresh}, format="json")
+        second = self.client.post("/api/auth/logout/", {"refresh": refresh}, format="json")
+        self.assertEqual(first.status_code, 200, first.content)
+        self.assertEqual(
+            second.status_code, 200,
+            "a user retrying logout must not be refused by a token that logout already revoked",
+        )
+
+    def test_logout_tolerates_a_malformed_or_expired_token(self):
+        user = make_staff("logout.stale@staff.dev")
+        self.auth(user)
+
+        malformed = self.client.post("/api/auth/logout/", {"refresh": "not-a-jwt"}, format="json")
+        self.assertEqual(malformed.status_code, 200, malformed.content)
+
+        expired_token = RefreshToken.for_user(user)
+        expired_token.set_exp(from_time=timezone.now() - timedelta(days=30))
+        expired = self.client.post(
+            "/api/auth/logout/", {"refresh": str(expired_token)}, format="json"
+        )
+        self.assertEqual(expired.status_code, 200, expired.content)
+
+    def test_logout_without_a_refresh_token_reports_a_client_error(self):
+        user = make_staff("logout.missing@staff.dev")
+        self.auth(user)
+        response = self.client.post("/api/auth/logout/", {}, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        body = response.json()
+        self.assertEqual(body["code"], "VALIDATION_ERROR")
+        self.assertIn("refresh", body["errors"])
+
+    def test_logout_requires_an_authenticated_caller(self):
+        self.unauth()
+        response = self.client.post("/api/auth/logout/", {"refresh": "anything"}, format="json")
+        self.assertEqual(response.status_code, 401, response.content)
+
+    def test_logout_does_not_revoke_another_accounts_session(self):
+        """A logged-out account's token cannot be used to end someone else's."""
+        victim = make_staff("logout.victim@staff.dev", role=User.Role.MANAGER)
+        attacker = make_staff("logout.attacker@staff.dev", role=User.Role.RECEPTIONIST)
+        victim_refresh = str(RefreshToken.for_user(victim))
+
+        self.auth(attacker)
+        response = self.client.post("/api/auth/logout/", {"refresh": victim_refresh}, format="json")
+        # Idempotent logout answers 200 either way: what matters is whether the
+        # victim's token still works.
+        self.assertEqual(response.status_code, 200, response.content)
+        self.unauth()
+        still_valid = self.client.post(
+            "/api/auth/token/refresh/", {"refresh": victim_refresh}, format="json"
+        )
+        self.assertEqual(
+            still_valid.status_code, 200,
+            "logout must only be able to blacklist the caller's own refresh token",
+        )

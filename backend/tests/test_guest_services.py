@@ -134,6 +134,50 @@ class GuestServiceTests(BaseAPITestCase):
             request=house_request, type=ServiceRequestEvent.Type.ACKNOWLEDGED, guest_visible=True
         ).exists())
 
+    def test_alias_role_workers_see_and_claim_their_own_team_queue(self):
+        """HOUSEKEEPER / MAINTENANCE_TECHNICIAN are worker roles, not strangers.
+
+        The team map was keyed on the canonical spellings only, so an account
+        holding the alias spelling saw an empty queue and was refused the claim
+        (audit D5/N8). Both spellings exist as real accounts.
+        """
+        housekeeper_alias = make_staff("alias-housekeeper@staff.dev", role=User.Role.HOUSEKEEPER)
+        technician_alias = make_staff("alias-technician@staff.dev", role=User.Role.MAINTENANCE_TECHNICIAN)
+        house_request, _ = create_service_request(
+            guest=self.guest, stay=self.stay, room=self.room,
+            category=ServiceRequest.Category.HOUSEKEEPING,
+            channel=ServiceRequest.Channel.FRONT_DESK,
+            summary="Replace towels", actor=self.manager,
+        )
+        maintenance_request, _ = create_service_request(
+            guest=self.guest, stay=self.stay, room=self.room,
+            category=ServiceRequest.Category.MAINTENANCE,
+            channel=ServiceRequest.Channel.FRONT_DESK,
+            summary="Fix reading light", actor=self.manager,
+        )
+
+        self.auth(housekeeper_alias)
+        queue = self.client.get("/api/admin/service-requests/")
+        self.assertEqual(queue.status_code, 200, queue.content)
+        references = {row["reference"] for row in queue.json()["data"]}
+        self.assertIn(house_request.reference, references)
+        self.assertNotIn(maintenance_request.reference, references)
+        claimed = self.client.post(f"/api/admin/service-requests/{house_request.reference}/claim/", {}, format="json")
+        self.assertEqual(claimed.status_code, 200, claimed.content)
+        house_request.refresh_from_db()
+        self.assertEqual(house_request.assigned_to_id, housekeeper_alias.pk)
+
+        self.auth(technician_alias)
+        queue = self.client.get("/api/admin/service-requests/")
+        self.assertEqual(queue.status_code, 200, queue.content)
+        references = {row["reference"] for row in queue.json()["data"]}
+        self.assertIn(maintenance_request.reference, references)
+        self.assertNotIn(house_request.reference, references)
+        claimed = self.client.post(f"/api/admin/service-requests/{maintenance_request.reference}/claim/", {}, format="json")
+        self.assertEqual(claimed.status_code, 200, claimed.content)
+        maintenance_request.refresh_from_db()
+        self.assertEqual(maintenance_request.assigned_to_id, technician_alias.pk)
+
     def test_portal_folio_reads_are_email_owned_and_statement_is_paginated(self):
         folio, _ = get_or_create_main_folio_for_stay(stay=self.stay, actor=self.manager)
         transaction, _ = create_posted_transaction(

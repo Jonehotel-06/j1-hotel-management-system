@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from apps.stays.models import Stay
 
-from ..models import Folio, FolioPosting
+from ..models import FinancialTransaction, Folio, FolioPosting
 from .references import generate_finance_reference
 
 
@@ -90,3 +90,74 @@ def close_folio(*, folio, actor, allow_nonzero_balance=False):
     folio.closed_by = actor
     folio.save(update_fields=["status", "closed_at", "closed_by", "updated_at"])
     return folio
+
+
+# ---------------------------------------------------------------------------
+# Authoritative guest balance (audit D4)
+#
+# The booking projection (`total_amount - amount_paid`) prices the STAY. It does
+# not include the restaurant, bar, room-service and other authorised charges the
+# guest actually ran up: those are posted to the guest's folio as
+# POS_CHARGE / OTHER_CHARGE ledger transactions numbered in one place — the
+# immutable ledger. A folio with ₦25,500 of such charges therefore left the
+# booking's displayed balance ₦25,500 short.
+#
+# ACCOMMODATION_CHARGE postings are DELIBERATELY EXCLUDED here: they are the
+# nightly split of the booking's own `total_amount` (see
+# accommodation_service._night_components), so including them would count the
+# room twice.
+#
+# Only POSTED (and not reversed) transactions contribute: drafts are not
+# liabilities and a VOIDED transaction has been reversed by a balancing entry.
+# ---------------------------------------------------------------------------
+def booking_folio_charge_map(*, booking_ids):
+    """Signed extra-charge balance per booking id — exactly one query.
+
+    Debits (posted guest charges) increase the balance; credits (controlled
+    discounts, adjustments, reversals) reduce it. Returns only bookings that
+    actually have such postings; callers treat a missing key as zero.
+    """
+    ids = [pk for pk in dict.fromkeys(booking_ids or []) if pk]
+    if not ids:
+        return {}
+    money_field = DecimalField(max_digits=14, decimal_places=2)
+    rows = (
+        FolioPosting.objects.filter(folio__booking_id__in=ids)
+        .exclude(transaction__type=FinancialTransaction.Type.ACCOMMODATION_CHARGE)
+        .filter(transaction__status=FinancialTransaction.Status.POSTED)
+        .values("folio__booking_id")
+        .annotate(
+            balance=Coalesce(
+                Sum(
+                    Case(
+                        When(effect=FolioPosting.Effect.DEBIT, then=F("amount")),
+                        When(effect=FolioPosting.Effect.CREDIT, then=-F("amount")),
+                        default=Value(Decimal("0.00")),
+                        output_field=money_field,
+                    )
+                ),
+                Value(Decimal("0.00")),
+                output_field=money_field,
+            )
+        )
+    )
+    return {row["folio__booking_id"]: row["balance"] for row in rows}
+
+
+def booking_folio_charge_balance(*, booking) -> Decimal:
+    """Convenience wrapper for a single booking (used outside list rendering)."""
+    if booking is None or booking.pk is None:
+        return Decimal("0.00")
+    return booking_folio_charge_map(booking_ids=[booking.pk]).get(booking.pk, Decimal("0.00"))
+
+
+def booking_outstanding_balance(*, booking, folio_charge_balance: Decimal | None = None) -> Decimal:
+    """What the guest still owes: stay balance + posted folio charges.
+
+    Never negative — an overpayment or a credit balance is not a debt.
+    """
+    stay_balance = Decimal(booking.amount_due or Decimal("0.00"))
+    if folio_charge_balance is None:
+        folio_charge_balance = booking_folio_charge_balance(booking=booking)
+    total = (stay_balance + Decimal(folio_charge_balance)).quantize(Decimal("0.01"))
+    return max(total, Decimal("0.00"))

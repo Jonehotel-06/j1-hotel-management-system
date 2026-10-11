@@ -9,7 +9,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.accounts.capabilities import has_capability
+from apps.accounts.capabilities import has_capability, is_housekeeping_worker
 from apps.accounts.models import User
 from apps.rooms.models import Room
 from apps.stays.models import StayRoom
@@ -64,8 +64,12 @@ def _can_work(task, actor):
 def _validate_assignee(assignee):
     if assignee is None:
         return
-    if not assignee.is_active or assignee.role != User.Role.HOUSEKEEPING:
-        raise ValidationError("A housekeeping task must be assigned to an active housekeeping user.")
+    # ``is_housekeeping_worker`` accepts both the canonical HOUSEKEEPING role
+    # and its historical HOUSEKEEPER alias (audit N8).
+    if not assignee.is_active or not is_housekeeping_worker(assignee):
+        raise ValidationError(
+            "A housekeeping task must be assigned to an active housekeeping user."
+        )
 
 
 def _validate_context(*, room, stay=None, service_request=None):
@@ -192,10 +196,10 @@ def claim_housekeeping_task(*, task, actor):
         if task.assigned_to_id == actor.pk:
             return task
         raise ValidationError("Task is already assigned to another user.")
-    if actor.role != User.Role.HOUSEKEEPING and not _is_dispatcher(actor):
+    if not is_housekeeping_worker(actor) and not _is_dispatcher(actor):
         raise PermissionDenied("Only a housekeeping user may claim an unassigned task.")
-    _validate_assignee(actor if actor.role == User.Role.HOUSEKEEPING else None)
-    if actor.role != User.Role.HOUSEKEEPING:
+    _validate_assignee(actor if is_housekeeping_worker(actor) else None)
+    if not is_housekeeping_worker(actor):
         raise ValidationError("A dispatcher must assign the task to an active housekeeping user.")
     previous = task.status
     task.assigned_to = actor
@@ -258,7 +262,7 @@ def add_housekeeping_comment(*, task, actor, message):
 def housekeeping_queryset_for_user(actor):
     if _is_dispatcher(actor):
         return HousekeepingTask.objects.all()
-    if getattr(actor, "role", "") == User.Role.HOUSEKEEPING:
+    if is_housekeeping_worker(actor):
         from django.db.models import Q
         return HousekeepingTask.objects.filter(Q(assigned_to=actor) | Q(assigned_to__isnull=True))
     return HousekeepingTask.objects.none()

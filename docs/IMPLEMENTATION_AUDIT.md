@@ -187,3 +187,19 @@ performed. Run those checks before production rollout. The one skipped Django
 module is `backend/tests/test_site_content.py`; it guards policy/image fields
 removed from `HotelSettings` and is skipped while those fields are absent. Keep
 that skip visible in CI and revisit the tests if the feature is restored.
+
+## Post-audit repair (2026-10-11)
+
+The findings in this document were addressed by the repair recorded in
+[`../REPAIR_COMPLETION_REPORT.md`](../REPAIR_COMPLETION_REPORT.md). Two points from that
+repair change statements made here:
+
+- **The Playwright gate described above is still not run.** Instead, the browser-level
+  checks that gate the accessibility and responsive findings were executed with headless
+  Chrome plus axe-core against a locally served copy of `frontend/` — public pages
+  **260 → 0** violation nodes and dashboard pages **906 → 0** — with the raw output in
+  [`verification/`](verification/). The real service-worker/offline/PWA interaction
+  remains unexercised, so that gate is still open.
+- **Migrations now extend through `accounts/0019_audit_view_is_administrator_only`.** As
+  before, review all pending migrations against the target MySQL version and take a backup
+  before release; nothing in this workspace was migrated against a persistent database.

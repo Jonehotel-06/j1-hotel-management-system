@@ -25,6 +25,67 @@ from ..models import Booking, BookingRoom
 BLOCKING_STATUSES = (Booking.Status.CONFIRMED, Booking.Status.CHECKED_IN)
 OPERATIONALLY_BLOCKED = (Room.Status.MAINTENANCE, Room.Status.OUT_OF_SERVICE)
 
+# ---------------------------------------------------------------------------
+# ONE authoritative room-readiness rule
+#
+# A physical room may be ADVERTISED as available or ASSIGNED to a guest only
+# when every one of these holds:
+#
+#   1. is_active                     — the room exists in inventory;
+#   2. status not in OPERATIONALLY_BLOCKED
+#                                    — not under maintenance / out of service;
+#   3. housekeeping_status == CLEAN  — cleaned AND released by housekeeping.
+#
+# Rule 3 is the fix for audit D3: Room 14 returned effective_status=AVAILABLE
+# and public available=true while housekeeping had it DIRTY, so a room that was
+# not ready to receive a guest could be sold.
+#
+# The housekeeping projection is deliberately meaningful:
+#   * checkout sets the room DIRTY (booking_service._release_rooms_for_checkout);
+#   * a cleaning task sets CLEANING while work is in progress — this is the
+#     "awaiting inspection" state, and it is NOT sellable;
+#   * only the dispatcher-authorized COMPLETED transition (which records
+#     inspected_by/inspected_at) sets CLEAN.
+# So a worker cannot make a room sellable by completing their own task, and a
+# room is never auto-cleaned merely because a task was finished.
+#
+# Physical condition (housekeeping) stays distinct from commercial occupancy
+# (live bookings), which is derived separately below.
+# ---------------------------------------------------------------------------
+READY_HOUSEKEEPING_STATUSES = (Room.HousekeepingStatus.CLEAN,)
+
+
+def room_readiness_q():
+    """The single sellable-room predicate, shared by every availability path."""
+    return Q(is_active=True) & ~Q(status__in=OPERATIONALLY_BLOCKED) & Q(
+        housekeeping_status__in=READY_HOUSEKEEPING_STATUSES
+    )
+
+
+def unready_room_reason(room) -> str:
+    """Human-readable reason a specific room cannot be sold or assigned."""
+    if not room.is_active:
+        return f"Room {room.room_number} is inactive."
+    if room.status in OPERATIONALLY_BLOCKED:
+        return f"Room {room.room_number} is {room.get_status_display().lower()}."
+    if room.housekeeping_status not in READY_HOUSEKEEPING_STATUSES:
+        detail = {
+            Room.HousekeepingStatus.DIRTY: "still needs cleaning",
+            Room.HousekeepingStatus.CLEANING: "is awaiting inspection",
+        }.get(room.housekeeping_status, "is not ready")
+        return f"Room {room.room_number} {detail} (housekeeping: {room.housekeeping_status})."
+    return ""
+
+
+def room_is_sellable(room) -> bool:
+    """True when the room satisfies the authoritative readiness rule."""
+    return not unready_room_reason(room)
+
+
+def sellable_rooms_queryset(queryset=None):
+    """Apply the readiness rule to a Room queryset (the one place it lives)."""
+    return (queryset if queryset is not None else Room.objects.all()).filter(room_readiness_q())
+
 
 def blocking_booking_q(now=None, prefix=""):
     now = now or timezone.now()
@@ -53,8 +114,9 @@ def blocked_room_ids(*, room_type_id, check_in, check_out, now=None, exclude_boo
 def available_rooms_queryset(*, room_type, check_in, check_out, now=None,
                              for_update=False, exclude_booking_id=None, exclude_room_ids=()):
     qs = (
-        Room.objects.filter(room_type=room_type, is_active=True)
-        .exclude(status__in=OPERATIONALLY_BLOCKED)
+        # The readiness rule is applied HERE, in the single allocation path, so
+        # no caller can offer or assign a dirty / awaiting-inspection room.
+        sellable_rooms_queryset(Room.objects.filter(room_type=room_type))
         .exclude(
             pk__in=blocked_room_ids(
                 room_type_id=room_type.pk,
@@ -189,8 +251,7 @@ def available_room_counts(*, room_type_ids, check_in, check_out, now=None):
 
     now = now or timezone.now()
     for row in (
-        Room.objects.filter(room_type_id__in=type_ids, is_active=True)
-        .exclude(status__in=OPERATIONALLY_BLOCKED)
+        sellable_rooms_queryset(Room.objects.filter(room_type_id__in=type_ids))
         .values("room_type_id")
         .annotate(total=Count("pk"))
     ):
@@ -268,8 +329,7 @@ def nightly_inventory(*, room_type, start, end, now=None):
 
     now = now or timezone.now()
     sellable_ids = list(
-        Room.objects.filter(room_type=room_type, is_active=True)
-        .exclude(status__in=OPERATIONALLY_BLOCKED)
+        sellable_rooms_queryset(Room.objects.filter(room_type=room_type))
         .values_list("pk", flat=True)
     )
 

@@ -100,10 +100,16 @@
       const size = parseInt(node.getAttribute("data-size") || "20", 10);
       const svg = get(name).replace('width="24" height="24"', `width="${size}" height="${size}"`);
       node.innerHTML = svg;
+      /* A control that *is* the icon carrier (e.g. <button data-icon="menu">)
+         keeps its own role and accessible name - the injected SVG is just its
+         decorative content. Marking the control itself aria-hidden used to
+         leave a visible, focusable button inside an aria-hidden subtree
+         (audit N11, aria-hidden-focus). */
+      const control = node.closest("button, a[href]");
+      if (control === node) return;
       node.setAttribute("role", "img");
       if (!node.getAttribute("aria-label")) node.setAttribute("aria-hidden", "true");
-      // Preserve explicit aria-label on icon-only buttons
-      if (node.closest("button") && node.closest("button").getAttribute("aria-label")) {
+      if (control && control.getAttribute("aria-label")) {
         node.setAttribute("aria-hidden", "true");
       }
     });

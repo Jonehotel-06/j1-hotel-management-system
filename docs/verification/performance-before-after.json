@@ -1,0 +1,617 @@
+{
+ "what": "Warm-session shell load timing, 5 runs per page per tree (median reported). Headless Chrome 148 against a local static server; every /api/ request aborted, so the API is never involved and no backend data is touched.",
+ "before": {
+  "label": "before (git HEAD)",
+  "baseUrl": "http://127.0.0.1:8898",
+  "runs": 5,
+  "pages": {
+   "index.html": {
+    "domContentLoadedMs": 241,
+    "loadMs": 243,
+    "ttfbMs": 6,
+    "firstContentfulPaintMs": 204,
+    "requests": 40,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 276,
+      "loadMs": 278,
+      "ttfbMs": 11,
+      "firstContentfulPaintMs": null,
+      "requests": 40,
+      "transferBytes": 1656951
+     },
+     {
+      "domContentLoadedMs": 241,
+      "loadMs": 245,
+      "ttfbMs": 6,
+      "firstContentfulPaintMs": 204,
+      "requests": 40,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 215,
+      "loadMs": 217,
+      "ttfbMs": 6,
+      "firstContentfulPaintMs": null,
+      "requests": 40,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 212,
+      "loadMs": 218,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 40,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 242,
+      "loadMs": 243,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": 196,
+      "requests": 40,
+      "transferBytes": 0
+     }
+    ]
+   },
+   "rooms.html": {
+    "domContentLoadedMs": 169,
+    "loadMs": 174,
+    "ttfbMs": 5,
+    "firstContentfulPaintMs": 144,
+    "requests": 30,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 169,
+      "loadMs": 174,
+      "ttfbMs": 8,
+      "firstContentfulPaintMs": 144,
+      "requests": 30,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 154,
+      "loadMs": 159,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 30,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 172,
+      "loadMs": 178,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 30,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 161,
+      "loadMs": 169,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": null,
+      "requests": 30,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 176,
+      "loadMs": 184,
+      "ttfbMs": 6,
+      "firstContentfulPaintMs": null,
+      "requests": 30,
+      "transferBytes": 0
+     }
+    ]
+   },
+   "booking.html": {
+    "domContentLoadedMs": 177,
+    "loadMs": 180,
+    "ttfbMs": 7,
+    "firstContentfulPaintMs": 140,
+    "requests": 32,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 168,
+      "loadMs": 171,
+      "ttfbMs": 7,
+      "firstContentfulPaintMs": null,
+      "requests": 32,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 177,
+      "loadMs": 180,
+      "ttfbMs": 6,
+      "firstContentfulPaintMs": 140,
+      "requests": 32,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 185,
+      "loadMs": 191,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": null,
+      "requests": 32,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 194,
+      "loadMs": 197,
+      "ttfbMs": 7,
+      "firstContentfulPaintMs": null,
+      "requests": 32,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 171,
+      "loadMs": 178,
+      "ttfbMs": 8,
+      "firstContentfulPaintMs": null,
+      "requests": 32,
+      "transferBytes": 0
+     }
+    ]
+   },
+   "dashboard/pos.html": {
+    "domContentLoadedMs": 189,
+    "loadMs": 197,
+    "ttfbMs": 4,
+    "firstContentfulPaintMs": 164,
+    "requests": 38,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 189,
+      "loadMs": 195,
+      "ttfbMs": 7,
+      "firstContentfulPaintMs": null,
+      "requests": 32,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 208,
+      "loadMs": 219,
+      "ttfbMs": 3,
+      "firstContentfulPaintMs": null,
+      "requests": 38,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 185,
+      "loadMs": 193,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": null,
+      "requests": 38,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 194,
+      "loadMs": 197,
+      "ttfbMs": 3,
+      "firstContentfulPaintMs": 164,
+      "requests": 38,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 185,
+      "loadMs": 199,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": 148,
+      "requests": 38,
+      "transferBytes": 0
+     }
+    ]
+   },
+   "dashboard/index.html": {
+    "domContentLoadedMs": 180,
+    "loadMs": 181,
+    "ttfbMs": 5,
+    "firstContentfulPaintMs": 152,
+    "requests": 33,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 180,
+      "loadMs": 181,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 176,
+      "loadMs": 176,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": null,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 158,
+      "loadMs": 160,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 194,
+      "loadMs": 195,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": 152,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 190,
+      "loadMs": 191,
+      "ttfbMs": 6,
+      "firstContentfulPaintMs": null,
+      "requests": 33,
+      "transferBytes": 0
+     }
+    ]
+   },
+   "dashboard/bookings.html": {
+    "domContentLoadedMs": 178,
+    "loadMs": 185,
+    "ttfbMs": 5,
+    "firstContentfulPaintMs": 156,
+    "requests": 33,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 165,
+      "loadMs": 167,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": 144,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 258,
+      "loadMs": 260,
+      "ttfbMs": 3,
+      "firstContentfulPaintMs": 160,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 183,
+      "loadMs": 185,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": 156,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 166,
+      "loadMs": 173,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 178,
+      "loadMs": 185,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": 140,
+      "requests": 33,
+      "transferBytes": 0
+     }
+    ]
+   }
+  }
+ },
+ "after": {
+  "label": "after (repaired)",
+  "baseUrl": "http://127.0.0.1:8899",
+  "runs": 5,
+  "pages": {
+   "index.html": {
+    "domContentLoadedMs": 251,
+    "loadMs": 259,
+    "ttfbMs": 5,
+    "firstContentfulPaintMs": 220,
+    "requests": 40,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 251,
+      "loadMs": 255,
+      "ttfbMs": 11,
+      "firstContentfulPaintMs": 248,
+      "requests": 40,
+      "transferBytes": 1672667
+     },
+     {
+      "domContentLoadedMs": 245,
+      "loadMs": 264,
+      "ttfbMs": 15,
+      "firstContentfulPaintMs": 200,
+      "requests": 40,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 180,
+      "loadMs": 211,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 40,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 255,
+      "loadMs": 259,
+      "ttfbMs": 3,
+      "firstContentfulPaintMs": 220,
+      "requests": 40,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 254,
+      "loadMs": 267,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": 208,
+      "requests": 40,
+      "transferBytes": 0
+     }
+    ]
+   },
+   "rooms.html": {
+    "domContentLoadedMs": 179,
+    "loadMs": 184,
+    "ttfbMs": 5,
+    "firstContentfulPaintMs": 204,
+    "requests": 30,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 220,
+      "loadMs": 223,
+      "ttfbMs": 11,
+      "firstContentfulPaintMs": 204,
+      "requests": 30,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 179,
+      "loadMs": 184,
+      "ttfbMs": 7,
+      "firstContentfulPaintMs": null,
+      "requests": 30,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 149,
+      "loadMs": 154,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": null,
+      "requests": 30,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 158,
+      "loadMs": 163,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 30,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 182,
+      "loadMs": 185,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": 140,
+      "requests": 30,
+      "transferBytes": 0
+     }
+    ]
+   },
+   "booking.html": {
+    "domContentLoadedMs": 200,
+    "loadMs": 203,
+    "ttfbMs": 7,
+    "firstContentfulPaintMs": 196,
+    "requests": 32,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 162,
+      "loadMs": 173,
+      "ttfbMs": 10,
+      "firstContentfulPaintMs": 148,
+      "requests": 32,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 189,
+      "loadMs": 192,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 32,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 239,
+      "loadMs": 244,
+      "ttfbMs": 7,
+      "firstContentfulPaintMs": 196,
+      "requests": 32,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 261,
+      "loadMs": 265,
+      "ttfbMs": 10,
+      "firstContentfulPaintMs": 200,
+      "requests": 32,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 200,
+      "loadMs": 203,
+      "ttfbMs": 7,
+      "firstContentfulPaintMs": 180,
+      "requests": 32,
+      "transferBytes": 0
+     }
+    ]
+   },
+   "dashboard/pos.html": {
+    "domContentLoadedMs": 183,
+    "loadMs": 194,
+    "ttfbMs": 5,
+    "firstContentfulPaintMs": 180,
+    "requests": 38,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 188,
+      "loadMs": 205,
+      "ttfbMs": 6,
+      "firstContentfulPaintMs": 196,
+      "requests": 38,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 166,
+      "loadMs": 169,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 30,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 194,
+      "loadMs": 202,
+      "ttfbMs": 6,
+      "firstContentfulPaintMs": 180,
+      "requests": 38,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 183,
+      "loadMs": 194,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": 144,
+      "requests": 38,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 176,
+      "loadMs": 183,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 32,
+      "transferBytes": 0
+     }
+    ]
+   },
+   "dashboard/index.html": {
+    "domContentLoadedMs": 176,
+    "loadMs": 176,
+    "ttfbMs": 5,
+    "firstContentfulPaintMs": 180,
+    "requests": 33,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 174,
+      "loadMs": 176,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 176,
+      "loadMs": 176,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 166,
+      "loadMs": 166,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 201,
+      "loadMs": 201,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": 180,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 235,
+      "loadMs": 236,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": 160,
+      "requests": 33,
+      "transferBytes": 0
+     }
+    ]
+   },
+   "dashboard/bookings.html": {
+    "domContentLoadedMs": 188,
+    "loadMs": 194,
+    "ttfbMs": 4,
+    "firstContentfulPaintMs": 176,
+    "requests": 33,
+    "transferBytes": 0,
+    "samples": [
+     {
+      "domContentLoadedMs": 188,
+      "loadMs": 194,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": 160,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 184,
+      "loadMs": 187,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": 176,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 184,
+      "loadMs": 190,
+      "ttfbMs": 5,
+      "firstContentfulPaintMs": null,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 198,
+      "loadMs": 200,
+      "ttfbMs": 6,
+      "firstContentfulPaintMs": 180,
+      "requests": 33,
+      "transferBytes": 0
+     },
+     {
+      "domContentLoadedMs": 193,
+      "loadMs": 199,
+      "ttfbMs": 4,
+      "firstContentfulPaintMs": 156,
+      "requests": 33,
+      "transferBytes": 0
+     }
+    ]
+   }
+  }
+ }
+}

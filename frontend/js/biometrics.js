@@ -51,7 +51,7 @@
     if (!minutiae) {
       minutiae = await captureMinutiaeProbe();
     }
-    return window.API.post("/api/admin/staff-operations/fingerprint/enrollment/", {
+    return window.API.post(window.APP_CONFIG.API_ENDPOINTS.fingerprintEnrollment, {
       finger_position: fingerPosition,
       minutiae: minutiae
     });
@@ -62,7 +62,7 @@
     if (!minutiae) {
       minutiae = await captureMinutiaeProbe();
     }
-    var res = await window.API.post("/api/admin/staff-operations/biometrics/temporary-credential/", {
+    var res = await window.API.post(window.APP_CONFIG.API_ENDPOINTS.temporaryCredential, {
       email: email,
       fingerprint_probe: minutiae
     }, { auth: false });

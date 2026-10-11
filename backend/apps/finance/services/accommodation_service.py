@@ -34,6 +34,15 @@ def _component_for_night(total, *, nights: int, night_index: int) -> Decimal:
     return base
 
 
+def night_components(booking, service_date: date) -> tuple[Decimal, Decimal, Decimal]:
+    """Public view of the nightly net/tax/fee split.
+
+    Reporting and reconciliation read the same split the ledger postings use, so
+    a detected gap always equals the amount that would have been posted.
+    """
+    return _night_components(booking, service_date)
+
+
 def _night_components(booking, service_date: date) -> tuple[Decimal, Decimal, Decimal]:
     nights = (booking.check_out - booking.check_in).days
     night_index = (service_date - booking.check_in).days

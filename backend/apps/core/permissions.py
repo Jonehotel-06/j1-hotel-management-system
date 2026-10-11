@@ -64,6 +64,60 @@ class IsManagerOrAdmin(BasePermission):
         return _active(request.user) and request.user.role in MANAGER_ROLES
 
 
+# ---------------------------------------------------------------------------
+# Reservations
+#
+# The booking endpoints predate the capability matrix and were gated by the
+# broad legacy `STAFF_ROLES` allowlist. The matrix grants `booking.read` /
+# `booking.manage` to GENERAL_MANAGER and FRONT_DESK_SUPERVISOR (and the
+# sidebar shows them the reservations workspace), yet the API answered 403
+# (audit N10). These classes honour BOTH: the legacy allowlist keeps working
+# exactly as before, and the persisted capability grant now means what the
+# matrix and the UI have always claimed.
+#
+# Widening is deliberately limited to the capability in question — a role that
+# does not hold `booking.read` (Cashier, Housekeeping, Maintenance, Storekeeper,
+# Security, guests) is still refused, and sensitive operations keep their own
+# stricter gates (reschedule remains MANAGER/ADMIN).
+# ---------------------------------------------------------------------------
+def _has_booking_grant(user, code: str) -> bool:
+    if user.role in STAFF_ROLES:
+        return True
+    # A GUEST account must never reach the staff reservation surface, even if a
+    # capability row were mis-seeded: the role check is the outer boundary.
+    if user.role == "GUEST":
+        return False
+    return has_capability(user, code)
+
+
+class BookingReadAccess(BasePermission):
+    """Read reservations, guests and the derived booking surfaces."""
+
+    message = "Reservation access is required."
+
+    def has_permission(self, request, view):
+        return _active(request.user) and _has_booking_grant(request.user, "booking.read")
+
+
+class BookingManageAccess(BasePermission):
+    """Change reservations (confirm, cancel, check in/out, no-show, assign)."""
+
+    message = "Reservation management access is required."
+
+    def has_permission(self, request, view):
+        return _active(request.user) and _has_booking_grant(request.user, "booking.manage")
+
+
+class BookingAccess(BasePermission):
+    """Read for safe methods, manage for writes."""
+
+    message = "Reservation access is required."
+
+    def has_permission(self, request, view):
+        permission = BookingReadAccess() if request.method in SAFE_METHODS else BookingManageAccess()
+        return permission.has_permission(request, view)
+
+
 class IsAdminRole(BasePermission):
     """Administrators only (user management, settings, audit logs)."""
 

@@ -55,7 +55,7 @@ h4, .h4 {
   font-size: var(--fs-base);
 }
 
-h5, h6 {
+h5, h6, .h5 {
   font-family: var(--font-body);
   font-weight: 600;
   line-height: 1.4;

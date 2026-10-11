@@ -3,6 +3,7 @@ from django.db import transaction
 from rest_framework import serializers
 from rest_framework.relations import MANY_RELATION_KWARGS, ManyRelatedField
 
+from apps.bookings.services import availability
 from apps.core.storage import absolute_media_url, delete_quietly, save_upload
 from apps.core.validators import validate_image_upload
 
@@ -298,6 +299,12 @@ class RoomSerializer(serializers.ModelSerializer):
     images = serializers.SerializerMethodField()
     primary_image_url = serializers.SerializerMethodField()
     effective_status = serializers.SerializerMethodField()
+    # Physical readiness for sale, kept SEPARATE from booking occupancy
+    # (effective_status) and from the raw housekeeping code. The dashboard must
+    # not have to re-derive the rule, and the booking engine applies the same
+    # one (apps.bookings.services.availability.room_readiness_q) — audit D3.
+    is_sellable = serializers.SerializerMethodField()
+    not_sellable_reason = serializers.SerializerMethodField()
 
     # Optional image upload handled in one multipart request with the room
     # itself (the physical-room gallery lives in RoomImage — no duplicate field).
@@ -353,6 +360,18 @@ class RoomSerializer(serializers.ModelSerializer):
             return Room.Status.RESERVED
         return Room.Status.AVAILABLE
 
+    def get_is_sellable(self, obj) -> bool:
+        """Whether the room may currently be offered or assigned to a guest.
+
+        Occupancy does NOT affect this: a room that is occupied tonight is still
+        "sellable" for dates after its current stay, exactly as the booking
+        engine treats it. This answers the readiness question only.
+        """
+        return availability.room_is_sellable(obj)
+
+    def get_not_sellable_reason(self, obj) -> str:
+        return availability.unready_room_reason(obj)
+
     def _apply_image(self, room, image_file):
         if image_file is None:
             return None
@@ -395,6 +414,7 @@ class RoomSerializer(serializers.ModelSerializer):
             "id", "room_number", "room_type", "room_type_name", "room_type_slug",
             "room_type_base_price", "room_type_max_guests", "room_type_is_active", "floor",
             "status", "effective_status", "housekeeping_status", "notes", "is_active",
+            "is_sellable", "not_sellable_reason",
             "images", "image", "primary_image_url", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]

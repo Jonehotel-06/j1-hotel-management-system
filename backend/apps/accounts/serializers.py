@@ -13,7 +13,7 @@ from apps.audit.services import log_action
 from apps.core.exceptions import StaffSignInRestrictedError
 from apps.core.storage import absolute_media_url
 
-from .capabilities import capability_codes_for_user
+from .capabilities import capability_codes_for_user, has_capability
 from .desktop_policy import presented_desktop_key, receptionist_desktop_for_key, sign_in_policy_applies
 from .models import User, Workstation
 
@@ -200,9 +200,29 @@ class OperationalStaffDirectorySerializer(serializers.ModelSerializer):
 
     Dispatch screens need a stable ID and an active staff label—not profiles,
     contact details, credentials, or account-management controls.
+
+    ``email`` is an ACCOUNT field, not an assignment field. It is returned only
+    to callers that hold ``account.view`` (the same capability that unlocks the
+    full staff-account directory). A dispatch-only role such as RECEPTIONIST
+    can pick an assignee by id/name/role without receiving staff email
+    addresses (audit N7). The key stays present so existing consumers keep
+    working, and is ``null`` when the caller is not authorized to see it.
     """
 
     full_name = serializers.CharField(read_only=True)
+    email = serializers.SerializerMethodField()
+
+    def _may_view_account_details(self) -> bool:
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None:
+            # No request context (internal server-side use): keep the old
+            # behaviour rather than silently dropping data for our own code.
+            return True
+        return has_capability(user, "account.view")
+
+    def get_email(self, obj):
+        return obj.email if self._may_view_account_details() else None
 
     class Meta:
         model = User

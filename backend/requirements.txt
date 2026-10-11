@@ -5,7 +5,11 @@
 
 # --- Framework -------------------------------------------------------------
 Django>=5.2,<5.3                     # Web framework
-djangorestframework>=3.15,<3.17      # REST API layer
+djangorestframework>=3.17.2,<4.0   # REST API layer. 3.17.2 is the first release fixing
+#                                    CVE-2026-73228 (oversized-body bypass of
+#                                    DATA_UPLOAD_MAX_MEMORY_SIZE) and CVE-2026-73229
+#                                    (AdminRenderer disclosure on invalid writes);
+#                                    the previous `,<3.17` cap blocked both fixes.
 djangorestframework-simplejwt>=5.3   # JWT auth + refresh rotation + blacklist
 django-cors-headers>=4.4             # CORS for the independently hosted frontend
 drf-spectacular>=0.27                # OpenAPI 3 schema + Swagger UI docs

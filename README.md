@@ -15,7 +15,8 @@ dashboard for J-ONE Hotel & Lodge.
 |---|---|
 | [`backend/`](backend/) | Django + Django REST Framework JSON API. Reservations, stays, folios/finance, POS, guest services, operations, inventory, workforce, payments, reporting, and verified portal access. |
 | [`frontend/`](frontend/) | Static HTML/CSS/vanilla-JS public site, staff dashboard, and verified-email guest portal. `build.py` handles release versioning and public chrome. |
-| [`docs/`](docs/) | [Setup](docs/SETUP.md) and [usage](docs/USAGE.md) guides. |
+| [`docs/`](docs/) | [Setup](docs/SETUP.md), [usage](docs/USAGE.md) and [verification](docs/VERIFICATION.md) guides. |
+| [`docs/verification/`](docs/verification/) | Machine-readable evidence from the repair verification: browser accessibility scans, responsive measurements, the performance before/after pair, the backend query profile and the dependency scan. |
 | [`backend/docs/`](backend/docs/) | API reference, architecture notes, booking-flow spec and the OpenAPI 3 schema. |
 
 The API and static frontend deploy independently to any compatible application
@@ -83,11 +84,43 @@ are covered in **[docs/USAGE.md](docs/USAGE.md)**.
 ## Testing
 
 ```bash
-cd backend  && python manage.py test        # Django test suite
+cd backend  && python manage.py test        # Django test suite (930 tests)
 cd backend  && python manage.py check
+cd backend  && python manage.py makemigrations --check --dry-run
 cd frontend && python validate.py           # HTML + JS syntax across all pages
-cd frontend && node --test tests-js/        # frontend unit tests
+cd frontend && node --test tests-js/        # frontend unit + contract + a11y guards
 ```
+
+Dependencies are vulnerability-scanned before release — `pip-audit` must report
+**no known vulnerabilities** for both the environment and `requirements.txt`:
+
+```bash
+pip install pip-audit
+pip-audit                                  # installed environment (includes transitive deps)
+pip-audit -r backend/requirements.txt --no-deps
+```
+
+`requirements.txt` pins `djangorestframework>=3.17.2,<4.0` because 3.17.2 is the first
+release that fixes `CVE-2026-73228` and `CVE-2026-73229`; the previous `,<3.17` cap excluded
+every patched release.
+
+The frontend suite has three layers: behaviour/unit tests, contract tests that pin the
+endpoint map against the backend's routes (`tests-js/test-repair-contracts.js`), and
+static accessibility guards (`tests-js/test-accessibility-baseline.js`,
+`tests-js/test-ux-focus-regressions.js`). The accessibility guards encode the *source-level*
+cause of each Axe rule the audit reported, so they keep working on a machine with no
+browser; the browser-level check they mirror is described in
+[docs/VERIFICATION.md](docs/VERIFICATION.md).
+
+Two operational rules that the repair added and that should stay true:
+
+- **The endpoint map is the only place a `/api/` path may be written.** Everything else
+  resolves through `window.APP_CONFIG.API_ENDPOINTS`; a missing key is a configuration
+  error that must surface, never a silent fallback to a hard-coded route.
+- **A horizontally scrolling table must announce itself.** `.table-wrap` ships
+  `tabindex="0"`, `role="region"` and a name (statically, or via `JONE.dashboard`'s
+  `enhanceScrollRegions()`), and the CSS edge cue is only visible while there is content
+  left to scroll to.
 
 ## Releasing the frontend
 

@@ -35,7 +35,7 @@
     </div>
   </aside>
   <div class="dash-main">
-    <div class="dash-topbar">
+    <header class="dash-topbar">
       <div class="dash-topbar-left">
         <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
         <div class="dash-title" data-dash-title>
@@ -49,13 +49,13 @@
           <span class="icon-sun" data-icon="sun" data-size="18"></span>
         </button>
       </div>
-    </div>
-    <div class="dash-content">
+    </header>
+    <main class="dash-content">
 
 <section class="panel">
   <div class="filter-bar">
     <label class="field-label" style="align-self:center;">Period:</label>
-    <div class="field"><select class="select" id="rp-range"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 12 months</option><option value="custom">Custom</option></select></div>
+    <div class="field"><select class="select" id="rp-range" aria-label="Report range"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 12 months</option><option value="custom">Custom</option></select></div>
     <div class="field"><label class="field-label" for="rp-from">From</label><input class="input" type="date" id="rp-from" data-allow-past></div>
     <div class="field"><label class="field-label" for="rp-to">To</label><input class="input" type="date" id="rp-to" data-allow-past></div>
     <div class="field"><button class="btn btn-sm" id="rp-apply" type="button">Apply</button></div>
@@ -71,14 +71,14 @@
 
     <div class="panel-grid" style="margin-top:1.5rem;">
       <section class="panel" style="border:1px solid var(--color-border);">
-        <div class="panel-head"><h3>Ledger financial measures</h3></div>
+        <div class="panel-head"><h2>Ledger financial measures</h2></div>
         <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
           <thead><tr><th>Measure</th><th>Amount</th><th class="hide-sm">Ledger transactions</th></tr></thead>
           <tbody data-tbody="report-finance"></tbody>
         </table></div></div>
       </section>
       <section class="panel" style="border:1px solid var(--color-border);">
-        <div class="panel-head"><h3>Bookings &amp; occupancy</h3><div class="panel-actions"><span class="caption" data-rp="operational-summary">Loading operational summary…</span></div></div>
+        <div class="panel-head"><h2>Bookings &amp; occupancy</h2><div class="panel-actions"><span class="caption" data-rp="operational-summary">Loading operational summary…</span></div></div>
         <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
           <thead><tr><th>Status</th><th>Count</th></tr></thead>
           <tbody data-tbody="report-bookings"></tbody>
@@ -93,7 +93,7 @@
     </div>
   </div>
 </section>
-    </div>
+    </main>
   </div>
 </div>
 <script src="../js/runtime-config.js?v=1.1.12"></script>
@@ -410,16 +410,23 @@
 
   // The browser creates the CSV from the exact values already returned by the
   // APIs; it never recomputes financial amounts client-side.
+  /* The shared API layer owns Blob/object-URL handling: getBlob resolves to the
+     response envelope whose `data` is the Blob, so passing the envelope to
+     URL.createObjectURL threw and the download never happened (D14). */
   function downloadLedgerExport(kind){
     var dates=activeDates();
-    var endpoint=window.APP_CONFIG.API_ENDPOINTS.financeSummary;
-    window.API.getBlob(endpoint,{params:{start:dates.from,end:dates.to,currency:(window.APP_CONFIG&&window.APP_CONFIG.CURRENCY)||"NGN",export:kind},cache:"no-store"}).then(function(blob){
-      var url=URL.createObjectURL(blob);
-      var a=document.createElement("a");
-      a.href=url; a.download="jone-ledger-"+dates.from+"_"+dates.to+"."+kind;
-      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-      JONE.ui.toast("Report exported.","success");
-    }).catch(function(err){ JONE.ui.toast((err&&err.message)||"Export failed.","error"); });
+    var button=document.getElementById("export-"+kind);
+    if(button) button.disabled=true;
+    window.API.downloadReport(window.APP_CONFIG.API_ENDPOINTS.financeSummary,kind,{
+      start:dates.from,
+      end:dates.to,
+      filename:"jone-ledger-"+dates.from+"_"+dates.to+"."+kind,
+      params:{currency:(window.APP_CONFIG&&window.APP_CONFIG.CURRENCY)||"NGN"}
+    }).then(function(result){
+      JONE.ui.toast("Report exported ("+Math.max(1,Math.round(result.size/1024))+" KB).","success");
+    }).catch(function(err){
+      JONE.ui.toast((err&&err.message)||"Export failed.","error");
+    }).then(function(){ if(button) button.disabled=false; });
   }
   var xlsxBtn=document.getElementById("export-xlsx");
   if(xlsxBtn) xlsxBtn.addEventListener("click",function(){ downloadLedgerExport("xlsx"); });

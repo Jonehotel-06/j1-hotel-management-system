@@ -1,0 +1,162 @@
+{
+ "403.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "accounting.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "audit-log-details.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "audit-logs.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "availability.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "barcode-labels.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "booking-details.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "bookings.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "check-in.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "check-out.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "enquiries.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "facilities.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "gallery.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "guests.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "housekeeping.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "index.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "inventory.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "maintenance.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "missed-bookings.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "notification-details.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "notifications.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "occupancy.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "offers.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "payments.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "payroll.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "pos.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "procurement.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "profile.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "receipt-details.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "receipts.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "reports.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "reviews.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "room-details.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "rooms.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "service-qr.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "service-requests.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "settings.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "staff.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "terminals.html": {
+  "desktop": [],
+  "mobile": []
+ },
+ "workforce.html": {
+  "desktop": [],
+  "mobile": []
+ }
+}

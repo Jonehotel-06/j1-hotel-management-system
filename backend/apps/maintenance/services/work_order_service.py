@@ -9,8 +9,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.accounts.capabilities import has_capability
-from apps.accounts.models import User
+from apps.accounts.capabilities import has_capability, is_maintenance_worker
 from apps.rooms.models import Room
 
 from ..models import MaintenanceEvent, MaintenanceWorkOrder, RoomOutage
@@ -63,7 +62,12 @@ def _can_work(work_order, actor):
 def _validate_assignee(assignee):
     if assignee is None:
         return
-    if not assignee.is_active or assignee.role != User.Role.MAINTENANCE:
+    # ``is_maintenance_worker`` accepts both the canonical MAINTENANCE role and
+    # the MAINTENANCE_TECHNICIAN spelling that real accounts hold. Comparing
+    # ``role == User.Role.MAINTENANCE`` here excluded every technician account
+    # from the workflow entirely (audit D5/N8, same defect class as the
+    # housekeeping dispatch no-op fixed in task_service).
+    if not assignee.is_active or not is_maintenance_worker(assignee):
         raise ValidationError("A maintenance work order must be assigned to an active maintenance user.")
 
 
@@ -162,7 +166,7 @@ def claim_work_order(*, work_order, actor):
     if work_order.assigned_to_id:
         if work_order.assigned_to_id == actor.pk: return work_order
         raise ValidationError("Work order is already assigned to another user.")
-    if actor.role != User.Role.MAINTENANCE:
+    if not is_maintenance_worker(actor):
         raise PermissionDenied("Only a maintenance user may claim an unassigned work order.")
     _validate_assignee(actor)
     previous = work_order.status
@@ -262,7 +266,7 @@ def add_maintenance_comment(*, work_order, actor, message):
 
 def maintenance_queryset_for_user(actor):
     if _is_dispatcher(actor): return MaintenanceWorkOrder.objects.all()
-    if getattr(actor, "role", "") == User.Role.MAINTENANCE:
+    if is_maintenance_worker(actor):
         from django.db.models import Q
         return MaintenanceWorkOrder.objects.filter(Q(assigned_to=actor) | Q(assigned_to__isnull=True))
     return MaintenanceWorkOrder.objects.none()

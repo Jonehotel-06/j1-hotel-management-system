@@ -1,0 +1,1060 @@
+{
+  "baseUrl": "http://127.0.0.1:8898",
+  "pages": {
+    "403.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".footer-col:nth-child(2) > h5"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ]
+    },
+    "404.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".footer-col:nth-child(2) > h5"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ]
+    },
+    "500.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".footer-col:nth-child(2) > h5"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ]
+    },
+    "about.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 3,
+          "samples": [
+            ".facility-item:nth-child(1) > div:nth-child(2) > h4",
+            ".feature-row:nth-child(1) > div > h4",
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 2,
+          "samples": [
+            ".facility-item:nth-child(1) > div:nth-child(2) > h4",
+            ".feature-row:nth-child(1) > div > h4"
+          ]
+        }
+      ]
+    },
+    "booking-confirmation.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": 16,
+          "samples": [
+            "button[data-cal-display=\"checkin\"] > .cal-display-value",
+            "button[data-cal-display=\"checkout\"] > .cal-display-value",
+            "table[aria-label=\"October 2026 \u2014 choose dates\"] > thead > tr > th[aria-label=\"Monday\"]"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".footer-col:nth-child(2) > h5"
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": 8,
+          "samples": [
+            "button[aria-current=\"step\"]",
+            "button[aria-label=\"Step 2: Room (upcoming)\"]",
+            "button[aria-label=\"Step 3: Guest (upcoming)\"]"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": 16,
+          "samples": [
+            "button[data-cal-display=\"checkin\"] > .cal-display-value",
+            "button[data-cal-display=\"checkout\"] > .cal-display-value",
+            "table[aria-label=\"October 2026 \u2014 choose dates\"] > thead > tr > th[aria-label=\"Monday\"]"
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            "button[data-cal-display=\"checkin\"]",
+            "button[data-cal-display=\"checkout\"]"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ]
+    },
+    "booking-review.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": 16,
+          "samples": [
+            "button[data-cal-display=\"checkin\"] > .cal-display-value",
+            "button[data-cal-display=\"checkout\"] > .cal-display-value",
+            "table[aria-label=\"October 2026 \u2014 choose dates\"] > thead > tr > th[aria-label=\"Monday\"]"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".footer-col:nth-child(2) > h5"
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": 8,
+          "samples": [
+            "button[aria-current=\"step\"]",
+            "button[aria-label=\"Step 2: Room (upcoming)\"]",
+            "button[aria-label=\"Step 3: Guest (upcoming)\"]"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": 16,
+          "samples": [
+            "button[data-cal-display=\"checkin\"] > .cal-display-value",
+            "button[data-cal-display=\"checkout\"] > .cal-display-value",
+            "table[aria-label=\"October 2026 \u2014 choose dates\"] > thead > tr > th[aria-label=\"Monday\"]"
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            "button[data-cal-display=\"checkin\"]",
+            "button[data-cal-display=\"checkout\"]"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ]
+    },
+    "booking.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": 16,
+          "samples": [
+            "button[data-cal-display=\"checkin\"] > .cal-display-value",
+            "button[data-cal-display=\"checkout\"] > .cal-display-value",
+            "table[aria-label=\"October 2026 \u2014 choose dates\"] > thead > tr > th[aria-label=\"Monday\"]"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".footer-col:nth-child(2) > h5"
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": 8,
+          "samples": [
+            "button[aria-current=\"step\"]",
+            "button[aria-label=\"Step 2: Room (upcoming)\"]",
+            "button[aria-label=\"Step 3: Guest (upcoming)\"]"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": 16,
+          "samples": [
+            "button[data-cal-display=\"checkin\"] > .cal-display-value",
+            "button[data-cal-display=\"checkout\"] > .cal-display-value",
+            "table[aria-label=\"October 2026 \u2014 choose dates\"] > thead > tr > th[aria-label=\"Monday\"]"
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            "button[data-cal-display=\"checkin\"]",
+            "button[data-cal-display=\"checkout\"]"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ]
+    },
+    "cancellation-policy.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 2,
+          "samples": [
+            "h3:nth-child(2)",
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "h3:nth-child(2)"
+          ]
+        }
+      ]
+    },
+    "cancellation-result.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        }
+      ]
+    },
+    "contact.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 2,
+          "samples": [
+            ".feature-row:nth-child(1) > div > h4",
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".feature-row:nth-child(1) > div > h4"
+          ]
+        }
+      ]
+    },
+    "facilities.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 2,
+          "samples": [
+            "h3",
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "h3"
+          ]
+        }
+      ]
+    },
+    "gallery.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 2,
+          "samples": [
+            "h3",
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "h3"
+          ]
+        }
+      ]
+    },
+    "index.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": 3,
+          "samples": [
+            ".editorial > .editorial-body > .feature-list > .feature-row:nth-child(1) > .feature-num",
+            ".editorial > .editorial-body > .feature-list > .feature-row:nth-child(2) > .feature-num",
+            ".feature-row:nth-child(3) > .feature-num"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 3,
+          "samples": [
+            ".editorial > .editorial-body > .feature-list > .feature-row:nth-child(1) > div > h4",
+            ".location-grid > .editorial-body > .feature-list > .feature-row:nth-child(1) > div > h4",
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": 3,
+          "samples": [
+            ".editorial > .editorial-body > .feature-list > .feature-row:nth-child(1) > .feature-num",
+            ".editorial > .editorial-body > .feature-list > .feature-row:nth-child(2) > .feature-num",
+            ".feature-row:nth-child(3) > .feature-num"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 2,
+          "samples": [
+            ".editorial > .editorial-body > .feature-list > .feature-row:nth-child(1) > div > h4",
+            ".location-grid > .editorial-body > .feature-list > .feature-row:nth-child(1) > div > h4"
+          ]
+        }
+      ]
+    },
+    "login.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "my-bookings.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        }
+      ]
+    },
+    "offers.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 2,
+          "samples": [
+            "h3",
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "h3"
+          ]
+        }
+      ]
+    },
+    "offline.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "payment-verify.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "policies.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 2,
+          "samples": [
+            "h3",
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "h3"
+          ]
+        }
+      ]
+    },
+    "privacy.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 2,
+          "samples": [
+            "h3:nth-child(2)",
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "h3:nth-child(2)"
+          ]
+        }
+      ]
+    },
+    "qr-service.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "refund-policy.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 2,
+          "samples": [
+            "h3:nth-child(2)",
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "h3:nth-child(2)"
+          ]
+        }
+      ]
+    },
+    "register.html": {
+      "desktop": [],
+      "mobile": []
+    },
+    "review.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        }
+      ]
+    },
+    "room-details.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".footer-col:nth-child(2) > h5"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "html"
+          ]
+        }
+      ]
+    },
+    "rooms.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        }
+      ]
+    },
+    "terms.html": {
+      "desktop": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 1,
+          "samples": [
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 2,
+          "samples": [
+            "h3:nth-child(2)",
+            ".footer-col:nth-child(2) > h5"
+          ]
+        }
+      ],
+      "mobile": [
+        {
+          "id": "aria-hidden-focus",
+          "impact": "serious",
+          "nodes": 2,
+          "samples": [
+            ".menu-toggle",
+            ".mobile-drawer"
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "nodes": 1,
+          "samples": [
+            "h3:nth-child(2)"
+          ]
+        }
+      ]
+    }
+  },
+  "posMeasurements": "N2/N3 measurements live in responsive-pos-measurements.json (before = git HEAD baseline on :8898, after = repaired tree on :8899)."
+}

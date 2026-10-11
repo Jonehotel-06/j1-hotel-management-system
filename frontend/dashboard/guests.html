@@ -35,7 +35,7 @@
     </div>
   </aside>
   <div class="dash-main">
-    <div class="dash-topbar">
+    <header class="dash-topbar">
       <div class="dash-topbar-left">
         <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
         <div class="dash-title" data-dash-title>
@@ -49,8 +49,8 @@
           <span class="icon-sun" data-icon="sun" data-size="18"></span>
         </button>
       </div>
-    </div>
-    <div class="dash-content">
+    </header>
+    <main class="dash-content">
 
 <section class="panel">
   <div class="filter-bar">
@@ -59,13 +59,13 @@
   </div>
   <div class="panel-body no-pad">
     <div class="table-wrap"><table class="table table-guests">
-      <thead><tr><th>Guest</th><th>Contact</th><th class="num">Bookings</th><th>Last stay</th><th></th></tr></thead>
+      <thead><tr><th>Guest</th><th>Contact</th><th class="num">Bookings</th><th>Last stay</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody data-tbody="guests"></tbody>
     </table></div>
     <div class="pagination" data-pagination></div>
   </div>
 </section>
-    </div>
+    </main>
   </div>
 </div>
 <script src="../js/runtime-config.js?v=1.1.11"></script>
@@ -246,7 +246,7 @@
       "added together. Bookings already made keep the amount that was applied at the time.</p>" +
       (discounts.length
         ? '<div class="table-wrap"><table class="table"><thead><tr>' +
-          "<th>Discount</th><th>Valid</th><th>Used</th><th>Status</th><th></th>" +
+          "<th>Discount</th><th>Valid</th><th>Used</th><th>Status</th><th><span class='sr-only'>Actions</span></th>" +
           "</tr></thead><tbody>" + rows + "</tbody></table></div>"
         : '<div class="empty-state"><span data-icon="tag"></span><h3>No personal discount</h3>' +
           "<p>This guest pays the public rate, or the best public offer.</p></div>");

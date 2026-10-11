@@ -35,7 +35,7 @@
     </div>
   </aside>
   <div class="dash-main">
-    <div class="dash-topbar">
+    <header class="dash-topbar">
       <div class="dash-topbar-left">
         <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
         <div class="dash-title" data-dash-title>
@@ -49,8 +49,8 @@
           <span class="icon-sun" data-icon="sun" data-size="18"></span>
         </button>
       </div>
-    </div>
-    <div class="dash-content">
+    </header>
+    <main class="dash-content">
 
 <section class="panel">
   <div class="panel-head">
@@ -64,7 +64,7 @@
       <thead><tr>
         <th>Booking</th><th>Guest</th><th class="hide-sm num">Rooms</th><th>Stay</th>
         <th class="num">Nights</th><th class="hide-sm num">Paid</th>
-        <th class="num">Outstanding</th><th>Status</th><th></th>
+        <th class="num">Outstanding</th><th>Status</th><th><span class="sr-only">Actions</span></th>
       </tr></thead>
       <tbody data-tbody="late"></tbody>
     </table></div>
@@ -98,14 +98,14 @@
     <div class="table-wrap"><table class="table table-missed">
       <thead><tr>
         <th>Booking</th><th>Guest</th><th class="hide-sm">Room</th><th>Stay</th>
-        <th class="hide-sm num">Paid</th><th class="num">Refundable</th><th>Status</th><th></th>
+        <th class="hide-sm num">Paid</th><th class="num">Refundable</th><th>Status</th><th><span class="sr-only">Actions</span></th>
       </tr></thead>
       <tbody data-tbody="missed"></tbody>
     </table></div>
     <div class="pagination" data-pagination></div>
   </div>
 </section>
-    </div>
+    </main>
   </div>
 </div>
 <script src="../js/runtime-config.js?v=1.1.11"></script>

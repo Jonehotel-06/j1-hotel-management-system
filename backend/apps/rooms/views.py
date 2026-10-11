@@ -270,8 +270,11 @@ class RoomTypeRoomsView(generics.ListAPIView):
 
     def get_queryset(self):
         return (
-            Room.objects.filter(room_type=self.get_room_type(), is_active=True)
-            .exclude(status__in=availability.OPERATIONALLY_BLOCKED)
+            # Same authoritative readiness rule as the booking engine, so the
+            # public room list and the availability search never disagree.
+            availability.sellable_rooms_queryset(
+                Room.objects.filter(room_type=self.get_room_type())
+            )
             .select_related("room_type")
             .order_by("room_number")
         )

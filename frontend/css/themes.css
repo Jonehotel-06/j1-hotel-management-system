@@ -34,7 +34,9 @@ html[data-theme="dark"] {
 
   --color-text: #E6E9ED;
   --color-text-muted: #9AA3AF;
-  --color-text-faint: #6C7580;
+  /* Same AA requirement in the dark palette: #6C7580 measured 3.3–4.1:1
+     on the dark surfaces. */
+  --color-text-faint: #8D96A3;
   --color-heading: #F1F3F6;
 
   --color-border: #262B33;

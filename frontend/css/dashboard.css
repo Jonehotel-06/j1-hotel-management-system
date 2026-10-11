@@ -54,7 +54,10 @@
   font-size: 0.65rem;
   letter-spacing: var(--tracking-widest);
   text-transform: uppercase;
-  color: #727376;
+  /* #727376 on --brand-charcoal #22262C measured 3.21:1 (WCAG AA needs 4.5:1
+     for this 10.4px text). #9AA3AF measures 5.96:1 and keeps the muted
+     grouping-label weight. Verified with axe in a real browser (N11). */
+  color: #9AA3AF;
   padding: 0 0.75rem 0.4rem;
 }
 .dash-nav-item {
@@ -365,7 +368,12 @@ body.drawer-open .dash-main { overflow: hidden; }
 .kpi-grid.is-loading .kpi-sub {
   position: relative;
   overflow: hidden;
-  color: transparent;
+  /* The loading state shows shimmer bars, not prose, so the text is taken out
+     of the paint path entirely (font-size 0) rather than drawn invisibly with
+     color: transparent. The bars keep their shape because each placeholder
+     below carries its own width/min-height. Transparent text still counted as
+     low-contrast text in a real-browser axe run (measured 1.67:1, N11). */
+  font-size: 0;
   background: var(--color-surface-deep);
   border-radius: var(--radius-sm);
 }
@@ -382,7 +390,14 @@ body.drawer-open .dash-main { overflow: hidden; }
   transform: translateX(-100%);
   animation: shimmer 1.3s infinite;
 }
-.kpi-grid.has-error .kpi { opacity: 0.35; }
+/* The .dashboard-kpi-error block below already states, in words, that the
+   summary could not be loaded. Dimming the whole card to 35% additionally made
+   every label unreadable - measured 1.67:1 against the 4.5:1 AA minimum in a
+   real-browser axe run (N11). The unavailable values are greyed by colour
+   instead, which keeps all of the card's text legible. */
+.kpi-grid.has-error .kpi { border-color: var(--color-border-strong); }
+.kpi-grid.has-error .kpi-value,
+.kpi-grid.has-error .kpi-sub { color: var(--color-text-faint); }
 .dashboard-kpi-error {
   grid-column: 1 / -1;
   display: flex;
@@ -426,6 +441,25 @@ body.drawer-open .dash-main { overflow: hidden; }
    positioned descendants (e.g. .sr-only header labels), so a table that
    scrolls inside the wrap can never inflate the DOCUMENT's scroll width. */
 .table-wrap { position: relative; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* N3: a horizontally scrollable table needs a *visible* cue, not just the
+   tabindex/role/aria-label that assistive tech reads. The edge shadows below
+   are painted on the wrapper and the table's cells are transparent, so they
+   show through. The first two layers use background-attachment: local, which
+   means they scroll with the content and hide the matching shadow once that
+   edge has been reached - so the cue is only present while there is more to
+   see, and it disappears exactly at each end. */
+.table-wrap {
+  background-image:
+    linear-gradient(to right, var(--color-surface) 30%, transparent),
+    linear-gradient(to left, var(--color-surface) 30%, transparent),
+    linear-gradient(to right, color-mix(in srgb, var(--color-text) 18%, transparent), transparent),
+    linear-gradient(to left, color-mix(in srgb, var(--color-text) 18%, transparent), transparent);
+  background-repeat: no-repeat;
+  background-position: 0 0, 100% 0, 0 0, 100% 0;
+  background-size: 2rem 100%, 2rem 100%, 0.7rem 100%, 0.7rem 100%;
+  background-attachment: local, local, scroll, scroll;
+}
 
 /* --------------------------- Loading skeletons ----------------------------
    Shared DATA.loading() uses these instead of layout-breaking spinners. The
@@ -575,9 +609,21 @@ body.drawer-open .dash-main { overflow: hidden; }
 /* Small-screen operational layout: preserve readable controls without forcing
    the dashboard viewport wider than the device. */
 @media (max-width: 560px) {
-  .dash-topbar { padding: .65rem .8rem; gap: .5rem; }
+  /* N2: at 320-412px the auxiliary subtitle wrapped to four lines and pushed
+     the topbar to 124px, while the 18px title was cut off after one line. The
+     subtitle is dropped at phone widths (it repeats what the page body says)
+     and the title keeps its full text on at most two clamped lines. */
+  .dash-topbar { padding: .5rem .7rem; gap: .5rem; }
   .dash-topbar-left, .dash-topbar-right { min-width: 0; }
-  .dash-title h1 { font-size: var(--fs-md); }
+  .dash-title p { display: none; }
+  .dash-title h1 {
+    font-size: var(--fs-sm);
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
   .dash-topbar-actions { gap: .25rem; }
   .dash-topbar-actions .btn { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dash-content { padding: .75rem; gap: .9rem; }
@@ -1296,7 +1342,9 @@ body.receipt-view-page .receipt-utility-actions .btn-outline:hover {
 .receipt-export-row.is-pdf {
   --rx-bg: #2a221c;
   --rx-mid: rgba(255,255,255,0.12);
-  --rx-action: #b06f12;
+  /* White on #b06f12 measured 4.09:1 against the 4.5:1 AA minimum for this
+     button label; #9a5f0b keeps the amber hue at 5.23:1 (axe, N11). */
+  --rx-action: #9a5f0b;
   --rx-icon: #f0b533;
 }
 .receipt-export-kind,

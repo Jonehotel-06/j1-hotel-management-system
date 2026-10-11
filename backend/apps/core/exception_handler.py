@@ -23,18 +23,35 @@ from apps.core.storage import StorageUploadError
 logger = logging.getLogger("apps")
 
 
-def _envelope(code, message, errors, status_code):
+def _envelope(code, message, errors, status_code, headers=None):
+    """Build the uniform error body, preserving any header DRF attached.
+
+    DRF puts machine-readable headers on some errors - ``Retry-After`` on a 429,
+    ``WWW-Authenticate`` on a 401 - and a rebuilt Response silently dropped
+    them, so a throttled client had to parse prose to know when to come back
+    (found while proving the throttle guards, audit SEC-005). Forwarding the
+    original response's headers keeps DRF's own contract intact.
+    """
     payload = {"success": False, "code": code, "message": message}
     if errors:
         payload["errors"] = errors
-    return Response(payload, status=status_code)
+    return Response(payload, status=status_code, headers=headers)
 
 
 def jone_exception_handler(exc, context):
     if isinstance(exc, Http404):
         exc = drf_exceptions.NotFound()
     elif isinstance(exc, DjangoPermissionDenied):
-        exc = drf_exceptions.PermissionDenied()
+        # Domain services raise this with the actual business reason (for
+        # example "A requester cannot approve their own sensitive monetary
+        # action."). Blanking it turned every rule-based refusal into
+        # "You do not have permission to perform this action.", which reads as
+        # a permissions problem, sends staff to the wrong place, and hides the
+        # two-person rule from anyone testing it (audit D2). The message is
+        # authored in our own code, never a provider payload, so it is safe to
+        # surface; the generic text remains the fallback when there is none.
+        reason = " ".join(str(arg) for arg in exc.args if arg).strip()
+        exc = drf_exceptions.PermissionDenied(reason or None)
     elif isinstance(exc, DjangoValidationError):
         # Domain services deliberately use Django's validation primitive so
         # they are equally safe from HTTP, management-command, and task
@@ -64,7 +81,7 @@ def jone_exception_handler(exc, context):
     data = response.data
 
     if isinstance(exc, drf_exceptions.ValidationError):
-        return _envelope("VALIDATION_ERROR", "Validation failed.", data, response.status_code)
+        return _envelope("VALIDATION_ERROR", "Validation failed.", data, response.status_code, response.headers)
 
     if isinstance(exc, drf_exceptions.NotAuthenticated):
         return _envelope(
@@ -72,10 +89,11 @@ def jone_exception_handler(exc, context):
             "Authentication credentials were not provided or are invalid.",
             None,
             response.status_code,
+            response.headers,
         )
 
     if isinstance(exc, drf_exceptions.AuthenticationFailed):
-        return _envelope("UNAUTHORIZED", str(exc.detail), None, response.status_code)
+        return _envelope("UNAUTHORIZED", str(exc.detail), None, response.status_code, response.headers)
 
     if isinstance(exc, drf_exceptions.PermissionDenied):
         return _envelope(
@@ -83,17 +101,23 @@ def jone_exception_handler(exc, context):
             str(exc.detail) if exc.detail else "You do not have permission to perform this action.",
             None,
             response.status_code,
+            response.headers,
         )
 
     if isinstance(exc, drf_exceptions.NotFound):
-        return _envelope("RESOURCE_NOT_FOUND", "The requested resource was not found.", None, status.HTTP_404_NOT_FOUND)
+        return _envelope(
+            "RESOURCE_NOT_FOUND", "The requested resource was not found.", None,
+            status.HTTP_404_NOT_FOUND, response.headers,
+        )
 
     if isinstance(exc, drf_exceptions.Throttled):
         wait = getattr(exc, "wait", None)
         message = "Too many requests. Please slow down."
         if wait:
             message = f"Too many requests. Try again in {int(wait)} seconds."
-        return _envelope("RATE_LIMITED", message, None, status.HTTP_429_TOO_MANY_REQUESTS)
+        return _envelope(
+            "RATE_LIMITED", message, None, status.HTTP_429_TOO_MANY_REQUESTS, response.headers,
+        )
 
     # Domain APIExceptions (apps.core.exceptions) carry their own code/detail.
     code = exc.get_codes()
@@ -103,4 +127,4 @@ def jone_exception_handler(exc, context):
         code = "VALIDATION_ERROR"
     detail = exc.detail
     message = detail if isinstance(detail, str) else "; ".join(map(str, getattr(detail, "__iter__", lambda: [])() or [detail]))
-    return _envelope(str(code).upper(), str(message), None, response.status_code)
+    return _envelope(str(code).upper(), str(message), None, response.status_code, response.headers)

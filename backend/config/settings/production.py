@@ -45,9 +45,28 @@ if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
     raise RuntimeError("Production requires MySQL (set DATABASE_URL or DB_* variables).")
 
 # --- CORS / CSRF: explicit allowlists only ----------------------------------
+# A wildcard origin is never acceptable here, including via a stray
+# CORS_ALLOW_ALL_ORIGINS environment variable (audit SEC-02). The allowlist may
+# be intentionally EMPTY when the frontend reaches the API through its own
+# origin (same-origin requests are not CORS requests at all) — see the "/api"
+# rewrite in frontend/vercel.json.
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", cast=Csv())
 CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", cast=Csv())
 CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOW_CREDENTIALS = False
+if config("CORS_ALLOW_ALL_ORIGINS", default="False", cast=bool):
+    raise RuntimeError(
+        "CORS_ALLOW_ALL_ORIGINS must not be enabled in production. List the exact "
+        "browser origins in CORS_ALLOWED_ORIGINS instead."
+    )
+for _origin in CORS_ALLOWED_ORIGINS:
+    if not _origin.startswith(("http://", "https://")):
+        raise RuntimeError(
+            f"CORS_ALLOWED_ORIGINS entry {_origin!r} must include a scheme "
+            "(for example https://hotel.example.com)."
+        )
+if "*" in CORS_ALLOWED_ORIGINS:
+    raise RuntimeError("CORS_ALLOWED_ORIGINS must list exact origins, not '*'.")
 
 # --- HTTPS / browser security headers ---------------------------------------
 SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=True, cast=bool)

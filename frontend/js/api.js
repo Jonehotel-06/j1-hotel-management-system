@@ -146,8 +146,33 @@ const API = (() => {
     } catch (_) { /* diagnostics must never throw */ }
   }
 
+  /* ---------------------- Endpoint validation (safe-by-default) ------------ */
+  /* A path must be a real, non-empty string. Historically a missing
+     API_ENDPOINTS key produced a request to ".../undefined", which the backend
+     answered with a 404 and the page rendered a permanently blank panel (D1).
+     Building such a URL is now impossible: every request fails fast, in the
+     shared layer, with an actionable configuration error. */
+  const BAD_PATH_SEGMENT = /(^|\/)(undefined|null|NaN)(\/|$)/;
+
+  function endpointConfigError(path) {
+    return new APIError(
+      0,
+      "This part of the dashboard isn't configured correctly, so the request was " +
+        "not sent. Please report it to the administrator (missing endpoint configuration).",
+      { code: "ENDPOINT_NOT_CONFIGURED", path: path === undefined ? null : String(path) }
+    );
+  }
+
+  function assertUsablePath(path) {
+    if (typeof path !== "string" || !path.trim()) throw endpointConfigError(path);
+    const trimmed = path.trim();
+    if (BAD_PATH_SEGMENT.test(trimmed)) throw endpointConfigError(trimmed);
+    return trimmed;
+  }
+
   /* ----------------------------- Core request (single pass) ---------------- */
   async function requestOnce(path, opts = {}) {
+    path = assertUsablePath(path);
     const {
       method = "GET",
       body,
@@ -214,10 +239,38 @@ const API = (() => {
 
       const contentType = res.headers.get("content-type") || "";
       if (responseType === "blob" && res.ok) {
+        /* Reject a "successful" response whose body is not actually binary.
+           A JSON error envelope (or an HTML error page) served with HTTP 200
+           must never be written to disk as a .xlsx/.pdf file. */
+        if (contentType.includes("application/json") || contentType.includes("text/html")) {
+          const raw = await res.text().catch(() => "");
+          let detail = null;
+          try { detail = raw ? JSON.parse(raw) : null; } catch (_) { detail = null; }
+          debugLog(method, url, { label: `blob request returned ${contentType}, not a file`, bodyExcerpt: raw });
+          throw new APIError(
+            res.status,
+            (detail && (detail.message || detail.detail)) ||
+              "The server did not return a downloadable file. Please try again.",
+            detail,
+            "parse"
+          );
+        }
+        const blob = await res.blob();
+        // `size === 0` is a genuinely empty body. A non-Blob/stream stub has no
+        // `size` at all and must not be rejected here.
+        if (!blob || blob.size === 0) {
+          debugLog(method, url, { label: "empty binary response body" });
+          throw new APIError(
+            res.status,
+            "The server returned an empty file. Please try a different period or try again.",
+            null,
+            "parse"
+          );
+        }
         return {
           status: res.status,
           ok: true,
-          data: await res.blob(),
+          data: blob,
           pagination: null,
           response: res,
           headers: res.headers
@@ -347,6 +400,80 @@ const API = (() => {
   const put = (path, body, opts = {}) => request(path, { ...opts, method: "PUT", body });
   const patch = (path, body, opts = {}) => request(path, { ...opts, method: "PATCH", body });
   const del = (path, opts = {}) => request(path, { ...opts, method: "DELETE" });
+
+  /* --------------------------- Binary downloads ----------------------------
+     getBlob resolves to the SAME response envelope as every other verb, so the
+     payload is `res.data` — NOT the response object. Passing the envelope to
+     URL.createObjectURL() throws and the download silently fails (D14), so
+     browsers must never call createObjectURL themselves. Use this helper. */
+  const MIME_BY_EXTENSION = {
+    csv: "text/csv",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    pdf: "application/pdf"
+  };
+
+  function extensionOf(filename) {
+    const match = /\.([a-z0-9]+)$/i.exec(String(filename || ""));
+    return match ? match[1].toLowerCase() : "";
+  }
+
+  async function downloadFile(path, { filename, params, mimeType, expectedExtensions, ...opts } = {}) {
+    const response = await getBlob(path, { params, cache: "no-store", ...opts });
+    const payload = response && response.data;
+    if (!(typeof Blob !== "undefined" && payload instanceof Blob) || !payload.size) {
+      throw new APIError(0, "The server did not return a downloadable file. Please try again.", null, "parse");
+    }
+    const extension = extensionOf(filename);
+    /* Validate the declared response type against the requested file: a
+       mislabelled body would still "download" and then fail to open. */
+    const headerType = (response.headers && response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    const expected = expectedExtensions || (extension ? [extension] : []);
+    if (headerType && headerType !== "application/octet-stream") {
+      const wanted = mimeType || MIME_BY_EXTENSION[extension] || "";
+      if (wanted && headerType !== wanted) {
+        throw new APIError(
+          0,
+          `The server returned "${headerType}" instead of a ${extension.toUpperCase()} file. The export was not saved.`,
+          { code: "UNEXPECTED_EXPORT_TYPE", contentType: headerType, expected: wanted }
+        );
+      }
+    }
+    if (!expected.length) {
+      throw new APIError(0, "An export file name with an extension is required.", { code: "MISSING_FILENAME" });
+    }
+    const blob = mimeType ? new Blob([payload], { type: mimeType }) : payload;
+    const url = URL.createObjectURL(blob);
+    try {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.rel = "noopener";
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } finally {
+      /* Revoke on the next macrotask so the browser has started the download
+         (an immediate revoke cancels it in some Safari/Firefox builds). */
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 0);
+    }
+    return { filename, size: blob.size, contentType: blob.type || headerType };
+  }
+
+  function downloadReport(path, kind, { start, end, filename, ...opts } = {}) {
+    const extension = String(kind || "").toLowerCase().replace(/^\./, "");
+    if (!MIME_BY_EXTENSION[extension]) {
+      return Promise.reject(
+        new APIError(0, `"${kind}" is not a supported export format.`, { code: "UNSUPPORTED_EXPORT_FORMAT" })
+      );
+    }
+    return downloadFile(path, {
+      filename: filename || `report-${start}_${end}.${extension}`,
+      mimeType: MIME_BY_EXTENSION[extension],
+      params: { ...(opts.params || {}), start, end, export: extension },
+      ...opts
+    });
+  }
 
   /* ------------------------- Response helpers ------------------------------ */
 
@@ -612,7 +739,31 @@ const API = (() => {
   const checkInBooking   = (lookup, opts = {}) => bookingAction("check-in", lookup, {}, opts);
   const checkOutBooking  = (lookup, payload, opts = {}) => bookingAction("check-out", lookup, payload || {}, opts);
   const noShowBooking    = (lookup, opts = {}) => bookingAction("no-show", lookup, {}, opts);
-  const assignRoom       = (lookup, roomId, opts = {}) => bookingAction("assign-room", lookup, { room: roomId }, opts);
+  /* Re-point one existing reservation row at a different physical room.
+     Contract (apps/bookings/serializers_admin.py → AssignRoomSerializer):
+         { assignment_id, room_id }   → POST /api/admin/bookings/{lookup}/assign-room/
+     The booking must already have the target assignment row; the backend
+     re-validates room type, operational readiness, dates and overlapping
+     reservations under a lock. Sending a bare { room } used to be accepted as
+     a no-op success (D7) — both identifiers are now required and validated
+     here, before the request leaves the browser. */
+  const assignRoom = (lookup, assignmentId, roomId, opts = {}) => {
+    const asPositiveInt = (value, label) => {
+      const numeric = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+      if (!Number.isInteger(numeric) || numeric < 1) {
+        throw new APIError(0, `A valid ${label} is required to change a room assignment.`, {
+          code: "INVALID_ROOM_ASSIGNMENT",
+        });
+      }
+      return numeric;
+    };
+    return bookingAction(
+      "assign-room",
+      lookup,
+      { assignment_id: asPositiveInt(assignmentId, "assignment id"), room_id: asPositiveInt(roomId, "room id") },
+      opts
+    );
+  };
   /* Move an existing booking to new dates. The backend re-checks availability
      and re-prices the stay; the response carries the authoritative booking. */
   const rescheduleBooking = (lookup, payload, opts = {}) =>
@@ -771,6 +922,7 @@ const API = (() => {
 
   return {
     get, getBlob, post, put, patch, del, request,
+    downloadFile, downloadReport,
     // Public site
     getHotelInfo, getPolicies, getRooms, getRoom, checkAvailability, getUnavailableDates,
     getOffers, getFacilities, getGallery, submitEnquiry, submitCancellationRequest, getCancellationStatus,

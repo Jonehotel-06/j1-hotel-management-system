@@ -25,8 +25,16 @@
     if (!drawer || !toggle) return;
 
     const setOpen = (open) => {
+      const wasOpen = drawer.classList.contains("open");
       drawer.classList.toggle("open", open);
       drawer.setAttribute("aria-hidden", open ? "false" : "true");
+      /* Belt and braces with the CSS: `inert` also removes the closed drawer's
+         links from the tab order and the accessibility tree, so an aria-hidden
+         subtree never contains a focusable control (audit N11,
+         aria-hidden-focus). Browsers without `inert` still get the CSS rule. */
+      if ("inert" in drawer) drawer.inert = !open;
+      else if (open) drawer.removeAttribute("inert");
+      else drawer.setAttribute("inert", "");
       if (backdrop) backdrop.classList.toggle("open", open);
       toggle.setAttribute("aria-expanded", open ? "true" : "false");
       // Lock background scroll while the drawer is open; restore on close.
@@ -34,10 +42,16 @@
       if (open) {
         const first = drawer.querySelector("[data-drawer-close]") || drawer.querySelector("a, button");
         first && first.focus();
-      } else {
+      } else if (wasOpen) {
+        /* Return focus to the control that opened the drawer — but never steal
+           focus during initialisation, when nothing was open yet. */
         toggle.focus();
       }
     };
+
+    /* The markup ships closed; make that state explicit before first paint of
+       the first interaction so nothing can tab into the hidden drawer. */
+    if (!drawer.classList.contains("open")) setOpen(false);
 
     toggle.addEventListener("click", () => {
       setOpen(!drawer.classList.contains("open"));

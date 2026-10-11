@@ -756,6 +756,82 @@ class PayrollApiTests(BaseAPITestCase):
         self.assertEqual(Decimal(line["paye_tax"]), Decimal("0.00"))
         self.assertEqual(Decimal(line["employee_pension"]), Decimal("0.00"))
 
+    def test_my_payslips_scope_to_the_caller_and_exclude_unapproved_runs(self):
+        """PAY-004: the correct self-service route, correctly scoped.
+
+        Two housekeepers share one approved payroll run. Each must see only
+        their own line through `/payroll/my-payslips/`, a colleague's line must
+        not leak, a run that has not been approved must not appear at all, and a
+        staff member with no payroll line must get an empty list rather than the
+        whole table.
+        """
+        colleague = make_staff("payroll.colleague@staff.dev", role=User.Role.HOUSEKEEPER)
+        profile, _ = ensure_staff_profile(staff=colleague)
+        profile.department = "Housekeeping"
+        profile.employment_start = self.today
+        profile.save(update_fields=["department", "employment_start", "updated_at"])
+        self._register_tax_identity(colleague)
+        self.auth(self.creator)
+        compensation = self.client.post("/api/admin/staff-operations/payroll/compensation/", {
+            "staff_id": colleague.pk, "effective_from": self.today.isoformat(),
+            "currency": "NGN", "basic_salary": "90000.00", "overtime_rate": "0.00",
+        }, format="json")
+        self.assertEqual(compensation.status_code, 201, compensation.content)
+
+        # A rejected run keeps no visible payslip; its documented replacement does.
+        rejected = self._create_period(self._payload("payroll-scope-rejected"))
+        rejected_reference = rejected.json()["data"]["reference"]
+        self.auth(self.creator)
+        self.assertEqual(
+            self.client.post(
+                f"/api/admin/staff-operations/payroll/periods/{rejected_reference}/submit/", {}, format="json"
+            ).status_code,
+            200,
+        )
+        self.auth(self.approver)
+        refused = self.client.post(
+            f"/api/admin/staff-operations/payroll/periods/{rejected_reference}/review/",
+            {"approved": False, "review_note": "Rejected: hours did not reconcile."}, format="json",
+        )
+        self.assertEqual(refused.status_code, 200, refused.content)
+        self.assertEqual(
+            PayrollPeriod.objects.get(reference=rejected_reference).status, PayrollPeriod.Status.REJECTED
+        )
+
+        replacement_payload = self._payload("payroll-scope-approved")
+        replacement_payload["replaces_reference"] = rejected_reference
+        approved_reference, line = self._create_approved_run(replacement_payload)
+        self.assertEqual(Decimal(line["gross_pay"]), Decimal("67500.00"))
+        self.assertNotEqual(rejected_reference, approved_reference)
+
+        def payslips_for(user):
+            self.auth(user)
+            response = self.client.get("/api/admin/staff-operations/payroll/my-payslips/")
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assertIn("no-store", response["Cache-Control"])
+            return response.json()["data"]
+
+        own = payslips_for(self.employee)
+        self.assertTrue(own, "the caller's own approved payslip is missing")
+        self.assertEqual({row["period_reference"] for row in own}, {approved_reference})
+        self.assertNotIn(
+            rejected_reference, {row["period_reference"] for row in own},
+            "a rejected payroll run leaked into self-service",
+        )
+        self.assertEqual({Decimal(row["gross_pay"]) for row in own}, {Decimal("67500.00")})
+
+        colleague_rows = payslips_for(colleague)
+        self.assertEqual(
+            {Decimal(row["gross_pay"]) for row in colleague_rows}, {Decimal("90000.00")},
+            "the colleague saw a line that is not theirs",
+        )
+        self.assertNotIn(Decimal("67500.00"), {Decimal(r["gross_pay"]) for r in colleague_rows})
+
+        self.auth(self.approver)
+        empty = self.client.get("/api/admin/staff-operations/payroll/my-payslips/")
+        self.assertEqual(empty.status_code, 200, empty.content)
+        self.assertEqual(empty.json()["data"], [])
+
     def test_employee_my_payslips_are_private(self):
         self.auth(self.employee)
         response = self.client.get("/api/admin/staff-operations/payroll/my-payslips/")

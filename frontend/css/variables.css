@@ -30,7 +30,12 @@
 
   --color-text: #23272E;
   --color-text-muted: #5B6570;
-  --color-text-faint: #8B95A0;
+  /* 'Faint' is used for small real text (meta lines, counters, placeholders,
+     step labels), so it must meet WCAG AA on every surface it lands on —
+     not just look light. The previous #8B95A0 measured 2.6–3.0:1 on the
+     light surfaces: a serious colour-contrast finding (audit N11).
+     #5F6B77 keeps the quiet tone at ≥4.6:1 on every light surface. */
+  --color-text-faint: #5F6B77;
   --color-heading: #181C21;
 
   --color-border: #E3E8ED;
