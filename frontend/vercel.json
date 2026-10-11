@@ -214,7 +214,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://j1-hotel-management-system-production.up.railway.app/api/:path*"
+      "destination": "https://j1-hotel-management-system-production.up.railway.app/api/:path*/"
     }
   ]
 }

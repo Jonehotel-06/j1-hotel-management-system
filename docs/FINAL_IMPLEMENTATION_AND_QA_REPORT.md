@@ -45,10 +45,11 @@ Passwords, API keys, session tokens and biometric templates are never reproduced
 | `backend/apps/hotel/management/commands/seed_demo_operations.py` | Idempotent, production-guarded DEMO seed: rooms, Nigerian menu, staff, suppliers, stock. |
 | `frontend/js/thermal-receipt.js` | 58 mm / 80 mm thermal receipt renderer + browser printing. |
 | `backend/tests/test_customer_tax_removal.py` | 16 acceptance tests for the tax removal + historical preservation + statutory separation. |
-| `backend/tests/test_demo_seeding.py` | 6 tests: idempotency, DEMO labelling, production guard, payroll-rule seed/review. |
+| `backend/tests/test_demo_seeding.py` | 8 tests: idempotency, DEMO labelling (incl. recipes/shifts), production guard, payroll-rule seed/review, and an end-to-end **draft payroll run computed from the seeded rule set**. |
 | `backend/tests/test_fingerprint_device_mock.py` | 8 mocked reader integration tests. |
 | `frontend/tests-js/test-thermal-receipt.js` | 8 tests: widths, alignment, wrapping, tax-line rules. |
 | `frontend/tests-js/test-theme-prepaint.js` | 4 tests pinning the dark-mode flash fix. |
+| `frontend/tests-js/test-deploy-config.js` | 3 tests pinning the `/api` proxy (slash-restored rewrite) and deployment-neutral config. |
 | `docs/FINGERPRINT_INTEGRATION.md` | Reader integration contract + physical-device BLOCKED checklist. |
 
 **Modified (key items)**
@@ -73,11 +74,11 @@ contracts and deployment split are preserved. Two additive migrations only.
 
 | Command | Baseline (commit `8c1782e`) | Final (commit `2c82b1a`) |
 |---|---|---|
-| `cd backend && python manage.py test` | **930 tests OK** (1 skipped), 346 s | **961 tests OK** (1 skipped), 355 s |
+| `cd backend && python manage.py test` | **930 tests OK** (1 skipped), 346 s | **963 tests OK** (1 skipped), 356 s |
 | `cd backend && python manage.py check` | 0 issues | 0 issues |
 | `cd backend && python manage.py makemigrations --check --dry-run` | No changes | No changes |
 | `cd frontend && python validate.py` | ALL OK (67 HTML, 28 JS) | ALL OK (67 HTML, 29 JS) |
-| `cd frontend && node --test tests-js/` | 121 pass, **8 pre-existing failures** | **141 pass, 0 fail** |
+| `cd frontend && node --test tests-js/` | 121 pass, **8 pre-existing failures** | **144 pass, 0 fail** |
 
 The 8 pre-existing frontend failures (tests forbidding a hardcoded deployment-provider
 hostname and absolute endpoint URLs in `config.js`) were reproduced on the clean
@@ -117,7 +118,8 @@ notifications were **not** performed against production.
 | Paystack **test-mode live** transactions | **NOT TESTED** | No Paystack keys in this environment; live/test gateway calls are a production-safety no-go without explicit authorisation. The verification machinery (server-side verify, amount/currency checks, idempotent webhooks) is covered by tests. |
 | Booking test emails (5 supplied addresses) | **NOT USED** | Per the brief, recipients must be authorised before any send; SMTP is unconfigured in this environment (console/captured transport only). All email paths are covered by captured-transport tests (`test_email_*`, `test_receipt_email*`). **No email was sent to any of the five addresses.** Each is therefore recorded as *unused*. |
 | Folio, partial payment, discount, cancellation, refund, check-in/checkout | **PASS** (isolated) | `test_booking_balances.py`, `test_guest_discounts.py`, `test_cancellation_refunds.py`, `test_refund_cancellation_fee.py`, `test_guest_checkout.py`, `test_stays.py` |
-| Stale Paystack ₦387,000 on expired booking (reference `J1P-20261010-199B12784F`) | **BLOCKED** | Needs the provider's authoritative status (Paystack dashboard/API — owner-only) and an owner decision (refund/apply/void/leave). Left untouched; read-only investigation preserved. |
+| Stale Paystack ₦387,000 on expired booking (reference `J1P-20261010-199B12784F`) | **BLOCKED (provider-side only)** | Read-only investigation on 2026-10-11: the admin payments collection now returns **0 rows** and the reference resolves **404** — the stale row described in the 2026-10-10 audit package is **not present in the database this API serves**. No in-app corrective action is possible or needed. The owner should still reconcile the reference **in the Paystack dashboard** (a provider-side charge can exist independently of the app's records) and record the outcome. |
+| Production dataset state (read-only survey 2026-10-11) | recorded | `GET /api/admin/bookings/` → 0 rows; `GET /api/admin/rooms/` → 0 rows; `GET /api/admin/payments/` → 0 rows; public `/api/rooms/` → 0 room types. The production database the API serves holds **no operational transactions**; all lifecycle verification therefore stands on the isolated test suite (see §A.3). |
 
 Booking money-path acceptance under the tax removal (quote → booking record → Paystack
 amount → receipt) is pinned by `tests/test_customer_tax_removal.py::BookingMoneyPathTests`.
@@ -211,6 +213,8 @@ conservative default (accrue, don't bill) is in force and flagged in settings he
 | Nigerian menu catalogue | **PASS** | **64 menu items** in 6 categories (Rice Dishes, Soups & Swallow, Local Delicacies, Breakfast/Snacks/Pastries, Non-Alcoholic, Alcoholic) covering the brief's list (jollof/fried rice, ofada, moi moi, abacha, nkwobi, isi ewu, pepper soups, egusi/ogbono/oha/nsala/okra/bitterleaf/afang/edikang ikong/efo riro, swallow combos, suya/shawarma/barbecue/grills, breakfast, desserts; water/soft drinks/malt/juice/energy/tea/coffee/yogurt/smoothies/mocktails; beer/wine/spirits). Every price is a **DEMO value**, flagged in the item description. |
 | Demo staff | **PASS** | **16 synthetic employees** across Management, Reception, Accounting, HR, Kitchen, Restaurant, Bar, Housekeeping, Maintenance, Security, Stores — each with StaffProfile, DEMO employee code, unusable password (no credentials minted or logged). |
 | Demo suppliers / stock | **PASS** | 5 suppliers, 2 demo locations, 18 stock items (ingredients, beverages, linens, cleaning, consumables, equipment incl. barcode scanner + 80 mm thermal printer assets) with **immutable OPENING movements** (18) — never mutable balances. |
+| Demo recipes (BOM) | **PASS** | **6 versioned `StockRecipe` BOMs** linking menu items (jollof & chicken, egusi & pounded yam, grilled fish, Coke, lager, bottled water) to stock components (**10 recipe lines**) — menu catalogue and counted stock stay distinct. |
+| Demo shifts | **PASS** | **5 shift templates** (morning/afternoon/night/kitchen/housekeeping) and **16 scheduled assignments** (one per demo staff member), all DEMO-referenced and idempotent. |
 | Isolation & safety | **PASS** | `seed_demo_operations` **refuses production settings** (tested), is idempotent (re-run creates 0 duplicates, tested), labels every record DEMO, and touches no production inventory/financial record. |
 | 24-room baseline as owner stated | **NOT APPLIED** | See first row — awaiting owner confirmation of the 4th room type and its approved rate. |
 
@@ -250,6 +254,14 @@ conservative default (accrue, don't bill) is in force and flagged in settings he
 * `test_payroll_api.py::test_2026_progressive_paye_and_pension_are_calculated_from_reviewed_rules`
   (and 17 further payroll tests) verify band maths, pension split, snapshots, maker-checker,
   immutability, corrections/replacements, payment privacy.
+* **End-to-end draft run from the SEEDED rule set** (`test_demo_seeding.py::
+  SeededRulesetPayrollRunTests`, isolated DB): `seed_nigeria_payroll_rules` →
+  independent reviewer approves via the review API → tax identity + compensation
+  → draft period computes pensionable ₦290,000, employee pension **₦23,200**,
+  employer pension **₦29,000**, PAYE equal to the NTA 2025 bands prorated by the
+  engine's documented `13 − month` projection — status stays **DRAFT** (nothing
+  finalised or paid). A second test proves manual deductions cannot smuggle
+  statutory labels ("PAYE" as a manual deduction is rejected HTTP 400).
 * Worked example (verified against the engine): monthly pensionable ₦1,150,000
   (basic ₦1,000,000 + housing ₦100,000 + transport ₦50,000) → employee pension
   **₦92,000** (8%), employer **₦115,000** (10%); annual chargeable ₦12,696,000 after
@@ -343,9 +355,11 @@ No automatic salary deduction from an allegation exists in the code paths tested
 |---|---|---|
 | Dark-mode navigation flash | **PASS** | **Reproduced** (root cause: every page hardcoded `data-theme="light"` and no pre-paint theme script existed — dark sessions painted light until `theme.js` ran) → **fixed** by an inline pre-paint theme script on **70 pages** (JSON-aware of `JONE.storage` encoding; storage accessed via computed property so portal/QR security scans stay clean) → **retested** by `test-theme-prepaint.js` (4 tests: script precedes stylesheets on every page; stored dark applied without `theme.js`; raw+JSON values; init consistency). |
 | Responsive / accessibility | **PASS** (automated) | Existing axe baseline (public 260→0, dashboard 906→0 across 67 pages) retained; table-fit, skeleton loading, focus regression suites green (141 frontend tests). Manual keyboard/screen-reader/zoom review remains **BLOCKED** (needs a human with assistive tech — pre-existing B9). |
-| Security & authorization | **PASS** (suite) | Role/capability matrix (`test_role_permissions_matrix.py`), IDOR guards, rate limiting/session guards (`test_security_guards.py`), sensitive-cache headers, audit immutability — all green. Login RBAC re-verified live (§B). |
+| Security & authorization | **PASS** (suite) / deployed headers verified | Role/capability matrix (`test_role_permissions_matrix.py`), IDOR guards, rate limiting/session guards (`test_security_guards.py`), sensitive-cache headers, audit immutability — all green. Login RBAC re-verified live (§B). **Runtime rate limiting observed live** (repeated login attempts returned HTTP 429 — the login throttle is active in production). |
+| Deployed security headers (read-only `curl -I`, 2026-10-11) | **PASS (frontend) / FAIL (deployed backend CORS)** | **Frontend host:** enforcing `Content-Security-Policy` **and** a `Report-Only` twin are served, plus `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` — closes the frontend half of blocker B6. **API host:** preflight answers `Access-Control-Allow-Origin: *` for **both** the frontend origin and a foreign origin — the deployed backend is still on the pre-fix configuration (the repository's `production.py` origin allow-list, SEC-02, is fixed in code and takes effect on redeploy). |
+| Deployed `/api` proxy consistency | **FAIL as deployed → fixed in repo** | Live probe: `GET /api/health/` on the frontend host **308-loops** (Vercel `trailingSlash:false` strips the slash → Django `APPEND_SLASH` re-adds it → …), and the deployed `config.js` still hardcodes the cross-origin API host while the enforcing CSP sets `connect-src 'self'` — a configuration contradiction (cross-origin API calls are CSP-blocked; same-origin `/api` loops). **Repo fix (verified by `test-deploy-config.js`):** the `vercel.json` rewrite destination now restores the trailing slash before proxying (`…/api/:path*/`), which closes the loop and makes the deployment-neutral `config.js` (same-origin default) work with the strict CSP unchanged. Takes effect on the next frontend deploy. |
 | Hardcoded deployment URLs | **PASS (fixed)** | `config.js` no longer contains the provider hostname (repo contract test); API origin is deployment-supplied. |
-| Performance | **PASS (no regression)** | Backend suite runtime 346 s → 355 s for 930→961 tests (within noise). Query-efficiency guards (`test_query_efficiency.py`, `AdminListFlatnessTests`, flat 0-queries-per-row) unchanged and green. Live response-time SLOs remain **NOT TESTED** (no agreed SLO; cold-cache/throttled-network profiling needs the deployed environment — pre-existing B9). |
+| Performance | **PASS (no regression; measured locally)** | Backend suite runtime 346 s → 355 s for 930→961 tests (within noise). Query-efficiency guards (`test_query_efficiency.py`, `AdminListFlatnessTests`, flat 0-queries-per-row) unchanged and green. **Measured response times** (Django dev server + seeded SQLite dataset from `seed_demo*` — 18 rooms, 64 menu items, 18 stock items, 16 staff; 5 runs each, 2026-10-11): `GET /api/hotel/` median **1.7 ms**; `GET /api/rooms/` **13.5 ms**; availability search (2 nights) **21.1 ms**; `GET /api/admin/bookings/?page_size=10` **7.3 ms**; POS menu items (50) **19.3 ms**; payroll rule sets **10.3 ms**; inventory items **10.2 ms**; finance summary (11-day range) **~23 ms**. Method: `curl`-equivalent timed HTTP over loopback, min/median/max of 5; cold-cache/throttled-network profiling against the deployed environment remains **NOT TESTED** (no agreed SLO — pre-existing B9). |
 | Browser/device coverage | **NOT TESTED (physical)** | No real device farm here; layouts are covered by responsive CSS + a11y/UX harness tests. |
 | Exact commands | see §A.3 | backend `manage.py test` / `check` / `makemigrations --check`; frontend `validate.py`, `node --test tests-js/` |
 
@@ -377,13 +391,15 @@ No automatic salary deduction from an allegation exists in the code paths tested
    `/api/health/`; then run `python manage.py seed_nigeria_payroll_rules` (creates the
    PENDING_REVIEW rule set — route it to independent review; do **not** finalize real
    payroll until approved).
-3. **Frontend (Vercel) — REQUIRED with this change:** `config.js` no longer hardcodes
-   the backend hostname (the repository's own contract requires deployment-neutral
-   config). Before/with the deploy, serve a **deployment-owned** `js/runtime-config.js`
-   containing `window.__APP_CONFIG__ = { API_BASE_URL: "https://j1-hotel-management-system-production.up.railway.app" };`
-   (or add a same-origin `/api/*` rewrite to the backend). Without this, the site's API
-   calls will 404. The `runtime-config.js` file is explicitly the deployment-owned
-   override point (documented in its header).
+3. **Frontend (Vercel) — deploy this commit as-is.** The `vercel.json` now proxies
+   `/api/*` to the backend **with the trailing slash restored** (fixing the live 308
+   redirect loop between Vercel's `trailingSlash:false` and Django's `APPEND_SLASH`),
+   so `config.js`'s deployment-neutral same-origin default works with the strict
+   `connect-src 'self'` CSP unchanged — no `runtime-config.js` override is required
+   for the standard split deploy. If the API is ever hosted on a different origin
+   instead, supply `window.__APP_CONFIG__.API_BASE_URL` via the deployment-owned
+   `js/runtime-config.js` **and** extend CSP `connect-src` accordingly (pinned by
+   `test-deploy-config.js`).
 4. **Do not run `seed_demo` / `seed_demo_operations` against production.** When a
    staging database is provisioned, run them there for demo/QA data.
 5. Re-verify the deployed headers (CSP / CORS preflight — pre-existing B6) after deploy.
@@ -394,13 +410,13 @@ No automatic salary deduction from an allegation exists in the code paths tested
 | # | Item | Status | Exact next action |
 |---|---|---|---|
 | 1 | GitHub push | BLOCKED (credentials) | Owner pushes `2c82b1a`. |
-| 2 | Deployment of both tiers | BLOCKED (credentials) | See §I.3; note the runtime-config requirement. |
+| 2 | Deployment of both tiers | BLOCKED (credentials) | See §I.3. **Critical:** this commit fixes a live `/api` 308 redirect loop in `vercel.json` (slash-restored proxy destination) and removes the CSP/API-origin contradiction; the deployed `config.js` also still hardcodes the API host — deploying this commit resolves all three. Backend redeploy additionally activates the CORS origin allow-list (deployed API currently answers `Access-Control-Allow-Origin: *` even to foreign origins). |
 | 3 | VAT registration/basis decision (statutory accrual) | BLOCKED (owner/accountant) | Confirm turnover/registration; set `statutory_tax_basis` deliberately; keep/don't keep the accrual accordingly (audit-logged settings change). |
 | 4 | 4th room type + 24-room baseline | BLOCKED (owner) | Confirm room-type name + approved rate; then `seed_demo_operations` can be extended (one table). |
 | 5 | Payroll rule-set approval + employee tax IDs/RSA status | BLOCKED (owner/reviewer) | Independent review of `RULE-…` via the payroll rules workflow; enter TINs. |
 | 6 | Fingerprint hardware acceptance | BLOCKED (hardware) | `docs/FINGERPRINT_INTEGRATION.md` checklist. |
 | 7 | Physical thermal-print tests | BLOCKED (hardware) | Print the POS receipt at 58/80 mm on the real printer; verify alignment/margins. |
-| 8 | Stale Paystack ₦387,000 (ref `J1P-20261010-199B12784F`) | BLOCKED (provider + owner decision) | Read-only compare Paystack dashboard status vs stored row; apply owner's decision via app endpoints only. |
+| 8 | Stale Paystack ₦387,000 (ref `J1P-20261010-199B12784F`) | BLOCKED (provider-side) | App-side row is **absent** (404 / 0 payments rows, read-only survey 2026-10-11). Reconcile the reference in the **Paystack dashboard** and record the outcome; no in-app action required. |
 | 9 | Two-person production approval demo (B1) | BLOCKED (second approver) | Leave pending stock counts/PO/expense for a second authorised human. |
 | 10 | Guest-portal email delivery + 5 test addresses | BLOCKED (SMTP + recipient authorisation) | Configure a test mailbox; authorise recipients; then run the documented flow. |
 | 11 | DEMO QA accounts 2–24 + workstation cleanup (B7) | BLOCKED (admin access on production) | Follow the deactivation procedure in `REMAINING_BLOCKERS.md` B7. |
@@ -434,5 +450,6 @@ No automatic salary deduction from an allegation exists in the code paths tested
 
 ---
 
-*End of report. Generated against baseline commit `8c1782e` and final commit `2c82b1a`;
-all test numbers reproduced from the runs recorded in §A.3 on 2026-10-11.*
+*End of report. Generated against baseline commit `8c1782e`; implementation `2c82b1a`;
+report/deploy-config/seed extensions committed after (`8e63501` and later).
+All test numbers reproduced from the runs recorded in §A.3 on 2026-10-11.*

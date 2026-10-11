@@ -24,21 +24,23 @@ confirmed: the repository's approved demo catalogue has 3 room types and the
 live database currently publishes 0. The 4th room type and its approved rate
 are an OWNER DECISION; this command does not invent either.
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from django.conf import settings as django_settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.inventory.models import (
     StockItem, StockLocation, StockMovement, Supplier,
 )
+from apps.inventory.models import StockRecipe, StockRecipeLine
 from apps.inventory.services.inventory_service import record_stock_movement
 from apps.pos.models import MenuCategory, MenuItem
 from apps.rooms.models import Room, RoomType
-from apps.staff_operations.models import StaffProfile
+from apps.staff_operations.models import ShiftAssignment, ShiftTemplate, StaffProfile
 
 DEMO = "DEMO"
 DEMO_EMAIL_DOMAIN = "demo.j-one.test"
@@ -207,6 +209,31 @@ DEMO_OPENING_BALANCES = [
 ]
 
 
+# (menu_sku, location_code, [(stock_sku, quantity_per_menu_unit), ...])
+DEMO_RECIPES = [
+    ("DEMO-M-JOL-CHK", "DEMO-STORE", [
+        ("DEMO-I-RIC-01", "0.0100"), ("DEMO-I-TOM-01", "0.0100"), ("DEMO-I-CHK-01", "0.1000"),
+    ]),
+    ("DEMO-M-EGU-PND", "DEMO-STORE", [
+        ("DEMO-I-VEG-01", "0.0500"), ("DEMO-I-GOT-01", "0.1500"),
+    ]),
+    ("DEMO-M-GRF-YAM", "DEMO-STORE", [
+        ("DEMO-I-CTF-01", "0.2500"), ("DEMO-I-POL-01", "0.0050"),
+    ]),
+    ("DEMO-B-SFT-COK", "DEMO-BAR", [("DEMO-B-COK-50", "0.0833")]),
+    ("DEMO-B-BER-LAG", "DEMO-BAR", [("DEMO-B-BER-LG", "0.0833")]),
+    ("DEMO-B-WAT-75", "DEMO-BAR", [("DEMO-B-WAT-75", "0.0833")]),
+]
+
+DEMO_SHIFT_TEMPLATES = [
+    ("DEMO-MORNING", "Demo Morning Shift", "Reception", "07:00", "15:00", 30),
+    ("DEMO-AFTERNOON", "Demo Afternoon Shift", "Restaurant", "15:00", "23:00", 30),
+    ("DEMO-NIGHT", "Demo Night Shift", "Security", "23:00", "07:00", 30),
+    ("DEMO-KITCHEN", "Demo Kitchen Day", "Kitchen", "08:00", "16:00", 30),
+    ("DEMO-HOUSEKEEPING", "Demo Housekeeping Day", "Housekeeping", "08:00", "16:00", 30),
+]
+
+
 class Command(BaseCommand):
     help = "Seed the isolated DEMO operations dataset (menu, staff, suppliers, stock). Idempotent."
 
@@ -370,6 +397,80 @@ class Command(BaseCommand):
                 actor=None,
                 notes=f"{DEMO} opening balance (isolated test data)",
                 source_reference=f"{DEMO}-OPENING",
+            )
+
+        # 7. Demo recipes (menu item -> stock components, versioned BOM).
+        from datetime import time as _time
+
+        for menu_sku, location_code, components in DEMO_RECIPES:
+            menu_item = MenuItem.objects.filter(sku=menu_sku).first()
+            if menu_item is None or any(stock_sku not in items for stock_sku, _ in components):
+                continue
+            recipe, was_created = StockRecipe.objects.get_or_create(
+                menu_item=menu_item, version=1,
+                defaults={
+                    "reference": f"DEMO-RCP-{menu_sku}",
+                    "idempotency_key": f"demo-recipe:{menu_sku}:v1",
+                    "location": locations[location_code],
+                    "tracking_mode": StockRecipe.TrackingMode.COMPONENTS,
+                    "notes": f"Synthetic {DEMO} recipe for isolated testing.",
+                },
+            )
+            if was_created:
+                created.append(f"recipe:{menu_sku}")
+                for stock_sku, qty in components:
+                    StockRecipeLine.objects.create(
+                        recipe=recipe, item=items[stock_sku],
+                        quantity_per_menu_unit=Decimal(qty),
+                    )
+
+        # 8. Demo shift templates and one scheduled shift per demo staff member.
+        templates = {}
+        for code, name, department, start_hm, end_hm, break_min in DEMO_SHIFT_TEMPLATES:
+            start_h, start_m = (int(x) for x in start_hm.split(":"))
+            end_h, end_m = (int(x) for x in end_hm.split(":"))
+            tpl, was_created = self._get_or_create(
+                ShiftTemplate,
+                defaults={
+                    "name": f"{name} ({DEMO})",
+                    "department": department,
+                    "start_time": _time(start_h, start_m),
+                    "end_time": _time(end_h, end_m),
+                    "unpaid_break_minutes": break_min,
+                    "notes": f"Synthetic {DEMO} shift template.",
+                },
+                label=f"shift-template:{code}", created=created, code=code,
+            )
+            templates[code] = tpl
+
+        tomorrow = date.today() + timedelta(days=1)
+        dept_template = {
+            "Reception": "DEMO-MORNING", "Restaurant": "DEMO-AFTERNOON", "Bar": "DEMO-AFTERNOON",
+            "Kitchen": "DEMO-KITCHEN", "Housekeeping": "DEMO-HOUSEKEEPING",
+            "Security": "DEMO-NIGHT", "Maintenance": "DEMO-MORNING", "Stores": "DEMO-MORNING",
+        }
+        for profile in StaffProfile.objects.filter(notes__contains=DEMO):
+            template = templates[dept_template.get(profile.department, "DEMO-MORNING")]
+            reference = f"DEMO-SHIFT-{profile.user_id:04d}-001"
+            _, was_created = self._get_or_create(
+                ShiftAssignment,
+                defaults={
+                    "idempotency_key": f"demo-shift:{profile.user_id}:001",
+                    "staff": profile.user,
+                    "template": template,
+                    "status": ShiftAssignment.Status.SCHEDULED,
+                    "planned_start_at": timezone.make_aware(
+                        datetime.combine(tomorrow, template.start_time)
+                    ),
+                    "planned_end_at": timezone.make_aware(
+                        datetime.combine(tomorrow, template.end_time)
+                        if template.end_time > template.start_time
+                        else datetime.combine(tomorrow + timedelta(days=1), template.end_time)
+                    ),
+                    "department": profile.department,
+                    "notes": f"Synthetic {DEMO} shift assignment.",
+                },
+                label=f"shift:{reference}", created=created, reference=reference,
             )
 
         self.stdout.write(self.style.SUCCESS(
