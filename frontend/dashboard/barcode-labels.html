@@ -7,8 +7,8 @@
 (function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
 </script><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Barcode Label Printing | J-ONE Staff</title>
-  <link rel="stylesheet" href="../css/main.css?v=1.1.15">
-  <link rel="stylesheet" href="../css/dashboard.css?v=1.1.15">
+  <link rel="stylesheet" href="../css/main.css?v=1.1.11">
+  <link rel="stylesheet" href="../css/dashboard.css?v=1.1.11">
   <style>
     .label-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
     .label-card { border: 1px solid var(--color-border); padding: 1rem; border-radius: var(--radius-sm); background: #fff; text-align: center; }
@@ -43,17 +43,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.15"></script>
-<script src="../js/config.js?v=1.1.15"></script>
-<script src="../js/utils.js?v=1.1.15"></script>
-<script src="../js/icons.js?v=1.1.15"></script>
-<script src="../js/api.js?v=1.1.15"></script>
-<script src="../js/theme.js?v=1.1.15"></script>
-<script src="../js/ui.js?v=1.1.15"></script>
-<script src="../js/auth.js?v=1.1.15"></script>
-<script src="../js/navigation.js?v=1.1.15"></script>
-<script src="../js/dashboard.js?v=1.1.15"></script>
-<script src="../js/barcode-scanner.js?v=1.1.15"></script>
+<script src="../js/runtime-config.js?v=1.1.11"></script>
+<script src="../js/config.js?v=1.1.11"></script>
+<script src="../js/utils.js?v=1.1.11"></script>
+<script src="../js/icons.js?v=1.1.11"></script>
+<script src="../js/api.js?v=1.1.11"></script>
+<script src="../js/theme.js?v=1.1.11"></script>
+<script src="../js/ui.js?v=1.1.11"></script>
+<script src="../js/auth.js?v=1.1.11"></script>
+<script src="../js/navigation.js?v=1.1.11"></script>
+<script src="../js/dashboard.js?v=1.1.11"></script>
+<script src="../js/barcode-scanner.js?v=1.1.11"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("receptionist");
@@ -104,8 +104,5 @@
   document.getElementById("load-inv-items").addEventListener("click", loadInventory);
   loadPos();
 </script>
-<script src="js/pwa.js?v=1.1.15"></script>
-<script src="js/version.js?v=1.1.15"></script>
-<script src="js/update-checker.js?v=1.1.15"></script>
 </body>
 </html>
