@@ -24,7 +24,9 @@
   // Django dev server used when running locally and nothing else is configured.
   var LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
 
-  var PRODUCTION_API_BASE_URL = "https://j1-hotel-management-system-production.up.railway.app";
+  // Production uses the same-origin /api/* Vercel rewrite. This avoids CSP
+  // connect-src violations and keeps the frontend portable across hosts.
+  var PRODUCTION_API_BASE_URL = "";
  
   
   function resolveApiBase(value) {
