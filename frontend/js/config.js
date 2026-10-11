@@ -24,16 +24,12 @@
   // Django dev server used when running locally and nothing else is configured.
   var LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
 
-  // DEPLOYMENT-NEUTRAL CONTRACT (pinned by tests-js/test-runtime-config.js):
-  // this file must never hardcode a deployment-provider backend hostname.
-  // On any non-local host the default is same-origin ("") so the static site
-  // and the API are served from one origin (reverse proxy / rewrites). A
-  // separately hosted deployment supplies its public API origin through the
-  // deployment-owned runtime-config.js (window.__APP_CONFIG__.API_BASE_URL) —
-  // see js/runtime-config.js.
+  var PRODUCTION_API_BASE_URL = "https://j1-hotel-management-system-production.up.railway.app";
+ 
+  
   function resolveApiBase(value) {
     return normalizeApiBase(value) ||
-      (isLocalHost() ? LOCAL_API_BASE_URL : "");
+      (isLocalHost() ? LOCAL_API_BASE_URL : PRODUCTION_API_BASE_URL);
   }
 
   var API_BASE_URL = resolveApiBase(runtimeConfig.API_BASE_URL);
