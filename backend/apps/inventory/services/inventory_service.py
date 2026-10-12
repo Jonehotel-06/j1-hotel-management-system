@@ -231,7 +231,7 @@ def approve_purchase_order(*, purchase_order, actor):
     if po.status == PurchaseOrder.Status.APPROVED: return po
     if po.status != PurchaseOrder.Status.SUBMITTED: raise ValidationError(f"Purchase order cannot approve from {po.status}.")
     if po.requested_by_id == actor.pk and actor.role != "ADMIN":
-    raise PermissionDenied("A requester cannot approve their own purchase order.")
+        raise PermissionDenied("A requester cannot approve their own purchase order.")
     po.status = PurchaseOrder.Status.APPROVED; po.approved_by = actor; po.approved_at = timezone.now()
     po.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
     return po
