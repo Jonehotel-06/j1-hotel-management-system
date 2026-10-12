@@ -10,6 +10,7 @@ import os
 import re
 from datetime import timedelta
 from pathlib import Path
+import dj_database_url
 
 from botocore.config import Config as BotocoreConfig
 from corsheaders.defaults import default_headers
@@ -102,25 +103,55 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# ---------------------------------------------------------------------------
-# Database (default SQLite; overridden per-environment)
-# ---------------------------------------------------------------------------
-_DEFAULT_DB = {
-    "ENGINE": config("DB_ENGINE", default="django.db.backends.sqlite3"),
-    "NAME": config("DB_NAME", default=BASE_DIR / "db.sqlite3"),
-    "USER": config("DB_USER", default=""),
-    "PASSWORD": config("DB_PASSWORD", default=""),
-    "HOST": config("DB_HOST", default=""),
-    "PORT": config("DB_PORT", default=""),
-    "CONN_MAX_AGE": 60,
-    "CONN_HEALTH_CHECKS": True,
-}
 
-# STRICT_TRANS_TABLES is MySQL-only; SQLite rejects the SET statement.
-if "mysql" in _DEFAULT_DB["ENGINE"]:
-    _DEFAULT_DB["OPTIONS"] = {"init_command": "SET sql_mode='STRICT_TRANS_TABLES'"}
+# ---------------------------------------------------------------------------
+# Database (DATABASE_URL takes priority; legacy settings remain supported)
+# ---------------------------------------------------------------------------
 
-DATABASES = {"default": _DEFAULT_DB}
+DATABASE_URL = config("DATABASE_URL", default="").strip()
+
+if DATABASE_URL:
+    # Connect to the external PostgreSQL/MySQL database.
+    DATABASES = {
+        "default": dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=60,
+            conn_health_checks=True,
+        )
+    }
+
+    # Apply strict SQL mode for MySQL connections.
+    if "mysql" in DATABASES["default"]["ENGINE"]:
+        DATABASES["default"].setdefault("OPTIONS", {})
+        DATABASES["default"]["OPTIONS"].setdefault(
+            "init_command",
+            "SET sql_mode='STRICT_TRANS_TABLES'",
+        )
+
+else:
+    # Local SQLite or legacy DB_* environment configuration.
+    _DEFAULT_DB = {
+        "ENGINE": config(
+            "DB_ENGINE",
+            default="django.db.backends.sqlite3",
+        ),
+        "NAME": config("DB_NAME", default=BASE_DIR / "db.sqlite3"),
+        "USER": config("DB_USER", default=""),
+        "PASSWORD": config("DB_PASSWORD", default=""),
+        "HOST": config("DB_HOST", default=""),
+        "PORT": config("DB_PORT", default=""),
+        "CONN_MAX_AGE": 60,
+        "CONN_HEALTH_CHECKS": True,
+    }
+
+    if "mysql" in _DEFAULT_DB["ENGINE"]:
+        _DEFAULT_DB["OPTIONS"] = {
+            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'"
+        }
+
+    DATABASES = {"default": _DEFAULT_DB}
+
+
 
 # ---------------------------------------------------------------------------
 # Authentication
