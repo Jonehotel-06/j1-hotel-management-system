@@ -27,7 +27,7 @@
 
 "use strict";
 
-const CACHE_VERSION = "jone-v1.1.11";
+const CACHE_VERSION = "jone-v1.1.12";
 const PRECACHE = `${CACHE_VERSION}-precache`;
 const PAGES_CACHE = `${CACHE_VERSION}-pages`;
 const IMAGES_CACHE = `${CACHE_VERSION}-images`;
