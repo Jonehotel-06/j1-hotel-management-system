@@ -333,11 +333,53 @@ def receive_goods(*, purchase_order, receipt_lines, actor, source_key, received_
     return receipt, True
 
 
+UNIT_TO_BASE_FACTORS = {
+    ("ml", "l"): Decimal("0.0010"),
+    ("ml", "litre"): Decimal("0.0010"),
+    ("ml", "liter"): Decimal("0.0010"),
+    ("cl", "l"): Decimal("0.0100"),
+    ("cl", "litre"): Decimal("0.0100"),
+    ("cl", "liter"): Decimal("0.0100"),
+    ("l", "ml"): Decimal("1000.0000"),
+    ("litre", "ml"): Decimal("1000.0000"),
+    ("liter", "ml"): Decimal("1000.0000"),
+    ("l", "cl"): Decimal("100.0000"),
+    ("litre", "cl"): Decimal("100.0000"),
+    ("liter", "cl"): Decimal("100.0000"),
+    ("g", "kg"): Decimal("0.0010"),
+    ("gram", "kg"): Decimal("0.0010"),
+    ("grams", "kg"): Decimal("0.0010"),
+    ("kg", "g"): Decimal("1000.0000"),
+    ("shot", "l"): Decimal("0.0500"),
+    ("shot", "litre"): Decimal("0.0500"),
+    ("shot", "ml"): Decimal("50.0000"),
+}
+
+
+def convert_stock_quantity(quantity, *, from_unit=None, to_unit=None, conversion_factor=None) -> Decimal:
+    """Convert a recipe/consumption quantity into the stock item's base unit."""
+    amount = _quantity(quantity, field="quantity", positive=True)
+    if conversion_factor is not None and str(conversion_factor).strip() != "":
+        factor = _quantity(conversion_factor, field="conversion_factor", positive=True)
+        return (amount * factor).quantize(QTY, rounding=ROUND_HALF_UP)
+    src = str(from_unit or "").strip().lower()
+    dst = str(to_unit or "").strip().lower()
+    if not src or not dst or src == dst:
+        return amount
+    factor = UNIT_TO_BASE_FACTORS.get((src, dst))
+    if factor is not None:
+        return (amount * factor).quantize(QTY, rounding=ROUND_HALF_UP)
+    return amount
+
+
 def _active_recipe_snapshots(menu_item_ids):
     """Return the current active, serializable recipe mapping for menu IDs.
 
     The caller freezes this mapping into a hand-off or its resolution evidence;
     it must never rely on a mutable recipe after a stock movement is posted.
+    When a menu item has no explicit StockRecipe but matches an active StockItem
+    by SKU or name that has a StockBalance location, a 1:1 component recipe is
+    auto-resolved so bar/restaurant/POS sales still deplete Stock on Hand.
     """
     ids = sorted({int(value) for value in menu_item_ids if value is not None})
     if not ids:
@@ -371,6 +413,52 @@ def _active_recipe_snapshots(menu_item_ids):
                 for line in recipe.lines.all()
             ],
         }
+    missing_ids = [mid for mid in ids if str(mid) not in snapshots]
+    if missing_ids:
+        from apps.pos.models import MenuItem
+
+        for menu_item in MenuItem.objects.filter(pk__in=missing_ids, is_active=True).select_related("category"):
+            stock_item = (
+                StockItem.objects.filter(is_active=True, sku__iexact=menu_item.sku).first()
+                or StockItem.objects.filter(is_active=True, name__iexact=menu_item.name).first()
+            )
+            if stock_item is None:
+                continue
+            preferred_balance = (
+                StockBalance.objects.filter(item=stock_item, location__is_active=True)
+                .select_related("location")
+                .order_by("-quantity_on_hand", "pk")
+                .first()
+            )
+            target_location = preferred_balance.location if preferred_balance else (
+                StockLocation.objects.filter(is_active=True).order_by("pk").first()
+            )
+            if target_location is None:
+                continue
+            auto_recipe, _ = create_stock_recipe(
+                menu_item=menu_item,
+                location=target_location,
+                tracking_mode=StockRecipe.TrackingMode.COMPONENTS,
+                components=[{"item_id": stock_item.pk, "quantity_per_menu_unit": "1.0000"}],
+                actor=None,
+                idempotency_key=f"auto-sku-recipe:{menu_item.pk}:{stock_item.pk}:{target_location.pk}",
+                notes="Auto-linked 1:1 stock recipe from matching SKU/name.",
+            )
+            snapshots[str(menu_item.pk)] = {
+                "recipe_reference": auto_recipe.reference,
+                "recipe_version": auto_recipe.version,
+                "menu_item_id": menu_item.pk,
+                "location_id": target_location.pk,
+                "location_code": target_location.code,
+                "tracking_mode": auto_recipe.tracking_mode,
+                "components": [
+                    {
+                        "item_id": stock_item.pk,
+                        "item_sku": stock_item.sku,
+                        "quantity_per_menu_unit": "1.0000",
+                    }
+                ],
+            }
     return snapshots
 
 
@@ -417,7 +505,15 @@ def create_stock_recipe(*, menu_item, location, tracking_mode, components, actor
     if len(items) != len(item_ids):
         raise ValidationError({"components": "One or more stock items are inactive or missing."})
     normalized = [
-        (items[item_id], _quantity(raw.get("quantity_per_menu_unit"), field="quantity_per_menu_unit", positive=True))
+        (
+            items[item_id],
+            convert_stock_quantity(
+                raw.get("quantity_per_menu_unit"),
+                from_unit=raw.get("unit"),
+                to_unit=items[item_id].base_unit,
+                conversion_factor=raw.get("conversion_factor"),
+            ),
+        )
         for raw, item_id in zip(raw_components, item_ids)
     ]
     prior = list(StockRecipe.objects.select_for_update().filter(menu_item=menu_item).order_by("-version", "-pk"))
@@ -688,6 +784,108 @@ def process_pending_pos_consumption(*, limit=200, actor=None):
         else:
             failed += 1
     return {"examined": len(pending), "posted": posted, "still_open": failed}
+
+
+@transaction.atomic
+def reverse_pos_stock_consumption(*, request_or_order=None, pos_order=None, order=None, actor=None, reason=""):
+    """Idempotently reverse posted POS_CONSUMPTION movements for a voided/returned order."""
+    target = request_or_order or pos_order or order
+    if isinstance(target, StockConsumptionRequest):
+        req = StockConsumptionRequest.objects.select_for_update().select_related("pos_order").get(pk=target.pk)
+    else:
+        req = (
+            StockConsumptionRequest.objects.select_for_update()
+            .select_related("pos_order")
+            .filter(pos_order=target)
+            .first()
+        )
+        if req is None:
+            return None, False
+    payload = dict(req.resolution_payload or {})
+    if payload.get("reversed"):
+        return req, False
+    if req.status != StockConsumptionRequest.Status.PROCESSED:
+        return req, False
+    movements = list(
+        StockMovement.objects.select_related("item", "location")
+        .filter(
+            type=StockMovement.Type.POS_CONSUMPTION,
+            source_key__startswith=f"pos-consumption:{req.reference}:",
+        )
+        .order_by("pk")
+    )
+    reversed_movements = []
+    for mov in movements:
+        restore_qty = abs(Decimal(mov.quantity_delta)).quantize(QTY)
+        rev_mov, _ = record_stock_movement(
+            item=mov.item,
+            location=mov.location,
+            movement_type=StockMovement.Type.ADJUSTMENT,
+            quantity_delta=restore_qty,
+            source_key=f"pos-consumption-reversal:{req.reference}:{mov.location_id}:{mov.item_id}",
+            actor=actor,
+            unit_cost=mov.unit_cost if mov.unit_cost is not None else mov.item.standard_cost,
+            source_reference=req.pos_order.reference,
+            notes=(reason or f"POS order reversal/return for {req.pos_order.reference}")[:500],
+            metadata={
+                "stock_consumption_request": req.reference,
+                "pos_order": req.pos_order.reference,
+                "reversed_movement": mov.reference,
+                "reason": reason or "order_reversal",
+            },
+        )
+        reversed_movements.append(rev_mov.reference)
+    payload["reversed"] = True
+    payload["reversed_at"] = timezone.now().isoformat()
+    payload["reversed_movements"] = reversed_movements
+    if reason:
+        payload["reversal_reason"] = str(reason)[:500]
+    req.resolution_payload = payload
+    req.resolution_note = f"POS consumption reversed ({len(reversed_movements)} movement(s) restored)."
+    req.save(update_fields=["resolution_payload", "resolution_note", "updated_at"])
+    return req, True
+
+
+@transaction.atomic
+def record_opening_stock(*, item, location, quantity, actor, source_key="", idempotency_key="", unit_cost=None, notes=""):
+    """Record an idempotent opening-balance stock movement."""
+    key = source_key or idempotency_key
+    quantity = _quantity(quantity, positive=True)
+    cost = _cost(unit_cost) if unit_cost not in (None, "") else item.standard_cost
+    return record_stock_movement(
+        item=item,
+        location=location,
+        movement_type=StockMovement.Type.OPENING,
+        quantity_delta=quantity,
+        source_key=key,
+        actor=actor,
+        unit_cost=cost,
+        source_reference="OPENING_BALANCE",
+        notes=notes or "Opening stock balance",
+    )
+
+
+@transaction.atomic
+def record_stock_return(
+    *, item, location, quantity, actor, source_key="", idempotency_key="",
+    direction="IN", unit_cost=None, source_reference="", notes=""
+):
+    """Record an idempotent return-in or return-out stock movement."""
+    key = source_key or idempotency_key
+    quantity = _quantity(quantity, positive=True)
+    cost = _cost(unit_cost) if unit_cost not in (None, "") else item.standard_cost
+    is_outward = str(direction or "IN").upper() in ("OUT", "OUTWARD", "SUPPLIER")
+    return record_stock_movement(
+        item=item,
+        location=location,
+        movement_type=StockMovement.Type.ISSUE if is_outward else StockMovement.Type.MAINTENANCE_RETURN,
+        quantity_delta=-quantity if is_outward else quantity,
+        source_key=key,
+        actor=actor,
+        unit_cost=cost,
+        source_reference=source_reference or ("SUPPLIER_RETURN" if is_outward else "STOCK_RETURN"),
+        notes=notes or ("Returned stock to supplier" if is_outward else "Returned stock to store"),
+    )
 
 
 def _count_event(*, stock_count, event_type, actor=None, details=None):

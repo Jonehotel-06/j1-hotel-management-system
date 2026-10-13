@@ -30,11 +30,17 @@
       <a href="index.html" class="brand" style="display:inline-flex;justify-content:center;">
         <img src="assets/icons/logo-official.svg" alt="J-ONE Hotel &amp; Lodge" width="22" height="38" style="margin:0 auto;display:block;">
       </a>
-      <h1 style="font-size:var(--fs-xl);margin-top:1rem;">Sign in</h1>
-      <p class="muted">Hotel staff access only.</p>
+      <h1 id="login-portal-title" style="font-size:var(--fs-xl);margin-top:1rem;">Sign in</h1>
+      <p id="login-portal-subtitle" class="muted">Hotel staff access only.</p>
+      <div id="dept-portal-banner" class="badge" style="display:none;margin-top:0.5rem;"></div>
     </div>
 
     <div class="card card-pad">
+      <div style="display:flex;gap:0.5rem;margin-bottom:1.25rem;" role="tablist" aria-label="Sign-in method">
+        <button class="btn btn-sm" type="button" id="tab-password-login" role="tab" aria-selected="true" style="flex:1;">Email &amp; Password</button>
+        <button class="btn btn-sm btn-ghost" type="button" id="tab-code-login" role="tab" aria-selected="false" style="flex:1;">6-Digit Access Code</button>
+      </div>
+
       <form id="login-form" novalidate>
         <div class="field">
           <label class="field-label" for="email">Email</label>
@@ -55,6 +61,23 @@
         <div class="field-error" data-form-error style="display:none;color:var(--color-danger);margin-bottom:1rem;"></div>
         <button class="btn btn-block" type="submit">Sign in</button>
       </form>
+
+      <form id="access-code-login-form" novalidate style="display:none;">
+        <p class="caption muted" style="margin-bottom:1rem;">
+          Enter the 6-digit numeric workstation access code issued at the Reception Attendance Workstation after fingerprint clock-in. Codes expire automatically when you clock out.
+        </p>
+        <div class="field">
+          <label class="field-label" for="access-code">6-Digit Numeric Access Code</label>
+          <input class="input" id="access-code" name="access_code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="e.g. 482917" required autocomplete="one-time-code" style="letter-spacing:0.25em;font-weight:700;text-align:center;font-size:1.15rem;">
+        </div>
+        <div class="field">
+          <label class="field-label" for="access-code-identifier">Employee Code or Email (optional verification)</label>
+          <input class="input" id="access-code-identifier" name="identifier" type="text" placeholder="STF-... or staff@jonehotel.com" autocomplete="off">
+        </div>
+        <div class="field-error" id="access-code-error" style="display:none;color:var(--color-danger);margin-bottom:1rem;"></div>
+        <button class="btn btn-block" type="submit" id="access-code-submit">Sign in with Access Code</button>
+      </form>
+
       <details id="desk-setup" style="margin-top:1.25rem;">
         <summary class="caption" style="cursor:pointer;">Set up this Receptionist Desktop</summary>
         <div style="margin-top:0.75rem;">
@@ -91,6 +114,80 @@
 <script src="js/navigation.js?v=1.1.12"></script>
 <script>
   JONE.ui.initChrome();
+  (function () {
+    var subCtx = window.Auth.getSubdomainContext ? window.Auth.getSubdomainContext() : null;
+    if (subCtx) {
+      var titleEl = document.getElementById("login-portal-title");
+      var subEl = document.getElementById("login-portal-subtitle");
+      var bannerEl = document.getElementById("dept-portal-banner");
+      if (titleEl) titleEl.textContent = subCtx.label + " Sign in";
+      if (subEl) subEl.textContent = subCtx.portalTitle;
+      if (bannerEl) {
+        bannerEl.textContent = subCtx.subdomain + ".jonehotel.com · " + subCtx.code;
+        bannerEl.style.display = "inline-block";
+      }
+    }
+
+    var tabPw = document.getElementById("tab-password-login");
+    var tabCode = document.getElementById("tab-code-login");
+    var formPw = document.getElementById("login-form");
+    var formCode = document.getElementById("access-code-login-form");
+    function setLoginMode(mode) {
+      var isCode = mode === "code";
+      if (formPw) formPw.style.display = isCode ? "none" : "block";
+      if (formCode) formCode.style.display = isCode ? "block" : "none";
+      if (tabPw) {
+        tabPw.classList.toggle("btn-ghost", isCode);
+        tabPw.setAttribute("aria-selected", isCode ? "false" : "true");
+      }
+      if (tabCode) {
+        tabCode.classList.toggle("btn-ghost", !isCode);
+        tabCode.setAttribute("aria-selected", isCode ? "true" : "false");
+      }
+    }
+    if (tabPw) tabPw.addEventListener("click", function () { setLoginMode("pw"); });
+    if (tabCode) tabCode.addEventListener("click", function () { setLoginMode("code"); });
+
+    if (formCode) {
+      formCode.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        var btn = document.getElementById("access-code-submit");
+        var errBox = document.getElementById("access-code-error");
+        if (errBox) { errBox.style.display = "none"; errBox.textContent = ""; }
+        var codeVal = String((document.getElementById("access-code").value || "")).replace(/\D/g, "").trim();
+        var idVal = String((document.getElementById("access-code-identifier").value || "")).trim();
+        if (!/^\d{6}$/.test(codeVal)) {
+          var m = "Enter a valid 6-digit numeric workstation access code.";
+          if (errBox) { errBox.textContent = m; errBox.style.display = "block"; }
+          JONE.ui.toast(m, "error");
+          return;
+        }
+        if (!JONE.guardSubmit(btn)) return;
+        var extra = {};
+        if (idVal) {
+          if (idVal.indexOf("@") !== -1) extra.email = idVal;
+          else extra.employee_code = idVal;
+        }
+        try {
+          var session = await window.Auth.loginWithAccessCode(codeVal, extra);
+          JONE.ui.toast("Signed in with workstation access code.", "success");
+          var params = new URLSearchParams(location.search);
+          var next = params.get("next");
+          if (!next || /login/i.test(next)) next = null;
+          var role = session && session.user && session.user.role;
+          if (!next) next = window.Auth.isStaffRole(role) ? window.Auth.defaultStaffLanding(role) : "index.html";
+          location.href = next;
+        } catch (err) {
+          var msg = (err && err.message) || "Invalid or expired workstation access code.";
+          if (errBox) { errBox.textContent = msg; errBox.style.display = "block"; }
+          JONE.ui.toast(msg, "error");
+        } finally {
+          JONE.releaseGuard(btn);
+        }
+      });
+    }
+  })();
+
   // Already signed in? Staff accounts go directly to their departmental console.
   if (window.Auth.isAuthenticated()) {
     window.Auth.restore();

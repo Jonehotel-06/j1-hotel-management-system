@@ -59,29 +59,82 @@
 
 <section class="panel">
   <div class="panel-head">
-    <h2>Staff accounts</h2>
-    <div class="panel-actions">
+    <div>
+      <h2>Staff Directory, Departments &amp; Access Control</h2>
+      <p class="caption muted">Unified employee records, configurable departments, disciplinary register, and administrator permission matrix.</p>
+    </div>
+    <div class="panel-actions" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+      <button class="btn btn-sm btn-outline" type="button" data-staff-tab="directory">Staff Directory</button>
+      <button class="btn btn-sm btn-outline" type="button" data-staff-tab="departments">Departments</button>
+      <button class="btn btn-sm btn-outline" type="button" data-staff-tab="disciplinary">Offenses &amp; Disciplinary</button>
+      <button class="btn btn-sm btn-outline" type="button" data-staff-tab="permissions" id="btn-tab-permissions">Permission Matrix</button>
       <button class="btn btn-sm" data-new type="button"><span data-icon="plus" data-size="14"></span> New staff member</button>
     </div>
   </div>
+
+  <div id="staff-tab-directory">
   <div class="filter-bar">
-    <div class="field"><label class="field-label" for="q">Search</label><input class="input" id="q" placeholder="Name, email, phone"></div>
-    <div class="field"><label class="field-label" for="role">Role</label><select class="select" id="role"><option value="">All staff</option><optgroup label="Management and front desk"><option value="ADMIN">Administrators</option><option value="MANAGER">Managers</option><option value="GENERAL_MANAGER">General managers</option><option value="FRONT_DESK_SUPERVISOR">Front-desk supervisors</option><option value="RECEPTIONIST">Receptionists</option><option value="CASHIER">Cashiers</option></optgroup><optgroup label="Restaurant, bar, and kitchen"><option value="RESTAURANT_MANAGER">Restaurant managers</option><option value="WAITER">Waiters / servers</option><option value="BAR_MANAGER">Bar managers</option><option value="BARTENDER">Bartenders</option><option value="KITCHEN_MANAGER">Kitchen managers</option><option value="CHEF">Chefs / kitchen staff</option></optgroup><optgroup label="Hotel operations"><option value="HOUSEKEEPING_MANAGER">Housekeeping managers</option><option value="HOUSEKEEPER">Housekeepers</option><option value="HOUSEKEEPING">Legacy housekeeping</option><option value="MAINTENANCE_TECHNICIAN">Maintenance technicians</option><option value="MAINTENANCE">Legacy maintenance</option><option value="SECURITY">Security</option></optgroup><optgroup label="Finance, people, and stock"><option value="ACCOUNTS_MANAGER">Accounts managers</option><option value="ACCOUNTANT">Accountants</option><option value="HR_MANAGER">HR managers</option><option value="PROCUREMENT_OFFICER">Procurement officers</option><option value="STOREKEEPER">Storekeepers</option><option value="INVENTORY_CLERK">Legacy inventory clerks</option></optgroup></select></div>
+    <div class="field"><label class="field-label" for="q">Search</label><input class="input" id="q" placeholder="Name, code, email, phone"></div>
+    <div class="field"><label class="field-label" for="department-filter">Department</label><select class="select" id="department-filter"><option value="">All departments</option><option value="MANAGEMENT">Management</option><option value="ACCOUNTS">Accounts &amp; Finance</option><option value="ADMIN_PROCUREMENT">Administration &amp; Procurement</option><option value="FRONT_DESK">Front Desk / Reception</option><option value="KITCHEN">Kitchen</option><option value="RESTAURANT_BAR">Restaurant &amp; Bar Service</option><option value="HOUSEKEEPING">Housekeeping</option><option value="PORTERING">Portering</option><option value="STORES_INVENTORY">Stores &amp; Inventory</option></select></div>
+    <div class="field"><label class="field-label" for="role">Role</label><select class="select" id="role"><option value="">All staff</option><optgroup label="Management and front desk"><option value="ADMIN">Administrators</option><option value="MANAGER">Managers</option><option value="GENERAL_MANAGER">General managers</option><option value="FRONT_DESK_SUPERVISOR">Front-desk supervisors</option><option value="RECEPTIONIST">Receptionists</option><option value="CASHIER">Cashiers</option></optgroup><optgroup label="Restaurant, bar, and kitchen"><option value="RESTAURANT_MANAGER">Restaurant managers</option><option value="WAITER">Waiters / servers</option><option value="BAR_MANAGER">Bar managers</option><option value="BARTENDER">Bartenders</option><option value="KITCHEN_MANAGER">Kitchen managers</option><option value="CHEF">Chefs / kitchen staff</option><option value="KITCHEN_ASSISTANT">Kitchen assistants</option></optgroup><optgroup label="Hotel operations"><option value="HOUSEKEEPING_MANAGER">Housekeeping managers</option><option value="HOUSEKEEPER">Housekeepers</option><option value="HOUSEKEEPING">Legacy housekeeping</option><option value="PORTER">Porters</option><option value="MAINTENANCE_TECHNICIAN">Maintenance technicians</option><option value="MAINTENANCE">Legacy maintenance</option><option value="SECURITY">Security</option></optgroup><optgroup label="Finance, people, and stock"><option value="ACCOUNTS_MANAGER">Accounts managers</option><option value="ACCOUNTANT">Accountants</option><option value="HR_MANAGER">HR managers</option><option value="PROCUREMENT_OFFICER">Procurement officers</option><option value="STOREKEEPER">Storekeepers</option><option value="INVENTORY_CLERK">Legacy inventory clerks</option></optgroup></select></div>
     <div class="field"><label class="field-label" for="active">Status</label><select class="select" id="active"><option value="">All statuses</option><option value="true">Active</option><option value="false">Inactive</option></select></div>
   </div>
   <div class="panel-body no-pad">
     <div class="table-wrap"><table class="table table-staff">
       <colgroup>
-        <col style="width:38%"><col style="width:14%"><col style="width:12%">
-        <col style="width:16%"><col style="width:20%">
+        <col style="width:32%"><col style="width:18%"><col style="width:12%">
+        <col style="width:14%"><col style="width:24%">
       </colgroup>
       <thead><tr>
-        <th scope="col">Staff</th><th scope="col">Role</th><th scope="col">Status</th>
+        <th scope="col">Staff</th><th scope="col">Department &amp; Role</th><th scope="col">Status</th>
         <th scope="col">Last login</th><th scope="col">Actions</th>
       </tr></thead>
       <tbody data-rows></tbody>
     </table></div>
     <div class="pagination" data-pagination></div>
+  </div>
+  </div>
+
+  <div id="staff-tab-departments" style="display:none;">
+    <div class="panel-body" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+      <p class="caption muted">Configurable hotel departments, supported recruitment positions, and department subdomain portals.</p>
+      <button class="btn btn-sm" type="button" id="btn-new-department">Add Department</button>
+    </div>
+    <div class="panel-body no-pad">
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Department</th><th>Subdomain URLs</th><th>Job Positions</th><th>Active / Total Staff</th><th>Dashboard Path</th></tr></thead>
+        <tbody id="department-rows"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div id="staff-tab-disciplinary" style="display:none;">
+    <div class="panel-body" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+      <p class="caption muted">Controlled offense, investigation, warning, and approved monetary deduction register. Open allegations never auto-deduct salary.</p>
+      <button class="btn btn-sm" type="button" id="btn-new-disciplinary">Record Offense / Incident</button>
+    </div>
+    <div class="panel-body no-pad">
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Reference</th><th>Employee</th><th>Category &amp; Summary</th><th>Status</th><th>Action / Warning</th><th>Approved Deduction</th><th>Actions</th></tr></thead>
+        <tbody id="disciplinary-rows"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div id="staff-tab-permissions" style="display:none;">
+    <div class="panel-body">
+      <p class="caption muted">Administrator-only Role &amp; Capability Permission Matrix. Changes take effect immediately and are recorded in the Audit Log.</p>
+      <div class="field" style="max-width:340px;margin-top:0.75rem;">
+        <label class="field-label" for="perm-role-select">Select Role to Configure</label>
+        <select class="select" id="perm-role-select"></select>
+      </div>
+    </div>
+    <div class="panel-body no-pad">
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Capability Code</th><th>Name &amp; Category</th><th>Description</th><th>Granted to Role</th><th>Toggle</th></tr></thead>
+        <tbody id="permission-matrix-rows"></tbody>
+      </table></div>
+    </div>
   </div>
 </section>
     </main>
@@ -142,15 +195,16 @@
       }
       return '<tr>' +
         '<td data-label="Staff"><div class="staff-cell">' + pic +
-          '<span class="staff-cell-text"><strong title="' + JONE.esc(name) + '">' + esc(name) + "</strong>" +
+          '<span class="staff-cell-text"><strong title="' + JONE.esc(name) + '">' + esc(name) + (u.employee_code ? ' <small class="muted">(' + JONE.esc(u.employee_code) + ')</small>' : '') + "</strong>" +
           '<small title="' + JONE.esc(contact) + '">' + contact + "</small></span></div></td>" +
-        '<td data-label="Role">' + JONE.esc(String(u.role || "").replace(/_/g, " ")) + "</td>" +
-        '<td data-label="Status">' + JONE.dashboard.statusPill(u.is_active ? "ACTIVE" : "INACTIVE") + "</td>" +
+        '<td data-label="Department & Role"><strong>' + JONE.esc(u.department || "—") + '</strong><br><small class="muted">' + JONE.esc((u.job_title ? u.job_title + " · " : "") + String(u.role || "").replace(/_/g, " ")) + "</small></td>" +
+        '<td data-label="Status">' + JONE.dashboard.statusPill(u.employment_status || (u.is_active ? "ACTIVE" : "INACTIVE")) + "</td>" +
         '<td data-label="Last login">' + esc(u.last_login ? JONE.formatDate(u.last_login, "mid") : "Never") + "</td>" +
         '<td data-label="Actions"><div class="row-actions">' +
+          '<a class="btn btn-sm" href="staff-profile.html?id=' + id + '" aria-label="Full 10-tab profile for ' + JONE.esc(name) + '">10-Tab Profile</a>' +
           '<button class="btn btn-sm btn-outline" data-profile="' + id + '"' +
             ' aria-label="View profile for ' + JONE.esc(name) + '" title="Profile">' +
-            '<span data-icon="user" data-size="13"></span><span class="btn-label">Profile</span></button>' +
+            '<span data-icon="user" data-size="13"></span><span class="btn-label">Card</span></button>' +
           action("data-edit", "edit", "Edit") +
           (u.is_active
             ? action("data-deactivate", "lock", "Deactivate")
@@ -165,18 +219,25 @@
      paging keeps the active filters; any filter change restarts at page 1. */
   var state = { page: 1 };
   var pager = document.querySelector("[data-pagination]");
+  var deptFilter = document.getElementById("department-filter");
   function renderPager(meta){ JONE.dashboard.renderPagination(pager, meta, { onPage: load }); }
 
   async function load(page){
     if (page != null) state.page = Math.max(1, page);
     JONE.dashboard.DATA.loading(rows);
     try {
-      var params = { page: state.page, page_size: JONE.dashboard.pageSize(), role__in: "ADMIN,MANAGER,GENERAL_MANAGER,FRONT_DESK_SUPERVISOR,RECEPTIONIST,CASHIER,RESTAURANT_MANAGER,WAITER,BAR_MANAGER,BARTENDER,KITCHEN_MANAGER,CHEF,HOUSEKEEPING_MANAGER,HOUSEKEEPER,HOUSEKEEPING,MAINTENANCE_TECHNICIAN,MAINTENANCE,ACCOUNTS_MANAGER,ACCOUNTANT,HR_MANAGER,SECURITY,PROCUREMENT_OFFICER,STOREKEEPER,INVENTORY_CLERK" };
+      var params = { page: state.page, page_size: JONE.dashboard.pageSize(), role__in: "ADMIN,MANAGER,GENERAL_MANAGER,FRONT_DESK_SUPERVISOR,RECEPTIONIST,CASHIER,RESTAURANT_MANAGER,WAITER,BAR_MANAGER,BARTENDER,KITCHEN_MANAGER,CHEF,KITCHEN_ASSISTANT,HOUSEKEEPING_MANAGER,HOUSEKEEPER,HOUSEKEEPING,PORTER,MAINTENANCE_TECHNICIAN,MAINTENANCE,ACCOUNTS_MANAGER,ACCOUNTANT,HR_MANAGER,SECURITY,PROCUREMENT_OFFICER,STOREKEEPER,INVENTORY_CLERK" };
       if (q && q.value.trim()) params.search = q.value.trim();
       if (role && role.value) params.role = role.value;
       if (active && active.value !== "") params.is_active = active.value;
       var res = await window.API.list("users", params);
       var items = window.API.normalizeList(res.data, res.pagination).items || [];
+      if (deptFilter && deptFilter.value) {
+        var df = deptFilter.value.toUpperCase();
+        items = items.filter(function(item){
+          return String(item.department || "").toUpperCase().indexOf(df) !== -1;
+        });
+      }
       render(items);
       renderPager(items.length ? res.pagination : null);
     } catch (err) {
@@ -185,7 +246,7 @@
     }
   }
   load(1);
-  [q, role, active].forEach(function(el){ if (el) el.addEventListener("change", function(){ load(1); }); });
+  [q, role, active, deptFilter].forEach(function(el){ if (el) el.addEventListener("change", function(){ load(1); }); });
   if (q) q.addEventListener("input", JONE.debounce(function(){ load(1); }, 300));
 
   /* ---------------------- Complete staff profile card ----------------------
@@ -230,9 +291,34 @@
     }
     var fields = [
       { name: "first_name", label: "First name", type: "text", required: true },
+      { name: "middle_name", label: "Middle name", type: "text" },
       { name: "last_name", label: "Last name", type: "text", required: true },
       { name: "email", label: "Email", type: "email", required: true },
       { name: "phone", label: "Phone", type: "tel" },
+      { name: "department", label: "Department", type: "select", options: [
+        { value: "Management", label: "Management" },
+        { value: "Accounts & Finance", label: "Accounts & Finance" },
+        { value: "Administration & Procurement", label: "Administration & Procurement" },
+        { value: "Front Desk / Reception", label: "Front Desk / Reception" },
+        { value: "Kitchen", label: "Kitchen" },
+        { value: "Restaurant & Bar Service", label: "Restaurant & Bar Service" },
+        { value: "Housekeeping", label: "Housekeeping" },
+        { value: "Portering", label: "Portering" },
+        { value: "Stores & Inventory", label: "Stores & Inventory" },
+      ] },
+      { name: "job_title", label: "Job title / Position", type: "text", placeholder: "e.g. Receptionist, Chef, Kitchen Assistant, Porter, Storekeeper" },
+      { name: "employment_type", label: "Employment type", type: "select", options: [
+        { value: "FULL_TIME", label: "Full-time" },
+        { value: "PART_TIME", label: "Part-time" },
+        { value: "CONTRACT", label: "Contract" },
+        { value: "PROBATION", label: "Probation" },
+        { value: "TEMPORARY", label: "Temporary / Casual" },
+      ] },
+      { name: "employment_start", label: "Start date", type: "date" },
+      { name: "emergency_contact_name", label: "Emergency contact name", type: "text" },
+      { name: "emergency_contact_relationship", label: "Emergency contact relationship", type: "text" },
+      { name: "emergency_contact_phone", label: "Emergency contact phone", type: "tel" },
+      { name: "residential_address", label: "Residential address", type: "text" },
       { name: "role", label: "Role", type: "select", required: true, options: [
         { value: "ADMIN", label: "Administrator" },
         { value: "MANAGER", label: "Manager" },
@@ -246,9 +332,11 @@
         { value: "BARTENDER", label: "Bartender" },
         { value: "KITCHEN_MANAGER", label: "Kitchen manager" },
         { value: "CHEF", label: "Chef / kitchen staff" },
+        { value: "KITCHEN_ASSISTANT", label: "Kitchen assistant" },
         { value: "HOUSEKEEPING_MANAGER", label: "Housekeeping manager" },
         { value: "HOUSEKEEPER", label: "Housekeeper" },
         { value: "HOUSEKEEPING", label: "Legacy housekeeping" },
+        { value: "PORTER", label: "Porter" },
         { value: "MAINTENANCE_TECHNICIAN", label: "Maintenance technician" },
         { value: "MAINTENANCE", label: "Legacy maintenance" },
         { value: "ACCOUNTS_MANAGER", label: "Accounts manager" },
@@ -263,7 +351,7 @@
       { name: "profile_image", label: "Profile photo", type: "imagefile",
         currentUrl: u ? u.profile_image_url : null, removeName: "remove_profile_image", maxMB: 5 },
     ];
-    if (!id) fields.push({ name: "password", label: "Temporary password", type: "password", required: true });
+    if (!id) fields.push({ name: "password", label: "Temporary password (leave blank to auto-generate)", type: "password", required: false });
 
     await JONE.dashboard.formModal({
       title: id ? "Edit staff member" : "Create staff member",
@@ -276,6 +364,204 @@
         else await window.API.create("users", formData);
         load();
         JONE.ui.toast(id ? "Staff account updated." : "Staff account created.", "success");
+      }
+    });
+  }
+
+  /* ---------------------- Tabs: Departments, Disciplinary, Permissions ---------------------- */
+  var tabContainers = {
+    directory: document.getElementById("staff-tab-directory"),
+    departments: document.getElementById("staff-tab-departments"),
+    disciplinary: document.getElementById("staff-tab-disciplinary"),
+    permissions: document.getElementById("staff-tab-permissions")
+  };
+  document.querySelectorAll("button[data-staff-tab]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var target = btn.getAttribute("data-staff-tab");
+      Object.keys(tabContainers).forEach(function(k){
+        if (tabContainers[k]) tabContainers[k].style.display = k === target ? "" : "none";
+      });
+      if (target === "departments") loadDepartments();
+      if (target === "disciplinary") loadDisciplinary();
+      if (target === "permissions") loadPermissionMatrix();
+    });
+  });
+
+  async function loadDepartments(){
+    var tbody = document.getElementById("department-rows");
+    if (!tbody) return;
+    JONE.dashboard.DATA.loading(tbody);
+    try {
+      var res = await window.API.list("departments", {});
+      var items = (res && res.data && (res.data.results || res.data)) || [];
+      if (!items.length) {
+        JONE.dashboard.DATA.empty(tbody, "building", "No departments configured", "Add a hotel department.", 5);
+        return;
+      }
+      tbody.innerHTML = items.map(function(d){
+        var subs = (d.subdomains || []).map(function(s){ return '<code>' + JONE.esc(s) + '.jonehotel.com</code>'; }).join(", ") || "—";
+        var jobs = (d.job_positions || []).join(", ") || "—";
+        return '<tr>' +
+          '<td><strong>' + JONE.esc(d.name) + '</strong><br><small class="muted">' + JONE.esc(d.code) + '</small></td>' +
+          '<td>' + subs + '</td>' +
+          '<td>' + JONE.esc(jobs) + '</td>' +
+          '<td>' + JONE.esc(d.active_staff_count || 0) + ' / ' + JONE.esc(d.staff_count || 0) + '</td>' +
+          '<td><code>' + JONE.esc(d.dashboard_path || "/dashboard/index.html") + '</code></td>' +
+        '</tr>';
+      }).join("");
+    } catch (err) {
+      JONE.dashboard.DATA.error(tbody, "Departments could not be loaded", (err && err.message) || "Please retry.", 5);
+    }
+  }
+
+  var newDeptBtn = document.getElementById("btn-new-department");
+  if (newDeptBtn) {
+    newDeptBtn.addEventListener("click", async function(){
+      await JONE.dashboard.formModal({
+        title: "Add / Configure Department",
+        submitText: "Save Department",
+        fields: [
+          { name: "code", label: "Department Code", type: "text", required: true, placeholder: "e.g. PORTERING" },
+          { name: "name", label: "Department Name", type: "text", required: true, placeholder: "e.g. Portering & Guest Assistance" },
+          { name: "slug", label: "Slug", type: "text", required: true, placeholder: "e.g. portering" },
+          { name: "dashboard_path", label: "Dashboard Path", type: "text", placeholder: "/dashboard/service-requests.html" },
+          { name: "description", label: "Description", type: "textarea" }
+        ],
+        onSubmit: async function(vals){
+          await window.API.create("departments", vals);
+          JONE.ui.toast("Department saved.", "success");
+          loadDepartments();
+        }
+      });
+    });
+  }
+
+  async function loadDisciplinary(){
+    var tbody = document.getElementById("disciplinary-rows");
+    if (!tbody) return;
+    JONE.dashboard.DATA.loading(tbody);
+    try {
+      var res = await window.API.list("staffDisciplinary", {});
+      var items = (res && res.data && (res.data.results || res.data)) || [];
+      if (!items.length) {
+        JONE.dashboard.DATA.empty(tbody, "fileText", "No disciplinary records", "All staff disciplinary records are clear.", 7);
+        return;
+      }
+      tbody.innerHTML = items.map(function(r){
+        return '<tr>' +
+          '<td><code>' + JONE.esc(r.reference) + '</code><br><small>' + JONE.esc(JONE.formatDate(r.incident_at, "mid")) + '</small></td>' +
+          '<td><a href="staff-profile.html?id=' + JONE.esc(r.staff) + '&tab=disciplinary"><strong>' + JONE.esc(r.staff_name) + '</strong></a><br><small>' + JONE.esc(r.employee_code) + '</small></td>' +
+          '<td><strong>' + JONE.esc(r.category) + '</strong><br><small>' + JONE.esc(r.allegation_summary) + '</small></td>' +
+          '<td>' + JONE.dashboard.statusPill(r.status) + '</td>' +
+          '<td>' + JONE.esc(r.disciplinary_action) + ' (' + JONE.esc(r.warning_level) + ')</td>' +
+          '<td>' + (r.deduction_approved ? '<strong>NGN ' + JONE.esc(r.approved_deduction_amount) + '</strong>' : '<span class="muted">None / Unapproved</span>') + '</td>' +
+          '<td><a class="btn btn-sm btn-outline" href="staff-profile.html?id=' + JONE.esc(r.staff) + '&tab=disciplinary">Manage</a></td>' +
+        '</tr>';
+      }).join("");
+    } catch (err) {
+      JONE.dashboard.DATA.error(tbody, "Disciplinary records could not be loaded", (err && err.message) || "Please retry.", 7);
+    }
+  }
+
+  var newDiscBtn = document.getElementById("btn-new-disciplinary");
+  if (newDiscBtn) {
+    newDiscBtn.addEventListener("click", async function(){
+      await JONE.dashboard.formModal({
+        title: "Record Employee Offense / Incident",
+        submitText: "Record Allegation",
+        fields: [
+          { name: "staff", label: "Staff User ID", type: "number", required: true },
+          { name: "category", label: "Category", type: "select", required: true, options: [
+            { value: "ATTENDANCE", label: "Attendance / lateness" },
+            { value: "ABSENCE", label: "Unauthorised absence" },
+            { value: "MISCONDUCT", label: "Workplace misconduct" },
+            { value: "POLICY_VIOLATION", label: "Policy violation" },
+            { value: "CASH_VARIANCE", label: "Cash / billing variance" },
+            { value: "STOCK_SHORTAGE", label: "Inventory / stock shortage" },
+            { value: "DAMAGE", label: "Property / asset damage" },
+            { value: "GUEST_COMPLAINT", label: "Verified guest complaint" }
+          ] },
+          { name: "allegation_summary", label: "Incident Summary", type: "text", required: true },
+          { name: "allegation_detail", label: "Detailed Description", type: "textarea", required: true },
+          { name: "recommended_deduction_amount", label: "Recommended Deduction (NGN, requires separate approval)", type: "number" }
+        ],
+        onSubmit: async function(vals){
+          await window.API.create("staffDisciplinary", vals);
+          JONE.ui.toast("Disciplinary allegation recorded.", "success");
+          loadDisciplinary();
+        }
+      });
+    });
+  }
+
+  var permMatrixCache = null;
+  async function loadPermissionMatrix(){
+    var tbody = document.getElementById("permission-matrix-rows");
+    var roleSel = document.getElementById("perm-role-select");
+    if (!tbody || !roleSel) return;
+    JONE.dashboard.DATA.loading(tbody);
+    try {
+      var res = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.permissionsMatrix);
+      permMatrixCache = res && res.data;
+      var rolesList = (permMatrixCache && permMatrixCache.roles) || [];
+      var curRole = roleSel.value || (rolesList[1] && rolesList[1].role) || "MANAGER";
+      roleSel.innerHTML = rolesList.map(function(r){
+        return '<option value="' + JONE.esc(r.role) + '"' + (r.role === curRole ? " selected" : "") + '>' + JONE.esc(r.label + " (" + r.role + ")") + '</option>';
+      }).join("");
+      renderPermissionMatrixForRole(curRole);
+    } catch (err) {
+      JONE.dashboard.DATA.error(tbody, "Permission matrix requires Administrator access", (err && err.message) || "Forbidden.", 5);
+    }
+  }
+
+  function renderPermissionMatrixForRole(roleCode){
+    var tbody = document.getElementById("permission-matrix-rows");
+    if (!tbody || !permMatrixCache) return;
+    var roleObj = (permMatrixCache.roles || []).find(function(r){ return r.role === roleCode; });
+    var grantedSet = new Set((roleObj && roleObj.capabilities) || []);
+    var caps = permMatrixCache.capabilities || [];
+    tbody.innerHTML = caps.map(function(c){
+      var hasIt = grantedSet.has(c.code);
+      var disabled = roleCode === "ADMIN" || c.admin_only;
+      return '<tr>' +
+        '<td><code>' + JONE.esc(c.code) + '</code></td>' +
+        '<td><strong>' + JONE.esc(c.name) + '</strong><br><small class="muted">' + JONE.esc(c.category) + '</small></td>' +
+        '<td>' + JONE.esc(c.description || "—") + '</td>' +
+        '<td>' + JONE.dashboard.statusPill(hasIt ? "ACTIVE" : "INACTIVE") + '</td>' +
+        '<td>' + (disabled
+          ? '<span class="caption muted">Locked (Admin policy)</span>'
+          : '<button class="btn btn-sm ' + (hasIt ? "btn-danger" : "btn-outline") + '" type="button" data-perm-toggle="' + JONE.esc(c.code) + '" data-perm-effect="' + (hasIt ? "REVOKE" : "GRANT") + '">' + (hasIt ? "Revoke" : "Grant") + '</button>') +
+        '</td>' +
+      '</tr>';
+    }).join("");
+  }
+
+  var permRoleSel = document.getElementById("perm-role-select");
+  if (permRoleSel) {
+    permRoleSel.addEventListener("change", function(){ renderPermissionMatrixForRole(permRoleSel.value); });
+  }
+  var permTbody = document.getElementById("permission-matrix-rows");
+  if (permTbody) {
+    permTbody.addEventListener("click", async function(e){
+      var btn = e.target.closest("button[data-perm-toggle]");
+      if (!btn || !permRoleSel) return;
+      var code = btn.getAttribute("data-perm-toggle");
+      var effect = btn.getAttribute("data-perm-effect");
+      var roleCode = permRoleSel.value;
+      if (!JONE.guardSubmit(btn)) return;
+      try {
+        var res = await window.API.post(window.APP_CONFIG.API_ENDPOINTS.permissionsMatrix, {
+          role: roleCode,
+          capability_code: code,
+          effect: effect
+        });
+        permMatrixCache = res && res.data;
+        renderPermissionMatrixForRole(roleCode);
+        JONE.ui.toast("Updated " + code + " for " + roleCode + ".", "success");
+      } catch (err) {
+        JONE.ui.toast((err && err.message) || "Could not update permission.", "error");
+      } finally {
+        JONE.releaseGuard(btn);
       }
     });
   }

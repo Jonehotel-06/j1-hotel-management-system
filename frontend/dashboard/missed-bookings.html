@@ -317,10 +317,12 @@
         target.disabled = true;
         await window.API.noShowBooking(ref);
         JONE.ui.toast("Booking marked as no-show.", "success");
-        load();
+        await load();
       } catch (err) {
-        target.disabled = false; JONE.releaseGuard(target);
         JONE.ui.toast((err && err.message) || "The booking couldn't be updated.", "error");
+      } finally {
+        target.disabled = false;
+        JONE.releaseGuard(target);
       }
       return;
     }

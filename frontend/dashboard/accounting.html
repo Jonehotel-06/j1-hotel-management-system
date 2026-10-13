@@ -151,7 +151,7 @@
   // boot() redirects receptionists to 403.html. If a navigation is ever
   // blocked (or the redirect races), the page must still never request or
   // render financial data — the backend is the real gate, this is the belt.
-  var __reportsAllowed = JONE.dashboard.boot("manager"); // Accounting uses the same manager/admin gate as Reports.
+  var __reportsAllowed = JONE.dashboard.boot(["admin", "manager", "general_manager", "accounts_manager", "accountant"]); // Accounting uses the same manager/admin/accountant gate.
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
 
 

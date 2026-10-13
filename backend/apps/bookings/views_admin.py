@@ -1,8 +1,9 @@
 # apps/bookings/views_admin.py
 """Staff booking & guest management endpoints (/api/admin/...)."""
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
+from django.db import transaction
 from django.db.models import Count, Max, Prefetch, Q
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
@@ -470,28 +471,96 @@ class AdminBookingSendReceiptView(APIView):
         if not recipient or not validate_email_address(recipient):
             raise ValidationError({"email": ["This guest has no valid email address on file."]})
 
-        # Idempotency: block a duplicate while one is already in flight for
-        # this booking. A previous FAILED/SENT does not block an intentional
-        # resend (staff explicitly clicked again). Sends interrupted by a
-        # deploy/timeout leave PENDING/SENDING rows behind with no worker to
-        # resolve them — mark stale ones FAILED first so they can never lock
-        # this booking's receipt button forever.
+        # Idempotency & rapid duplicate guard:
+        # 1. Block a duplicate while one is already in flight (PENDING/SENDING).
+        # 2. Block rapid duplicate clicks/submissions within a 30-second window
+        #    (or matching idempotency_key) after a successful SENT delivery
+        #    unless force/force_resend is explicitly requested.
+        # 3. A previous FAILED attempt never blocks a retry.
+        idempotency_key = ""
+        force_resend = False
+        if isinstance(request.data, dict):
+            idempotency_key = str(request.data.get("idempotency_key") or "").strip()[:120]
+            force_resend = bool(request.data.get("force") or request.data.get("force_resend"))
+        if not idempotency_key and hasattr(request, "headers"):
+            idempotency_key = str(
+                request.headers.get("Idempotency-Key")
+                or request.headers.get("X-Idempotency-Key")
+                or ""
+            ).strip()[:120]
+
         EmailLog.resolve_stale(
             EmailLog.objects.filter(booking_reference=booking.booking_reference)
         )
-        in_flight = EmailLog.objects.filter(
-            booking_reference=booking.booking_reference,
-            kind=EmailLog.Kind.RECEIPT,
-            status__in=[EmailLog.Status.PENDING, EmailLog.Status.SENDING],
-        ).exists()
-        if in_flight:
+        now = timezone.now()
+        dedup_cutoff = now - timedelta(seconds=30)
+        with transaction.atomic():
+            Booking.objects.select_for_update().filter(pk=booking.pk).first()
+            in_flight_log = (
+                EmailLog.objects.filter(
+                    booking_reference=booking.booking_reference,
+                    kind=EmailLog.Kind.RECEIPT,
+                    status__in=[EmailLog.Status.PENDING, EmailLog.Status.SENDING],
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            recent_sent_log = None
+            if in_flight_log is None and not force_resend:
+                recent_sent_log = (
+                    EmailLog.objects.filter(
+                        booking_reference=booking.booking_reference,
+                        kind=EmailLog.Kind.RECEIPT,
+                        to_email__iexact=recipient,
+                        status=EmailLog.Status.SENT,
+                        created_at__gte=dedup_cutoff,
+                    )
+                    .order_by("-created_at")
+                    .first()
+                )
+                if recent_sent_log is None and idempotency_key:
+                    idem_cutoff = now - timedelta(minutes=10)
+                    recent_sent_log = (
+                        EmailLog.objects.filter(
+                            booking_reference=booking.booking_reference,
+                            kind=EmailLog.Kind.RECEIPT,
+                            to_email__iexact=recipient,
+                            status=EmailLog.Status.SENT,
+                            provider_message_id=f"idem:{idempotency_key}",
+                            created_at__gte=idem_cutoff,
+                        )
+                        .order_by("-created_at")
+                        .first()
+                    )
+
+        if in_flight_log is not None:
             return success_response(
                 {
                     "booking_reference": booking.booking_reference,
                     "recipient": recipient,
+                    "email_log_id": in_flight_log.pk,
                     "status": "IN_PROGRESS",
+                    "deduplicated": True,
                 },
                 message="A receipt email for this booking is already being processed.",
+            )
+        if recent_sent_log is not None:
+            payload = {
+                "booking_reference": booking.booking_reference,
+                "recipient": recipient,
+                "email_log_id": recent_sent_log.pk,
+                "status": EmailLog.Status.SENT,
+                "deduplicated": True,
+            }
+            if recent_sent_log.provider_message_id:
+                payload["provider_message_id"] = recent_sent_log.provider_message_id
+            return Response(
+                {
+                    "success": True,
+                    "message": f"Receipt email already sent to {recipient}.",
+                    "data": payload,
+                },
+                status=status.HTTP_200_OK,
             )
 
         receipt = ReceiptSerializer().to_representation(booking)
@@ -555,6 +624,9 @@ class AdminBookingSendReceiptView(APIView):
             attach_receipt_pdf=True,
             created_by=request.user,
         )
+        if log is not None and idempotency_key and not log.provider_message_id:
+            log.provider_message_id = f"idem:{idempotency_key}"[:120]
+            log.save(update_fields=["provider_message_id"])
 
         from apps.audit.services import log_action
         log_action(actor=request.user, action="RECEIPT_EMAIL_SENT", instance=booking,

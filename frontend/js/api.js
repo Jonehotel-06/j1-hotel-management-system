@@ -195,10 +195,6 @@ const API = (() => {
       if (q) url += (url.includes("?") ? "&" : "?") + q;
     }
 
-    // Vercel only proxies /api paths WITHOUT a trailing slash. The rewrite in
-    // vercel.json adds the slash Django needs, so remove it here.
-    url = url.replace(/\/(?=\?|#|$)/, "");
-
     const out = { method, headers: { Accept: "application/json", ...headers } };
     if (cache) out.cache = cache;
     if (body !== undefined) {
@@ -903,15 +899,29 @@ const API = (() => {
      mail server actually accepted the message; a 502 throws an APIError
      carrying a safe version of the real failure reason. There is no queued
      state in this flow. */
-  function sendReceipt(lookup, opts = {}) {
+  function sendReceipt(lookup, payloadOrOpts = {}, opts = {}) {
     const base = BOOKINGS_EP();
     if (!base) throw notConfigured("bookings");
+    let body = {};
+    let reqOpts = { ...opts };
+    if (payloadOrOpts && typeof payloadOrOpts === "object") {
+      const { recipient_email, idempotency_key, force, force_resend, ...rest } = payloadOrOpts;
+      if (recipient_email !== undefined) body.recipient_email = recipient_email;
+      if (idempotency_key !== undefined) body.idempotency_key = idempotency_key;
+      if (force !== undefined) body.force = force;
+      if (force_resend !== undefined) body.force_resend = force_resend;
+      reqOpts = { ...rest, ...reqOpts };
+    }
+    const headers = { ...(reqOpts.headers || {}) };
+    if (body.idempotency_key && !headers["Idempotency-Key"]) {
+      headers["Idempotency-Key"] = String(body.idempotency_key);
+    }
     // Receipt delivery involves PDF generation and a real SMTP handshake,
     // which legitimately takes longer than a normal API call. Use a timeout
     // that matches the server's request timeout so a slow-but-successful send
     // is not aborted as a false "timeout" on the client. Callers may still
     // override via opts.timeout.
-    return post(`${base}/${encodeURIComponent(lookup)}/send-receipt/`, {}, { timeout: 60000, ...opts });
+    return post(`${base}/${encodeURIComponent(lookup)}/send-receipt/`, body, { timeout: 60000, ...reqOpts, headers });
   }
 
   /* Read the recorded delivery state of a transactional email (EmailLog). */

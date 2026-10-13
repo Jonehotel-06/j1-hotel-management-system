@@ -24,6 +24,27 @@ class WorkstationJWTAuthentication(JWTAuthentication):
             return None
 
         user, token = result
+        cred_id = token.get("workstation_credential_id") if hasattr(token, "get") else None
+        if cred_id:
+            from rest_framework.exceptions import AuthenticationFailed
+            from apps.staff_operations.biometric_models import TemporaryWorkstationCredential
+
+            cred = (
+                TemporaryWorkstationCredential.objects.select_related("attendance_record")
+                .filter(pk=cred_id, staff_id=user.pk)
+                .first()
+            )
+            if (
+                cred is None
+                or not cred.session_active
+                or cred.revoked_at is not None
+                or (cred.attendance_record and cred.attendance_record.clock_out_at is not None)
+            ):
+                raise AuthenticationFailed(
+                    "Workstation session ended because the staff member clocked out.",
+                    code="workstation_clocked_out",
+                )
+
         reference = (request.headers.get("X-JONE-Terminal") or "").strip()
         terminal = None
         if reference and len(reference) <= 48 and getattr(user, "is_staff_member", False):

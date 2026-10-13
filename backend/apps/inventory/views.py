@@ -18,19 +18,23 @@ from apps.core.responses import success_response
 
 from .models import GoodsReceipt, PurchaseOrder, StockBalance, StockConsumptionRequest, StockCount, StockItem, StockLocation, StockMovement, StockRecipe, Supplier
 from .serializers import (
-    GoodsReceiptCreateSerializer, GoodsReceiptSerializer, IssueStockSerializer, PurchaseOrderCreateSerializer,
-    PurchaseOrderDetailSerializer, PurchaseOrderListSerializer, StockBalanceSerializer, StockConsumptionRequestSerializer,
+    GoodsReceiptCreateSerializer, GoodsReceiptSerializer, IssueStockSerializer, OpeningStockSerializer,
+    PurchaseOrderCreateSerializer, PurchaseOrderDetailSerializer, PurchaseOrderListSerializer, ReturnStockSerializer,
+    StockBalanceSerializer, StockConsumptionRequestSerializer,
     StockCountCreateSerializer, StockCountSerializer, StockCountSubmitSerializer, StockItemSerializer,
     InventoryMenuItemDirectorySerializer,
     ProductProfitabilityRowSerializer, ProductProfitabilitySummarySerializer,
-    StockLocationSerializer, StockMovementSerializer, StockRecipeCreateSerializer, StockRecipeSerializer, SupplierSerializer,
+    StockLocationSerializer, StockMovementSerializer, StockRecipeCreateSerializer, StockRecipeSerializer,
+    SupplierSerializer, TransferStockSerializer,
 )
 from .services.valuation_service import (
     SORT_KEYS, product_profitability_projection, projection_filter_choices, projection_summary, sort_projection,
 )
 from .services.inventory_service import (
     approve_purchase_order, approve_stock_count, create_purchase_order, create_stock_recipe, issue_stock, mark_purchase_order_ordered,
-    process_pos_stock_consumption, receive_goods, retire_stock_recipe, scoped_key, start_stock_count, submit_purchase_order, submit_stock_count,
+    process_pending_pos_consumption, process_pos_stock_consumption, receive_goods, record_opening_stock,
+    record_stock_return, retire_stock_recipe, reverse_pos_stock_consumption, scoped_key, start_stock_count,
+    submit_purchase_order, submit_stock_count, transfer_stock,
 )
 
 
@@ -86,6 +90,20 @@ class StockItemListCreateView(APIView):
         return _page(self, request, queryset, StockItemSerializer)
     def post(self, request):
         serializer=StockItemSerializer(data=request.data); serializer.is_valid(raise_exception=True); item=serializer.save()
+        opening_qty = request.data.get("opening_quantity")
+        opening_loc_id = request.data.get("opening_location_id")
+        if opening_qty not in (None, "", "0", 0, "0.0000") and opening_loc_id:
+            loc = StockLocation.objects.filter(pk=opening_loc_id, is_active=True).first()
+            if loc is not None:
+                record_opening_stock(
+                    item=item,
+                    location=loc,
+                    quantity=opening_qty,
+                    actor=request.user,
+                    source_key=f"item-opening:{item.pk}:{loc.pk}",
+                    unit_cost=item.standard_cost,
+                    notes="Initial opening stock on item creation",
+                )
         log_action(actor=request.user, action="STOCK_ITEM_CREATED", instance=item, request=request)
         return success_response(StockItemSerializer(item).data, message="Stock item created.", status=status.HTTP_201_CREATED)
 
@@ -216,6 +234,32 @@ class StockConsumptionRequestProcessView(APIView):
         return success_response(StockConsumptionRequestSerializer(consumption).data, message=message)
 
 
+class StockConsumptionCatchUpView(APIView):
+    permission_classes = [HasCapability]; required_capability = "inventory.manage"
+    def post(self, request):
+        limit = request.data.get("limit", 200) if isinstance(request.data, dict) else 200
+        summary = process_pending_pos_consumption(limit=limit, actor=request.user)
+        return success_response(summary, message="Pending POS consumption hand-offs processed.")
+
+
+class StockConsumptionReverseView(APIView):
+    permission_classes = [HasCapability]; required_capability = "inventory.manage"
+    def post(self, request, reference):
+        consumption = StockConsumptionRequest.objects.filter(reference=reference).first()
+        if consumption is None: raise NotFound("Stock-consumption request not found.")
+        reason = (request.data.get("reason") or "") if isinstance(request.data, dict) else ""
+        consumption, reversed_now = reverse_pos_stock_consumption(
+            request_or_order=consumption, actor=request.user, reason=reason,
+        )
+        consumption = StockConsumptionRequest.objects.select_related("pos_order", "pos_order__created_by", "processed_by").get(pk=consumption.pk)
+        log_action(actor=request.user, action="POS_STOCK_CONSUMPTION_REVERSED", instance=consumption, request=request,
+                   metadata={"reference": consumption.reference, "reversed": reversed_now})
+        return success_response(
+            StockConsumptionRequestSerializer(consumption).data,
+            message="POS stock consumption reversed." if reversed_now else "No active consumption to reverse.",
+        )
+
+
 @extend_schema(tags=["Admin · Inventory"], summary="List stock counts or begin a frozen stock-count snapshot")
 class StockCountListCreateView(APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
@@ -284,6 +328,77 @@ class StockIssueView(APIView):
         return success_response(StockMovementSerializer(StockMovement.objects.select_related("item", "location", "actor").get(pk=movement.pk)).data,
                                 message="Stock issue recorded." if created else "Existing stock issue returned.",
                                 status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+@extend_schema(tags=["Admin · Inventory"], summary="Record a source-keyed opening stock balance")
+class StockOpeningView(APIView):
+    permission_classes = [HasCapability]; required_capability = "inventory.manage"
+    def post(self, request):
+        serializer = OpeningStockSerializer(data=request.data); serializer.is_valid(raise_exception=True); data = serializer.validated_data
+        item = StockItem.objects.filter(pk=data["item_id"]).first()
+        if item is None: raise NotFound("Stock item not found.")
+        location = StockLocation.objects.filter(pk=data["location_id"]).first()
+        if location is None: raise NotFound("Stock location not found.")
+        raw_key = data.get("idempotency_key") or f"opening:{item.pk}:{location.pk}:{data['quantity']}"
+        key = scoped_key(prefix="stock-opening", scope=f"staff:{request.user.pk}", raw_key=raw_key)
+        movement, created = record_opening_stock(
+            item=item, location=location, quantity=data["quantity"], actor=request.user,
+            source_key=key, unit_cost=data.get("unit_cost"), notes=data.get("notes", ""),
+        )
+        return success_response(
+            StockMovementSerializer(StockMovement.objects.select_related("item", "location", "actor").get(pk=movement.pk)).data,
+            message="Opening stock recorded." if created else "Existing opening stock returned.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+@extend_schema(tags=["Admin · Inventory"], summary="Record a source-keyed stock return into store")
+class StockReturnView(APIView):
+    permission_classes = [HasCapability]; required_capability = "inventory.manage"
+    def post(self, request):
+        serializer = ReturnStockSerializer(data=request.data); serializer.is_valid(raise_exception=True); data = serializer.validated_data
+        item = StockItem.objects.filter(pk=data["item_id"]).first()
+        if item is None: raise NotFound("Stock item not found.")
+        location = StockLocation.objects.filter(pk=data["location_id"]).first()
+        if location is None: raise NotFound("Stock location not found.")
+        raw_key = data.get("idempotency_key") or f"return:{item.pk}:{location.pk}:{data['quantity']}"
+        key = scoped_key(prefix="stock-return", scope=f"staff:{request.user.pk}", raw_key=raw_key)
+        movement, created = record_stock_return(
+            item=item, location=location, quantity=data["quantity"], actor=request.user,
+            source_key=key, unit_cost=data.get("unit_cost"),
+            source_reference=data.get("source_reference", ""), notes=data.get("notes", ""),
+        )
+        return success_response(
+            StockMovementSerializer(StockMovement.objects.select_related("item", "location", "actor").get(pk=movement.pk)).data,
+            message="Stock return recorded." if created else "Existing stock return returned.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+@extend_schema(tags=["Admin · Inventory"], summary="Transfer stock between two active locations")
+class StockTransferView(APIView):
+    permission_classes = [HasCapability]; required_capability = "inventory.manage"
+    def post(self, request):
+        serializer = TransferStockSerializer(data=request.data); serializer.is_valid(raise_exception=True); data = serializer.validated_data
+        item = StockItem.objects.filter(pk=data["item_id"]).first()
+        if item is None: raise NotFound("Stock item not found.")
+        from_loc = StockLocation.objects.filter(pk=data["from_location_id"]).first()
+        to_loc = StockLocation.objects.filter(pk=data["to_location_id"]).first()
+        if from_loc is None or to_loc is None: raise NotFound("Stock location not found.")
+        raw_key = data.get("idempotency_key") or f"transfer:{item.pk}:{from_loc.pk}:{to_loc.pk}:{data['quantity']}"
+        key = scoped_key(prefix="stock-transfer", scope=f"staff:{request.user.pk}", raw_key=raw_key)
+        (outbound, inbound), created = transfer_stock(
+            item=item, from_location=from_loc, to_location=to_loc, quantity=data["quantity"],
+            actor=request.user, transfer_key=key, notes=data.get("notes", ""),
+        )
+        return success_response(
+            {
+                "outbound": StockMovementSerializer(StockMovement.objects.select_related("item", "location", "actor").get(pk=outbound.pk)).data,
+                "inbound": StockMovementSerializer(StockMovement.objects.select_related("item", "location", "actor").get(pk=inbound.pk)).data,
+            },
+            message="Stock transfer recorded." if created else "Existing stock transfer returned.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
 
 @extend_schema(tags=["Admin · Procurement"], summary="List or create suppliers")

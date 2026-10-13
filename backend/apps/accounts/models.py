@@ -64,16 +64,20 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         SECURITY = "SECURITY", "Security"
         PROCUREMENT_OFFICER = "PROCUREMENT_OFFICER", "Procurement Officer"
         STOREKEEPER = "STOREKEEPER", "Storekeeper"
+        PORTER = "PORTER", "Porter"
+        KITCHEN_ASSISTANT = "KITCHEN_ASSISTANT", "Kitchen Assistant"
         GUEST = "GUEST", "Guest"
 
     email = models.EmailField(unique=True, db_index=True)
     first_name = models.CharField(max_length=100)
+    middle_name = models.CharField(max_length=100, blank=True, default="")
     last_name = models.CharField(max_length=100)
     phone = models.CharField(max_length=20, blank=True, default="")
     role = models.CharField(max_length=32, choices=Role.choices, default=Role.RECEPTIONIST, db_index=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)  # Django admin access only
     email_verified = models.BooleanField(default=False)
+    must_change_password = models.BooleanField(default=False)
     profile_image = models.ImageField(
         upload_to="profiles/%Y/%m/", null=True, blank=True, validators=[validate_image_upload]
     )
@@ -92,7 +96,8 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
     @property
     def full_name(self):
-        return f"{self.first_name} {self.last_name}".strip() or self.email
+        parts = [p.strip() for p in (self.first_name, getattr(self, "middle_name", ""), self.last_name) if p and p.strip()]
+        return " ".join(parts) or self.email
 
     @property
     def is_admin(self):
@@ -112,6 +117,11 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         """
         return self.role in (role for role in self.Role.values if role != self.Role.GUEST)
 
+    def refresh_from_db(self, using=None, fields=None, from_queryset=None):
+        super().refresh_from_db(using=using, fields=fields, from_queryset=from_queryset)
+        if hasattr(self, "_jone_capability_codes"):
+            delattr(self, "_jone_capability_codes")
+
 
 def _new_workstation_reference():
     return "wks-" + secrets.token_urlsafe(18)
@@ -130,6 +140,8 @@ class Workstation(TimeStampedModel):
         MAINTENANCE = "MAINTENANCE", "Maintenance"
         ACCOUNTS = "ACCOUNTS", "Accounts"
         INVENTORY = "INVENTORY", "Inventory / stores"
+        PROCUREMENT = "PROCUREMENT", "Administration & procurement"
+        PORTER = "PORTER", "Portering"
         HR = "HR", "Human resources"
         SECURITY = "SECURITY", "Security"
         MANAGEMENT = "MANAGEMENT", "Management"
@@ -214,3 +226,29 @@ class RoleCapability(TimeStampedModel):
 
     def __str__(self):
         return f"{self.role} → {self.capability.code}"
+
+
+class UserCapabilityOverride(TimeStampedModel):
+    """Per-user capability grant or revocation controlled by an Administrator."""
+
+    class Effect(models.TextChoices):
+        GRANT = "GRANT", "Grant capability"
+        REVOKE = "REVOKE", "Revoke capability"
+
+    user = models.ForeignKey("accounts.User", on_delete=models.CASCADE, related_name="capability_overrides")
+    capability = models.ForeignKey(Capability, on_delete=models.CASCADE, related_name="user_overrides")
+    effect = models.CharField(max_length=12, choices=Effect.choices, default=Effect.GRANT, db_index=True)
+    reason = models.CharField(max_length=255, blank=True, default="")
+    updated_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="capability_overrides_authored"
+    )
+
+    class Meta:
+        ordering = ["user_id", "capability__code"]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "capability"], name="unique_user_capability_override"),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} · {self.effect} · {self.capability.code}"
+

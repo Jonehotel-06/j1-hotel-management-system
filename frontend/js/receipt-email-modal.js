@@ -84,33 +84,46 @@
       }
     }
 
+    var hasCompleted = false;
+    var inFlight = false;
+    function newIdempotencyKey() {
+      return "rem-" + bookingReference + "-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10);
+    }
+    var idempotencyKey = newIdempotencyKey();
+
     function succeed() {
+      hasCompleted = true;
       status.textContent = "Receipt sent — the mail server accepted the message for " + guestEmail + ".";
-      sendBtn.onclick = function () { JONE.ui.modal.close(); };
       JONE.ui.toast("Email sent successfully.", "success");
     }
 
     function fail(err) {
+      hasCompleted = false;
+      idempotencyKey = newIdempotencyKey();
       var reason = (err && err.message) || "the email service could not be reached. Please try again.";
       status.textContent = /\.$/.test(reason) ? reason : "The email could not be sent. Please retry.";
       JONE.ui.toast("Email could not be sent. Please retry.", "error", { assertive: true });
     }
 
     sendBtn.addEventListener("click", async function () {
-      if (sendBtn.disabled) return;             // duplicate-submit guard
+      if (hasCompleted) {
+        JONE.ui.modal.close();
+        return;
+      }
+      if (inFlight || sendBtn.disabled) return; // duplicate-submit guard
+      inFlight = true;
       setBusy(true);
       status.textContent = "Sending receipt…";
       var finalLabel = "Send receipt";
       try {
-        var res = await window.API.sendReceipt(bookingReference);
+        var res = await window.API.sendReceipt(bookingReference, { idempotency_key: idempotencyKey });
         var payload = (res && res.data) || {};
         if (payload.status === "SENT") {
           succeed();
           finalLabel = "Done";
         } else if (payload.status === "IN_PROGRESS") {
+          hasCompleted = true;
           status.textContent = "A receipt for this booking is already being processed.";
-          sendBtn.textContent = "Done";
-          sendBtn.onclick = function () { JONE.ui.modal.close(); };
           finalLabel = "Done";
         } else {
           fail({ message: payload.error || "delivery failed at the mail server." });
@@ -119,12 +132,14 @@
       } catch (err) {
         fail(err);
         finalLabel = "Retry";
+      } finally {
+        inFlight = false;
+        // Always end in a usable state — never a stuck disabled modal.
+        sendBtn.disabled = false;
+        closeBtn.disabled = false;
+        sendBtn.removeAttribute("aria-busy");
+        sendBtn.textContent = finalLabel;
       }
-      // Always end in a usable state — never a stuck disabled modal.
-      sendBtn.disabled = false;
-      closeBtn.disabled = false;
-      sendBtn.removeAttribute("aria-busy");
-      sendBtn.textContent = finalLabel;
     });
   }
 

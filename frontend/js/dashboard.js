@@ -22,9 +22,9 @@
       { label: "Missed bookings", href: "missed-bookings.html", icon: "userX", view: "missed-bookings" },
       { label: "Guests", href: "guests.html", icon: "users", view: "guests" },
       { label: "Rooms", href: "rooms.html", icon: "bed", view: "rooms" },
-      { label: "POS & Room Service", href: "pos.html", icon: "utensils", view: "pos", capabilities: ["pos.order.manage", "restaurant.order.manage", "bar.order.manage", "kitchen.queue.view", "kitchen.ticket.manage"], roles: ["admin", "manager", "general_manager", "cashier", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef"] },
-      { label: "Workforce", href: "workforce.html", icon: "clock", view: "workforce", capabilities: ["staff.profile.manage", "shift.manage", "attendance.clock", "attendance.manage", "leave.request", "leave.approve", "payroll.view", "payroll.manage"], roles: ["admin", "manager", "receptionist", "cashier", "housekeeping", "maintenance", "inventory_clerk", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "housekeeping_manager", "housekeeper", "maintenance_technician", "accounts_manager", "accountant", "hr_manager", "security", "procurement_officer", "storekeeper"] },
-      { label: "Guest Requests", href: "service-requests.html", icon: "messageCircle", view: "service-requests", capabilities: ["guest_request.manage", "guest_request.assign"], roles: ["admin", "manager", "receptionist", "housekeeping", "maintenance", "waiter", "bartender", "security"] },
+      { label: "POS & Room Service", href: "pos.html", icon: "utensils", view: "pos", capabilities: ["pos.order.manage", "restaurant.order.manage", "bar.order.manage", "kitchen.queue.view", "kitchen.ticket.manage"], roles: ["admin", "manager", "general_manager", "cashier", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "kitchen_assistant"] },
+      { label: "Workforce", href: "workforce.html", icon: "clock", view: "workforce", capabilities: ["staff.profile.manage", "shift.manage", "attendance.clock", "attendance.manage", "leave.request", "leave.approve", "payroll.view", "payroll.manage"], roles: ["admin", "manager", "general_manager", "front_desk_supervisor", "receptionist", "cashier", "housekeeping", "maintenance", "inventory_clerk", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "kitchen_assistant", "housekeeping_manager", "housekeeper", "maintenance_technician", "accounts_manager", "accountant", "hr_manager", "security", "procurement_officer", "storekeeper", "porter"] },
+      { label: "Guest Requests", href: "service-requests.html", icon: "messageCircle", view: "service-requests", capabilities: ["guest_request.manage", "guest_request.assign"], roles: ["admin", "manager", "general_manager", "receptionist", "front_desk_supervisor", "housekeeping", "housekeeper", "maintenance", "maintenance_technician", "waiter", "bartender", "security", "porter"] },
       { label: "Barcode Labels", href: "barcode-labels.html", icon: "printer", view: "barcode-labels", capabilities: ["inventory.manage", "pos.order.manage"], roles: ["admin", "manager", "inventory_clerk", "storekeeper", "cashier"] },
       { label: "Service Links", href: "service-qr.html", icon: "grid", view: "service-qr", capabilities: ["service_qr.manage"], roles: ["admin", "manager", "general_manager"] },
       { label: "Housekeeping", href: "housekeeping.html", icon: "bed", view: "housekeeping", capabilities: ["housekeeping.task.manage", "housekeeping.task.assign"], roles: ["admin", "manager", "receptionist", "housekeeping", "housekeeping_manager", "housekeeper"] },
@@ -52,7 +52,7 @@
       { label: "Notifications", href: "notifications.html", icon: "bell", view: "notifications" },
     ]},
     { group: "Administration", items: [
-      { label: "Staff", href: "staff.html", icon: "users", view: "staff", role: "admin" },
+      { label: "Staff", href: "staff.html", icon: "users", view: "staff", capabilities: ["staff.profile.manage", "staff.view"], roles: ["admin", "general_manager", "manager", "hr_manager"] },
       { label: "Workstations", href: "terminals.html", icon: "grid", view: "terminals", capabilities: ["terminal.manage"], roles: ["admin", "manager", "general_manager"] },
       { label: "Audit Logs", href: "audit-logs.html", icon: "fileText", view: "audit-logs", role: "admin" },
       { label: "Settings", href: "settings.html", icon: "settings", view: "settings", role: "admin" },
@@ -698,7 +698,52 @@
     // and call notifBadge.set(count), avoiding a duplicate API round trip.
     if (!options.deferNotificationBadge) notifBadge.refresh();
     enhanceScrollRegions();
+    const subCtx = window.Auth && typeof window.Auth.getSubdomainContext === "function"
+      ? window.Auth.getSubdomainContext() : null;
+    if (subCtx && subCtx.code && !options.skipDepartmentBanner) {
+      renderDepartmentSummaryBanner(subCtx.code, subCtx);
+    }
     return true;
+  }
+
+  async function renderDepartmentSummaryBanner(deptCode, subCtx) {
+    const main = document.querySelector("main.dash-content");
+    if (!main || document.getElementById("dept-portal-summary-banner")) return null;
+    const banner = document.createElement("section");
+    banner.id = "dept-portal-summary-banner";
+    banner.className = "panel";
+    banner.style.marginBottom = "1rem";
+    const title = (subCtx && subCtx.label) || String(deptCode || "Department");
+    banner.innerHTML =
+      '<div class="panel-head">' +
+        '<div><h2>' + JONE.esc(title) + '</h2><p class="caption muted" data-dept-banner-sub>Department portal summary &amp; live attendance status</p></div>' +
+        '<div class="panel-actions"><a class="btn btn-sm btn-outline" href="workforce.html">Attendance &amp; Shifts</a></div>' +
+      '</div>' +
+      '<div class="panel-body" data-dept-banner-metrics></div>';
+    main.insertBefore(banner, main.firstChild);
+    try {
+      const base = window.APP_CONFIG && window.APP_CONFIG.API_ENDPOINTS && window.APP_CONFIG.API_ENDPOINTS.departments;
+      if (!base || !window.API || typeof window.API.get !== "function") return banner;
+      const res = await window.API.get(base + encodeURIComponent(deptCode) + "/dashboard-summary/");
+      const data = (res && res.data) || {};
+      const metrics = data.metrics || {};
+      const metricBox = banner.querySelector("[data-dept-banner-metrics]");
+      if (metricBox) {
+        const entries = [
+          ["Active Department Staff", data.active_staff_count != null ? data.active_staff_count : "—"],
+          ["Staff Currently On Duty", data.on_duty_count != null ? data.on_duty_count : "—"],
+        ];
+        Object.keys(metrics).forEach((k) => {
+          entries.push([k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), metrics[k]]);
+        });
+        metricBox.innerHTML = '<div class="grid grid-4" style="gap:0.75rem;">' + entries.slice(0, 8).map((pair) =>
+          '<div class="card card-pad"><div class="caption muted">' + JONE.esc(pair[0]) + '</div><div style="font-size:1.2rem;font-weight:700;margin-top:0.2rem;">' + JONE.esc(String(pair[1])) + '</div></div>'
+        ).join("") + '</div>';
+      }
+      return data;
+    } catch (_) {
+      return banner;
+    }
   }
 
   /* A table that scrolls sideways must also be reachable without a pointer and
@@ -1857,7 +1902,7 @@
   window.JONE = window.JONE || {};
   window.JONE.dashboard = {
     renderSidebar, renderUser, setupSidebar, setupStickyTopbar, renderTopbarBell, renderBottomNav,
-    navItemAllowed, notifBadge, statusPill, boot, startLiveRefresh, topbar, NAV, badge, DATA, formModal,
+    navItemAllowed, notifBadge, statusPill, boot, renderDepartmentSummaryBanner, startLiveRefresh, topbar, NAV, badge, DATA, formModal,
     /* Shared read-only dialog host. Pages that need a details/drill-down dialog
        (expense details, receipt details, audit details) use this instead of
        building their own modal: one markup, one ESC/backdrop contract, one focus

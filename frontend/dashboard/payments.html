@@ -259,10 +259,11 @@
       form.reset();
       load();
     }catch(err){
-      JONE.releaseGuard(btn);
       var msg=(err&&err.message)||"The payment couldn't be recorded.";
       if(errBox){ errBox.textContent=msg; errBox.style.display="block"; }
       JONE.ui.toast(msg,"error");
+    }finally{
+      JONE.releaseGuard(btn);
     }
   });
 

@@ -143,7 +143,7 @@
 <script src="../js/thermal-receipt.js?v=1.1.12"></script>
 <script>
 JONE.ui.initChrome();
-var __posAllowed=JONE.dashboard.boot(["admin","manager","general_manager","cashier","restaurant_manager","waiter","bar_manager","bartender","kitchen_manager","chef"]);
+var __posAllowed=JONE.dashboard.boot(["admin","manager","general_manager","cashier","restaurant_manager","waiter","bar_manager","bartender","kitchen_manager","chef","kitchen_assistant"]);
 document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
 
 (function(){
@@ -321,13 +321,15 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(!Number.isInteger(covers)||covers<1||covers>60){JONE.ui.toast('Covers must be between 1 and 60.','warning');return;}
     if(!JONE.guardSubmit(button))return;
     try{var res=await window.API.create('posRestaurantTableSessions',{table_id:tableId,covers:covers,notes:'',idempotency_key:state.openTableSessionKey});var session=res.data||{};state.selectedTableSession=session.reference||null;state.openTableSessionKey=newKey();JONE.ui.toast('Table session opened for '+(session.table_code||'table')+'.','success');await loadRestaurantSessions(true);}
-    catch(err){JONE.releaseGuard(button);JONE.ui.toast((err&&err.message)||'The table session could not be opened. Refresh and check the register.','error');loadRestaurantTables(true);loadRestaurantSessions(true);}
+    catch(err){JONE.ui.toast((err&&err.message)||'The table session could not be opened. Refresh and check the register.','error');loadRestaurantTables(true);loadRestaurantSessions(true);}
+    finally{JONE.releaseGuard(button);}
   }
   async function closeRestaurantTableSession(reference,button){
     var confirmed=await JONE.ui.confirm({title:'Close table session?',message:'Every order must be finished, and delivered orders must be fully settled. The server will reject closure while anything remains open or unpaid.',confirmText:'Close session'});if(!confirmed)return;
     if(!JONE.guardSubmit(button))return;
     try{await window.API.resourceAction('posRestaurantTableSessions',reference,'close',{close_note:''});if(state.selectedTableSession===reference)state.selectedTableSession=null;JONE.ui.toast('Restaurant table session closed.','success');await loadRestaurantSessions(true);}
-    catch(err){JONE.releaseGuard(button);JONE.ui.toast((err&&err.message)||'The table session could not be closed.','error');loadRestaurantSessions(true);}
+    catch(err){JONE.ui.toast((err&&err.message)||'The table session could not be closed.','error');loadRestaurantSessions(true);}
+    finally{JONE.releaseGuard(button);}
   }
   async function addRestaurantTable(){
     if(!hasCapability('restaurant.table.manage',['admin','manager','general_manager','restaurant_manager']))return;
@@ -422,7 +424,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(status==="DRAFT")buttons+='<button class="btn btn-sm" type="button" data-pos-action="submit" data-pos-ref="'+ref+'">Submit</button>';
     if(status==="SUBMITTED")buttons+='<button class="btn btn-sm" type="button" data-pos-action="PREPARING" data-pos-ref="'+ref+'">Start</button>';
     if(status==="PREPARING")buttons+='<button class="btn btn-sm" type="button" data-pos-action="READY" data-pos-ref="'+ref+'">Ready</button>';
-    if(status==="READY")buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-action="DELIVERED" data-pos-ref="'+ref+'">Deliver</button>';
+    if(["SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-action="DELIVERED" data-pos-ref="'+ref+'">Deliver</button>';
     if(["DRAFT","SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-action="CANCELLED" data-pos-ref="'+ref+'">Cancel</button>';
     if(status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&order.settlement_status!=="PAID"&&canTender())buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-tender="'+ref+'">Tender</button>';
     if(status==="DELIVERED")buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-thermal="'+ref+'">Receipt</button>';
@@ -554,7 +556,8 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     }
     if(!JONE.guardSubmit(button))return;
     try{if(action==="submit")await window.API.submitPosOrder(reference,{});else await window.API.updatePosOrderStatus(reference,action);JONE.ui.toast(action==="submit"?"Order sent to its production station.":"Order status updated.","success");loadOrders();loadKitchen();}
-    catch(err){JONE.releaseGuard(button);JONE.ui.toast((err&&err.message)||"The order could not be updated.","error");}
+    catch(err){JONE.ui.toast((err&&err.message)||"The order could not be updated.","error");}
+    finally{JONE.releaseGuard(button);}
   }
   async function captureTender(reference){
     await loadDrawer();
@@ -621,7 +624,8 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(state.selectedStay)payload.stay_id=state.selectedStay.id;
     if(state.serviceRequest){payload.service_request_reference=state.serviceRequest.reference;if(mode()==="BAR")payload.table_number=state.serviceRequest.table_number;}
     try{var res=await window.API.create("posOrders",payload);var order=res.data||{};JONE.ui.toast(state.serviceRequest?"POS draft "+(order.reference||"created")+" linked to request "+state.serviceRequest.reference+". Review it before submission.":"POS draft "+(order.reference||"created")+" created. Submit it when the order is final.","success");state.cart=[];state.selectedStay=null;state.orderKey=newKey();if(state.serviceRequestReference){state.serviceRequestReference="";state.serviceRequest=null;showServiceRequestNotice("");var cleanUrl=new URL(window.location.href);cleanUrl.searchParams.delete("service_request");window.history.replaceState(null,document.title,cleanUrl.pathname+cleanUrl.search+cleanUrl.hash);}selectedStayLabel.textContent="No in-house guest selected.";stayResults.innerHTML="";document.getElementById("pos-create-form").reset();document.getElementById("pos-mode").value=allowedModes()[0]||"";renderRestaurantSessions();state.menuArea=null;updateMode();renderCart();loadOrders();}
-    catch(err){JONE.releaseGuard(button);setCreateError((err&&err.message)||"The POS draft could not be created.");}
+    catch(err){setCreateError((err&&err.message)||"The POS draft could not be created.");}
+    finally{JONE.releaseGuard(button);}
   });
   document.getElementById("pos-apply").addEventListener("click",function(){loadOrders(1);});
   document.getElementById("pos-search").addEventListener("input",JONE.debounce(function(){loadOrders(1);},300));
@@ -654,7 +658,8 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
           }
         });
         if (itemMatch) {
-          addItem(itemMatch.id, 1, [], "");
+          state.cart.push({menu_item_id: itemMatch.id, item_name: itemMatch.name, quantity: 1, modifier_ids: [], modifier_labels: [], notes: ""});
+          renderCart();
           JONE.ui.toast("Scanned & added: " + itemMatch.name, "success");
         } else {
           JONE.ui.toast("Scanned barcode [" + code + "] not found in active menu.", "error");

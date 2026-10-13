@@ -13,8 +13,11 @@ urlpatterns = [
     # Assignment-picker projection is capability-gated separately from the
     # administrator-only account management collection.
     path("directory/", views_admin.OperationalStaffDirectoryView.as_view(), name="operational-staff-directory"),
+    path("permissions-matrix/", views_admin.AdminPermissionMatrixView.as_view(), name="permissions-matrix"),
     # Registered BEFORE the numeric detail route so "staff/" is never captured
     # as a user id.
     path("staff/<int:pk>/", views_admin.AdminStaffProfileView.as_view(), name="staff-profile"),
+    path("<int:pk>/actions/", views_admin.AdminUserAccountActionView.as_view(), name="user-actions"),
+    path("<int:pk>/permissions/", views_admin.AdminUserPermissionsView.as_view(), name="user-permissions"),
     path("<int:pk>/", views_admin.AdminUserDetailView.as_view(), name="user-detail"),
 ]

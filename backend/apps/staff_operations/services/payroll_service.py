@@ -773,11 +773,31 @@ def create_payroll_period(
             ])
             deductions = [row for row in deductions if Decimal(row["amount"]) > ZERO]
 
+        from ..models import StaffDisciplinaryRecord
+
+        approved_disciplinary = list(
+            StaffDisciplinaryRecord.objects.select_for_update()
+            .filter(
+                staff_id=staff_id,
+                deduction_approved=True,
+                approved_deduction_amount__gt=ZERO,
+                applied_payroll_line__isnull=True,
+                status=StaffDisciplinaryRecord.Status.RESOLVED,
+            )
+            .exclude(appeal_status=StaffDisciplinaryRecord.AppealStatus.OVERTURNED)
+            .filter(Q(effective_date__isnull=True) | Q(effective_date__lte=ends_on))
+            .order_by("incident_at", "pk")
+        )
+        for disc in approved_disciplinary:
+            disc_label = f"Approved disciplinary deduction ({disc.reference})"
+            if not any(disc.reference in str(row.get("label", "")) for row in deductions):
+                deductions.append({"label": disc_label[:100], "amount": str(disc.approved_deduction_amount.quantize(CENT))})
+
         deductions_total = _components_total(deductions)
         net = (gross - deductions_total).quantize(CENT)
         if net < ZERO:
             raise ValidationError({"deductions": f"Statutory and other deductions exceed gross pay for {profile.employee_code}."})
-        PayrollLine.objects.create(
+        line = PayrollLine.objects.create(
             period=period,
             staff=profile.user,
             compensation=compensation,
@@ -814,6 +834,10 @@ def create_payroll_period(
             deductions_total=deductions_total,
             net_pay=net,
         )
+        if approved_disciplinary:
+            StaffDisciplinaryRecord.objects.filter(
+                pk__in=[d.pk for d in approved_disciplinary]
+            ).update(applied_payroll_line=line)
         totals["gross"] += gross
         totals["deductions"] += deductions_total
         totals["net"] += net

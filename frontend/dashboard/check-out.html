@@ -233,23 +233,30 @@
     }
   }
 
-  var debouncedLoad = JONE.debounce(function(){ load(input ? input.value.trim() : ""); }, DEBOUNCE_MS);
+  var searchTimer = null;
 
   if (input) {
     input.addEventListener("input", function(){
       if (clearBtn) clearBtn.hidden = !input.value;
+      if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
       if (!input.value.trim()) { load(""); return; }
-      debouncedLoad();
+      searchTimer = setTimeout(function(){ searchTimer = null; load(input ? input.value.trim() : ""); }, DEBOUNCE_MS);
     });
     input.addEventListener("keydown", function(e){
-      if (e.key === "Enter") { e.preventDefault(); load(input.value.trim()); }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+        load(input.value.trim());
+      }
     });
-    // A room number handed over from another page (?q=203) runs immediately.
-    var pre = new URLSearchParams(location.search).get("q");
+    // A room number or booking reference handed over from another page (?q=203 or ?ref=J1-...) runs immediately.
+    var urlParams = new URLSearchParams(location.search);
+    var pre = (urlParams.get("q") || urlParams.get("ref") || urlParams.get("reference") || "").trim();
     if (pre) { input.value = pre; if (clearBtn) clearBtn.hidden = false; }
     load(pre || "");
   }
   if (clearBtn) clearBtn.addEventListener("click", function(){
+    if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
     if (input) input.value = "";
     clearBtn.hidden = true;
     if (input) input.focus();
@@ -260,6 +267,7 @@
   document.addEventListener("click", async function(e){
     var payBtn = e.target.closest && e.target.closest("[data-pay-btn]");
     if (payBtn) {
+      if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
       var booking = null;
       for (var i = 0; i < found.length; i++) if (String(found[i].id) === String(payBtn.getAttribute("data-pay-btn"))) booking = found[i];
       if (!booking) return;
@@ -271,21 +279,26 @@
 
     var inBtn = e.target.closest && e.target.closest("[data-checkin-btn]");
     if (inBtn) {
+      if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
       var inRef = inBtn.getAttribute("data-checkin-btn");
       if (!JONE.guardSubmit(inBtn)) return;
       try {
+        inBtn.disabled = true;
         await window.API.checkInBooking(inRef);
         JONE.ui.toast("Guest checked in (" + inRef + ").", "success");
-        load(input ? input.value.trim() : "");
+        await load(input ? input.value.trim() : "");
       } catch (err) {
-        JONE.releaseGuard(inBtn);
         JONE.ui.toast((err && err.message) || "Couldn't check this guest in.", "error");
+      } finally {
+        inBtn.disabled = false;
+        JONE.releaseGuard(inBtn);
       }
       return;
     }
 
     var btn = e.target.closest && e.target.closest("[data-checkout-btn]");
     if (!btn) return;
+    if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
     var ref = btn.getAttribute("data-checkout-btn");
     var hasDue = btn.getAttribute("data-due") === "1";
     if (hasDue) {
@@ -301,11 +314,12 @@
       btn.disabled = true;
       await window.API.checkOutBooking(ref, hasDue ? { allow_balance_due: true } : {});
       JONE.ui.toast("Guest checked out (" + ref + ").", "success");
-      load(input ? input.value.trim() : "");
+      await load(input ? input.value.trim() : "");
     } catch (err) {
-      JONE.releaseGuard(btn);
-      btn.disabled = false;
       JONE.ui.toast((err && err.message) || "Couldn't check out this guest. Please try again.", "error");
+    } finally {
+      btn.disabled = false;
+      JONE.releaseGuard(btn);
     }
   });
 })();

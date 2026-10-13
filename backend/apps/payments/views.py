@@ -57,17 +57,46 @@ class VerifyPaymentView(APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "payment_verify"
 
-    def get(self, request, reference):
-        from apps.payments.models import Payment
+    def _resolve_reference(self, request, reference=None):
+        if reference:
+            return str(reference).strip()
+        data = getattr(request, "data", None) or {}
+        if isinstance(data, dict):
+            ref = (
+                data.get("reference")
+                or data.get("trxref")
+                or data.get("payment_reference")
+                or data.get("booking_reference")
+            )
+            if ref:
+                return str(ref).strip()
+        qp = getattr(request, "query_params", None) or getattr(request, "GET", {})
+        ref = (
+            qp.get("reference")
+            or qp.get("trxref")
+            or qp.get("payment_reference")
+            or qp.get("booking_reference")
+        )
+        return str(ref or "").strip()
 
-        payment = Payment.objects.select_related("booking", "booking__guest").filter(reference=reference).first()
+    def _handle_verify(self, request, reference=None):
+        resolved_ref = self._resolve_reference(request, reference)
+        if not resolved_ref:
+            raise NotFound("Payment not found.")
+        payment = payment_service.resolve_payment_for_verification(resolved_ref)
         if payment is None or not can_access_booking(
             request, payment.booking, staff_required_capabilities=("booking.manage", "payment.capture")
         ):
             # 404 (not 403) so payment references alone expose nothing.
             raise NotFound("Payment not found.")
-        result = payment_service.process_verification(reference=reference, request=request)
+        result = payment_service.process_verification(reference=payment.reference, request=request)
         return success_response(result, message="Payment verified.")
+
+    def get(self, request, reference=None):
+        return self._handle_verify(request, reference=reference)
+
+    def post(self, request, reference=None):
+        return self._handle_verify(request, reference=reference)
 
 
 @method_decorator(csrf_exempt, name="dispatch")

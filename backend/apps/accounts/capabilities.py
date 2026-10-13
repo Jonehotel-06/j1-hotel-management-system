@@ -172,6 +172,8 @@ ROLE_CAPABILITY_CODES = {
     "SECURITY": frozenset({"guest_request.manage", "attendance.clock"}),
     "PROCUREMENT_OFFICER": frozenset({"procurement.manage", "attendance.clock", "leave.request"}),
     "STOREKEEPER": frozenset({"inventory.manage", "procurement.manage", "attendance.clock", "leave.request"}),
+    "PORTER": frozenset({"guest_request.manage", "attendance.clock", "leave.request"}),
+    "KITCHEN_ASSISTANT": frozenset({"kitchen.queue.view", "kitchen.ticket.manage", "attendance.clock", "leave.request"}),
     "GUEST": frozenset(),
 }
 
@@ -228,15 +230,26 @@ def capability_codes_for_user(user: "User") -> frozenset[str]:
     if cached is not None:
         return cached
 
-    from .models import Capability, RoleCapability, User
+    from .models import Capability, RoleCapability, User, UserCapabilityOverride
 
     if user.role == User.Role.ADMIN:
         codes = frozenset(Capability.objects.filter(is_active=True).values_list("code", flat=True))
     else:
-        codes = frozenset(
+        role_codes = set(
             RoleCapability.objects.filter(role=user.role, capability__is_active=True)
             .values_list("capability__code", flat=True)
         )
+        if not role_codes and user.role in ROLE_CAPABILITY_CODES:
+            role_codes = set(ROLE_CAPABILITY_CODES[user.role])
+        for effect, cap_code in (
+            UserCapabilityOverride.objects.filter(user=user, capability__is_active=True)
+            .values_list("effect", "capability__code")
+        ):
+            if effect == UserCapabilityOverride.Effect.GRANT:
+                role_codes.add(cap_code)
+            elif effect == UserCapabilityOverride.Effect.REVOKE:
+                role_codes.discard(cap_code)
+        codes = frozenset(role_codes)
     user._jone_capability_codes = codes
     return codes
 

@@ -7,6 +7,7 @@ app_name = "payments"
 
 urlpatterns = [
     path("initialize/", views.InitializePaymentView.as_view(), name="initialize"),
+    path("verify/", views.VerifyPaymentView.as_view(), name="verify-query"),
     path("verify/<str:reference>/", views.VerifyPaymentView.as_view(), name="verify"),
     path("webhook/", views.PaystackWebhookView.as_view(), name="webhook"),
 ]

@@ -153,7 +153,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Explore</h5>
+        <h2 class="h5">Explore</h2>
         <a href="index.html#rooms">Rooms &amp; Suites</a>
         <a href="facilities.html">Facilities</a>
         <a href="gallery.html">Gallery</a>
@@ -163,7 +163,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Booking</h5>
+        <h2 class="h5">Booking</h2>
         <a href="booking.html">Book Your Stay</a>
         <a href="my-bookings.html">Your stays</a>
         <a href="portal/login.html">Guest portal</a>
@@ -174,7 +174,7 @@
       </div>
 
       <div class="footer-col">
-        <h5>Contact</h5>
+        <h2 class="h5">Contact</h2>
         <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
         <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
         <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
@@ -187,8 +187,7 @@
       <span>
         <a href="privacy.html">Privacy</a> &middot;
         <a href="policies.html">Policies</a> &middot;
-        <a href="terms.html">Terms</a> &middot;
-        <a href="login.html">Staff</a>
+        <a href="terms.html">Terms</a>
       </span>
     </div>
   </div>
@@ -267,10 +266,42 @@
   var quote = null;
   var receiptData = null;
   function bookingTokenKey(ref) { return "jone.guest_access_token." + String(ref || ""); }
-  var guestToken = (bookingRef && sessionStorage.getItem(bookingTokenKey(bookingRef))) || sessionStorage.getItem("jone.guest_access_token") || p.get("token") || "";
+  function readCookie(name) {
+    try {
+      var m = document.cookie.match(new RegExp("(?:^|;\\s*)" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "=([^;]*)"));
+      return m ? decodeURIComponent(m[1]) : "";
+    } catch (_) { return ""; }
+  }
+  function saveGuestToken(token, bRef, payRef) {
+    if (!token) return;
+    try { sessionStorage.setItem("jone.guest_access_token", token); } catch (_) {}
+    try { localStorage.setItem("jone.guest_access_token", token); } catch (_) {}
+    if (bRef) {
+      try { sessionStorage.setItem(bookingTokenKey(bRef), token); } catch (_) {}
+      try { localStorage.setItem(bookingTokenKey(bRef), token); } catch (_) {}
+    }
+    if (payRef) {
+      try { sessionStorage.setItem("jone.payment_access." + payRef, token); } catch (_) {}
+      try { localStorage.setItem("jone.payment_access." + payRef, token); } catch (_) {}
+    }
+    try {
+      var host = String(location.hostname || "").toLowerCase();
+      var dom = (host === "jonehotel.com" || host.endsWith(".jonehotel.com")) ? "; domain=.jonehotel.com" : "";
+      var sec = location.protocol === "https:" ? "; Secure" : "";
+      document.cookie = "jone_guest_access_token=" + encodeURIComponent(token) + "; path=/; max-age=7200; SameSite=Lax" + dom + sec;
+    } catch (_) {}
+  }
+  var savedConfirmed = null;
+  try { savedConfirmed = JONE.storage.get(S + ".confirmed", null); } catch (_) {}
+  var guestToken = (bookingRef && (sessionStorage.getItem(bookingTokenKey(bookingRef)) || localStorage.getItem(bookingTokenKey(bookingRef))))
+    || sessionStorage.getItem("jone.guest_access_token")
+    || localStorage.getItem("jone.guest_access_token")
+    || (savedConfirmed && savedConfirmed.guest_access_token)
+    || readCookie("jone_guest_access_token")
+    || p.get("token")
+    || "";
   if (guestToken) {
-    sessionStorage.setItem("jone.guest_access_token", guestToken); // legacy fallback
-    if (bookingRef) sessionStorage.setItem(bookingTokenKey(bookingRef), guestToken);
+    saveGuestToken(guestToken, bookingRef, "");
   }
   function guestOpts() { return window.API.guestAccessOpts(guestToken); }
 
@@ -506,12 +537,11 @@
     if (!authUrl || !pay.reference) {
       throw new Error("Payment could not be started. Please try again.");
     }
+    if (guestToken && booking) booking.guest_access_token = guestToken;
     try { JONE.storage.set(S + ".confirmed", booking); } catch (_) {}
-    // Scope guest authorization to both records. This survives the same-tab
-    // Paystack redirect without putting the private token in a URL.
+    // Scope guest authorization to both records across sessionStorage, localStorage, and first-party cookie.
     if (guestToken) {
-      sessionStorage.setItem(bookingTokenKey(booking.booking_reference), guestToken);
-      sessionStorage.setItem("jone.payment_access." + pay.reference, guestToken);
+      saveGuestToken(guestToken, booking.booking_reference, pay.reference);
     }
     location.href = authUrl;
     return true;
@@ -554,9 +584,14 @@
           prior.check_in === criteria.check_in && prior.check_out === criteria.check_out
         ) {
           try {
+            if (!guestToken && prior.guest_access_token) {
+              guestToken = prior.guest_access_token;
+              saveGuestToken(guestToken, prior.booking_reference, "");
+            }
             var resumed = await window.API.getBooking(prior.booking_reference, guestOpts());
             var rb = (resumed && resumed.data) || {};
             if (rb.booking_reference && rb.can_pay && Number(rb.amount_due || 0) > 0) {
+              if (guestToken) rb.guest_access_token = guestToken;
               booking = rb;
               bookingRef = rb.booking_reference;
               fillPaymentSummary();
@@ -605,8 +640,7 @@
         clearBookingIdemKey();  // creation confirmed — a future booking gets a fresh key
         if (booking.guest_access_token) {
           guestToken = booking.guest_access_token;
-          sessionStorage.setItem("jone.guest_access_token", guestToken);
-          sessionStorage.setItem(bookingTokenKey(booking.booking_reference), guestToken);
+          saveGuestToken(guestToken, booking.booking_reference, "");
         }
         bookingRef = booking.booking_reference || bookingRef;
         fillPaymentSummary();

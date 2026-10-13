@@ -435,8 +435,8 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
         return order
     allowed = {
         PosOrder.Status.DRAFT: {PosOrder.Status.CANCELLED},
-        PosOrder.Status.SUBMITTED: {PosOrder.Status.PREPARING, PosOrder.Status.CANCELLED},
-        PosOrder.Status.PREPARING: {PosOrder.Status.READY, PosOrder.Status.CANCELLED},
+        PosOrder.Status.SUBMITTED: {PosOrder.Status.PREPARING, PosOrder.Status.READY, PosOrder.Status.DELIVERED, PosOrder.Status.CANCELLED},
+        PosOrder.Status.PREPARING: {PosOrder.Status.READY, PosOrder.Status.DELIVERED, PosOrder.Status.CANCELLED},
         PosOrder.Status.READY: {PosOrder.Status.DELIVERED, PosOrder.Status.CANCELLED},
     }
     if target_status not in allowed.get(order.status, set()):
@@ -445,21 +445,32 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
     ticket = KitchenTicket.objects.select_for_update().filter(order=order).first()
     now = timezone.now()
     if target_status == PosOrder.Status.PREPARING:
-        ticket.status = KitchenTicket.Status.PREPARING
-        ticket.started_at = now
-        ticket.assigned_to = actor
-        ticket.save(update_fields=["status", "started_at", "assigned_to", "updated_at"])
+        if ticket is not None:
+            ticket.status = KitchenTicket.Status.PREPARING
+            ticket.started_at = now
+            ticket.assigned_to = actor
+            ticket.save(update_fields=["status", "started_at", "assigned_to", "updated_at"])
         event_type = PosOrderEvent.Type.PREPARING
     elif target_status == PosOrder.Status.READY:
-        ticket.status = KitchenTicket.Status.READY
-        ticket.ready_at = now
-        ticket.save(update_fields=["status", "ready_at", "updated_at"])
+        if ticket is not None:
+            if not ticket.started_at:
+                ticket.started_at = now
+                ticket.assigned_to = ticket.assigned_to or actor
+            ticket.status = KitchenTicket.Status.READY
+            ticket.ready_at = now
+            ticket.save(update_fields=["status", "started_at", "assigned_to", "ready_at", "updated_at"])
         event_type = PosOrderEvent.Type.READY
     elif target_status == PosOrder.Status.DELIVERED:
         _post_order_charge(order=order, actor=actor)
-        ticket.status = KitchenTicket.Status.COMPLETED
-        ticket.completed_at = now
-        ticket.save(update_fields=["status", "completed_at", "updated_at"])
+        if ticket is not None:
+            if not ticket.started_at:
+                ticket.started_at = now
+                ticket.assigned_to = ticket.assigned_to or actor
+            if not ticket.ready_at:
+                ticket.ready_at = now
+            ticket.status = KitchenTicket.Status.COMPLETED
+            ticket.completed_at = now
+            ticket.save(update_fields=["status", "started_at", "assigned_to", "ready_at", "completed_at", "updated_at"])
         order.delivered_at = now
         event_type = PosOrderEvent.Type.DELIVERED
     else:  # CANCELLED only — paid/delivered orders deliberately cannot reach here.

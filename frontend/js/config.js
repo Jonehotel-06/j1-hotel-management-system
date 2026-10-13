@@ -59,6 +59,98 @@
     TERMINAL: "jone.terminal.reference"
   },
 
+  /* Department subdomain routing map (Priority 5 / Part F2) */
+  DEPARTMENT_SUBDOMAINS: {
+    manager: {
+      subdomain: "manager",
+      code: "MANAGEMENT",
+      label: "Management",
+      portalTitle: "Executive & General Management Portal",
+      landingPath: "/dashboard/index.html",
+      allowedRoles: ["admin", "general_manager", "manager", "hr_manager"]
+    },
+    accountant: {
+      subdomain: "accountant",
+      code: "ACCOUNTS",
+      label: "Accounts & Finance",
+      portalTitle: "Accounts & Financial Control Portal",
+      landingPath: "/dashboard/accounting.html",
+      allowedRoles: ["admin", "accounts_manager", "accountant", "cashier", "general_manager", "manager"]
+    },
+    admin: {
+      subdomain: "admin",
+      code: "ADMIN_PROCUREMENT",
+      label: "Administration",
+      portalTitle: "System Administration Portal",
+      landingPath: "/dashboard/staff.html",
+      allowedRoles: ["admin"]
+    },
+    procurement: {
+      subdomain: "procurement",
+      code: "ADMIN_PROCUREMENT",
+      label: "Administration & Procurement",
+      portalTitle: "Procurement & Vendor Operations Portal",
+      landingPath: "/dashboard/procurement.html",
+      allowedRoles: ["admin", "procurement_officer", "manager", "general_manager", "storekeeper"]
+    },
+    frontdesk: {
+      subdomain: "frontdesk",
+      code: "FRONT_DESK",
+      label: "Front Desk / Reception",
+      portalTitle: "Front Desk & Reception Operations Portal",
+      landingPath: "/dashboard/bookings.html",
+      allowedRoles: ["admin", "front_desk_supervisor", "receptionist", "general_manager", "manager"]
+    },
+    kitchen: {
+      subdomain: "kitchen",
+      code: "KITCHEN",
+      label: "Kitchen",
+      portalTitle: "Kitchen & Culinary Production Portal",
+      landingPath: "/dashboard/pos.html",
+      allowedRoles: ["admin", "kitchen_manager", "chef", "kitchen_assistant", "general_manager", "manager"]
+    },
+    restaurant: {
+      subdomain: "restaurant",
+      code: "RESTAURANT_BAR",
+      label: "Restaurant Service",
+      portalTitle: "Restaurant & Dining Service Portal",
+      landingPath: "/dashboard/pos.html",
+      allowedRoles: ["admin", "restaurant_manager", "waiter", "cashier", "general_manager", "manager"]
+    },
+    bar: {
+      subdomain: "bar",
+      code: "RESTAURANT_BAR",
+      label: "Bar Service",
+      portalTitle: "Bar & Beverage Service Portal",
+      landingPath: "/dashboard/pos.html",
+      allowedRoles: ["admin", "bar_manager", "bartender", "cashier", "general_manager", "manager"]
+    },
+    housekeeping: {
+      subdomain: "housekeeping",
+      code: "HOUSEKEEPING",
+      label: "Housekeeping",
+      portalTitle: "Housekeeping & Room Readiness Portal",
+      landingPath: "/dashboard/housekeeping.html",
+      allowedRoles: ["admin", "housekeeping_manager", "housekeeper", "housekeeping", "general_manager", "manager"]
+    },
+    porter: {
+      subdomain: "porter",
+      code: "PORTERING",
+      label: "Portering & Guest Assistance",
+      portalTitle: "Porters & Guest Services Portal",
+      landingPath: "/dashboard/service-requests.html",
+      allowedRoles: ["admin", "porter", "maintenance", "maintenance_technician", "security", "general_manager", "manager"]
+    },
+    store: {
+      subdomain: "store",
+      code: "STORES_INVENTORY",
+      label: "Stores & Inventory",
+      portalTitle: "Central Stores & Inventory Control Portal",
+      landingPath: "/dashboard/inventory.html",
+      allowedRoles: ["admin", "storekeeper", "inventory_clerk", "general_manager", "manager"]
+    }
+  },
+
   /* ========================================================================
      BACKEND CONTRACT — staff/dashboard resource base paths.
      VERIFIED against the actual Django backend (live run + its test suite +
@@ -132,16 +224,25 @@
     housekeepingTasks:     "/api/admin/housekeeping/",
     maintenanceWorkOrders: "/api/admin/maintenance/",
     staffDirectory:        "/api/admin/users/directory/",
+    permissionsMatrix:     "/api/admin/users/permissions-matrix/",
     staffProfiles:         "/api/admin/staff-operations/profiles/",
+    staffFullProfile:      "/api/admin/staff-operations/staff/",
+    departments:           "/api/admin/staff-operations/departments/",
+    departmentDashboard:   "/api/admin/staff-operations/department-dashboard/",
+    staffDisciplinary:     "/api/admin/staff-operations/disciplinary/",
+    staffDocuments:        "/api/admin/staff-operations/documents/",
     /* Biometric enrollment is workstation-scoped: the desktop terminal key is
        the credential, and the server refuses the request without it. The paths
        used to be hard-coded inside js/biometrics.js, which bypassed the single
        endpoint map (D1 sweep). */
     fingerprintEnrollment: "/api/admin/staff-operations/fingerprint/enrollment/",
     fingerprintEnrollments:"/api/admin/staff-operations/fingerprint/enrollments/",
+    fingerprintStaff:      "/api/admin/staff-operations/fingerprint/staff/",
     faceEnrollment:        "/api/admin/staff-operations/face/enrollment/",
     faceEnrollments:       "/api/admin/staff-operations/face/enrollments/",
     temporaryCredential:   "/api/admin/staff-operations/biometrics/temporary-credential/",
+    receptionTerminal:     "/api/admin/staff-operations/biometrics/reception-terminal/",
+    biometricDevices:      "/api/admin/staff-operations/biometrics/devices/",
     attendanceClock:       "/api/admin/staff-operations/attendance/clock/",
     leaveRequests:         "/api/admin/staff-operations/leave-requests/",
     shiftTemplates:        "/api/admin/staff-operations/shift-templates/",
@@ -169,8 +270,12 @@
     inventoryMovements:           "/api/admin/inventory/movements/",
     inventoryRecipes:             "/api/admin/inventory/recipes/",
     inventoryConsumptionRequests: "/api/admin/inventory/consumption-requests/",
+    inventoryProcessPendingConsumption: "/api/admin/inventory/consumption-requests/process-pending/",
     stockCounts:                  "/api/admin/inventory/stock-counts/",
     inventoryIssues:              "/api/admin/inventory/issues/",
+    inventoryOpeningStock:        "/api/admin/inventory/opening-stock/",
+    inventoryReturns:             "/api/admin/inventory/returns/",
+    inventoryTransfers:           "/api/admin/inventory/transfers/",
     suppliers:                    "/api/admin/inventory/suppliers/",
     purchaseOrders:               "/api/admin/inventory/purchase-orders/",
 

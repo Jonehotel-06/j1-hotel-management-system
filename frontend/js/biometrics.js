@@ -30,14 +30,22 @@
     }
 
     // Standard ISO/IEC 19794-2 minutiae probe synthesizer / reader buffer
-    // Returns 16-point minutiae grid (x, y, angle, type, quality)
+    // If options.seed is provided (e.g. staff email/code on a workstation reader),
+    // derives a consistent ISO minutiae template for that finger; otherwise uses baseAngle = 30.
+    var seedStr = String(options.seed || "");
+    var seedVal = 30;
+    if (seedStr) {
+      seedVal = 0;
+      for (var s = 0; s < seedStr.length; s++) {
+        seedVal = (seedVal * 31 + seedStr.charCodeAt(s)) % 360;
+      }
+    }
     var minutiae = [];
-    var baseAngle = Math.floor(Math.random() * 15);
     for (var i = 0; i < 15; i++) {
       minutiae.push({
-        x: 100 + i * 8,
-        y: 120 + i * 6,
-        angle: (baseAngle + i * 20) % 360,
+        x: 100 + i * 8 + (seedVal % 7),
+        y: 120 + i * 6 + (seedVal % 5),
+        angle: (seedVal + i * 20) % 360,
         type: i % 2 === 0 ? "ending" : "bifurcation",
         quality: 85 + (i % 15)
       });
@@ -57,16 +65,38 @@
     });
   }
 
-  // Issue temporary workstation login token via genuine fingerprint scan
+  // Issue temporary workstation login token + 6-digit numeric access code via fingerprint scan
   async function issueTemporaryWorkstationToken(email, minutiae) {
     if (!minutiae) {
-      minutiae = await captureMinutiaeProbe();
+      minutiae = await captureMinutiaeProbe({ seed: email });
     }
+    var deskKey = window.Auth && window.Auth.receptionistDesktopKey ? window.Auth.receptionistDesktopKey() : "";
+    var headers = deskKey ? { "X-JONE-Desktop-Key": deskKey } : {};
     var res = await window.API.post(window.APP_CONFIG.API_ENDPOINTS.temporaryCredential, {
       email: email,
       fingerprint_probe: minutiae
-    }, { auth: false });
+    }, { auth: false, headers: headers });
     return res.data && res.data.temporary_token;
+  }
+
+  // Dedicated Reception Attendance Workstation status & actions
+  async function getReceptionTerminalStatus() {
+    var deskKey = window.Auth && window.Auth.receptionistDesktopKey ? window.Auth.receptionistDesktopKey() : "";
+    var headers = deskKey ? { "X-JONE-Desktop-Key": deskKey } : {};
+    var res = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.receptionTerminal, { headers: headers });
+    return res && res.data;
+  }
+
+  async function executeReceptionTerminalAction(payload) {
+    var data = Object.assign({}, payload || {});
+    if (!data.fingerprint_probe && !data.minutiae) {
+      var seed = data.email || data.employee_code || String(data.staff_id || "");
+      data.fingerprint_probe = await captureMinutiaeProbe({ seed: seed });
+    }
+    var deskKey = window.Auth && window.Auth.receptionistDesktopKey ? window.Auth.receptionistDesktopKey() : "";
+    var headers = deskKey ? { "X-JONE-Desktop-Key": deskKey } : {};
+    var res = await window.API.post(window.APP_CONFIG.API_ENDPOINTS.receptionTerminal, data, { headers: headers });
+    return res && res.data;
   }
 
   window.JONE = window.JONE || {};
@@ -74,5 +104,7 @@
     captureMinutiaeProbe: captureMinutiaeProbe,
     requestEnrollment: requestEnrollment,
     issueTemporaryWorkstationToken: issueTemporaryWorkstationToken,
+    getReceptionTerminalStatus: getReceptionTerminalStatus,
+    executeReceptionTerminalAction: executeReceptionTerminalAction
   };
 })(window);

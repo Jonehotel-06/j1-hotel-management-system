@@ -26,12 +26,15 @@ class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     profile_image_url = serializers.SerializerMethodField()
     capabilities = serializers.SerializerMethodField()
+    employee_code = serializers.SerializerMethodField()
+    department = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
-            "id", "email", "first_name", "last_name", "full_name", "phone",
-            "role", "capabilities", "email_verified", "profile_image_url", "date_joined", "last_login",
+            "id", "email", "first_name", "middle_name", "last_name", "full_name", "phone",
+            "role", "department", "employee_code", "capabilities", "email_verified",
+            "must_change_password", "profile_image_url", "date_joined", "last_login",
         ]
         read_only_fields = fields  # role changes only happen via admin endpoints
 
@@ -43,11 +46,22 @@ class UserSerializer(serializers.ModelSerializer):
         # frontend, never a substitute for the endpoint permission check.
         return sorted(capability_codes_for_user(obj))
 
+    def get_employee_code(self, obj):
+        profile = getattr(obj, "staff_profile", None)
+        return profile.employee_code if profile else ""
+
+    def get_department(self, obj):
+        if not getattr(obj, "is_staff_member", False):
+            return ""
+        from apps.staff_operations.services.fingerprint_service import staff_department_code
+
+        return staff_department_code(obj)
+
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "phone", "profile_image"]
+        fields = ["first_name", "middle_name", "last_name", "phone", "profile_image"]
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -96,6 +110,25 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
             if desktop is None:
                 log_staff_sign_in_rejected(self.user, request)
                 raise StaffSignInRestrictedError()
+        if request is not None and getattr(self.user, "is_staff_member", False):
+            target_dept = (
+                (request.data.get("department") if hasattr(request.data, "get") else "")
+                or request.headers.get("X-JONE-Department")
+                or ""
+            ).strip()
+            if target_dept:
+                from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
+                from apps.staff_operations.services.fingerprint_service import is_staff_authorized_for_department
+
+                if not is_staff_authorized_for_department(self.user, target_dept):
+                    log_action(
+                        actor=self.user,
+                        action="CROSS_DEPARTMENT_SIGN_IN_DENIED",
+                        request=request,
+                        metadata={"target_department": target_dept, "role": self.user.role},
+                        summary="Staff sign-in refused for unauthorized department subdomain",
+                    )
+                    raise DjangoPermissionDenied("Your account is not authorized to sign in to this department dashboard.")
         log_staff_sign_in(self.user, request, desktop)
         data["user"] = UserSerializer(self.user, context=self.context).data
         return data
@@ -154,7 +187,8 @@ class PasswordChangeSerializer(serializers.Serializer):
     def save(self, **kwargs):
         user = self.context["request"].user
         user.set_password(self.validated_data["new_password"])
-        user.save(update_fields=["password", "updated_at"])
+        user.must_change_password = False
+        user.save(update_fields=["password", "must_change_password", "updated_at"])
         return user
 
 
@@ -234,14 +268,51 @@ class AdminUserListSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     profile_image_url = serializers.SerializerMethodField()
     bookings_count = serializers.SerializerMethodField()
+    employee_code = serializers.SerializerMethodField()
+    department = serializers.SerializerMethodField()
+    job_title = serializers.SerializerMethodField()
+    employment_status = serializers.SerializerMethodField()
+    employment_type = serializers.SerializerMethodField()
+    credential_delivery_status = serializers.SerializerMethodField()
 
     def get_profile_image_url(self, obj):
         return absolute_media_url(obj.profile_image, self.context.get("request"))
 
+    def get_employee_code(self, obj):
+        p = getattr(obj, "staff_profile", None)
+        return p.employee_code if p else ""
+
+    def get_department(self, obj):
+        p = getattr(obj, "staff_profile", None)
+        if p and p.department:
+            return p.department
+        if getattr(obj, "is_staff_member", False):
+            from apps.staff_operations.services.fingerprint_service import staff_department_code
+            return staff_department_code(obj)
+        return ""
+
+    def get_job_title(self, obj):
+        p = getattr(obj, "staff_profile", None)
+        return p.job_title if p else ""
+
+    def get_employment_status(self, obj):
+        p = getattr(obj, "staff_profile", None)
+        return p.employment_status if p else ("ACTIVE" if obj.is_active else "INACTIVE")
+
+    def get_employment_type(self, obj):
+        p = getattr(obj, "staff_profile", None)
+        return p.employment_type if p else "FULL_TIME"
+
+    def get_credential_delivery_status(self, obj):
+        p = getattr(obj, "staff_profile", None)
+        return p.credential_delivery_status if p else "NOT_SENT"
+
     class Meta:
         model = User
         fields = [
-            "id", "email", "first_name", "last_name", "full_name", "phone", "role",
+            "id", "email", "first_name", "middle_name", "last_name", "full_name", "phone", "role",
+            "employee_code", "department", "job_title", "employment_status", "employment_type",
+            "credential_delivery_status", "must_change_password",
             "profile_image_url", "is_active", "email_verified", "bookings_count", "date_joined", "last_login",
         ]
 
@@ -307,11 +378,34 @@ class AdminStaffProfileSerializer(serializers.ModelSerializer):
 class AdminUserCreateSerializer(serializers.ModelSerializer):
     """Administrator-created staff accounts (roles above GUEST)."""
 
-    password = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False)
+    password = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False, required=False, allow_blank=True)
+    department = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=120)
+    job_title = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=120)
+    employment_type = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=24)
+    employment_status = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=16)
+    employment_start = serializers.DateField(write_only=True, required=False, allow_null=True)
+    date_of_birth = serializers.DateField(write_only=True, required=False, allow_null=True)
+    gender = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=24)
+    residential_address = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=1000)
+    emergency_contact_name = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=160)
+    emergency_contact_relationship = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=80)
+    emergency_contact_phone = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=40)
+    emergency_contact_address = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=1000)
+    work_location = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=120)
+    job_description = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=5000)
+    notes = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=5000)
 
     class Meta:
         model = User
-        fields = ["email", "first_name", "last_name", "phone", "role", "password", "is_active", "profile_image"]
+        fields = [
+            "email", "first_name", "middle_name", "last_name", "phone", "role",
+            "password", "is_active", "must_change_password", "profile_image",
+            "department", "job_title", "employment_type", "employment_status", "employment_start",
+            "date_of_birth", "gender", "residential_address",
+            "emergency_contact_name", "emergency_contact_relationship",
+            "emergency_contact_phone", "emergency_contact_address",
+            "work_location", "job_description", "notes",
+        ]
 
     def validate_email(self, value):
         email = User.objects.normalize_email(value)
@@ -320,14 +414,44 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
         return email
 
     def validate_password(self, value):
-        password_validation.validate_password(value)
+        if value:
+            password_validation.validate_password(value)
         return value
 
     def create(self, validated_data):
+        import secrets
+        from apps.staff_operations.services.staff_operations_service import ensure_staff_profile
+
+        profile_keys = (
+            "department", "job_title", "employment_type", "employment_status", "employment_start",
+            "date_of_birth", "gender", "residential_address",
+            "emergency_contact_name", "emergency_contact_relationship",
+            "emergency_contact_phone", "emergency_contact_address",
+            "work_location", "job_description", "notes",
+        )
+        profile_data = {k: validated_data.pop(k) for k in profile_keys if k in validated_data}
+        if hasattr(self, "initial_data") and "is_active" not in self.initial_data:
+            validated_data["is_active"] = True
+        if hasattr(self, "initial_data") and "must_change_password" not in self.initial_data:
+            validated_data["must_change_password"] = False
+
+        raw_pw = validated_data.get("password")
+        if not raw_pw:
+            raw_pw = f"Jone#{secrets.token_hex(4)}!9"
+            validated_data["password"] = raw_pw
+            validated_data["must_change_password"] = True
+
         # is_staff grants Django-admin access for privileged roles only.
         role = validated_data.get("role", User.Role.RECEPTIONIST)
         validated_data["is_staff"] = role in (User.Role.ADMIN,)
-        return User.objects.create_user(**validated_data)
+        user = User.objects.create_user(**validated_data)
+        if user.role != User.Role.GUEST and user.is_active and any(v not in (None, "") for v in profile_data.values()):
+            profile, _ = ensure_staff_profile(staff=user)
+            for k, v in profile_data.items():
+                if v is not None and v != "":
+                    setattr(profile, k, v)
+            profile.save()
+        return user
 
 
 class WorkstationSerializer(serializers.ModelSerializer):
@@ -356,7 +480,10 @@ class WorkstationSerializer(serializers.ModelSerializer):
 class AdminUserUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["first_name", "last_name", "phone", "role", "is_active", "email_verified", "profile_image"]
+        fields = [
+            "first_name", "middle_name", "last_name", "phone", "role",
+            "is_active", "email_verified", "must_change_password", "profile_image",
+        ]
 
     def validate(self, attrs):
         request = self.context["request"]
@@ -370,3 +497,4 @@ class AdminUserUpdateSerializer(serializers.ModelSerializer):
         if target and target.is_superuser and request.user != target and not request.user.is_superuser:
             raise serializers.ValidationError("Only a superuser can modify another superuser account.")
         return attrs
+

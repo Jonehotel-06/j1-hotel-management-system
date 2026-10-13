@@ -87,9 +87,9 @@ test("the drill-down endpoint is centralized and the reference is escaped by the
   };
   loadScript(ctx, "js/api.js");
   await ctx.window.API.getOne("financeExpenseDetail", "EXP/2026/0001");
-  // GET strips the trailing slash (the deployment rewrite restores it for Django);
-  // the reference itself is percent-encoded, so a slash cannot escape the route.
-  assert.equal(requests[0], "/api/admin/finance/expenses/EXP%2F2026%2F0001");
+  // The trailing slash is preserved for Django; the reference itself is
+  // percent-encoded, so a slash cannot escape the route.
+  assert.equal(requests[0], "/api/admin/finance/expenses/EXP%2F2026%2F0001/");
 });
 
 test("every field the brief lists is rendered, including the paid/incurred distinction", () => {

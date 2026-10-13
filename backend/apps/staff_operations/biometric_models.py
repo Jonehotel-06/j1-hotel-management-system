@@ -78,9 +78,21 @@ class TemporaryWorkstationCredential(TimeStampedModel):
     staff = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="temp_workstation_credentials")
     workstation_reference = models.CharField(max_length=64, db_index=True)
     credential_token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    numeric_code_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    department = models.CharField(max_length=80, blank=True, default="", db_index=True)
+    attendance_record = models.ForeignKey(
+        "staff_operations.AttendanceRecord",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="workstation_credentials",
+    )
     expires_at = models.DateTimeField(db_index=True)
     is_used = models.BooleanField(default=False, db_index=True)
     used_at = models.DateTimeField(null=True, blank=True)
+    session_active = models.BooleanField(default=True, db_index=True)
+    revoked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    revoked_reason = models.CharField(max_length=120, blank=True, default="")
 
     class Meta:
         ordering = ["-created_at"]

@@ -88,8 +88,43 @@ class IssueStockSerializer(serializers.Serializer):
     item_id = serializers.IntegerField(min_value=1)
     location_id = serializers.IntegerField(min_value=1)
     quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
-    type = serializers.ChoiceField(choices=[StockMovement.Type.ISSUE, StockMovement.Type.MAINTENANCE_ISSUE], default=StockMovement.Type.ISSUE)
+    type = serializers.ChoiceField(
+        choices=[
+            StockMovement.Type.ISSUE,
+            StockMovement.Type.MAINTENANCE_ISSUE,
+            StockMovement.Type.WRITE_OFF,
+        ],
+        default=StockMovement.Type.ISSUE,
+    )
     source_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
+
+
+class OpeningStockSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField(min_value=1)
+    location_id = serializers.IntegerField(min_value=1)
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
+    unit_cost = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.00"), required=False, allow_null=True)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
+
+
+class ReturnStockSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField(min_value=1)
+    location_id = serializers.IntegerField(min_value=1)
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
+    unit_cost = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.00"), required=False, allow_null=True)
+    source_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
+
+
+class TransferStockSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField(min_value=1)
+    from_location_id = serializers.IntegerField(min_value=1)
+    to_location_id = serializers.IntegerField(min_value=1)
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
 
@@ -281,6 +316,10 @@ class StockRecipeSerializer(serializers.ModelSerializer):
 class StockRecipeComponentInputSerializer(serializers.Serializer):
     item_id = serializers.IntegerField(min_value=1)
     quantity_per_menu_unit = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
+    unit = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    conversion_factor = serializers.DecimalField(
+        max_digits=14, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True
+    )
 
 
 class StockRecipeCreateSerializer(serializers.Serializer):

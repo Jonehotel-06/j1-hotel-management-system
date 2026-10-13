@@ -180,7 +180,7 @@ class AdminUserQuerysetMixin:
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
-        qs = User.objects.all().annotate(
+        qs = User.objects.select_related("staff_profile").annotate(
             bookings_count=Count(
                 "guest_profile__bookings",
                 filter=~Q(guest_profile__bookings__status__in=UNCOUNTED_BOOKING_STATUSES),
@@ -318,3 +318,343 @@ class AdminStaffProfileView(generics.RetrieveAPIView):
             else 0
         )
         return success_response(data)
+
+
+class AdminUserAccountActionView(APIView):
+    """Administrator / Staff Management lifecycle controls for employee accounts."""
+    permission_classes = [HasCapability]
+    required_capability = "staff.profile.manage"
+
+    def post(self, request, pk: int):
+        import secrets
+        from django.utils import timezone
+        from apps.core.emails import send_email_safe
+        from apps.staff_operations.models import Department
+        from apps.staff_operations.services.fingerprint_service import revoke_workstation_credentials_on_clock_out
+        from apps.staff_operations.services.staff_operations_service import ensure_staff_profile
+
+        target = User.objects.select_related("staff_profile").filter(pk=pk).first()
+        if target is None:
+            raise NotFound("Staff user not found.")
+
+        action = (request.data.get("action") or "").strip().lower()
+        if not action:
+            raise ValidationError({"action": "An account action is required."})
+
+        # Non-ADMIN managers cannot modify an ADMIN account or their own active/role state
+        if target.role == User.Role.ADMIN and request.user.role != User.Role.ADMIN:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only an Administrator can modify an Administrator account.")
+
+        now = timezone.now()
+
+        if action in ("activate", "reactivate"):
+            target.is_active = True
+            target.save(update_fields=["is_active", "updated_at"])
+            profile, _ = ensure_staff_profile(staff=target) if target.role != User.Role.GUEST else (None, False)
+            if profile:
+                profile.employment_status = profile.EmploymentStatus.ACTIVE
+                profile.employment_end_date = None
+                profile.employment_end_reason = ""
+                profile.save(update_fields=["employment_status", "employment_end_date", "employment_end_reason", "updated_at"])
+            log_action(actor=request.user, action="STAFF_ACCOUNT_REACTIVATED", instance=target, request=request)
+            return success_response(AdminUserListSerializer(target, context={"request": request}).data, message="Staff account reactivated.")
+
+        profile = getattr(target, "staff_profile", None)
+        if profile is None and target.is_active and target.role != User.Role.GUEST:
+            profile, _ = ensure_staff_profile(staff=target)
+
+        if action == "suspend":
+            if target.pk == request.user.pk:
+                raise ValidationError({"action": "You cannot suspend your own account."})
+            target.is_active = False
+            target.save(update_fields=["is_active", "updated_at"])
+            if profile:
+                profile.employment_status = profile.EmploymentStatus.SUSPENDED
+                profile.save(update_fields=["employment_status", "updated_at"])
+            revoke_workstation_credentials_on_clock_out(staff=target, reason="SUSPENDED")
+            log_action(
+                actor=request.user, action="STAFF_ACCOUNT_SUSPENDED", instance=target, request=request,
+                metadata={"reason": str(request.data.get("reason") or "")[:250]},
+            )
+            return success_response(AdminUserListSerializer(target, context={"request": request}).data, message="Staff member suspended.")
+
+        if action in ("deactivate", "archive"):
+            if target.pk == request.user.pk:
+                raise ValidationError({"action": "You cannot deactivate your own account."})
+            target.is_active = False
+            target.save(update_fields=["is_active", "updated_at"])
+            if profile:
+                profile.employment_status = profile.EmploymentStatus.INACTIVE
+                profile.employment_end_date = request.data.get("employment_end_date") or now.date()
+                profile.employment_end_reason = str(request.data.get("reason") or "Archived / Deactivated")[:255]
+                profile.save(update_fields=["employment_status", "employment_end_date", "employment_end_reason", "updated_at"])
+            revoke_workstation_credentials_on_clock_out(staff=target, reason="DEACTIVATED")
+            log_action(
+                actor=request.user, action="STAFF_ACCOUNT_DEACTIVATED", instance=target, request=request,
+                metadata={"reason": str(request.data.get("reason") or "")[:250]},
+            )
+            return success_response(AdminUserListSerializer(target, context={"request": request}).data, message="Staff account deactivated and archived safely.")
+
+        if action in ("reset_password", "resend_credentials"):
+            if request.user.role != User.Role.ADMIN and not (request.user.pk != target.pk):
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("Password reset requires Administrator or independent HR authority.")
+            new_pw = (request.data.get("new_password") or "").strip()
+            generated = False
+            if not new_pw:
+                new_pw = f"Jone#{secrets.token_hex(4)}!9"
+                generated = True
+            target.set_password(new_pw)
+            target.must_change_password = bool(request.data.get("must_change_password", True))
+            target.save(update_fields=["password", "must_change_password", "updated_at"])
+
+            delivery_status = "PENDING_DELIVERY"
+            if request.data.get("send_email", True):
+                ok = send_email_safe(
+                    subject="J-One Hotel & Lodge — Staff Account Credentials",
+                    message=(
+                        f"Hello {target.full_name},\n\n"
+                        f"Your J-One Hotel & Lodge staff account ({target.email}) credentials have been issued/reset.\n"
+                        f"Temporary Password: {new_pw}\n\n"
+                        f"Please sign in at your department portal and change your password immediately."
+                    ),
+                    recipient_list=[target.email],
+                )
+                delivery_status = "SENT" if ok else "PENDING_DELIVERY"
+            if profile:
+                profile.credential_delivery_status = delivery_status
+                if delivery_status == "SENT":
+                    profile.credential_delivered_at = now
+                profile.save(update_fields=["credential_delivery_status", "credential_delivered_at", "updated_at"])
+            log_action(
+                actor=request.user, action="STAFF_CREDENTIALS_ISSUED", instance=target, request=request,
+                metadata={"delivery_status": delivery_status, "must_change_password": target.must_change_password},
+            )
+            res_payload = AdminUserListSerializer(target, context={"request": request}).data
+            res_payload["credential_delivery_status"] = delivery_status
+            if generated and request.user.role == User.Role.ADMIN:
+                res_payload["temporary_password"] = new_pw
+            return success_response(res_payload, message=f"Credentials updated ({delivery_status.lower().replace('_', ' ')}).")
+
+        if action == "transfer_department":
+            new_dept = (request.data.get("department") or "").strip()
+            new_title = (request.data.get("job_title") or "").strip()
+            new_role = (request.data.get("role") or "").strip().upper()
+            if not new_dept and not new_role:
+                raise ValidationError({"department": "Specify a new department or role for the transfer."})
+            old_dept = profile.department if profile else ""
+            old_role = target.role
+            if new_role and new_role in User.Role.values and new_role != User.Role.GUEST:
+                if new_role == User.Role.ADMIN and request.user.role != User.Role.ADMIN:
+                    from rest_framework.exceptions import PermissionDenied
+                    raise PermissionDenied("Only an Administrator can assign the ADMIN role.")
+                target.role = new_role
+                target.save(update_fields=["role", "updated_at"])
+            if profile:
+                if new_dept:
+                    dept_obj = Department.objects.filter(Q(code__iexact=new_dept) | Q(name__iexact=new_dept)).first()
+                    profile.department = dept_obj.name if dept_obj else new_dept
+                    profile.department_ref = dept_obj
+                if new_title:
+                    profile.job_title = new_title
+                profile.save()
+            log_action(
+                actor=request.user, action="STAFF_DEPARTMENT_TRANSFERRED", instance=target, request=request,
+                metadata={"from_department": old_dept, "to_department": profile.department if profile else new_dept, "from_role": old_role, "to_role": target.role},
+            )
+            return success_response(AdminUserListSerializer(target, context={"request": request}).data, message="Department / role transfer completed.")
+
+        raise ValidationError({"action": f"Unsupported action '{action}'."})
+
+
+class AdminPermissionMatrixView(APIView):
+    """Administrator-only view to inspect and manage the role & user permission matrix."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        from .capabilities import CAPABILITY_DEFINITIONS, ROLE_CAPABILITY_CODES
+        from .models import Capability, RoleCapability, UserCapabilityOverride
+
+        capabilities = list(
+            Capability.objects.filter(is_active=True).order_by("category", "code")
+        )
+        role_grants = {}
+        for role_val, _label in User.Role.choices:
+            if role_val == User.Role.GUEST:
+                continue
+            role_grants[role_val] = set()
+        for rc in RoleCapability.objects.select_related("capability").filter(capability__is_active=True):
+            role_grants.setdefault(rc.role, set()).add(rc.capability.code)
+        if User.Role.ADMIN in role_grants:
+            role_grants[User.Role.ADMIN] = {c.code for c in capabilities}
+
+        overrides = [
+            {
+                "id": ov.pk,
+                "user_id": ov.user_id,
+                "user_email": ov.user.email,
+                "user_name": ov.user.full_name,
+                "user_role": ov.user.role,
+                "capability_code": ov.capability.code,
+                "effect": ov.effect,
+                "reason": ov.reason,
+                "updated_by_email": ov.updated_by.email if ov.updated_by else "",
+                "updated_at": ov.updated_at,
+            }
+            for ov in UserCapabilityOverride.objects.select_related("user", "capability", "updated_by").all()[:200]
+        ]
+
+        return success_response({
+            "capabilities": [
+                {
+                    "id": c.pk,
+                    "code": c.code,
+                    "name": c.name,
+                    "category": c.category,
+                    "description": c.description,
+                    "admin_only": c.code == "audit.view",
+                }
+                for c in capabilities
+            ],
+            "roles": [
+                {
+                    "role": role_val,
+                    "label": role_label,
+                    "capabilities": sorted(role_grants.get(role_val, set())),
+                    "default_capabilities": sorted(ROLE_CAPABILITY_CODES.get(role_val, frozenset())),
+                }
+                for role_val, role_label in User.Role.choices
+                if role_val != User.Role.GUEST
+            ],
+            "user_overrides": overrides,
+        })
+
+    def post(self, request):
+        from .models import Capability, RoleCapability, UserCapabilityOverride
+
+        role = (request.data.get("role") or "").strip().upper()
+        capability_code = (request.data.get("capability_code") or "").strip()
+        effect = (request.data.get("effect") or "GRANT").strip().upper()
+
+        if not role or role not in User.Role.values or role == User.Role.GUEST:
+            raise ValidationError({"role": "Select a valid staff role."})
+        if role == User.Role.ADMIN:
+            raise ValidationError({"role": "The ADMIN role permanently holds all active capabilities."})
+        cap = Capability.objects.filter(code=capability_code, is_active=True).first()
+        if cap is None:
+            raise ValidationError({"capability_code": "Unknown capability code."})
+        if cap.code == "audit.view":
+            raise ValidationError({"capability_code": "The audit.view capability is strictly reserved for the Administrator role."})
+
+        if effect == "GRANT":
+            RoleCapability.objects.get_or_create(role=role, capability=cap)
+        elif effect == "REVOKE":
+            RoleCapability.objects.filter(role=role, capability=cap).delete()
+        else:
+            raise ValidationError({"effect": "Effect must be GRANT or REVOKE."})
+
+        log_action(
+            actor=request.user,
+            action="ROLE_CAPABILITY_UPDATED",
+            instance=cap,
+            request=request,
+            metadata={"role": role, "capability_code": cap.code, "effect": effect},
+        )
+        return self.get(request)
+
+
+class AdminUserPermissionsView(APIView):
+    """Administrator-only view to inspect and override individual user capabilities."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request, pk: int):
+        from .capabilities import capability_codes_for_user
+        from .models import RoleCapability, UserCapabilityOverride
+
+        target = User.objects.filter(pk=pk).first()
+        if target is None:
+            raise NotFound("User not found.")
+        if hasattr(target, "_jone_capability_codes"):
+            delattr(target, "_jone_capability_codes")
+        effective = sorted(capability_codes_for_user(target))
+        role_defaults = sorted(
+            RoleCapability.objects.filter(role=target.role, capability__is_active=True)
+            .values_list("capability__code", flat=True)
+        )
+        overrides = [
+            {
+                "id": ov.pk,
+                "capability_code": ov.capability.code,
+                "capability_name": ov.capability.name,
+                "effect": ov.effect,
+                "reason": ov.reason,
+                "updated_at": ov.updated_at,
+            }
+            for ov in UserCapabilityOverride.objects.select_related("capability").filter(user=target)
+        ]
+        return success_response({
+            "user_id": target.pk,
+            "email": target.email,
+            "full_name": target.full_name,
+            "role": target.role,
+            "effective_capabilities": effective,
+            "role_capabilities": role_defaults,
+            "overrides": overrides,
+        })
+
+    def post(self, request, pk: int):
+        from .models import Capability, UserCapabilityOverride
+
+        target = User.objects.filter(pk=pk).first()
+        if target is None:
+            raise NotFound("User not found.")
+        if target.role == User.Role.ADMIN:
+            raise ValidationError({"user": "Administrator accounts hold all capabilities by default."})
+
+        capability_code = (request.data.get("capability_code") or "").strip()
+        effect = (request.data.get("effect") or "").strip().upper()
+        reason = str(request.data.get("reason") or "")[:255]
+
+        if capability_code:
+            cap = Capability.objects.filter(code=capability_code, is_active=True).first()
+            if cap is None:
+                raise ValidationError({"capability_code": "Unknown capability code."})
+            if effect in ("CLEAR", "DEFAULT", "REMOVE"):
+                UserCapabilityOverride.objects.filter(user=target, capability=cap).delete()
+            elif effect in ("GRANT", "REVOKE"):
+                UserCapabilityOverride.objects.update_or_create(
+                    user=target,
+                    capability=cap,
+                    defaults={"effect": effect, "reason": reason, "updated_by": request.user},
+                )
+            else:
+                raise ValidationError({"effect": "Effect must be GRANT, REVOKE, or CLEAR."})
+        else:
+            grants = request.data.get("grants") or []
+            revocations = request.data.get("revocations") or []
+            UserCapabilityOverride.objects.filter(user=target).delete()
+            for code in grants:
+                cap = Capability.objects.filter(code=code, is_active=True).first()
+                if cap:
+                    UserCapabilityOverride.objects.create(
+                        user=target, capability=cap, effect="GRANT", reason=reason, updated_by=request.user
+                    )
+            for code in revocations:
+                cap = Capability.objects.filter(code=code, is_active=True).first()
+                if cap:
+                    UserCapabilityOverride.objects.create(
+                        user=target, capability=cap, effect="REVOKE", reason=reason, updated_by=request.user
+                    )
+
+        if hasattr(target, "_jone_capability_codes"):
+            delattr(target, "_jone_capability_codes")
+        log_action(
+            actor=request.user,
+            action="USER_CAPABILITY_OVERRIDE_UPDATED",
+            instance=target,
+            request=request,
+            metadata={"capability_code": capability_code, "effect": effect, "reason": reason},
+        )
+        return self.get(request, pk=pk)
+

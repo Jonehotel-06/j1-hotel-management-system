@@ -147,33 +147,55 @@
       apply();
     }catch(err){ DATA.error(tbody,"Arrivals couldn't be loaded",(err&&err.message)||"Please try again in a moment.",6); }
   }
-  load();
+  var searchTimer=null;
+  async function runSearch(){
+    if(searchTimer){ clearTimeout(searchTimer); searchTimer=null; }
+    var qEl=document.getElementById("chi-q");
+    var q=(qEl&&qEl.value||"").trim();
+    if(!q){ apply(); return; }
+    try {
+      var res=await window.API.list("bookings",{status:"CONFIRMED,CHECKED_IN",search:q,ordering:"check_in",page_size:25});
+      var rows=window.API.normalizeList?window.API.normalizeList(res.data,res.pagination).items:((res.data&&res.data.results)||res.data||[]);
+      render(rows.filter(function(b){return b.status!=="CHECKED_IN";}));
+      renderInHouse(rows.filter(function(b){return b.status==="CHECKED_IN";}));
+    } catch(err){
+      DATA.error(tbody,"Search failed",err.message||"Please try again.",6);
+    }
+  }
 
   var s=document.querySelector("[data-chi-search]");
-  if(s) s.addEventListener("click",apply);
+  if(s) s.addEventListener("click",function(){ runSearch(); });
   var qEl=document.getElementById("chi-q");
-  if(qEl) qEl.addEventListener("input", JONE.debounce(async function(){
-    var q=qEl.value.trim(); if(!q){ apply(); return; }
-    try { var res=await window.API.list("bookings",{status:"CONFIRMED,CHECKED_IN",search:q,ordering:"check_in",page_size:25}); var rows=window.API.normalizeList?window.API.normalizeList(res.data,res.pagination).items:((res.data&&res.data.results)||res.data||[]); render(rows.filter(function(b){return b.status!=="CHECKED_IN";})); renderInHouse(rows.filter(function(b){return b.status==="CHECKED_IN";})); }
-    catch(err){ DATA.error(tbody,"Search failed",err.message||"Please try again.",6); }
-  },300));
+  if(qEl){
+    qEl.addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); runSearch(); } });
+    qEl.addEventListener("input", function(){
+      if(searchTimer) clearTimeout(searchTimer);
+      searchTimer=setTimeout(function(){ searchTimer=null; runSearch(); },300);
+    });
+  }
+
+  var initialQuery=(new URLSearchParams(location.search).get("q")||new URLSearchParams(location.search).get("ref")||new URLSearchParams(location.search).get("reference")||"").trim();
+  if(initialQuery && qEl){ qEl.value=initialQuery; }
+  load().then(function(){ if(initialQuery) runSearch(); });
 
   // Check-in is a real backend action (POST /api/admin/bookings/{ref}/check-in/):
   // success is only shown AFTER the server confirms.
   document.addEventListener("click", async function(e){
     var btn=e.target.closest("[data-checkin-btn]");
     if(!btn) return;
+    if(searchTimer){ clearTimeout(searchTimer); searchTimer=null; }
     var ref=decodeURIComponent(btn.getAttribute("data-checkin-btn"));
     if(!JONE.guardSubmit(btn)) return;
     try{
       btn.disabled=true;
       await window.API.checkInBooking(ref);
       JONE.ui.toast("Guest checked in ("+ref+").","success");
-      load();
+      await load();
     }catch(err){
-      JONE.releaseGuard(btn);
-      btn.disabled=false;
       JONE.ui.toast(err && (err.message || "Couldn't check in this guest. Please try again."),"error");
+    }finally{
+      btn.disabled=false;
+      JONE.releaseGuard(btn);
     }
   });
 })();

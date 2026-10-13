@@ -30,11 +30,10 @@ from .factories import hotel_settings, make_staff
 # no longer carries the feature so the suite reflects the real codebase; if
 # the feature is ever restored, these tests reactivate automatically.
 _FEATURE_REMOVED = not hasattr(HotelSettings, "policy_text")
-if _FEATURE_REMOVED:
-    raise unittest.SkipTest(
-        "HotelSettings.policy_text / website-image fields were removed from the "
-        "model; these site-content tests cover a feature that no longer exists."
-    )
+_SKIP_REASON = (
+    "HotelSettings.policy_text / website-image fields were removed from the "
+    "model; these site-content tests cover a feature that no longer exists."
+)
 
 
 def _png_file(name="hero.png", size=(24, 24), color=(120, 30, 30, 255)):
@@ -43,6 +42,7 @@ def _png_file(name="hero.png", size=(24, 24), color=(120, 30, 30, 255)):
     return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
 
 
+@unittest.skipIf(_FEATURE_REMOVED, _SKIP_REASON)
 class PolicyFallbackTests(BaseAPITestCase):
     def setUp(self):
         super().setUp()
@@ -113,6 +113,7 @@ class PolicyFallbackTests(BaseAPITestCase):
         )
 
 
+@unittest.skipIf(_FEATURE_REMOVED, _SKIP_REASON)
 class SettingsContentPermissionTests(BaseAPITestCase):
     def setUp(self):
         super().setUp()
@@ -159,6 +160,7 @@ class SettingsContentPermissionTests(BaseAPITestCase):
         self.assertIn(res.status_code, (401, 403))
 
 
+@unittest.skipIf(_FEATURE_REMOVED, _SKIP_REASON)
 class WebsiteImageSettingsTests(BaseAPITestCase):
     def setUp(self):
         super().setUp()

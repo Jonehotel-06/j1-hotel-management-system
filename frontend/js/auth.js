@@ -36,6 +36,7 @@
     MAINTENANCE_TECHNICIAN: "maintenance_technician", ACCOUNTS_MANAGER: "accounts_manager",
     ACCOUNTANT: "accountant", HR_MANAGER: "hr_manager", SECURITY: "security",
     PROCUREMENT_OFFICER: "procurement_officer", STOREKEEPER: "storekeeper",
+    PORTER: "porter", KITCHEN_ASSISTANT: "kitchen_assistant",
     GUEST: "guest", STAFF: "staff"
   };
 
@@ -49,12 +50,47 @@
     return Object.values(ROLES).filter((value) => value !== "guest").includes(r);
   }
 
+  function getSubdomainContext(hostnameOverride, searchOverride) {
+    const map = (window.APP_CONFIG && window.APP_CONFIG.DEPARTMENT_SUBDOMAINS) || {};
+    const host = String(hostnameOverride != null ? hostnameOverride : (window.location && window.location.hostname) || "").toLowerCase();
+    const parts = host.split(".");
+    if (parts.length >= 2) {
+      const first = parts[0];
+      if (first && first !== "www" && first !== "jonehotel" && map[first]) {
+        return map[first];
+      }
+    }
+    try {
+      const searchStr = searchOverride != null ? searchOverride : (window.location && window.location.search) || "";
+      const params = new URLSearchParams(searchStr);
+      const deptParam = String(params.get("department") || params.get("portal") || "").toLowerCase().trim();
+      if (deptParam && map[deptParam]) return map[deptParam];
+    } catch (_) {}
+    return null;
+  }
+
+  function isAuthorizedForSubdomain(roleOrUser, subdomainCtx) {
+    const ctx = subdomainCtx || getSubdomainContext();
+    if (!ctx) return true;
+    const rawRole = typeof roleOrUser === "object" && roleOrUser !== null ? roleOrUser.role : roleOrUser;
+    const r = normRole(rawRole || state.role);
+    if (!r) return false;
+    if (r === "admin") return true;
+    if (Array.isArray(ctx.allowedRoles) && ctx.allowedRoles.includes(r)) return true;
+    return false;
+  }
+
   function defaultStaffLanding(role) {
     const r = normRole(role);
-    if (["cashier", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef"].includes(r)) {
+    const subCtx = getSubdomainContext();
+    if (subCtx && isAuthorizedForSubdomain(r, subCtx) && subCtx.landingPath) {
+      return subCtx.landingPath.replace(/^\//, "");
+    }
+    if (["cashier", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "kitchen_assistant"].includes(r)) {
       return "dashboard/pos.html";
     }
     if (["housekeeping", "housekeeping_manager", "housekeeper"].includes(r)) return "dashboard/housekeeping.html";
+    if (["porter"].includes(r)) return "dashboard/service-requests.html";
     if (["maintenance", "maintenance_technician"].includes(r)) return "dashboard/maintenance.html";
     if (["inventory_clerk", "storekeeper"].includes(r)) return "dashboard/inventory.html";
     if (r === "procurement_officer") return "dashboard/procurement.html";
@@ -174,31 +210,36 @@
 
   /* One-time refresh: called by the API layer on a 401. Returns true when a new
      access token was obtained so the original request is retried once. Never
-     loops (the API layer only retries a single time). */
-  let refreshing = false;
+     loops (the API layer only retries a single time).
+     Single-flight promise deduplication: concurrent callers awaiting a 401
+     refresh share the same in-flight refreshPromise so rotated refresh tokens
+     are never submitted twice or prematurely rejected as false. */
+  let refreshPromise = null;
   async function refreshAccess() {
-    if (refreshing) return false;      // guard against concurrent refresh storms
-    refreshing = true;
-    try {
-      const cred = getSessionCred();
-      if (!cred || !cred.refresh) return false;
-      const deskKey = receptionistDesktopKey();
-      const res = await window.API.refreshTokenCall(cred.refresh, deskKey ? { headers: { "X-JONE-Desktop-Key": deskKey } } : {});
-      const tokens = (res.data && (res.data.tokens || res.data)) || {};
-      const access = tokens.access || null;
-      if (!access) return false;
+    if (refreshPromise) return refreshPromise;
+    refreshPromise = (async () => {
       try {
-        const cur = getSessionCred() || {};
-        cur.access = access;
-        if (tokens.refresh) cur.refresh = tokens.refresh;   // rotation
-        sessionStorage.setItem(SESSION_KEY, JSON.stringify(cur));
-      } catch (_) {}
-      return true;
-    } catch (_) {
-      return false;
-    } finally {
-      refreshing = false;
-    }
+        const cred = getSessionCred();
+        if (!cred || !cred.refresh) return false;
+        const deskKey = receptionistDesktopKey();
+        const res = await window.API.refreshTokenCall(cred.refresh, deskKey ? { headers: { "X-JONE-Desktop-Key": deskKey } } : {});
+        const tokens = (res.data && (res.data.tokens || res.data)) || {};
+        const access = tokens.access || null;
+        if (!access) return false;
+        try {
+          const cur = getSessionCred() || {};
+          cur.access = access;
+          if (tokens.refresh) cur.refresh = tokens.refresh;   // rotation
+          sessionStorage.setItem(SESSION_KEY, JSON.stringify(cur));
+        } catch (_) {}
+        return true;
+      } catch (_) {
+        return false;
+      } finally {
+        refreshPromise = null;
+      }
+    })();
+    return refreshPromise;
   }
 
   function onUnauthorized() {
@@ -250,10 +291,29 @@
     return true;
   }
 
-  async function login(email, password) {
+  async function login(email, password, extra) {
     const key = receptionistDesktopKey();
-    const opts = key ? { headers: { "X-JONE-Desktop-Key": key } } : {};
-    const res = await window.API.login({ email: email, password: password }, opts);
+    const subCtx = getSubdomainContext();
+    const headers = {};
+    if (key) headers["X-JONE-Desktop-Key"] = key;
+    if (subCtx && subCtx.subdomain) headers["X-JONE-Department"] = subCtx.subdomain;
+    const opts = Object.keys(headers).length ? { headers: headers } : {};
+    const body = Object.assign({ email: email, password: password }, extra || {});
+    if (subCtx && subCtx.subdomain && !body.department) body.department = subCtx.subdomain;
+    const res = await window.API.login(body, opts);
+    storeSession(res.data);
+    setAPITokenProvider();
+    return res.data;
+  }
+
+  async function loginWithAccessCode(accessCode, extra) {
+    const subCtx = getSubdomainContext();
+    const headers = {};
+    if (subCtx && subCtx.subdomain) headers["X-JONE-Department"] = subCtx.subdomain;
+    const opts = Object.keys(headers).length ? { headers: headers } : {};
+    const body = Object.assign({ access_code: String(accessCode || "").trim() }, extra || {});
+    if (subCtx && subCtx.subdomain && !body.department) body.department = subCtx.subdomain;
+    const res = await window.API.login(body, opts);
     storeSession(res.data);
     setAPITokenProvider();
     return res.data;
@@ -286,6 +346,11 @@
     if (!isAuthenticated()) {
       const next = encodeURIComponent(location.pathname + location.search);
       location.replace("/login.html?next=" + next);
+      return false;
+    }
+    const subCtx = getSubdomainContext();
+    if (subCtx && !isAuthorizedForSubdomain(state.user || state.role, subCtx)) {
+      location.replace("/403.html");
       return false;
     }
     const allowed = Array.isArray(minRole) ? hasAnyRole(minRole) : hasRole(minRole);
@@ -329,12 +394,13 @@
   }
 
   window.Auth = {
-    ROLES, state, login, logout, guard, hasRole, hasAnyRole, can,
+    ROLES, state, login, loginWithAccessCode, logout, guard, hasRole, hasAnyRole, can,
     isAuthenticated, restore, refreshProfile, onUnauthorized,
     bindLoginForm, clearSession, refreshAccess, loadCapabilities,
     receptionistDesktopKey, setReceptionistDesktopKey,
     hasCapability, hasAnyCapability,
-    isStaffRole, defaultStaffLanding
+    isStaffRole, defaultStaffLanding,
+    getSubdomainContext, isAuthorizedForSubdomain
   };
   window.JONE = window.JONE || {};
 })();

@@ -262,6 +262,9 @@ def clock_attendance(*, staff: User, action: str, actor: User, idempotency_key, 
                 shift.save(update_fields=["status", "actual_end_at", "actual_worked_minutes", "updated_at"])
                 _event(shift=shift, event_type=ShiftAssignmentEvent.Type.COMPLETED, actor=actor,
                        details={"attendance_reference": current.reference, "worked_minutes": current.worked_minutes})
+        from .fingerprint_service import revoke_workstation_credentials_on_clock_out
+
+        revoke_workstation_credentials_on_clock_out(staff=staff, reason="CLOCKED_OUT")
     _attendance_event(record=current, event_type=action, source_key=source_key, actor=actor, occurred_at=now)
     return current, True
 

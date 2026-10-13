@@ -41,9 +41,17 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 logger = logging.getLogger("apps")
 
 
-def _tokens_for(user):
+def _tokens_for(user, workstation_credential=None):
     refresh = RefreshToken.for_user(user)
     refresh["role"] = user.role
+    if workstation_credential is not None:
+        refresh["workstation_credential_id"] = workstation_credential.pk
+        refresh["department"] = workstation_credential.department or ""
+        access = refresh.access_token
+        access["role"] = user.role
+        access["workstation_credential_id"] = workstation_credential.pk
+        access["department"] = workstation_credential.department or ""
+        return {"access": str(access), "refresh": str(refresh)}
     return {"access": str(refresh.access_token), "refresh": str(refresh)}
 
 
@@ -74,19 +82,74 @@ class LoginView(TokenObtainPairView):
     serializer_class = JOneTokenObtainPairSerializer
 
     def post(self, request, *args, **kwargs):
-        # Support temporary biometric workstation credential token
+        # Support temporary biometric workstation credential token or 6-digit numeric access code
         temp_token = request.data.get("temporary_token")
+        access_code = (
+            request.data.get("access_code")
+            or request.data.get("numeric_code")
+            or request.data.get("workstation_code")
+        )
         if temp_token:
-            from apps.staff_operations.services.fingerprint_service import consume_temporary_workstation_credential
-            user = consume_temporary_workstation_credential(temp_token)
-            if not user or not user.is_active:
+            from apps.staff_operations.services.fingerprint_service import (
+                consume_temporary_workstation_credential_record,
+                is_staff_authorized_for_department,
+            )
+            cred = consume_temporary_workstation_credential_record(raw_token=str(temp_token))
+            if not cred or not cred.staff or not cred.staff.is_active:
                 raise AuthenticationFailed("Invalid or expired temporary workstation credential.")
-            tokens = _tokens_for(user)
+            user = cred.staff
+            target_dept = (
+                request.data.get("department")
+                or request.headers.get("X-JONE-Department")
+                or ""
+            ).strip()
+            if target_dept and not is_staff_authorized_for_department(user, target_dept):
+                raise AuthenticationFailed("Temporary credential is not authorized for this department dashboard.")
+            tokens = _tokens_for(user, workstation_credential=cred)
             payload = {
                 "user": UserSerializer(user, context={"request": request}).data,
                 "tokens": tokens,
             }
             return success_response(payload, message="Logged in with temporary biometric credential.")
+
+        if access_code is not None and str(access_code).strip() != "":
+            from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
+            from apps.staff_operations.services.fingerprint_service import authenticate_numeric_workstation_code
+
+            target_dept = (
+                request.data.get("department")
+                or request.headers.get("X-JONE-Department")
+                or ""
+            ).strip()
+            try:
+                cred = authenticate_numeric_workstation_code(
+                    access_code=str(access_code).strip(),
+                    email=str(request.data.get("email") or "").strip(),
+                    employee_code=str(request.data.get("employee_code") or "").strip(),
+                    department=target_dept,
+                    workstation_reference=str(request.data.get("workstation_reference") or "").strip(),
+                )
+            except DjangoPermissionDenied as exc:
+                raise AuthenticationFailed(str(exc)) from exc
+            user = cred.staff
+            tokens = _tokens_for(user, workstation_credential=cred)
+            log_action(
+                actor=user,
+                action="STAFF_SIGN_IN",
+                request=request,
+                metadata={
+                    "role": user.role,
+                    "workstation_reference": cred.workstation_reference,
+                    "department": cred.department,
+                    "policy": "numeric_workstation_code",
+                },
+                summary="Staff signed in with numeric workstation code",
+            )
+            payload = {
+                "user": UserSerializer(user, context={"request": request}).data,
+                "tokens": tokens,
+            }
+            return success_response(payload, message="Logged in with numeric workstation access code.")
 
         try:
             response = super().post(request, *args, **kwargs)
@@ -106,9 +169,17 @@ class JOneTokenRefreshView(TokenRefreshView):
         # refused refresh leaves the session untouched. This closes the gap where
         # a refresh token issued before the desk rule would otherwise keep
         # operational staff signed in indefinitely from any device.
-        _refuse_staff_refresh_outside_desk(request)
+        ws_cred = _refuse_staff_refresh_outside_desk(request)
         response = super().post(request, *args, **kwargs)
-        tokens = {"access": response.data.get("access")}
+        access_str = response.data.get("access")
+        if ws_cred is not None and access_str:
+            from rest_framework_simplejwt.tokens import AccessToken
+
+            access_obj = AccessToken(access_str)
+            access_obj["workstation_credential_id"] = ws_cred.pk
+            access_obj["department"] = ws_cred.department or ""
+            access_str = str(access_obj)
+        tokens = {"access": access_str}
         if response.data.get("refresh"):
             tokens["refresh"] = response.data["refresh"]
         return success_response({"tokens": tokens}, message="Token refreshed.")
@@ -117,16 +188,35 @@ class JOneTokenRefreshView(TokenRefreshView):
 def _refuse_staff_refresh_outside_desk(request):
     raw = request.data.get("refresh") if hasattr(request.data, "get") else None
     if not isinstance(raw, str) or not raw:
-        return
+        return None
     try:
         token = RefreshToken(raw)
     except TokenError:
-        return  # simplejwt returns its standard 401 for malformed or expired tokens
+        return None  # simplejwt returns its standard 401 for malformed or expired tokens
     user = User.objects.filter(pk=token.get("user_id")).first()
-    if user is None or not sign_in_policy_applies(user):
-        return
+    if user is None:
+        return None
+    cred_id = token.get("workstation_credential_id")
+    if cred_id:
+        from apps.staff_operations.biometric_models import TemporaryWorkstationCredential
+
+        cred = (
+            TemporaryWorkstationCredential.objects.select_related("attendance_record")
+            .filter(pk=cred_id, staff_id=user.pk)
+            .first()
+        )
+        if (
+            cred is None
+            or not cred.session_active
+            or cred.revoked_at is not None
+            or (cred.attendance_record and cred.attendance_record.clock_out_at is not None)
+        ):
+            raise AuthenticationFailed("Workstation session ended upon clock-out.", code="workstation_clocked_out")
+        return cred
+    if not sign_in_policy_applies(user):
+        return None
     if receptionist_desktop_for_key(presented_desktop_key(request)) is not None:
-        return
+        return None
     logger.warning("Staff session refresh refused: user_id=%s role=%s reason=no_receptionist_desktop", user.pk, user.role)
     log_action(
         actor=user, action="STAFF_SIGN_IN_RESTRICTED", request=request,

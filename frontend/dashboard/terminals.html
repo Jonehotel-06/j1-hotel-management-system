@@ -14,6 +14,71 @@
 <div class="dash-main"><header class="dash-topbar"><div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title" data-dash-title><h1>Registered workstations</h1><p>Optional accountability labels for this browser's staff requests.</p></div></div><div class="dash-topbar-right"><div class="dash-topbar-actions" data-topbar-actions></div><button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false"><span class="icon-moon" data-icon="moon" data-size="18"></span><span class="icon-sun" data-icon="sun" data-size="18"></span></button></div></header>
 <main class="dash-content">
   <div class="qr-note">Workstation attribution is informational only. Every action still uses the signed-in staff account and server-side capabilities; selecting or spoofing a workstation never grants access or locks an account. Browser selection is stored locally and may be cleared at any time.</div>
+
+  <section class="panel" id="reception-attendance-workstation-panel" style="margin-bottom:1.5rem;">
+    <div class="panel-head">
+      <div>
+        <h2>Reception Attendance Workstation &amp; Numeric Code Issuance</h2>
+        <p class="caption muted">Verify staff fingerprints, record clock-in / break / clock-out, and issue 6-digit numeric workstation access codes bound to active attendance sessions.</p>
+      </div>
+      <div class="panel-actions">
+        <button class="btn btn-sm btn-outline" type="button" id="reception-terminal-refresh">Refresh terminal</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div class="grid grid-4" style="gap:0.75rem;margin-bottom:1.25rem;">
+        <div class="card card-pad"><div class="caption muted">Enrolled Fingerprints</div><div id="rt-kpi-enrolled" style="font-size:1.4rem;font-weight:700;">0</div></div>
+        <div class="card card-pad"><div class="caption muted">Currently Clocked In</div><div id="rt-kpi-on-duty" style="font-size:1.4rem;font-weight:700;">0</div></div>
+        <div class="card card-pad"><div class="caption muted">On Break / Clocked Out Today</div><div id="rt-kpi-break-out" style="font-size:1.4rem;font-weight:700;">0 / 0</div></div>
+        <div class="card card-pad"><div class="caption muted">Active 6-Digit Access Codes</div><div id="rt-kpi-codes" style="font-size:1.4rem;font-weight:700;">0</div></div>
+      </div>
+
+      <div class="grid grid-2" style="gap:1.25rem;align-items:start;">
+        <div class="card card-pad">
+          <h3 style="font-size:1rem;margin-bottom:0.5rem;">Biometric Fingerprint Verification &amp; Clock Action</h3>
+          <p class="caption muted" style="margin-bottom:0.75rem;">Enter Employee Code or Email (or leave blank for 1:N reader identification) and place finger on reader.</p>
+          <div class="field">
+            <label class="field-label" for="rt-staff-identifier">Employee Code or Email</label>
+            <input class="input" id="rt-staff-identifier" type="text" placeholder="e.g. STF-... or staff@jonehotel.com">
+          </div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+            <button class="btn btn-sm" type="button" data-rt-action="CLOCK_IN">Clock In &amp; Issue 6-Digit Code</button>
+            <button class="btn btn-sm btn-outline" type="button" data-rt-action="ISSUE_CODE">Re-Issue 6-Digit Code</button>
+            <button class="btn btn-sm btn-outline" type="button" data-rt-action="VERIFY_STATUS">Verify Status</button>
+            <button class="btn btn-sm btn-outline" type="button" data-rt-action="BREAK_START">Start Break</button>
+            <button class="btn btn-sm btn-outline" type="button" data-rt-action="BREAK_END">End Break</button>
+            <button class="btn btn-sm btn-danger" type="button" data-rt-action="CLOCK_OUT">Clock Out (Expire Code)</button>
+          </div>
+        </div>
+
+        <div class="card card-pad" id="rt-result-card">
+          <h3 style="font-size:1rem;margin-bottom:0.5rem;">Verified Employee &amp; Issued Workstation Code</h3>
+          <div id="rt-result-body">
+            <p class="caption muted">Scan a staff member's fingerprint on the left to verify attendance status or issue a 6-digit numeric workstation access code.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-body no-pad">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Active attendance and workstation codes">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th>Department &amp; Role</th>
+              <th>Attendance Status</th>
+              <th>Clocked In</th>
+              <th>Workstation Code State</th>
+              <th>Quick Action</th>
+            </tr>
+          </thead>
+          <tbody id="rt-active-attendance-rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <section class="panel"><div class="panel-head"><h2>Workstation registry</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-terminal-clear>Clear this browser</button><button class="btn btn-sm btn-outline" type="button" data-terminal-refresh>Refresh</button><button class="btn btn-sm" type="button" data-terminal-new>Register workstation</button></div></div>
     <div class="panel-body"><p class="caption" data-terminal-current>No workstation selected for this browser.</p></div>
     <div class="panel-body" data-desk-key-panel style="display:none;" role="status" aria-live="polite" style="border-left:3px solid var(--color-warning,#b7791f);"><p><strong>Receptionist Desktop key.</strong> Copy it now and enter it on the front desk browser under &ldquo;Set up this Receptionist Desktop&rdquo; on the sign-in page. It is shown only once; the server stores just a digest. Issuing a new key revokes the previous one.</p><p><code data-desk-key-value style="word-break:break-all;user-select:all;"></code></p><div class="row-actions"><button class="btn btn-sm" type="button" data-desk-key-copy>Copy key</button><button class="btn btn-sm btn-outline" type="button" data-desk-key-dismiss>I have copied it</button></div></div>
@@ -21,7 +86,7 @@
     <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Registered workstations"><table class="table"><thead><tr><th>Workstation</th><th>Department</th><th>Status</th><th class="hide-sm">Last reported staff</th><th class="hide-sm">Last seen</th><th>Actions</th></tr></thead><tbody data-terminal-rows></tbody></table></div><div class="pagination" data-terminal-pagination></div></div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.12"></script><script src="../js/config.js?v=1.1.12"></script><script src="../js/utils.js?v=1.1.12"></script><script src="../js/icons.js?v=1.1.12"></script><script src="../js/api.js?v=1.1.12"></script><script src="../js/theme.js?v=1.1.12"></script><script src="../js/ui.js?v=1.1.12"></script><script src="../js/auth.js?v=1.1.12"></script><script src="../js/navigation.js?v=1.1.12"></script><script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script><script src="../js/operations.js?v=1.1.12"></script>
+<script src="../js/runtime-config.js?v=1.1.12"></script><script src="../js/config.js?v=1.1.12"></script><script src="../js/utils.js?v=1.1.12"></script><script src="../js/icons.js?v=1.1.12"></script><script src="../js/api.js?v=1.1.12"></script><script src="../js/theme.js?v=1.1.12"></script><script src="../js/ui.js?v=1.1.12"></script><script src="../js/auth.js?v=1.1.12"></script><script src="../js/navigation.js?v=1.1.12"></script><script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script><script src="../js/operations.js?v=1.1.12"></script><script src="../js/biometrics.js?v=1.1.12"></script>
 <script>
 JONE.ui.initChrome();var __terminalAllowed=JONE.dashboard.boot(["admin","manager","general_manager"]);document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
 (function(){"use strict";if(!__terminalAllowed)return;var OPS=JONE.operations,rows=document.querySelector("[data-terminal-rows]"),pager=document.querySelector("[data-terminal-pagination]"),current=document.querySelector("[data-terminal-current]"),state={page:1,cache:{}};
@@ -39,5 +104,95 @@ async function deactivate(id,reference){var ok=await JONE.ui.confirm({title:"Dea
 rows.addEventListener("click",function(event){var button=event.target.closest("button[data-terminal-action]");if(!button)return;var action=button.dataset.terminalAction,id=button.dataset.terminalId,ref=button.dataset.terminalRef;if(action==="select"){var item=state.cache&&state.cache[String(id)];if(!item||!item.is_active)return;var selected=window.API.getWorkstationReference()===ref;window.API.setWorkstationReference(selected?"":ref);JONE.ui.toast(selected?"Workstation attribution cleared.":"Workstation selected for this browser.","success");load();}else if(action==="edit")editTerminal(id);else if(action==="desk-key")issueDeskKey(id,ref,button.dataset.terminalName||"");else if(action==="deactivate")deactivate(id,ref);});
 document.querySelector("[data-terminal-new]").addEventListener("click",createTerminal);document.querySelector("[data-desk-key-copy]").addEventListener("click",copyDeskKey);document.querySelector("[data-desk-key-dismiss]").addEventListener("click",hideDeskKey);document.querySelector("[data-terminal-refresh]").addEventListener("click",function(){load();});document.querySelector("[data-terminal-clear]").addEventListener("click",function(){window.API.setWorkstationReference("");JONE.ui.toast("Workstation attribution cleared.","success");load();});document.getElementById("terminal-active").addEventListener("change",function(){load(1);});document.getElementById("terminal-search").addEventListener("input",JONE.debounce(function(){load(1);},300));
 load(1);
+
+// Reception Attendance Workstation logic
+var rtRows=document.getElementById("rt-active-attendance-rows"),rtResult=document.getElementById("rt-result-body");
+async function loadReceptionTerminal(){
+  if(!rtRows)return;
+  try{
+    var data=await JONE.biometrics.getReceptionTerminalStatus();
+    var sum=(data&&data.summary)||{};
+    var elEnr=document.getElementById("rt-kpi-enrolled"),elDuty=document.getElementById("rt-kpi-on-duty"),elBrk=document.getElementById("rt-kpi-break-out"),elCodes=document.getElementById("rt-kpi-codes");
+    if(elEnr)elEnr.textContent=String(sum.enrolled_staff_count||0);
+    if(elDuty)elDuty.textContent=String(sum.currently_clocked_in_count||0);
+    if(elBrk)elBrk.textContent=String(sum.currently_on_break_count||0)+" / "+String(sum.clocked_out_today_count||0);
+    if(elCodes)elCodes.textContent=String(sum.active_access_codes_count||0);
+    var activeList=(data&&data.active_attendance)||[];
+    if(!activeList.length){
+      JONE.dashboard.DATA.empty(rtRows,"clock","No staff currently clocked in","Verify a staff member's fingerprint above to clock in and issue a 6-digit workstation access code.",6);
+      return;
+    }
+    rtRows.innerHTML=activeList.map(function(row){
+      var codeState=row.has_active_code?'<span class="badge">Active Code ('+JONE.esc(row.code_workstation||"Terminal")+')</span>':'<span class="caption muted">No active code</span>';
+      return '<tr>'+
+        '<td><strong>'+JONE.esc(row.staff_name)+'</strong><br><small>'+JONE.esc(row.employee_code)+" · "+JONE.esc(row.staff_email)+'</small></td>'+
+        '<td>'+JONE.esc(row.department)+'<br><small>'+JONE.esc(String(row.role||"").replace(/_/g," "))+'</small></td>'+
+        '<td>'+JONE.dashboard.statusPill(row.status)+'</td>'+
+        '<td>'+JONE.esc(row.clock_in_at?JONE.formatDateTime(row.clock_in_at):"—")+'</td>'+
+        '<td>'+codeState+'</td>'+
+        '<td><div class="row-actions">'+
+          '<button class="btn btn-sm btn-outline" type="button" data-rt-row-action="ISSUE_CODE" data-rt-email="'+JONE.esc(row.staff_email)+'">Re-Issue Code</button>'+
+          '<button class="btn btn-sm btn-danger" type="button" data-rt-row-action="CLOCK_OUT" data-rt-email="'+JONE.esc(row.staff_email)+'">Clock Out</button>'+
+        '</div></td>'+
+      '</tr>';
+    }).join("");
+  }catch(err){
+    JONE.dashboard.DATA.error(rtRows,"Reception terminal status unavailable",(err&&err.message)||"Configure Receptionist Desktop key or sign in with attendance permissions.",6);
+  }
+}
+
+function renderRtActionResult(res){
+  if(!rtResult||!res)return;
+  var codeHtml="";
+  if(res.access_code){
+    codeHtml='<div style="margin-top:0.75rem;padding:0.85rem;border:1px dashed var(--color-primary,#373435);border-radius:8px;text-align:center;">'+
+      '<div class="caption muted">6-DIGIT NUMERIC WORKSTATION ACCESS CODE</div>'+
+      '<div data-reception-issued-code style="font-size:1.75rem;font-weight:800;letter-spacing:0.3em;margin:0.35rem 0;">'+JONE.esc(res.access_code)+'</div>'+
+      '<div class="caption muted">Bound to '+JONE.esc(res.staff_name)+' ('+JONE.esc(res.department)+') · Expires automatically upon clock-out</div>'+
+    '</div>';
+  }
+  rtResult.innerHTML=
+    '<div><strong>'+JONE.esc(res.staff_name||"—")+'</strong> ('+JONE.esc(res.employee_code||"—")+')</div>'+
+    '<div class="caption muted">Department: '+JONE.esc(res.department||"—")+' · Role: '+JONE.esc(String(res.role||"").replace(/_/g," "))+'</div>'+
+    '<div style="margin-top:0.5rem;">Attendance Status: '+JONE.dashboard.statusPill(res.attendance_status||res.status||"VERIFIED")+'</div>'+
+    codeHtml;
+}
+
+async function runRtAction(action,identifierOverride,btn){
+  var idInput=document.getElementById("rt-staff-identifier");
+  var rawId=String(identifierOverride!=null?identifierOverride:(idInput?idInput.value:"")).trim();
+  var payload={action:action};
+  if(rawId){
+    if(rawId.indexOf("@")!==-1)payload.email=rawId;
+    else payload.employee_code=rawId;
+  }
+  var wsRef=window.API.getWorkstationReference();
+  if(wsRef)payload.workstation_reference=wsRef;
+  if(btn&&!JONE.guardSubmit(btn))return;
+  try{
+    var res=await JONE.biometrics.executeReceptionTerminalAction(payload);
+    renderRtActionResult(res);
+    JONE.ui.toast("Biometric "+action.toLowerCase().replace(/_/g," ")+" completed for "+(res.staff_name||"staff")+".","success");
+    loadReceptionTerminal();
+  }catch(err){
+    JONE.ui.toast((err&&err.message)||"Biometric verification failed.","error");
+  }finally{
+    if(btn)JONE.releaseGuard(btn);
+  }
+}
+
+document.querySelectorAll("button[data-rt-action]").forEach(function(btn){
+  btn.addEventListener("click",function(){runRtAction(btn.getAttribute("data-rt-action"),null,btn);});
+});
+if(rtRows){
+  rtRows.addEventListener("click",function(e){
+    var b=e.target.closest("button[data-rt-row-action]");
+    if(!b)return;
+    runRtAction(b.getAttribute("data-rt-row-action"),b.getAttribute("data-rt-email"),b);
+  });
+}
+var rtRefresh=document.getElementById("reception-terminal-refresh");
+if(rtRefresh)rtRefresh.addEventListener("click",function(){loadReceptionTerminal();});
+loadReceptionTerminal();
 })();
 </script><script src="../js/pwa.js?v=1.1.12"></script><script src="../js/version.js?v=1.1.12"></script><script src="../js/update-checker.js?v=1.1.12"></script></body></html>

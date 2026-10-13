@@ -73,6 +73,29 @@ Enforced security properties:
 3. Verification and clock-in use the approved template only.
 4. Templates expire (retention policy) and are cleared on expiry.
 
+## Reception Attendance Workstation & 6-Digit Numeric Access Code Workflow
+
+To support shared department workstations across the property (`frontdesk.jonehotel.com`, `kitchen.jonehotel.com`, `restaurant.jonehotel.com`, `bar.jonehotel.com`, `housekeeping.jonehotel.com`, `porter.jonehotel.com`, `store.jonehotel.com`, etc.), the Reception Attendance Workstation (`POST /api/admin/staff-operations/biometrics/reception-terminal/` or `POST /api/admin/staff-operations/biometrics/temporary-credential/`) implements the following lifecycle:
+
+1. **Biometric Verification & Clock-In**:
+   - The employee scans their fingerprint at the Reception Attendance Workstation (`dashboard/workforce.html` or `dashboard/terminals.html`).
+   - The backend verifies that the employee is `is_active=True`, has `StaffProfile.employment_status == "ACTIVE"`, and matches an `ACTIVE` approved `FingerprintTemplate` above the similarity threshold (`70.0`).
+2. **Cryptographically Random 6-Digit Numeric Code Issuance**:
+   - Upon `CLOCK_IN` (or `ISSUE_CODE` while actively clocked in), `issue_temporary_workstation_credential()` generates a cryptographically random 6-digit numeric-only code (`000000`–`999999` via `secrets.randbelow`, avoiding active collisions).
+   - Only the salted SHA-256 hash (`access_code_hash`) and masked last 4 digits (`access_code_last4`) are persisted in `TemporaryWorkstationCredential`, bound to:
+     - `staff` (verified employee)
+     - `department` (resolved department code, e.g. `FRONT_DESK`, `KITCHEN`)
+     - `workstation` (`Workstation` instance)
+     - `attendance_record` (active `AttendanceRecord` shift)
+3. **Department Subdomain / Workstation Sign-In**:
+   - The employee enters their 6-digit numeric access code on `login.html` (`POST /api/auth/login/` with `access_code` and optional `department`).
+   - Cross-department use is rejected (`403 Forbidden`) if the employee's department/role does not match the target department portal.
+   - The issued JWT access and refresh tokens carry `workstation_credential_id` and `department`.
+4. **Immediate Transactional Expiration Upon Clock-Out**:
+   - Browser logout clears the local browser session without clocking the employee out.
+   - When the employee clocks out (`CLOCK_OUT` via Reception Attendance Workstation or `clock_attendance()`), `revoke_workstation_credentials_on_clock_out()` runs inside the same database transaction, setting `status = REVOKED`, `revoked_at = timezone.now()`, and `revoked_reason = "CLOCKED_OUT"`.
+   - `WorkstationJWTAuthentication` and `JOneTokenRefreshView` verify the linked `TemporaryWorkstationCredential` and active attendance record on every request, immediately rejecting tokens after clock-out with `401 Unauthorized` (`code="workstation_clocked_out"`).
+
 ## Mock integration tests
 
 `backend/tests/test_fingerprint_device_mock.py` (8 tests) drives this exact

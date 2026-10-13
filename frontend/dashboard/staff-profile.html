@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<script>
+/* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
+(function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Staff Profile | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">
+<link rel="stylesheet" href="../css/main.css?v=1.1.12">
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <header class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1 id="sp-page-title">Staff Profile</h1>
+          <p id="sp-page-subtitle">Comprehensive 10-section employee record</p>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <a class="btn btn-sm btn-outline" href="staff.html">&larr; Staff Directory</a>
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </header>
+    <main class="dash-content">
+      <section class="panel" style="margin-bottom:1.25rem;">
+        <div class="panel-body">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:1rem;">
+            <div style="display:flex;align-items:center;gap:1rem;">
+              <div id="sp-avatar" class="dash-avatar" style="width:56px;height:56px;font-size:1.25rem;">ST</div>
+              <div>
+                <h2 id="sp-header-name" style="margin:0;">Loading employee...</h2>
+                <div class="caption muted" id="sp-header-meta">—</div>
+                <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.5rem;" id="sp-header-badges"></div>
+              </div>
+            </div>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;" id="sp-lifecycle-actions">
+              <button class="btn btn-sm" type="button" id="sp-btn-edit">Edit Profile</button>
+              <button class="btn btn-sm btn-outline" type="button" id="sp-btn-transfer">Transfer Dept / Role</button>
+              <button class="btn btn-sm btn-outline" type="button" id="sp-btn-reset-pw">Reset / Send Credentials</button>
+              <button class="btn btn-sm btn-outline" type="button" id="sp-btn-suspend">Suspend</button>
+              <button class="btn btn-sm btn-outline" type="button" id="sp-btn-reactivate">Reactivate</button>
+              <button class="btn btn-sm btn-danger" type="button" id="sp-btn-archive">Deactivate / Archive</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel-body" style="border-top:1px solid var(--color-border);display:flex;gap:0.4rem;flex-wrap:wrap;" role="tablist" aria-label="Employee profile tabs">
+          <button class="btn btn-sm" type="button" data-sp-tab="overview">1. Overview</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="personal">2. Personal</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="employment">3. Employment &amp; Dept</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="biometrics">4. Fingerprint &amp; Attendance</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="salary">5. Salary &amp; Payments</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="disciplinary">6. Offenses &amp; Disciplinary</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="leave_shifts">7. Leave &amp; Shifts</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="documents">8. Documents</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="permissions">9. Permissions &amp; Access</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="audit">10. Activity &amp; Audit</button>
+        </div>
+      </section>
+
+      <section class="panel" id="sp-pane-overview">
+        <div class="panel-head"><h2>Employee Overview</h2></div>
+        <div class="panel-body" id="sp-overview-body"></div>
+      </section>
+
+      <section class="panel" id="sp-pane-personal" style="display:none;">
+        <div class="panel-head"><h2>Personal &amp; Emergency Contact Information</h2></div>
+        <div class="panel-body" id="sp-personal-body"></div>
+      </section>
+
+      <section class="panel" id="sp-pane-employment" style="display:none;">
+        <div class="panel-head"><h2>Employment, Department &amp; Workstation Assignment</h2></div>
+        <div class="panel-body" id="sp-employment-body"></div>
+      </section>
+
+      <section class="panel" id="sp-pane-biometrics" style="display:none;">
+        <div class="panel-head">
+          <h2>Biometric Fingerprint &amp; Attendance Records</h2>
+          <div class="panel-actions">
+            <button class="btn btn-sm" type="button" id="sp-btn-enroll-fp">Enroll / Re-Enroll Fingerprint</button>
+            <button class="btn btn-sm btn-danger" type="button" id="sp-btn-revoke-fp">Revoke Fingerprint</button>
+          </div>
+        </div>
+        <div class="panel-body" id="sp-biometrics-summary"></div>
+        <div class="panel-body no-pad">
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>Reference</th><th>Date</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Worked Mins</th></tr></thead>
+            <tbody id="sp-attendance-rows"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <section class="panel" id="sp-pane-salary" style="display:none;">
+        <div class="panel-head">
+          <h2>Salary Structure &amp; Payment History</h2>
+          <div class="panel-actions">
+            <button class="btn btn-sm" type="button" id="sp-btn-set-comp">Update Compensation</button>
+          </div>
+        </div>
+        <div class="panel-body" id="sp-salary-summary"></div>
+        <div class="panel-body no-pad">
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>Payroll Period</th><th>Basic Pay</th><th>Gross Pay</th><th>Deductions</th><th>Net Payable</th><th>Paid / Balance</th><th>Status</th></tr></thead>
+            <tbody id="sp-payroll-rows"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <section class="panel" id="sp-pane-disciplinary" style="display:none;">
+        <div class="panel-head">
+          <h2>Offenses, Disciplinary Actions &amp; Approved Deductions</h2>
+          <div class="panel-actions">
+            <button class="btn btn-sm" type="button" id="sp-btn-new-offense">Record Offense / Incident</button>
+          </div>
+        </div>
+        <div class="panel-body no-pad">
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>Reference &amp; Date</th><th>Category &amp; Allegation</th><th>Employee Response</th><th>Review Status &amp; Outcome</th><th>Action / Warning</th><th>Deduction Status</th><th>Workflow Actions</th></tr></thead>
+            <tbody id="sp-disciplinary-rows"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <section class="panel" id="sp-pane-leave_shifts" style="display:none;">
+        <div class="panel-head"><h2>Leave History &amp; Scheduled Shifts</h2></div>
+        <div class="panel-body no-pad">
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>Leave Ref</th><th>Type</th><th>Dates</th><th>Status</th><th>Reason / Review Note</th></tr></thead>
+            <tbody id="sp-leave-rows"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <section class="panel" id="sp-pane-documents" style="display:none;">
+        <div class="panel-head">
+          <h2>HR Documents, Contracts, Certifications &amp; Assets</h2>
+          <div class="panel-actions">
+            <button class="btn btn-sm" type="button" id="sp-btn-upload-doc">Add / Upload Document</button>
+          </div>
+        </div>
+        <div class="panel-body no-pad">
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>Reference</th><th>Category</th><th>Title &amp; Description</th><th>Issued / Expiry</th><th>Uploaded By</th><th>Actions</th></tr></thead>
+            <tbody id="sp-document-rows"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <section class="panel" id="sp-pane-permissions" style="display:none;">
+        <div class="panel-head">
+          <h2>Account Access, Credential Delivery &amp; Permission Overrides</h2>
+          <div class="panel-actions">
+            <button class="btn btn-sm btn-outline" type="button" id="sp-btn-override-perm">Add Capability Override</button>
+          </div>
+        </div>
+        <div class="panel-body" id="sp-permissions-body"></div>
+      </section>
+
+      <section class="panel" id="sp-pane-audit" style="display:none;">
+        <div class="panel-head"><h2>Employee Activity &amp; Audit Trail</h2></div>
+        <div class="panel-body no-pad">
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>Timestamp</th><th>Action</th><th>Summary</th><th>Actor</th><th>Details</th></tr></thead>
+            <tbody id="sp-audit-rows"></tbody>
+          </table></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.12"></script>
+<script src="../js/config.js?v=1.1.12"></script>
+<script src="../js/utils.js?v=1.1.12"></script>
+<script src="../js/icons.js?v=1.1.12"></script>
+<script src="../js/api.js?v=1.1.12"></script>
+<script src="../js/theme.js?v=1.1.12"></script>
+<script src="../js/ui.js?v=1.1.12"></script>
+<script src="../js/auth.js?v=1.1.12"></script>
+<script src="../js/navigation.js?v=1.1.12"></script>
+<script src="../js/dashboard.js?v=1.1.12"></script>
+<script src="../js/table-fit.js?v=1.1.12"></script>
+<script src="../js/biometrics.js?v=1.1.12"></script>
+<script>
+JONE.ui.initChrome();
+var __spAllowed = JONE.dashboard.boot(["admin", "general_manager", "manager", "hr_manager"]);
+document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  "use strict";
+  if (!__spAllowed) return;
+  var params = new URLSearchParams(location.search);
+  var userId = params.get("id") || params.get("user_id");
+  var initialTab = params.get("tab") || "overview";
+  var fullData = null;
+
+  var panes = ["overview","personal","employment","biometrics","salary","disciplinary","leave_shifts","documents","permissions","audit"];
+  function switchTab(tab){
+    panes.forEach(function(p){
+      var el = document.getElementById("sp-pane-" + p);
+      if (el) el.style.display = (p === tab) ? "" : "none";
+    });
+    document.querySelectorAll("button[data-sp-tab]").forEach(function(b){
+      var active = b.getAttribute("data-sp-tab") === tab;
+      b.classList.toggle("btn-ghost", !active);
+    });
+  }
+  document.querySelectorAll("button[data-sp-tab]").forEach(function(b){
+    b.addEventListener("click", function(){ switchTab(b.getAttribute("data-sp-tab")); });
+  });
+  switchTab(initialTab);
+
+  function kvGrid(pairs){
+    return '<div class="grid grid-3" style="gap:0.85rem;">' + pairs.map(function(p){
+      return '<div class="card card-pad"><div class="caption muted">' + JONE.esc(p[0]) + '</div><div style="font-weight:600;margin-top:0.2rem;">' + JONE.esc(p[1] == null || p[1] === "" ? "—" : String(p[1])) + '</div></div>';
+    }).join("") + '</div>';
+  }
+
+  async function loadFullProfile(){
+    if (!userId) {
+      JONE.ui.toast("Missing staff user ID in URL (?id=...).", "error");
+      return;
+    }
+    try {
+      var ep = window.APP_CONFIG.API_ENDPOINTS.staffFullProfile + encodeURIComponent(userId) + "/full-profile/";
+      var res = await window.API.get(ep);
+      fullData = res && res.data;
+      renderProfile(fullData);
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "Could not load staff profile.", "error");
+    }
+  }
+
+  function renderProfile(d){
+    if (!d) return;
+    var ov = d.overview || {};
+    var pr = d.profile || {};
+    var us = d.user || {};
+
+    document.getElementById("sp-header-name").textContent = ov.full_name || us.full_name || us.email;
+    document.getElementById("sp-header-meta").textContent =
+      (ov.employee_code || "—") + " · " + (ov.department || "Unassigned Dept") + " · " + (ov.job_title || ov.role_label || ov.role);
+    document.getElementById("sp-avatar").textContent = JONE.initials(ov.full_name || us.email || "ST");
+    document.getElementById("sp-header-badges").innerHTML =
+      JONE.dashboard.statusPill(ov.employment_status || "ACTIVE") +
+      '<span class="badge">Account: ' + JONE.esc(ov.account_active ? "ACTIVE" : "INACTIVE") + '</span>' +
+      '<span class="badge">Fingerprint: ' + JONE.esc(ov.fingerprint_status || "NOT_ENROLLED") + '</span>' +
+      '<span class="badge">Attendance: ' + JONE.esc(ov.attendance_status || "NOT_CLOCKED_IN") + '</span>';
+
+    document.getElementById("sp-overview-body").innerHTML = kvGrid([
+      ["Full Name", ov.full_name],
+      ["Employee Code", ov.employee_code],
+      ["Department", ov.department],
+      ["Job Title / Position", ov.job_title],
+      ["System Role", ov.role_label + " (" + ov.role + ")"],
+      ["Employment Status", ov.employment_status],
+      ["Employment Type", ov.employment_type],
+      ["Fingerprint Status", ov.fingerprint_status],
+      ["Current Attendance", ov.attendance_status],
+      ["Active Workstation Code", ov.has_active_access_code ? "Issued (Active Shift)" : "None"],
+      ["Open Disciplinary Cases", ov.open_disciplinary_count],
+      ["Active HR Documents", ov.documents_count]
+    ]);
+
+    document.getElementById("sp-personal-body").innerHTML = kvGrid([
+      ["First Name", pr.first_name || us.first_name],
+      ["Middle Name", pr.middle_name || us.middle_name],
+      ["Last Name", pr.last_name || us.last_name],
+      ["Employee Code", pr.employee_code],
+      ["Date of Birth", pr.date_of_birth],
+      ["Gender", pr.gender],
+      ["Phone Number", pr.phone || us.phone],
+      ["Email Address", pr.email || us.email],
+      ["Residential Address", pr.residential_address],
+      ["Emergency Contact Name", pr.emergency_contact_name],
+      ["Emergency Contact Relationship", pr.emergency_contact_relationship],
+      ["Emergency Contact Phone", pr.emergency_contact_phone],
+      ["Emergency Contact Address", pr.emergency_contact_address]
+    ]);
+
+    document.getElementById("sp-employment-body").innerHTML = kvGrid([
+      ["Department", pr.department_name || pr.department],
+      ["Job Title", pr.job_title],
+      ["Employment Type", pr.employment_type],
+      ["Employment Status", pr.employment_status],
+      ["Start Date", pr.employment_start],
+      ["Probation Status", pr.probation_status],
+      ["Probation End Date", pr.probation_end_date],
+      ["Reporting Manager", pr.reporting_manager_name],
+      ["Work Location / Branch", pr.work_location],
+      ["Default Shift Template", pr.default_shift_template_name],
+      ["Assigned Workstation", pr.assigned_workstation_name],
+      ["End Date / Reason", (pr.employment_end_date || "—") + (pr.employment_end_reason ? " · " + pr.employment_end_reason : "")],
+      ["Job Description & Responsibilities", pr.job_description],
+      ["Supervisor Notes", pr.notes]
+    ]);
+
+    var bio = (d.biometrics_attendance && d.biometrics_attendance.biometrics) || {};
+    document.getElementById("sp-biometrics-summary").innerHTML = kvGrid([
+      ["Enrollment Status", bio.enrollment_status],
+      ["Verification Status", bio.verification_status],
+      ["Last Verified At", bio.last_verified_at ? JONE.formatDateTime(bio.last_verified_at) : "Never"],
+      ["Failed Attempts", bio.failed_attempts_count],
+      ["Current Attendance", bio.attendance_status],
+      ["Active Workstation Code", bio.has_active_access_code ? "Active (" + (bio.active_workstation_reference || "Terminal") + ")" : "None"]
+    ]);
+
+    var attRows = document.getElementById("sp-attendance-rows");
+    var attList = (d.biometrics_attendance && d.biometrics_attendance.recent_attendance) || [];
+    if (!attList.length) {
+      JONE.dashboard.DATA.empty(attRows, "clock", "No attendance records", "No clock-in records found for this employee.", 6);
+    } else {
+      attRows.innerHTML = attList.map(function(a){
+        return '<tr><td><code>' + JONE.esc(a.reference) + '</code></td><td>' + JONE.esc(a.business_date) + '</td><td>' + JONE.dashboard.statusPill(a.status) + '</td><td>' + JONE.esc(a.clock_in_at ? JONE.formatDateTime(a.clock_in_at) : "—") + '</td><td>' + JONE.esc(a.clock_out_at ? JONE.formatDateTime(a.clock_out_at) : "—") + '</td><td>' + JONE.esc(a.worked_minutes || 0) + '</td></tr>';
+      }).join("");
+    }
+
+    var sal = d.salary_payments || {};
+    var salSum = document.getElementById("sp-salary-summary");
+    var payRows = document.getElementById("sp-payroll-rows");
+    if (!sal.authorized) {
+      salSum.innerHTML = '<p class="muted">Salary and payroll records require payroll viewing or Administrator permission.</p>';
+      JONE.dashboard.DATA.empty(payRows, "lock", "Restricted", "Salary history is restricted.", 7);
+    } else {
+      var comp = sal.current_compensation || {};
+      var ssum = sal.summary || {};
+      salSum.innerHTML = kvGrid([
+        ["Basic Salary", comp.basic_salary ? (comp.currency + " " + comp.basic_salary) : "Not configured"],
+        ["Housing Allowance", comp.housing_allowance ? (comp.currency + " " + comp.housing_allowance) : "0.00"],
+        ["Transport Allowance", comp.transport_allowance ? (comp.currency + " " + comp.transport_allowance) : "0.00"],
+        ["Overtime Rate / Hr", comp.overtime_rate ? (comp.currency + " " + comp.overtime_rate) : "0.00"],
+        ["Effective Date", comp.effective_from || "—"],
+        ["Total Net Payable (History)", ssum.total_net_payable || "0.00"],
+        ["Total Paid", ssum.total_paid || "0.00"],
+        ["Outstanding Balance", ssum.outstanding_balance || "0.00"]
+      ]);
+      var phist = sal.payroll_history || [];
+      if (!phist.length) {
+        JONE.dashboard.DATA.empty(payRows, "creditCard", "No payroll periods yet", "Prepare a payroll period in Payroll to generate lines.", 7);
+      } else {
+        payRows.innerHTML = phist.map(function(l){
+          return '<tr><td><code>' + JONE.esc(l.period_reference) + '</code><br><small>' + JONE.esc(l.starts_on) + ' → ' + JONE.esc(l.ends_on) + '</small></td><td>' + JONE.esc(l.basic_pay) + '</td><td>' + JONE.esc(l.gross_pay) + '</td><td>' + JONE.esc(l.deductions_total) + '</td><td><strong>' + JONE.esc(l.net_pay) + '</strong></td><td>Paid: ' + JONE.esc(l.amount_paid) + '<br><small>Due: ' + JONE.esc(l.balance_due) + '</small></td><td>' + JONE.dashboard.statusPill(l.payment_status) + '</td></tr>';
+        }).join("");
+      }
+    }
+
+    var discRows = document.getElementById("sp-disciplinary-rows");
+    var discList = d.disciplinary || [];
+    if (!discList.length) {
+      JONE.dashboard.DATA.empty(discRows, "check", "No offenses or disciplinary cases", "This employee has a clean disciplinary record.", 7);
+    } else {
+      discRows.innerHTML = discList.map(function(r){
+        return '<tr>' +
+          '<td><code>' + JONE.esc(r.reference) + '</code><br><small>' + JONE.esc(JONE.formatDate(r.incident_at, "mid")) + '</small></td>' +
+          '<td><strong>' + JONE.esc(r.category) + '</strong><br><small>' + JONE.esc(r.allegation_summary) + '</small></td>' +
+          '<td>' + JONE.esc(r.employee_response || "No response recorded yet") + '</td>' +
+          '<td>' + JONE.dashboard.statusPill(r.status) + '<br><small>' + JONE.esc(r.investigation_outcome || "") + '</small></td>' +
+          '<td>' + JONE.esc(r.disciplinary_action) + ' (' + JONE.esc(r.warning_level) + ')</td>' +
+          '<td>' + (r.deduction_approved ? '<strong>Approved: NGN ' + JONE.esc(r.approved_deduction_amount) + '</strong>' : '<span class="muted">Unapproved (Rec: NGN ' + JONE.esc(r.recommended_deduction_amount) + ')</span>') + '</td>' +
+          '<td><div class="row-actions">' +
+            '<button class="btn btn-sm btn-outline" type="button" data-disc-action="submit_response" data-disc-ref="' + JONE.esc(r.reference) + '">Response</button>' +
+            '<button class="btn btn-sm btn-outline" type="button" data-disc-action="resolve" data-disc-ref="' + JONE.esc(r.reference) + '">Resolve</button>' +
+            '<button class="btn btn-sm btn-outline" type="button" data-disc-action="approve_deduction" data-disc-ref="' + JONE.esc(r.reference) + '" data-disc-amt="' + JONE.esc(r.recommended_deduction_amount) + '">Approve Deduction</button>' +
+            '<button class="btn btn-sm btn-ghost" type="button" data-disc-action="dismiss" data-disc-ref="' + JONE.esc(r.reference) + '">Dismiss</button>' +
+          '</div></td>' +
+        '</tr>';
+      }).join("");
+    }
+
+    var lvRows = document.getElementById("sp-leave-rows");
+    var lvList = (d.leave_shifts && d.leave_shifts.leave_requests) || [];
+    if (!lvList.length) {
+      JONE.dashboard.DATA.empty(lvRows, "calendar", "No leave requests", "No leave history recorded.", 5);
+    } else {
+      lvRows.innerHTML = lvList.map(function(l){
+        return '<tr><td><code>' + JONE.esc(l.reference) + '</code></td><td>' + JONE.esc(l.type) + '</td><td>' + JONE.esc(l.start_date) + ' → ' + JONE.esc(l.end_date) + '</td><td>' + JONE.dashboard.statusPill(l.status) + '</td><td>' + JONE.esc(l.reason || l.review_note || "—") + '</td></tr>';
+      }).join("");
+    }
+
+    var docRows = document.getElementById("sp-document-rows");
+    var docList = d.documents || [];
+    if (!docList.length) {
+      JONE.dashboard.DATA.empty(docRows, "fileText", "No documents uploaded", "Upload employment letters, contracts, certifications, or asset records.", 6);
+    } else {
+      docRows.innerHTML = docList.map(function(doc){
+        var dl = doc.file_url ? '<a class="btn btn-sm btn-outline" href="' + JONE.esc(doc.file_url) + '" target="_blank" rel="noopener">Download</a>' : '';
+        return '<tr>' +
+          '<td><code>' + JONE.esc(doc.reference) + '</code></td>' +
+          '<td>' + JONE.esc(doc.category) + '</td>' +
+          '<td><strong>' + JONE.esc(doc.title) + '</strong><br><small>' + JONE.esc(doc.description || doc.file_name || "") + '</small></td>' +
+          '<td>' + JONE.esc(doc.issued_date || "—") + ' / ' + JONE.esc(doc.expiry_date || "—") + '</td>' +
+          '<td>' + JONE.esc(doc.uploaded_by_name || "—") + '</td>' +
+          '<td><div class="row-actions">' + dl + '<button class="btn btn-sm btn-danger" type="button" data-doc-remove="' + JONE.esc(doc.reference) + '">Remove</button></div></td>' +
+        '</tr>';
+      }).join("");
+    }
+
+    var ap = d.account_permissions || {};
+    var capsHtml = (ap.effective_capabilities || []).map(function(c){ return '<span class="badge" style="margin:0.15rem;">' + JONE.esc(c) + '</span>'; }).join(" ");
+    document.getElementById("sp-permissions-body").innerHTML =
+      kvGrid([
+        ["Login Email", ap.email],
+        ["Employee Code", ap.employee_code],
+        ["Assigned Role", ap.role_label + " (" + ap.role + ")"],
+        ["Account Active", ap.is_active ? "Yes" : "No"],
+        ["Must Change Password on Next Login", ap.must_change_password ? "Yes" : "No"],
+        ["Credential Delivery Status", ap.credential_delivery_status]
+      ]) +
+      '<div style="margin-top:1rem;"><strong>Effective Capabilities (' + ((ap.effective_capabilities || []).length) + ')</strong><div style="margin-top:0.5rem;">' + (capsHtml || '<span class="muted">None</span>') + '</div></div>';
+
+    var audRows = document.getElementById("sp-audit-rows");
+    var audList = d.activity_audit || [];
+    if (!audList.length) {
+      JONE.dashboard.DATA.empty(audRows, "fileText", "No audit events", "No audit log entries recorded for this staff member.", 5);
+    } else {
+      audRows.innerHTML = audList.map(function(a){
+        return '<tr><td>' + JONE.esc(JONE.formatDateTime(a.created_at)) + '</td><td><code>' + JONE.esc(a.action) + '</code></td><td>' + JONE.esc(a.summary || a.object_repr || "—") + '</td><td>' + JONE.esc(a.actor_name || a.actor_email || "System") + '</td><td><small>' + JONE.esc(JSON.stringify(a.changes || a.metadata || {})) + '</small></td></tr>';
+      }).join("");
+    }
+  }
+
+  async function runUserLifecycleAction(action, extraData){
+    var ep = window.APP_CONFIG.API_ENDPOINTS.users + encodeURIComponent(userId) + "/actions/";
+    var body = Object.assign({ action: action }, extraData || {});
+    var res = await window.API.post(ep, body);
+    var msg = (res && res.message) || "Action completed.";
+    if (res && res.data && res.data.temporary_password) {
+      msg += " Temporary password: " + res.data.temporary_password;
+    }
+    JONE.ui.toast(msg, "success");
+    loadFullProfile();
+  }
+
+  document.getElementById("sp-btn-edit").addEventListener("click", async function(){
+    if (!fullData) return;
+    var pr = fullData.profile || {};
+    await JONE.dashboard.formModal({
+      title: "Edit Employee Profile",
+      submitText: "Save Profile",
+      values: pr,
+      fields: [
+        { name: "first_name", label: "First Name", type: "text", required: true },
+        { name: "middle_name", label: "Middle Name", type: "text" },
+        { name: "last_name", label: "Last Name", type: "text", required: true },
+        { name: "phone", label: "Phone", type: "tel" },
+        { name: "department", label: "Department", type: "text" },
+        { name: "job_title", label: "Job Title", type: "text" },
+        { name: "employment_type", label: "Employment Type", type: "select", options: [
+          { value: "FULL_TIME", label: "Full-time" },
+          { value: "PART_TIME", label: "Part-time" },
+          { value: "CONTRACT", label: "Contract" },
+          { value: "PROBATION", label: "Probation" },
+          { value: "TEMPORARY", label: "Temporary" }
+        ] },
+        { name: "employment_start", label: "Start Date", type: "date" },
+        { name: "work_location", label: "Work Location", type: "text" },
+        { name: "date_of_birth", label: "Date of Birth", type: "date" },
+        { name: "gender", label: "Gender", type: "text" },
+        { name: "residential_address", label: "Residential Address", type: "textarea" },
+        { name: "emergency_contact_name", label: "Emergency Contact Name", type: "text" },
+        { name: "emergency_contact_relationship", label: "Emergency Contact Relationship", type: "text" },
+        { name: "emergency_contact_phone", label: "Emergency Contact Phone", type: "tel" },
+        { name: "emergency_contact_address", label: "Emergency Contact Address", type: "textarea" },
+        { name: "job_description", label: "Job Description & Responsibilities", type: "textarea" },
+        { name: "notes", label: "Notes", type: "textarea" }
+      ],
+      onSubmit: async function(vals){
+        var ep = window.APP_CONFIG.API_ENDPOINTS.staffFullProfile + encodeURIComponent(userId) + "/full-profile/";
+        await window.API.patch(ep, vals);
+        JONE.ui.toast("Profile updated.", "success");
+        loadFullProfile();
+      }
+    });
+  });
+
+  document.getElementById("sp-btn-transfer").addEventListener("click", async function(){
+    await JONE.dashboard.formModal({
+      title: "Transfer Department / Role",
+      submitText: "Transfer",
+      fields: [
+        { name: "department", label: "New Department", type: "select", required: true, options: [
+          { value: "Management", label: "Management" },
+          { value: "Accounts & Finance", label: "Accounts & Finance" },
+          { value: "Administration & Procurement", label: "Administration & Procurement" },
+          { value: "Front Desk / Reception", label: "Front Desk / Reception" },
+          { value: "Kitchen", label: "Kitchen" },
+          { value: "Restaurant & Bar Service", label: "Restaurant & Bar Service" },
+          { value: "Housekeeping", label: "Housekeeping" },
+          { value: "Portering", label: "Portering" },
+          { value: "Stores & Inventory", label: "Stores & Inventory" }
+        ] },
+        { name: "job_title", label: "New Job Title", type: "text", required: true }
+      ],
+      onSubmit: async function(vals){
+        await runUserLifecycleAction("transfer_department", vals);
+      }
+    });
+  });
+
+  document.getElementById("sp-btn-reset-pw").addEventListener("click", async function(){
+    await runUserLifecycleAction("reset_password", { send_email: true, must_change_password: true });
+  });
+  document.getElementById("sp-btn-suspend").addEventListener("click", async function(){
+    await runUserLifecycleAction("suspend", { reason: "Suspended via Staff Profile" });
+  });
+  document.getElementById("sp-btn-reactivate").addEventListener("click", async function(){
+    await runUserLifecycleAction("reactivate", {});
+  });
+  document.getElementById("sp-btn-archive").addEventListener("click", async function(){
+    var ok = await JONE.ui.confirm({
+      title: "Deactivate & Archive Employee?",
+      message: "This deactivates login and revokes workstation codes while preserving all historical attendance, payroll, and audit records.",
+      confirmText: "Deactivate & Archive",
+      danger: true
+    });
+    if (ok) await runUserLifecycleAction("archive", { reason: "Archived via Staff Profile" });
+  });
+
+  document.getElementById("sp-btn-enroll-fp").addEventListener("click", async function(){
+    try {
+      var email = (fullData && fullData.user && fullData.user.email) || "";
+      var probe = await JONE.biometrics.captureMinutiaeProbe({ seed: email });
+      var ep = window.APP_CONFIG.API_ENDPOINTS.fingerprintStaff + encodeURIComponent(userId) + "/";
+      await window.API.post(ep, { action: "enroll", minutiae: probe, finger_position: "RIGHT_INDEX", auto_approve: true });
+      JONE.ui.toast("Fingerprint enrolled and approved.", "success");
+      loadFullProfile();
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "Fingerprint enrollment failed.", "error");
+    }
+  });
+
+  document.getElementById("sp-btn-revoke-fp").addEventListener("click", async function(){
+    try {
+      var ep = window.APP_CONFIG.API_ENDPOINTS.fingerprintStaff + encodeURIComponent(userId) + "/";
+      await window.API.post(ep, { action: "revoke", note: "Revoked from Staff Profile" });
+      JONE.ui.toast("Fingerprint template revoked.", "success");
+      loadFullProfile();
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "Could not revoke fingerprint.", "error");
+    }
+  });
+
+  document.getElementById("sp-btn-set-comp").addEventListener("click", async function(){
+    await JONE.dashboard.formModal({
+      title: "Set / Update Employee Compensation",
+      submitText: "Save Compensation",
+      fields: [
+        { name: "effective_from", label: "Effective Date", type: "date", required: true },
+        { name: "basic_salary", label: "Monthly Basic Salary (NGN)", type: "number", required: true },
+        { name: "housing_allowance", label: "Monthly Housing Allowance (NGN)", type: "number" },
+        { name: "transport_allowance", label: "Monthly Transport Allowance (NGN)", type: "number" },
+        { name: "overtime_rate", label: "Overtime Rate per Hour (NGN)", type: "number" },
+        { name: "notes", label: "Notes / Approval Remarks", type: "textarea" }
+      ],
+      onSubmit: async function(vals){
+        vals.staff_id = Number(userId);
+        vals.currency = "NGN";
+        vals.idempotency_key = "comp-" + userId + "-" + Date.now();
+        await window.API.create("payrollCompensation", vals);
+        JONE.ui.toast("Compensation saved.", "success");
+        loadFullProfile();
+      }
+    });
+  });
+
+  document.getElementById("sp-btn-new-offense").addEventListener("click", async function(){
+    await JONE.dashboard.formModal({
+      title: "Record Offense / Disciplinary Incident",
+      submitText: "Record Incident",
+      fields: [
+        { name: "category", label: "Offense Category", type: "select", required: true, options: [
+          { value: "ATTENDANCE", label: "Attendance / lateness" },
+          { value: "ABSENCE", label: "Unauthorised absence" },
+          { value: "MISCONDUCT", label: "Workplace misconduct" },
+          { value: "POLICY_VIOLATION", label: "Policy violation" },
+          { value: "CASH_VARIANCE", label: "Cash / billing variance" },
+          { value: "STOCK_SHORTAGE", label: "Inventory / stock shortage" },
+          { value: "DAMAGE", label: "Property / asset damage" },
+          { value: "GUEST_COMPLAINT", label: "Verified guest complaint" }
+        ] },
+        { name: "location", label: "Location", type: "text" },
+        { name: "allegation_summary", label: "Allegation Summary", type: "text", required: true },
+        { name: "allegation_detail", label: "Detailed Description", type: "textarea", required: true },
+        { name: "recommended_deduction_amount", label: "Recommended Deduction (NGN, requires formal approval)", type: "number" }
+      ],
+      onSubmit: async function(vals){
+        vals.staff = Number(userId);
+        await window.API.create("staffDisciplinary", vals);
+        JONE.ui.toast("Disciplinary allegation recorded.", "success");
+        loadFullProfile();
+      }
+    });
+  });
+
+  document.getElementById("sp-disciplinary-rows").addEventListener("click", async function(e){
+    var btn = e.target.closest("button[data-disc-action]");
+    if (!btn) return;
+    var act = btn.getAttribute("data-disc-action");
+    var ref = btn.getAttribute("data-disc-ref");
+    var ep = window.APP_CONFIG.API_ENDPOINTS.staffDisciplinary + encodeURIComponent(ref) + "/action/";
+    if (act === "submit_response") {
+      await JONE.dashboard.formModal({
+        title: "Record Employee Statement / Response",
+        submitText: "Save Response",
+        fields: [{ name: "employee_response", label: "Employee Statement", type: "textarea", required: true }],
+        onSubmit: async function(v){
+          await window.API.post(ep, { action: "submit_response", employee_response: v.employee_response });
+          JONE.ui.toast("Employee response recorded.", "success");
+          loadFullProfile();
+        }
+      });
+    } else if (act === "resolve") {
+      await JONE.dashboard.formModal({
+        title: "Resolve Disciplinary Investigation",
+        submitText: "Save Resolution",
+        fields: [
+          { name: "investigation_outcome", label: "Investigation Outcome", type: "textarea", required: true },
+          { name: "disciplinary_action", label: "Approved Action", type: "select", required: true, options: [
+            { value: "VERBAL_WARNING", label: "Verbal warning" },
+            { value: "WRITTEN_WARNING", label: "Written warning" },
+            { value: "FINAL_WARNING", label: "Final written warning" },
+            { value: "MONETARY_DEDUCTION", label: "Monetary deduction" },
+            { value: "SUSPENSION", label: "Suspension" },
+            { value: "EXONERATED", label: "Exonerated / no action" }
+          ] },
+          { name: "warning_level", label: "Warning Level", type: "select", options: [
+            { value: "NONE", label: "None" },
+            { value: "VERBAL", label: "Verbal" },
+            { value: "FIRST_WRITTEN", label: "First written" },
+            { value: "FINAL_WRITTEN", label: "Final written" }
+          ] }
+        ],
+        onSubmit: async function(v){
+          v.action = "resolve";
+          await window.API.post(ep, v);
+          JONE.ui.toast("Investigation resolved.", "success");
+          loadFullProfile();
+        }
+      });
+    } else if (act === "approve_deduction") {
+      var recAmt = btn.getAttribute("data-disc-amt") || "0.00";
+      await JONE.dashboard.formModal({
+        title: "Approve Monetary Salary Deduction",
+        submitText: "Approve Deduction",
+        values: { approved_deduction_amount: recAmt },
+        fields: [
+          { name: "approved_deduction_amount", label: "Approved Deduction Amount (NGN)", type: "number", required: true },
+          { name: "effective_date", label: "Effective Payroll Date", type: "date", required: true }
+        ],
+        onSubmit: async function(v){
+          v.action = "approve_deduction";
+          await window.API.post(ep, v);
+          JONE.ui.toast("Monetary deduction formally approved for payroll.", "success");
+          loadFullProfile();
+        }
+      });
+    } else if (act === "dismiss") {
+      await window.API.post(ep, { action: "dismiss", investigation_outcome: "Dismissed / Exonerated" });
+      JONE.ui.toast("Case dismissed.", "success");
+      loadFullProfile();
+    }
+  });
+
+  document.getElementById("sp-btn-upload-doc").addEventListener("click", async function(){
+    await JONE.dashboard.formModal({
+      title: "Add / Upload Staff Document",
+      submitText: "Save Document",
+      fields: [
+        { name: "category", label: "Category", type: "select", required: true, options: [
+          { value: "EMPLOYMENT_LETTER", label: "Employment letter" },
+          { value: "CONTRACT", label: "Employment contract" },
+          { value: "IDENTIFICATION", label: "Identification / KYC" },
+          { value: "CERTIFICATION", label: "Certification / license" },
+          { value: "TRAINING", label: "Training record" },
+          { value: "PERFORMANCE_REVIEW", label: "Performance review" },
+          { value: "EQUIPMENT_ASSIGNMENT", label: "Assigned equipment / asset" },
+          { value: "POLICY_ACKNOWLEDGEMENT", label: "Policy acknowledgement" },
+          { value: "EXIT_DOCUMENT", label: "Exit / handover document" }
+        ] },
+        { name: "title", label: "Document Title", type: "text", required: true },
+        { name: "description", label: "Description / Notes", type: "textarea" },
+        { name: "issued_date", label: "Issued Date", type: "date" },
+        { name: "expiry_date", label: "Expiry Date", type: "date" }
+      ],
+      onSubmit: async function(vals){
+        vals.staff = Number(userId);
+        await window.API.create("staffDocuments", vals);
+        JONE.ui.toast("Document recorded.", "success");
+        loadFullProfile();
+      }
+    });
+  });
+
+  document.getElementById("sp-document-rows").addEventListener("click", async function(e){
+    var btn = e.target.closest("button[data-doc-remove]");
+    if (!btn) return;
+    var ref = btn.getAttribute("data-doc-remove");
+    await window.API.remove("staffDocuments", ref);
+    JONE.ui.toast("Document archived.", "success");
+    loadFullProfile();
+  });
+
+  document.getElementById("sp-btn-override-perm").addEventListener("click", async function(){
+    await JONE.dashboard.formModal({
+      title: "Per-User Capability Override (Admin Only)",
+      submitText: "Apply Override",
+      fields: [
+        { name: "capability_code", label: "Capability Code (e.g. inventory.manage, payroll.view)", type: "text", required: true },
+        { name: "effect", label: "Override Effect", type: "select", required: true, options: [
+          { value: "GRANT", label: "Grant capability" },
+          { value: "REVOKE", label: "Revoke capability" },
+          { value: "CLEAR", label: "Clear override (restore role default)" }
+        ] },
+        { name: "reason", label: "Audit Reason", type: "text", required: true }
+      ],
+      onSubmit: async function(vals){
+        var ep = window.APP_CONFIG.API_ENDPOINTS.users + encodeURIComponent(userId) + "/permissions/";
+        await window.API.post(ep, vals);
+        JONE.ui.toast("Capability override updated.", "success");
+        loadFullProfile();
+      }
+    });
+  });
+
+  loadFullProfile();
+})();
+</script>
+<script src="../js/pwa.js?v=1.1.12"></script>
+<script src="../js/version.js?v=1.1.12"></script>
+<script src="../js/update-checker.js?v=1.1.12"></script>
+</body>
+</html>

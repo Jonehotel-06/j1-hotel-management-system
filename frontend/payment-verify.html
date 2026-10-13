@@ -90,7 +90,7 @@ JONE.ui.initChrome();
   "use strict";
 
   var params = new URLSearchParams(location.search);
-  var reference = (params.get("reference") || params.get("trxref") || "").trim();
+  var reference = (params.get("reference") || params.get("trxref") || params.get("payment_reference") || "").trim();
 
   var elLoading = document.getElementById("verify-loading");
   var elSuccess = document.getElementById("verify-success");
@@ -108,8 +108,40 @@ JONE.ui.initChrome();
     return;
   }
 
-  var guestToken = sessionStorage.getItem("jone.payment_access." + reference) || sessionStorage.getItem("jone.guest_access_token") || params.get("token") || "";
-  if (guestToken) sessionStorage.setItem("jone.guest_access_token", guestToken);
+  function readCookie(name) {
+    try {
+      var m = document.cookie.match(new RegExp("(?:^|;\\s*)" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "=([^;]*)"));
+      return m ? decodeURIComponent(m[1]) : "";
+    } catch (_) { return ""; }
+  }
+  function saveGuestToken(token, bRef, payRef) {
+    if (!token) return;
+    try { sessionStorage.setItem("jone.guest_access_token", token); } catch (_) {}
+    try { localStorage.setItem("jone.guest_access_token", token); } catch (_) {}
+    if (bRef) {
+      try { sessionStorage.setItem("jone.guest_access_token." + bRef, token); } catch (_) {}
+      try { localStorage.setItem("jone.guest_access_token." + bRef, token); } catch (_) {}
+    }
+    if (payRef) {
+      try { sessionStorage.setItem("jone.payment_access." + payRef, token); } catch (_) {}
+      try { localStorage.setItem("jone.payment_access." + payRef, token); } catch (_) {}
+    }
+  }
+  var confirmedDraft = null;
+  try {
+    var S = (window.JONE && JONE.APP_CONFIG && JONE.APP_CONFIG.STORAGE && JONE.APP_CONFIG.STORAGE.BOOKING) || "jone.booking.draft";
+    confirmedDraft = JONE.storage && JONE.storage.get(S + ".confirmed", null);
+  } catch (_) {}
+
+  var guestToken = sessionStorage.getItem("jone.payment_access." + reference)
+    || localStorage.getItem("jone.payment_access." + reference)
+    || sessionStorage.getItem("jone.guest_access_token")
+    || localStorage.getItem("jone.guest_access_token")
+    || (confirmedDraft && confirmedDraft.guest_access_token)
+    || readCookie("jone_guest_access_token")
+    || params.get("token")
+    || "";
+  if (guestToken) saveGuestToken(guestToken, confirmedDraft && confirmedDraft.booking_reference, reference);
   function guestOpts() { return guestToken ? window.API.guestAccessOpts(guestToken) : {}; }
   var verifiedReceipt = null;
   var downloadBtn = document.getElementById("s-download-receipt");
@@ -136,13 +168,41 @@ JONE.ui.initChrome();
   }
   if (downloadBtn) downloadBtn.addEventListener("click", function () { downloadReceipt(); });
 
+  var POLL_DELAYS_MS = [350, 500, 700, 900];
+  function waitMs(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
   async function verify() {
     show(elLoading);
+    var retryBtn = document.getElementById("f-retry");
+    if (retryBtn) JONE.releaseGuard(retryBtn);
     try {
-      var res = await window.API.verifyPayment(reference, guestOpts());
-      var d = (res && res.data) || {};
-      var paymentStatus = String(d.payment_status || "").toUpperCase();
-      var transactionStatus = String(d.transaction_status || "").toLowerCase();
+      var res = null;
+      var d = {};
+      var paymentStatus = "";
+      var transactionStatus = "";
+      for (var attempt = 0; attempt <= POLL_DELAYS_MS.length; attempt += 1) {
+        try {
+          res = await window.API.verifyPayment(reference, guestOpts());
+          d = (res && res.data) || {};
+          if (d.booking_access_token || d.guest_access_token) {
+            guestToken = d.booking_access_token || d.guest_access_token;
+            saveGuestToken(guestToken, d.booking_reference, reference);
+          }
+          paymentStatus = String(d.payment_status || "").toUpperCase();
+          transactionStatus = String(d.transaction_status || "").toLowerCase();
+          if (transactionStatus === "success" || ["failed", "abandoned", "reversed"].indexOf(transactionStatus) !== -1) {
+            break;
+          }
+        } catch (attemptErr) {
+          var isTransient = attemptErr && (attemptErr.status === 502 || attemptErr.status === 503 || attemptErr.status === 504 || attemptErr.kind === "timeout");
+          if (!isTransient || attempt === POLL_DELAYS_MS.length) {
+            throw attemptErr;
+          }
+        }
+        if (attempt < POLL_DELAYS_MS.length) {
+          await waitMs(POLL_DELAYS_MS[attempt]);
+        }
+      }
       if (transactionStatus === "success") {
         // Backend confirmed — only now show success.
         setTxt("s-payref", d.payment_reference || reference);
@@ -153,7 +213,7 @@ JONE.ui.initChrome();
         if (line) line.textContent = (d.booking_status === "CONFIRMED") ? "Your booking is confirmed. We look forward to hosting you." : "Payment received. Your booking is being confirmed.";
         var view = document.getElementById("s-view-booking");
         if (d.booking_reference && guestToken) {
-          sessionStorage.setItem("jone.guest_access_token." + d.booking_reference, guestToken);
+          saveGuestToken(guestToken, d.booking_reference, reference);
         }
         if (view && d.booking_reference) view.href = "booking-confirmation.html?ref=" + encodeURIComponent(d.booking_reference);
         verifiedReceipt = d.receipt || null;

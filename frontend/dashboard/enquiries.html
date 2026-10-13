@@ -232,7 +232,8 @@
   if(save) save.addEventListener("click", async function(){
     if(!current||!current.id) return; if(!JONE.guardSubmit(save)) return; clearErr();
     try{ await window.API.update("enquiries", current.id, { status: document.getElementById("enq-status-select").value, internal_notes: document.getElementById("enq-notes").value }); JONE.ui.toast("Enquiry updated.","success"); closeModal(); load(); }
-    catch(er){ JONE.releaseGuard(save); showErr((er&&er.message)||"Couldn't save the enquiry."); }
+    catch(er){ showErr((er&&er.message)||"Couldn't save the enquiry."); }
+    finally{ JONE.releaseGuard(save); }
   });
 
   ["en-status","en-type"].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener("change",function(){ load(1); }); });

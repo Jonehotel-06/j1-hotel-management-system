@@ -243,8 +243,13 @@
     if(!JONE.guardSubmit(cancel)) return;
     try{
       await window.API.staffCancelBooking(ref);
-      JONE.ui.toast("Booking cancelled.","success"); load();
-    }catch(err){ JONE.releaseGuard(cancel); JONE.ui.toast(err.message||"Couldn't cancel this booking.","error"); }
+      JONE.ui.toast("Booking cancelled.","success");
+      await load();
+    }catch(err){
+      JONE.ui.toast(err.message||"Couldn't cancel this booking.","error");
+    }finally{
+      JONE.releaseGuard(cancel);
+    }
   });
 
   /* Record payment opens the focused payment modal right here — no navigation,
@@ -275,15 +280,21 @@
       if(st==="CHECKED_IN"){
         var due=Number(book.amount_due||0);
         var allow=due>0 ? window.confirm("This booking still has a balance of "+JONE.formatNaira(due)+". Check out anyway?") : true;
-        if(!allow){ checkin.disabled=false; JONE.releaseGuard(checkin); return; }
+        if(!allow) return;
         await window.API.checkOutBooking(ref, due>0?{allow_balance_due:true}:{});
         JONE.ui.toast("Guest checked out.","success");
       } else {
         await window.API.checkInBooking(ref);
         JONE.ui.toast("Guest checked in.","success");
       }
-      load();
-    }catch(err){ checkin.disabled=false; JONE.releaseGuard(checkin); JONE.ui.toast(err.message||"Action failed. Please try again.","error"); }
+      await load();
+    }catch(err){
+      JONE.ui.toast(err.message||"Action failed. Please try again.","error");
+    }finally{
+      checkin.disabled=false;
+      JONE.releaseGuard(checkin);
+      syncActions();
+    }
   });
 })();
 

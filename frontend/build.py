@@ -176,6 +176,11 @@ def _stamp_assets(raw, version):
 
 def _ensure_version_scripts(raw, depth):
     """Idempotently load js/version.js + js/update-checker.js on every page."""
+    raw = re.sub(
+        r'<script src="(?:\.\./)?js/(version|update-checker)\.js(?:\?[^"]*)?"></script>',
+        lambda m: f'<script src="{depth}js/{m.group(1)}.js"></script>',
+        raw,
+    )
     if "js/update-checker.js" not in raw:
         tags = (
             f'<script src="{depth}js/version.js"></script>\n'
@@ -202,6 +207,11 @@ def _ensure_pwa(raw, depth=""):
     if 'name="theme-color"' not in raw:
         raw = raw.replace('<link rel="icon"',
                           '<meta name="theme-color" content="#373435">\n<link rel="icon"', 1)
+    raw = re.sub(
+        r'<script src="(?:\.\./)?js/pwa\.js(?:\?[^"]*)?"></script>',
+        f'<script src="{depth}js/pwa.js"></script>',
+        raw,
+    )
     tag = '<script src="%sjs/pwa.js"></script>' % depth
     if "js/pwa.js" not in raw:
         raw = raw.replace("</body>", tag + "\n</body>", 1)
@@ -209,6 +219,7 @@ def _ensure_pwa(raw, depth=""):
 
 
 def build(path, version):
+    path = str(path).replace("\\", "/")
     f = ROOT / path
     if not f.exists():
         return False
@@ -318,7 +329,7 @@ def main():
     # dashboard pages also get version/update-checker wiring.
     built = []
     pages = list(PUBLIC_PAGES) + list(PORTAL_PAGES) + list(QR_SERVICE_PAGES) + sorted(
-        str(p.relative_to(ROOT)) for p in (ROOT / "dashboard").glob("*.html")
+        p.relative_to(ROOT).as_posix() for p in (ROOT / "dashboard").glob("*.html")
     )
     for p in pages:
         if build(p, version):

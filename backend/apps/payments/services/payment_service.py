@@ -226,7 +226,26 @@ def initialize_booking_payment(*, booking: Booking, user, request=None):
 # ---------------------------------------------------------------------------
 # Verification (idempotent) — shared by browser verification and webhook
 # ---------------------------------------------------------------------------
-def _verified_receipt_payload(payment: Payment, transaction_status=None):
+def resolve_payment_for_verification(reference: str):
+    """Resolve a Paystack Payment row by payment reference, provider transaction_id, or booking_reference."""
+    ref = str(reference or "").strip()
+    if not ref:
+        return None
+    qs = Payment.objects.select_related("booking", "booking__guest", "booking__guest__user")
+    payment = qs.filter(reference=ref, provider=Payment.Provider.PAYSTACK).first()
+    if payment is not None:
+        return payment
+    payment = qs.filter(transaction_id=ref, provider=Payment.Provider.PAYSTACK).order_by("-created_at").first()
+    if payment is not None:
+        return payment
+    return (
+        qs.filter(booking__booking_reference__iexact=ref, provider=Payment.Provider.PAYSTACK)
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def _verified_receipt_payload(payment: Payment, transaction_status=None, request=None):
     booking = payment.booking
     payload = {
         "payment_reference": payment.reference,
@@ -241,6 +260,11 @@ def _verified_receipt_payload(payment: Payment, transaction_status=None):
         "currency": booking.currency,
         "paid_at": payment.paid_at.isoformat() if payment.paid_at else None,
     }
+    if request is not None and hasattr(request, "headers"):
+        req_token = str(request.headers.get("X-Guest-Access-Token") or "").strip()
+        if req_token and booking.guest_token_matches(req_token):
+            payload["booking_access_token"] = req_token
+            payload["guest_access_token"] = req_token
     if payment.status == Payment.Status.SUCCESS:
         from apps.bookings.serializers import ReceiptSerializer
         payload["receipt"] = ReceiptSerializer().to_representation(booking)
@@ -287,14 +311,11 @@ def _paystack_hotel_amount_kobo(data: dict):
 
 def process_verification(*, reference, request=None, triggered_by="api"):
     """Verify with Paystack, validate reference/amount/currency and reconcile."""
-    payment = (
-        Payment.objects.select_related("booking", "booking__guest", "booking__guest__user")
-        .filter(reference=reference, provider=Payment.Provider.PAYSTACK)
-        .first()
-    )
+    payment = resolve_payment_for_verification(reference)
     if payment is None:
         from rest_framework.exceptions import NotFound
         raise NotFound("Payment not found.")
+    reference = payment.reference
     if payment.status == Payment.Status.SUCCESS:
         # A retry after a deployment/cutover may encounter a successful legacy
         # projection that has not yet been bridged. The finance service is
@@ -302,11 +323,28 @@ def process_verification(*, reference, request=None, triggered_by="api"):
         from apps.finance.services.payment_collection_service import ensure_payment_collection
 
         ensure_payment_collection(payment=payment, actor=payment.user)
+        payment.booking.refresh_from_db()
         return _verified_receipt_payload(payment, "success")
 
-    paystack_payload = paystack.verify_transaction(reference)
+    try:
+        paystack_payload = paystack.verify_transaction(reference)
+    except PaymentGatewayError:
+        # Bounded single retry for transient gateway hiccup on immediate redirect.
+        paystack_payload = paystack.verify_transaction(reference)
     data = paystack_payload["data"]
     gateway_status = str(data.get("status") or "").lower()
+    if gateway_status in PROCESSING_GATEWAY_STATUSES or gateway_status not in (FAILED_GATEWAY_STATUSES | {"success"}):
+        # Paystack may momentarily report 'ongoing'/'processing' at the exact
+        # instant the browser is redirected from checkout. Perform one bounded
+        # re-check before returning a pending status.
+        try:
+            retry_payload = paystack.verify_transaction(reference)
+            if isinstance(retry_payload, dict) and isinstance(retry_payload.get("data"), dict):
+                paystack_payload = retry_payload
+                data = retry_payload["data"]
+                gateway_status = str(data.get("status") or "").lower()
+        except PaymentGatewayError:
+            pass
 
     with transaction.atomic():
         payment = (
