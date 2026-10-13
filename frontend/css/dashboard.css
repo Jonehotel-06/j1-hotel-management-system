@@ -1869,3 +1869,87 @@ body.receipt-view-page .receipt-utility-actions .btn-outline:hover {
   .table-availability { min-width: 560px; }
   .table-availability td, .table-availability th { padding: .6rem .5rem; }
 }
+
+/* ===================== Product profitability projection =====================
+   The profitability/valuation table is a wide read-only projection, so it uses
+   the existing table system (`.table-wrap` horizontal scroll, `.cell-nowrap` on
+   atomic reference/date/money columns, `.cell-clamp` on prose columns) plus the
+   four small additions below. No per-page overrides: everything here is scoped
+   to classes that only the projection uses. */
+
+/* Sortable column headings. The whole heading is one real <button>, so the
+   column stays keyboard reachable and the sort state is exposed through the
+   table header's aria-sort attribute rather than through colour alone. */
+.table th .th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.table th .th-sort:hover { color: var(--color-heading); }
+.table th .th-sort:focus-visible {
+  outline: 2px solid var(--color-focus, var(--color-primary));
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.table th[aria-sort="ascending"] .th-sort::after { content: "\2191"; font-size: .75em; }
+.table th[aria-sort="descending"] .th-sort::after { content: "\2193"; font-size: .75em; }
+.table th.num .th-sort { justify-content: flex-end; }
+
+/* Denser row rhythm for an eleven-column projection. */
+.table.table-tight th, .table.table-tight td { padding: .5rem .6rem; }
+
+/* The projection table is deliberately wider than a generic list; it scrolls
+   inside its own container so the page itself never scrolls sideways. */
+.table-wrap.table-scroll { overflow-x: auto; }
+.table-wrap.table-scroll .table { min-width: 1080px; }
+@media (max-width: 720px) {
+  .table-wrap.table-scroll .table { min-width: 0; }
+}
+
+.profit-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--color-border);
+}
+.profit-summary:empty { display: none; }
+.profit-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: .15rem;
+  min-width: 9.5rem;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-alt);
+}
+.profit-summary-label { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-muted); }
+.profit-summary-value { font-size: 1.05rem; font-weight: 600; color: var(--color-heading); }
+.profit-summary-note { flex-basis: 100%; margin: 0; }
+
+/* ---------------------- Read-only details dialogs (drill-downs) ------------
+   Expenses, receipts and other records open in the shared panel host instead of
+   a per-page modal. These two classes style the audit-history list and the
+   section headings inside such a dialog, and are shared by every drill-down so
+   one page never invents its own layout. */
+.detail-section-title {
+  margin: var(--sp-4) 0 var(--sp-2);
+  font-size: var(--fs-sm);
+  font-family: var(--font-display);
+  color: var(--color-heading);
+}
+.detail-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-3); }
+.detail-timeline > li {
+  padding-left: var(--sp-4);
+  border-left: 2px solid var(--color-border);
+}
+.detail-timeline > li:last-child { border-left-color: var(--color-primary); }

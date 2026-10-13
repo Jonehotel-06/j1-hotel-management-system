@@ -9,7 +9,7 @@ single "revenue" number.
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db.models import Count, Q, Sum
 
@@ -17,6 +17,7 @@ from apps.core.utils import money
 
 from ..models import FinancialLine, FinancialTransaction
 from . import accounting
+from .payment_visibility import settlement_measure_filters, supplier_payment_visibility
 
 ZERO = Decimal("0.00")
 CHARGE_TYPES = (
@@ -122,6 +123,11 @@ def _metrics() -> dict[str, Q]:
             direction=FinancialLine.Direction.CREDIT,
             account_code=accounting.CASH_ON_HAND,
         ),
+        # Supplier-payment stages. These are conditional aggregates over the same
+        # ledger lines the summary already aggregates, so the whole supplier block
+        # costs no additional statement beyond the two bounded counts it makes for
+        # its opening balance and approval counts.
+        **settlement_measure_filters(),
     }
 
 
@@ -250,6 +256,16 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
                 "percent_of_recognized_revenue": str(share.quantize(Decimal("0.01"))),
             }
         )
+    # Assembled from the aggregate above plus two bounded counts — never from a
+    # second ledger pass.
+    payments = supplier_payment_visibility(
+        totals=totals, start_date=start_date, end_date=end_date, currency=currency,
+    )
+    # Net cash movement is defined once, from the same measures the rest of the
+    # report exposes, so a reader can always reproduce it: money received less
+    # money returned to guests less money actually disbursed. It is a MOVEMENT for
+    # the period, unlike `outstanding_supplier_payables`, which is a balance.
+    net_cash_movement = collections - refunds - _amount(payments["total_cash_disbursements"])
     return {
         "basis": "posted_immutable_ledger_business_date",
         "definitions": {
@@ -259,6 +275,10 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
             "operating_expenses": "Debit postings to EXPENSE.OPERATING from EXPENSE transactions (recognized, not necessarily paid).",
             "cash_paid_out": "Credit postings to cash on hand from EXPENSE transactions (actual cash leaving the drawer).",
             "gross_operating_result": "Recognized revenue less operating expense and accrued payroll. Not statutory net profit.",
+            "net_cash_movement": (
+                "Collections less refunds less cash actually disbursed (supplier payments, operating costs "
+                "paid, net salaries, other disbursements) in the period. A movement, not a bank balance."
+            ),
         },
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -269,6 +289,10 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
         "net_payroll_payments": money(net_payroll_payments),
         "actual_payments_made": money(cash_paid_out + net_payroll_payments),
         "gross_operating_result": money(revenue - operating_expenses - payroll_expenses),
+        "net_cash_movement": money(net_cash_movement),
+        # Supplier payments, payables and every other disbursement. Additive keys
+        # only: the existing contract above is unchanged.
+        "supplier_payments": payments,
         "by_department": by_department,
         "by_day": serialized_days,
     }
@@ -295,10 +319,39 @@ MEASURE_LABELS = (
 
 
 def _metric_amount(report: dict, key: str) -> str:
+    """Canonical STRING amount for a measure (undefined measures stay textual)."""
     value = report.get(key)
     if isinstance(value, dict):
         return str(value.get("amount") or "0.00")
     return str(value or "0.00")
+
+
+def _metric_amount_number(report: dict, key: str):
+    """The same amount as a Decimal, for spreadsheets that must sum the column.
+
+    Falls back to the textual value when the measure is absent (for example COGS,
+    which is deliberately reported as unavailable rather than as a zero).
+    """
+    value = report.get(key)
+    if isinstance(value, dict):
+        value = value.get("amount")
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return str(value)
+
+
+def _display_amount(amount: str) -> str:
+    """Thousands-separated 2-dp display for printed documents (§9).
+
+    Presentation only: the value, its precision and the API payload are unchanged.
+    """
+    try:
+        return f"{Decimal(str(amount)):,.2f}"
+    except (InvalidOperation, ValueError):
+        return str(amount)
 
 
 def _metric_count(report: dict, key: str):
@@ -322,13 +375,25 @@ def summary_xlsx_bytes(report: dict) -> bytes:
     sheet.append(["Currency", report.get("currency")])
     sheet.append(["Posted ledger transactions", report.get("ledger_transactions")])
     sheet.append([])
+    # Amounts are written as REAL numbers with a grouped display format, not as
+    # pre-formatted strings: a text cell cannot be summed, and a hard-coded
+    # "₦1,000.00" string would both lose precision and change the exported value.
+    # The stored precision (2 decimal places) is untouched — only how Excel shows
+    # the cell changes.
+    money_format = f'#,##0.00" {report.get("currency") or "NGN"}"'
     sheet.append(["Measure", "Amount", "Ledger transactions"])
     for key, label in MEASURE_LABELS:
-        sheet.append([label, _metric_amount(report, key), _metric_count(report, key)])
+        row_index = sheet.max_row + 1
+        amount = _metric_amount_number(report, key)
+        sheet.append([label, amount if amount is not None else _metric_amount(report, key), _metric_count(report, key)])
+        sheet.cell(row=row_index, column=2).number_format = money_format
     sheet.append([])
     sheet.append(["Department", "Amount", "Share of recognized revenue %", "Transactions"])
     for row in report.get("by_department") or []:
-        sheet.append([row.get("label"), row.get("amount"), row.get("percent_of_recognized_revenue"), row.get("transactions")])
+        row_index = sheet.max_row + 1
+        amount = _metric_amount_number({"amount": row.get("amount")}, "amount")
+        sheet.append([row.get("label"), amount, row.get("percent_of_recognized_revenue"), row.get("transactions")])
+        sheet.cell(row=row_index, column=2).number_format = money_format
     output = BytesIO()
     book.save(output)
     return output.getvalue()
@@ -357,7 +422,7 @@ def summary_pdf_bytes(report: dict) -> bytes:
     rows = [["Measure", "Amount", "Transactions"]]
     for key, label in MEASURE_LABELS:
         count = _metric_count(report, key)
-        rows.append([label, _metric_amount(report, key), "" if count is None else str(count)])
+        rows.append([label, _display_amount(_metric_amount(report, key)), "" if count is None else str(count)])
     table = Table(rows, colWidths=[240, 120, 100])
     table.setStyle(
         TableStyle(

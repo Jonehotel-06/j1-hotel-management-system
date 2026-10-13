@@ -197,7 +197,7 @@ const API = (() => {
 
     // Vercel only proxies /api paths WITHOUT a trailing slash. The rewrite in
     // vercel.json adds the slash Django needs, so remove it here.
-    if (!BASE) url = url.replace(/\/(?=\?|#|$)/, "");
+    url = url.replace(/\/(?=\?|#|$)/, "");
 
     const out = { method, headers: { Accept: "application/json", ...headers } };
     if (cache) out.cache = cache;

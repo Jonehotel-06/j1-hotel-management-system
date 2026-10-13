@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
 from apps.accounts.models import User
+from apps.core.approvals import override_event_details, override_note, require_independent_approver
 from apps.core.utils import hotel_today
 from apps.finance.models import CashMovement, CashSession, FinancialLine, FinancialTransaction
 from apps.finance.services import accounting
@@ -867,15 +868,20 @@ def review_payroll_period(*, period, reviewer, approved: bool, review_note=""):
         raise ValidationError("A final payroll review decision cannot be changed.")
     if period.status != PayrollPeriod.Status.SUBMITTED:
         raise ValidationError(f"Payroll run cannot be reviewed from {period.status}.")
-    if period.created_by_id == reviewer.pk:
-        raise PermissionDenied("The preparer cannot approve or reject their own payroll run.")
     if not has_capability(reviewer, "payroll.approve"):
         raise PermissionDenied("This user cannot review payroll.")
+    # One central maker-checker decision (apps.core.approvals): a separate
+    # reviewer is mandatory for every ordinary role, and an administrator may
+    # review a run they prepared under the configured override policy — with the
+    # override captured on the append-only payroll event below.
+    override = require_independent_approver(
+        requester=period.created_by, actor=reviewer, workflow="payroll run",
+    )
 
     now = timezone.now()
     period.reviewed_by = reviewer
     period.reviewed_at = now
-    period.review_note = (review_note or "")[:1000]
+    period.review_note = override_note((review_note or "")[:1000], override)
     if approved:
         employee_pension_total = sum((line.employee_pension for line in period.lines.all()), ZERO).quantize(CENT)
         pension_payable = (employee_pension_total + period.total_employer_pension).quantize(CENT)
@@ -940,15 +946,16 @@ def review_payroll_period(*, period, reviewer, approved: bool, review_note=""):
         period.approved_by = reviewer
         period.approved_at = now
         period.accrual_transaction = transaction_record
-        _event(period, PayrollEvent.Type.APPROVED, reviewer, {
+        _event(period, PayrollEvent.Type.APPROVED, reviewer, override_event_details({
             "financial_reference": transaction_record.reference,
             "gross": str(period.total_gross),
             "deductions": str(period.total_deductions),
             "net": str(period.total_net),
-        })
+        }, override))
     else:
         period.status = PayrollPeriod.Status.REJECTED
-        _event(period, PayrollEvent.Type.REJECTED, reviewer, {"review_note": period.review_note})
+        _event(period, PayrollEvent.Type.REJECTED, reviewer,
+               override_event_details({"review_note": period.review_note}, override))
     period.save(update_fields=[
         "status", "reviewed_by", "reviewed_at", "review_note", "approved_by", "approved_at",
         "accrual_transaction", "updated_at",

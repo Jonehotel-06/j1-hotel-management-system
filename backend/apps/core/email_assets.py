@@ -13,9 +13,13 @@ Reference strategy depends on the active provider:
   never used — Gmail strips them, which is exactly why the logo appeared
   broken in delivered receipts.
 """
+import logging
 import os
+from urllib.parse import urlparse
 
 from django.conf import settings
+
+logger = logging.getLogger("apps")
 
 LOGO_CID = "jone-logo"
 LOGO_FILENAME = "jone-logo.png"
@@ -40,23 +44,96 @@ def logo_bytes():
         return None
 
 
+# Hostnames that only ever resolve inside a development machine or the private
+# network the application runs in. A mail client fetching the logo runs on the
+# GUEST's device, so any of these produces a broken image in the delivered
+# message — which is exactly how the payment receipt logo came to render as a
+# grey placeholder in Gmail.
+_DEV_HOSTS = frozenset({
+    "localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]", "host.docker.internal",
+})
+
+
+def is_publicly_reachable(url: str) -> bool:
+    """True only for an absolute http(s) URL on a routable, non-loopback host."""
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host or host in _DEV_HOSTS:
+        return False
+    # Bare LAN addresses are just as unreachable from a guest's phone.
+    if host.startswith(("10.", "192.168.", "169.254.")):
+        return False
+    if host.startswith("172."):
+        try:
+            second = int(host.split(".")[1])
+        except (IndexError, ValueError):
+            return False
+        if 16 <= second <= 31:
+            return False
+    return True
+
+
 def hosted_logo_url():
-    """Public HTTPS URL for the logo (frontend-hosted, overridable)."""
+    """Public HTTPS URL for the logo, or ``""`` when none exists.
+
+    Returning an empty string is deliberate: an unreachable URL is strictly
+    worse than no URL, because the guest sees a broken image instead of the
+    hotel's name. Callers render a wordmark fallback when this is empty.
+    """
     configured = str(getattr(settings, "EMAIL_LOGO_URL", "") or "").strip()
     if configured:
-        return configured
+        if is_publicly_reachable(configured):
+            return configured
+        logger.warning(
+            "EMAIL_LOGO_URL (%s) is not a publicly reachable http(s) URL; "
+            "guests would see a broken image. Set it to the deployed HTTPS "
+            "origin of the logo asset.", configured,
+        )
+        return ""
     base = str(getattr(settings, "FRONTEND_URL", "") or "").rstrip("/")
-    return f"{base}/assets/icons/logo-official.png" if base else ""
+    if not base:
+        return ""
+    candidate = f"{base}/assets/icons/logo-official.png"
+    if is_publicly_reachable(candidate):
+        return candidate
+    logger.warning(
+        "FRONTEND_URL (%s) is a local/private origin, so it cannot be used as "
+        "the email logo source. Set EMAIL_LOGO_URL (or a public FRONTEND_URL) "
+        "before sending branded mail; falling back to an inline image.",
+        base,
+    )
+    return ""
 
 
 def logo_source(provider=None):
-    """``src`` value for the logo <img> under the active provider."""
+    """``src`` value for the logo ``<img>`` under the active provider.
+
+    Preference order:
+
+    1. ``cid:`` when the transport genuinely delivers inline MIME images;
+    2. a publicly reachable hosted URL;
+    3. ``cid:`` as the last resort even on an API transport — a CID the client
+       cannot resolve is no worse than a URL it cannot fetch, and it keeps the
+       attachment in the message;
+    4. ``""`` so the template renders its wordmark fallback instead of a broken
+       image.
+    """
     from apps.notifications.providers import get_provider
 
     provider = provider or get_provider()
     if getattr(provider, "supports_inline_images", False) and logo_bytes():
         return f"cid:{LOGO_CID}"
-    return hosted_logo_url()
+    hosted = hosted_logo_url()
+    if hosted:
+        return hosted
+    if logo_bytes():
+        return f"cid:{LOGO_CID}"
+    return ""
 
 
 def logo_context(provider=None):

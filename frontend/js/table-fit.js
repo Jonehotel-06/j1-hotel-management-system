@@ -17,7 +17,11 @@
   "use strict";
 
   // Headings whose values are short and atomic.
-  var ATOMIC = /(^|[^a-z])(date|dates|day|days|time|when|amount|amounts|total|totals|price|prices|rate|rates|balance|balances|paid|due|subtotal|tax|fee|fees|discount|qty|quantity|nights?|rooms?|no|number|ref|reference|id|code|status|state|actions?|phone|ip|count|updated|created|last|seen|check|clock|cost|value|stock|level|period|shift|percent|ngn|rating|score|pct)([^a-z]|$)/i;
+  // Vocabulary widened for the inventory/procurement tables: quantities and
+  // their column names ("On hand", "Counted", "Variance", "Expected", "Received",
+  // "Initiated") are atomic values, not prose, and were the columns still
+  // shredding mid-number before this list was extended.
+  var ATOMIC = /(^|[^a-z])(date|dates|day|days|time|when|amount|amounts|total|totals|price|prices|rate|rates|balance|balances|paid|due|subtotal|tax|fee|fees|discount|qty|quantity|quantities|nights?|rooms?|no|number|ref|reference|id|code|status|state|actions?|phone|ip|count|counted|variance|expected|initiated|received|ordered|issued|returned|outstanding|opening|closing|hand|lines?|updated|created|last|seen|check|clock|cost|value|stock|level|period|shift|percent|ngn|rating|score|pct)([^a-z]|$)/i;
 
   // Headings that hold prose, names or free text. A match here always wins
   // over ATOMIC so "Room type", "Guest name" or "Notes" keep wrapping.

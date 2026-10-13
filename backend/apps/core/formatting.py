@@ -46,10 +46,18 @@ def format_money(value, currency="NGN"):
         amount = Decimal("0.00")
     # Thousands separators with exactly two decimals.
     formatted = f"{amount:,.2f}"
+    # A negative amount keeps its sign in front of the symbol ("-₦5,000.00"),
+    # which is how an accounting document must read — "₦-5,000.00" is ambiguous
+    # at a glance and does not match the printed receipt or the web UI.
+    if amount < 0:
+        formatted = formatted.lstrip("-")
+        sign = "-"
+    else:
+        sign = ""
     if symbol:
-        return f"{symbol}{formatted}"
+        return f"{sign}{symbol}{formatted}"
     # Unknown currency: keep the code visible so the amount is never ambiguous.
-    return f"{currency} {formatted}"
+    return f"{sign}{currency} {formatted}"
 
 
 def _parse_dt(value):

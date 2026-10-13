@@ -50,6 +50,10 @@ test("atomic headings are classified as one-line values", () => {
   for (const label of [
     "Amount", "Total (NGN)", "Check-in date", "Reference", "Status", "Actions",
     "Qty", "Room no.", "Last seen", "Balance due", "Created", "Phone",
+    // Inventory/procurement quantity columns: these were the columns still
+    // breaking mid-number before the vocabulary was widened.
+    "On hand", "Counted", "Variance", "Expected", "Initiated", "Received", "Ordered",
+    "Outstanding", "Lines",
   ]) {
     assert.equal(isAtomicHeading(label), true, `expected atomic: ${label}`);
   }

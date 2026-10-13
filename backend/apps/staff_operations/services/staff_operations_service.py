@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
 from apps.accounts.models import User
+from apps.core.approvals import override_event_details, override_note, require_independent_approver
 from apps.core.utils import hotel_date_bounds, hotel_today
 
 from ..models import (
@@ -316,8 +317,13 @@ def review_leave(*, leave_request: LeaveRequest, reviewer: User, approved: bool,
         return leave_request
     if leave_request.status != LeaveRequest.Status.PENDING:
         raise ValidationError(f"Leave request cannot be reviewed from {leave_request.status}.")
-    if leave_request.staff_id == reviewer.pk:
-        raise PermissionDenied("A staff member cannot review their own leave request.")
+    # Centralised maker-checker policy: an ordinary staff member may never review
+    # their own leave; the administrator may override it (recorded as evidence on
+    # the decision event below) because a single-owner hotel would otherwise have
+    # nobody able to authorise the owner's own leave.
+    override = require_independent_approver(
+        requester=leave_request.staff, actor=reviewer, workflow="leave request",
+    )
     if approved:
         lower, upper = hotel_date_bounds(leave_request.start_date, leave_request.end_date)
         conflict = ShiftAssignment.objects.select_for_update().filter(
@@ -327,11 +333,13 @@ def review_leave(*, leave_request: LeaveRequest, reviewer: User, approved: bool,
         if conflict:
             raise ValidationError("Scheduled shifts overlap this leave period; resolve them before approval.")
     leave_request.status = LeaveRequest.Status.APPROVED if approved else LeaveRequest.Status.REJECTED
-    leave_request.reviewer = reviewer; leave_request.reviewed_at = timezone.now(); leave_request.review_note = review_note or ""
+    leave_request.reviewer = reviewer; leave_request.reviewed_at = timezone.now()
+    leave_request.review_note = override_note(review_note, override)
     leave_request.save(update_fields=["status", "reviewer", "reviewed_at", "review_note", "updated_at"])
     _leave_event(leave_request=leave_request,
                  event_type=LeaveRequestEvent.Type.APPROVED if approved else LeaveRequestEvent.Type.REJECTED,
-                 actor=reviewer, details={"review_note": leave_request.review_note})
+                 actor=reviewer,
+                 details=override_event_details({"review_note": leave_request.review_note}, override))
     return leave_request
 
 

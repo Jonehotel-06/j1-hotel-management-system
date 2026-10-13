@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
@@ -11,6 +12,8 @@ from django.db.models import F
 from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
+from apps.audit.services import log_action
+from apps.core.approvals import override_event_details, require_independent_approver
 from apps.core.utils import hotel_today
 
 from ..models import (
@@ -19,8 +22,17 @@ from ..models import (
     StockItem, StockLocation, StockMovement, StockRecipe, StockRecipeLine, Supplier,
 )
 
+logger = logging.getLogger("apps")
+
 QTY = Decimal("0.0001")
 MONEY = Decimal("0.01")
+
+# Who/what caused a POS hand-off to be posted. Recorded as append-only evidence
+# on StockConsumptionRequestEvent so an automatic depletion can always be told
+# apart from a manual inventory action during an audit.
+TRIGGER_POS_DELIVERY = "POS_DELIVERY"
+TRIGGER_MANUAL = "MANUAL"
+TRIGGER_CATCH_UP = "CATCH_UP"
 
 
 def _quantity(value, *, field="quantity", positive=False):
@@ -230,9 +242,24 @@ def approve_purchase_order(*, purchase_order, actor):
     po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
     if po.status == PurchaseOrder.Status.APPROVED: return po
     if po.status != PurchaseOrder.Status.SUBMITTED: raise ValidationError(f"Purchase order cannot approve from {po.status}.")
-    if po.requested_by_id == actor.pk and actor.role != "ADMIN":
-        raise PermissionDenied("A requester cannot approve their own purchase order.")
+    # Single, centrally enforced maker-checker rule (apps.core.approvals). An
+    # administrator may authorise their own order under the configured policy;
+    # every other role still needs a different authorising account.
+    override = require_independent_approver(
+        requester=po.requested_by, actor=actor, workflow="purchase order",
+    )
     po.status = PurchaseOrder.Status.APPROVED; po.approved_by = actor; po.approved_at = timezone.now()
+    if override:
+        # Keep the override visible on the record itself, not only in the audit
+        # log: PO.notes is free text and is never used for control decisions.
+        po.notes = (f"{po.notes}\n[{override['marker']}] {override['reason']}").strip()
+        po.save(update_fields=["status", "approved_by", "approved_at", "notes", "updated_at"])
+        log_action(
+            actor=actor, action=override["marker"], instance=po,
+            summary=f"Purchase order {po.reference} approved by its requester under administrator override",
+            metadata={"reference": po.reference, **override},
+        )
+        return po
     po.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
     return po
 
@@ -471,13 +498,16 @@ def request_pos_stock_consumption(*, order, actor=None):
 
 
 @transaction.atomic
-def process_pos_stock_consumption(*, request, actor):
+def process_pos_stock_consumption(*, request, actor, trigger=TRIGGER_MANUAL):
     """Inventory-only, idempotent posting of POS_CONSUMPTION ledger movements.
 
     A missing/invalid recipe never causes partial deduction: the request is
     marked failed with review evidence and can be retried once configuration is
     corrected. Each aggregate movement has a deterministic request/location/
     item source key, so a retried processing command converges safely.
+
+    ``trigger`` records WHERE the resolution was initiated (POS delivery,
+    inventory console, or the catch-up sweep) as append-only evidence.
     """
     request = StockConsumptionRequest.objects.select_for_update().select_related("pos_order").get(pk=request.pk)
     if request.status in {StockConsumptionRequest.Status.PROCESSED, StockConsumptionRequest.Status.SKIPPED}:
@@ -487,7 +517,8 @@ def process_pos_stock_consumption(*, request, actor):
         request.status = StockConsumptionRequest.Status.FAILED
         request.resolution_note = "The POS hand-off has no lines to resolve."
         request.save(update_fields=["status", "resolution_note", "updated_at"])
-        _consumption_event(request=request, event_type=StockConsumptionRequestEvent.Type.FAILED, actor=actor, details={"reason": "empty_lines"})
+        _consumption_event(request=request, event_type=StockConsumptionRequestEvent.Type.FAILED, actor=actor,
+                           details={"reason": "empty_lines", "trigger": trigger})
         return request, False
     snapshot_recipes = dict((request.payload or {}).get("recipe_snapshot") or {})
     needed_menu_ids = []
@@ -532,15 +563,40 @@ def process_pos_stock_consumption(*, request, actor):
     if missing:
         request.status = StockConsumptionRequest.Status.FAILED
         request.resolution_note = "Missing or invalid active recipe for: " + ", ".join(sorted(set(missing)))[:2000]
-        request.resolution_payload = {"resolved_recipes": resolved, "missing": sorted(set(missing))}
+        request.resolution_payload = {"resolved_recipes": resolved, "missing": sorted(set(missing)), "trigger": trigger}
         request.save(update_fields=["status", "resolution_note", "resolution_payload", "updated_at"])
         _consumption_event(request=request, event_type=StockConsumptionRequestEvent.Type.FAILED, actor=actor,
-                           details={"missing": sorted(set(missing))})
+                           details={"missing": sorted(set(missing)), "trigger": trigger})
         return request, False
     items = {item.pk: item for item in StockItem.objects.filter(pk__in=[key[0] for key in aggregates], is_active=True)}
     locations = {location.pk: location for location in StockLocation.objects.filter(pk__in=[key[1] for key in aggregates], is_active=True)}
     if len(items) != len({key[0] for key in aggregates}) or len(locations) != len({key[1] for key in aggregates}):
         raise ValidationError("A frozen recipe references an inactive or removed stock item/location.")
+    # All-or-nothing stock validation, performed under the same row locks the
+    # movements will take. A shortage must never post a partial deduction and
+    # must never drive a balance negative: it is parked for inventory review and
+    # completes automatically once a goods receipt restores the stock.
+    shortages = []
+    for (item_id, location_id), quantity in sorted(aggregates.items()):
+        balance = _locked_balance(item=items[item_id], location=locations[location_id])
+        available = Decimal(balance.quantity_on_hand)
+        if available < quantity:
+            shortages.append({
+                "item": items[item_id].sku,
+                "location": locations[location_id].code,
+                "required": str(quantity),
+                "available": str(available.quantize(QTY)),
+            })
+    if shortages:
+        request.status = StockConsumptionRequest.Status.FAILED
+        request.resolution_note = ("Insufficient stock to consume for " + ", ".join(
+            f"{row['item']}@{row['location']} (need {row['required']}, have {row['available']})" for row in shortages
+        ))[:2000]
+        request.resolution_payload = {"resolved_recipes": resolved, "shortages": shortages, "trigger": trigger}
+        request.save(update_fields=["status", "resolution_note", "resolution_payload", "updated_at"])
+        _consumption_event(request=request, event_type=StockConsumptionRequestEvent.Type.FAILED, actor=actor,
+                           details={"reason": "insufficient_stock", "shortages": shortages, "trigger": trigger})
+        return request, False
     for (item_id, location_id), quantity in sorted(aggregates.items()):
         recipe_evidence = [recipe for recipe in resolved.values() if recipe.get("location_id") == location_id and recipe.get("tracking_mode") == StockRecipe.TrackingMode.COMPONENTS]
         record_stock_movement(
@@ -549,18 +605,89 @@ def process_pos_stock_consumption(*, request, actor):
             unit_cost=items[item_id].standard_cost, source_reference=request.pos_order.reference,
             notes=f"POS consumption for {request.pos_order.reference}",
             metadata={"stock_consumption_request": request.reference, "pos_order": request.pos_order.reference,
-                      "resolved_recipes": recipe_evidence},
+                      "resolved_recipes": recipe_evidence, "trigger": trigger},
         )
     has_components = bool(aggregates)
     request.status = StockConsumptionRequest.Status.PROCESSED if has_components else StockConsumptionRequest.Status.SKIPPED
     request.processed_by = actor; request.processed_at = timezone.now()
     request.resolution_note = "POS recipe consumption posted." if has_components else "All menu items are explicitly non-stock tracked."
-    request.resolution_payload = {"resolved_recipes": resolved, "movement_count": len(aggregates)}
+    request.resolution_payload = {"resolved_recipes": resolved, "movement_count": len(aggregates), "trigger": trigger}
     request.save(update_fields=["status", "processed_by", "processed_at", "resolution_note", "resolution_payload", "updated_at"])
     _consumption_event(request=request,
                        event_type=StockConsumptionRequestEvent.Type.PROCESSED if has_components else StockConsumptionRequestEvent.Type.SKIPPED,
-                       actor=actor, details={"movement_count": len(aggregates)})
+                       actor=actor, details={"movement_count": len(aggregates), "trigger": trigger})
     return request, True
+
+
+@transaction.atomic
+def consume_stock_for_delivered_order(*, order, actor=None):
+    """Deplete stock for a just-delivered POS order, exactly once.
+
+    This is the function every stock-consuming sales channel must reach when
+    its order is finalised. It performs the durable hand-off and then resolves
+    it immediately, so the ``Stock on Hand`` balance follows the sale instead of
+    waiting for a human to press a button in the inventory console.
+
+    Guarantees:
+
+    * Idempotent — the hand-off is source-keyed on the POS order reference and
+      every resulting movement is source-keyed on the hand-off, so a repeated
+      delivery, a retried request or a duplicate HTTP call converges on the
+      same single deduction.
+    * Atomic — the deduction commits with the delivery, or not at all.
+    * Never blocks a completed sale — an inventory configuration problem
+      (missing recipe, inactive item, insufficient stock) leaves a durable
+      ``PENDING``/``FAILED`` hand-off carrying review evidence instead of
+      rolling back a delivery that has already been charged to the guest.
+    """
+    from apps.inventory.models import StockConsumptionRequest as _Request
+
+    request, _created = request_pos_stock_consumption(order=order, actor=actor)
+    if request.status in {_Request.Status.PROCESSED, _Request.Status.SKIPPED}:
+        return request, False
+    try:
+        return process_pos_stock_consumption(request=request, actor=actor, trigger=TRIGGER_POS_DELIVERY)
+    except Exception:  # noqa: BLE001 - the hand-off is the durable record
+        logger.exception(
+            "POS stock consumption %s for order %s could not be posted; left for inventory review",
+            request.reference, order.reference,
+        )
+        return request, False
+
+
+@transaction.atomic
+def process_pending_pos_consumption(*, limit=200, actor=None):
+    """Catch-up sweep for hand-offs that were never resolved.
+
+    Covers orders delivered before automatic depletion existed, orders whose
+    recipe/stock configuration has since been corrected, and any hand-off that
+    a transient failure left behind. Every attempt is idempotent, so running
+    this repeatedly can never double-deduct.
+    """
+    try:
+        limit = max(1, min(int(limit), 1000))
+    except (TypeError, ValueError):
+        limit = 200
+    pending = list(
+        StockConsumptionRequest.objects.select_related("pos_order")
+        .filter(status__in=[StockConsumptionRequest.Status.PENDING, StockConsumptionRequest.Status.FAILED])
+        .order_by("requested_at", "pk")[:limit]
+    )
+    posted = failed = 0
+    for request in pending:
+        try:
+            resolved, created = process_pos_stock_consumption(
+                request=request, actor=actor, trigger=TRIGGER_CATCH_UP,
+            )
+        except Exception:  # noqa: BLE001 - one bad hand-off must not stop the sweep
+            logger.exception("Catch-up stock consumption failed for %s", request.reference)
+            failed += 1
+            continue
+        if created and resolved.status == StockConsumptionRequest.Status.PROCESSED:
+            posted += 1
+        else:
+            failed += 1
+    return {"examined": len(pending), "posted": posted, "still_open": failed}
 
 
 def _count_event(*, stock_count, event_type, actor=None, details=None):
@@ -640,8 +767,9 @@ def approve_stock_count(*, stock_count, actor):
     if stock_count.status == StockCount.Status.POSTED: return stock_count
     if stock_count.status != StockCount.Status.PENDING_APPROVAL:
         raise ValidationError(f"Stock count cannot approve from {stock_count.status}.")
-    if stock_count.initiated_by_id == actor.pk:
-        raise PermissionDenied("The stock-count initiator cannot approve its own variance adjustments.")
+    override = require_independent_approver(
+        requester=stock_count.initiated_by, actor=actor, workflow="stock-count variance adjustment",
+    )
     lines = list(StockCountLine.objects.select_for_update().select_related("item").filter(stock_count=stock_count))
     for line in lines:
         if line.counted_quantity is None or line.variance is None:
@@ -661,6 +789,8 @@ def approve_stock_count(*, stock_count, actor):
         line.save(update_fields=["adjustment_movement"])
     stock_count.status = StockCount.Status.POSTED; stock_count.approved_by = actor; stock_count.approved_at = timezone.now()
     stock_count.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
-    _count_event(stock_count=stock_count, event_type=StockCountEvent.Type.APPROVED, actor=actor)
-    _count_event(stock_count=stock_count, event_type=StockCountEvent.Type.POSTED, actor=actor, details={"movement_count": sum(1 for line in lines if line.variance)})
+    _count_event(stock_count=stock_count, event_type=StockCountEvent.Type.APPROVED, actor=actor,
+                 details=override_event_details({"variance_lines": sum(1 for line in lines if line.variance)}, override))
+    _count_event(stock_count=stock_count, event_type=StockCountEvent.Type.POSTED, actor=actor,
+                 details=override_event_details({"movement_count": sum(1 for line in lines if line.variance)}, override))
     return stock_count

@@ -22,6 +22,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
+from apps.core.approvals import override_note, require_independent_approver
 from apps.accounts.models import User, Workstation
 from apps.accounts.desktop_policy import receptionist_desktop_for_key, hash_desktop_key
 from apps.audit.services import log_action
@@ -209,10 +210,17 @@ def request_fingerprint_enrollment(*, staff: User, actor: User, minutiae, finger
 def approve_fingerprint_enrollment(*, template: FingerprintTemplate, approver: User) -> FingerprintTemplate:
     if not has_capability(approver, "attendance.manage"):
         raise PermissionDenied("Approving fingerprint enrollment requires attendance management rights.")
-    if approver.pk == template.staff_id:
+    # Centralised maker-checker policy. Ordinary supervisors still need a second
+    # person; an administrator enrolling their own fingerprint is permitted with
+    # recorded override evidence (see apps.core.approvals).
+    try:
+        override = require_independent_approver(
+            requester=template.staff, actor=approver, workflow="fingerprint enrollment",
+        )
+    except PermissionDenied:
         log_action(actor=approver, action="FINGERPRINT_ENROLLMENT_DENIED", instance=template,
                    metadata={"staff_id": template.staff_id, "reason": "self_approval"})
-        raise PermissionDenied("Fingerprint enrollment must be approved by a different supervisor.")
+        raise
 
     with transaction.atomic():
         locked = FingerprintTemplate.objects.select_for_update().get(pk=template.pk)
@@ -231,6 +239,9 @@ def approve_fingerprint_enrollment(*, template: FingerprintTemplate, approver: U
         locked.decided_at = timezone.now()
         locked.decided_by = approver
         locked.expires_at = locked.decided_at + timedelta(days=retention_days())
+        if override:
+            locked.decision_note = override_note(locked.decision_note, override)
+            locked.save(update_fields=["decision_note"])
         locked.save()
 
     log_action(actor=approver, action="FINGERPRINT_ENROLLMENT_APPROVED", instance=locked, metadata={"staff_id": locked.staff_id})

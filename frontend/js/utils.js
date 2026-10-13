@@ -7,12 +7,144 @@ const JONE = (() => {
   "use strict";
 
   /* ----------------------------- Currency ---------------------------------- */
+  /* ONE currency formatter for the whole application. Every financial table,
+     KPI card, modal, receipt and export renders money through this function —
+     which is why "no thousands separators" was a single-point defect and is
+     fixed in a single place.
+
+     Rules enforced here:
+     * thousands separators and the currency's decimal precision, always
+       (`₦165,000.00`, not `₦165000` and not `₦165,000`);
+     * the value is formatted as a NUMBER — callers pass numeric fields, never
+       pre-built strings containing a currency symbol;
+     * negative amounts, zero and reversals keep their sign;
+     * `null`/`undefined`/non-numeric render an explicit placeholder instead of
+       a misleading `₦0.00`;
+     * the underlying amount is never altered, rounded for storage, or coerced to
+       a different precision than the caller asked for.
+
+     Options: `{ currency, decimals, symbol, compact }`.
+     `compact:true` drops the decimal places (used for badges such as
+     "₦5,000 OFF" where trailing zeros are noise), never for money columns. */
+  const CURRENCY_SYMBOLS = { NGN: "\u20a6", USD: "$", GBP: "\u00a3", EUR: "\u20ac" };
+  const CURRENCY_DECIMALS = { NGN: 2, USD: 2, GBP: 2, EUR: 2 };
+  const CURRENCY_LOCALES = { NGN: "en-NG", USD: "en-US", GBP: "en-GB", EUR: "en-IE" };
+
+  function formatMoney(amount, opts = {}) {
+    if (amount === null || amount === undefined || amount === "") return "--";
+    const n = typeof amount === "number" ? amount : Number(String(amount).trim());
+    if (!Number.isFinite(n)) return "--";
+    const currency = String(opts.currency || "NGN").toUpperCase();
+    const decimals = opts.compact
+      ? 0
+      : (Number.isInteger(opts.decimals) ? opts.decimals : (CURRENCY_DECIMALS[currency] ?? 2));
+    const symbol = opts.symbol != null ? opts.symbol : (CURRENCY_SYMBOLS[currency] || `${currency} `);
+    // en-* grouping is the standard 3-digit separator the hotel's invoices use.
+    const body = Math.abs(n).toLocaleString(CURRENCY_LOCALES[currency] || "en-NG", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+    return `${n < 0 ? "\u2212" : ""}${symbol}${body}`;
+  }
+
+  /* Back-compat alias: every existing call site keeps working and now inherits
+     the separator/precision rules above. */
   function formatNaira(amount, opts = {}) {
-    if (amount == null || isNaN(amount)) return "--";
-    const n = Number(amount);
-    const abs = Math.abs(n);
-    const s = abs.toLocaleString("en-NG", { maximumFractionDigits: 0 });
-    return `${n < 0 ? "-" : ""}₦${s}`;
+    return formatMoney(amount, { currency: "NGN", ...(opts || {}) });
+  }
+
+  /* --------------------------- Quantities ---------------------------------- */
+  /* One quantity formatter for the whole application.
+
+     The defect this replaces: every stock table printed the raw four-decimal
+     column value, so a delivery of twenty whole bottles read "+20.0000".
+
+     The rule is driven by the PRODUCT'S OWN UNIT, never by blanket rounding:
+     * whole-count units (bottle, pack, piece, crate, plate, ...) show no
+       decimals at all — `20`, not `20.0000`;
+     * measured units keep the configured precision, and trailing zeros are
+       PRESERVED there — `1.250 kg` must never collapse to `1.25 kg`, let alone
+       `1 kg`;
+     * an unknown unit is treated as measured-but-trimmed, so nothing is
+       silently rounded down;
+     * the underlying value is never modified — this is presentation only.
+
+     Options: `{ unit, precision, signed, showUnit, sign }`. */
+  const WHOLE_COUNT_UNITS = new Set([
+    "PIECE", "PIECES", "PCS", "PC", "UNIT", "UNITS", "EA", "EACH", "ITEM", "ITEMS",
+    "BOTTLE", "BOTTLES", "PACK", "PACKS", "PACKET", "PACKETS", "CRATE", "CRATES",
+    "CAN", "CANS", "TIN", "TINS", "BOX", "BOXES", "CARTON", "CARTONS", "BAG", "BAGS",
+    "SACHET", "SACHETS", "PLATE", "PLATES", "PORTION", "PORTIONS", "SERVING", "SERVINGS",
+    "ROLL", "ROLLS", "TUBE", "TUBES", "BAR", "BARS", "DOZEN", "DOZENS", "CUP", "CUPS",
+    "GLASS", "GLASSES", "SHOT", "SHOTS", "TABLESPOON", "TABLESPOONS", "TEASPOON", "TEASPOONS",
+  ]);
+  /* Measured units keep fixed precision so `2.500 L` reads as a measured amount. */
+  const MEASURED_UNIT_PRECISION = {
+    L: 3, LITRE: 3, LITRES: 3, LITER: 3, LITERS: 3, LTR: 3,
+    KG: 3, KILOGRAM: 3, KILOGRAMS: 3, KILO: 3, KILOS: 3,
+    G: 1, GRAM: 1, GRAMS: 1,
+    ML: 1, MILLILITRE: 1, MILLILITRES: 1, MILLILITER: 1, MILLILITERS: 1, CL: 1,
+    M: 2, METRE: 2, METRES: 2, METER: 2, METERS: 2,
+    TBSP: 1, TSP: 1,
+  };
+  const MAX_QUANTITY_DECIMALS = 4;
+
+  function unitKey(unit) {
+    return String(unit == null ? "" : unit).trim().toUpperCase().replace(/\.$/, "");
+  }
+
+  /* Which unit labels are displayed with a space ("2.500 L") vs. tight ("12 pcs"). */
+  function unitSpacing(unit) {
+    const key = unitKey(unit);
+    return /^[A-Z]{1,4}$/.test(key) ? " " : " ";
+  }
+
+  function quantityPrecision(unit, explicit) {
+    if (Number.isInteger(explicit)) return Math.max(0, Math.min(explicit, MAX_QUANTITY_DECIMALS));
+    const key = unitKey(unit);
+    if (WHOLE_COUNT_UNITS.has(key)) return 0;
+    if (Object.prototype.hasOwnProperty.call(MEASURED_UNIT_PRECISION, key)) {
+      return MEASURED_UNIT_PRECISION[key];
+    }
+    return null;   // unknown unit: decide from the value itself
+  }
+
+  function formatQuantity(value, opts = {}) {
+    if (value === null || value === undefined || value === "") return "--";
+    const raw = typeof value === "number" ? String(value) : String(value).trim();
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return "--";
+    const unit = opts.unit || "";
+    let decimals = quantityPrecision(unit, opts.precision);
+    if (decimals === null) {
+      // Unknown/absent unit: keep every significant decimal the value carries,
+      // but never invent trailing zeros for a whole number.
+      const fraction = raw.split(".")[1] || "";
+      const trimmed = fraction.replace(/0+$/, "");
+      decimals = Math.min(trimmed.length, MAX_QUANTITY_DECIMALS);
+    }
+    const body = Math.abs(n).toLocaleString("en-NG", {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+    const negative = n < 0;
+    // Stock movements show direction explicitly: +20 received, −4 issued.
+    const showSign = opts.signed != null ? opts.signed : !!opts.sign;
+    const prefix = negative ? "\u2212" : (showSign && n > 0 ? "+" : "");
+    const label = opts.showUnit === false || !unit ? "" : unitSpacing(unit) + unit;
+    return `${prefix}${body}${label}`;
+  }
+
+  /* Convenience wrapper for a stock API row ({ quantity_on_hand, base_unit }). */
+  function formatStockQuantity(value, item, opts = {}) {
+    const unit = (item && (item.base_unit || item.unit)) || opts.unit || "";
+    return formatQuantity(value, { ...opts, unit });
+  }
+
+  /* Presentational precision for a stock item, so a table cell and its
+     tooltip/detail view can never disagree about the same number. */
+  function quantityPrecisionFor(unit) {
+    return quantityPrecision(unit);
   }
 
   /* ------------------------------- Dates ----------------------------------- */
@@ -327,7 +459,9 @@ const JONE = (() => {
   }
 
   return {
-    formatNaira, formatDate, formatDateTime, offerPeriod, offerStatusNote,
+    formatNaira, formatMoney, CURRENCY_SYMBOLS,
+    formatQuantity, formatStockQuantity, quantityPrecisionFor, WHOLE_COUNT_UNITS,
+    formatDate, formatDateTime, offerPeriod, offerStatusNote,
     offerCriteria, offerDiscountLabel, parseISO, hotelTodayISO, todayISO, nightsBetween, setupDateConstraints,
     $, $$, el, esc, debounce, throttle, storage, bindData, paginate, initials,
     scrollTop, guardSubmit, releaseGuard, appUrl

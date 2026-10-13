@@ -1,5 +1,6 @@
 """Bounded capability-protected inventory and procurement operations API."""
 import secrets
+from decimal import Decimal, InvalidOperation
 
 from django.db.models import Count, F, Q
 from django.utils.dateparse import parse_date
@@ -21,7 +22,11 @@ from .serializers import (
     PurchaseOrderDetailSerializer, PurchaseOrderListSerializer, StockBalanceSerializer, StockConsumptionRequestSerializer,
     StockCountCreateSerializer, StockCountSerializer, StockCountSubmitSerializer, StockItemSerializer,
     InventoryMenuItemDirectorySerializer,
+    ProductProfitabilityRowSerializer, ProductProfitabilitySummarySerializer,
     StockLocationSerializer, StockMovementSerializer, StockRecipeCreateSerializer, StockRecipeSerializer, SupplierSerializer,
+)
+from .services.valuation_service import (
+    SORT_KEYS, product_profitability_projection, projection_filter_choices, projection_summary, sort_projection,
 )
 from .services.inventory_service import (
     approve_purchase_order, approve_stock_count, create_purchase_order, create_stock_recipe, issue_stock, mark_purchase_order_ordered,
@@ -372,3 +377,96 @@ class GoodsReceiptCreateView(APIView):
         receipt=GoodsReceipt.objects.select_related("location", "supplier").prefetch_related("lines__item", "lines__stock_movement").get(pk=receipt.pk)
         if created: log_action(actor=request.user, action="GOODS_RECEIPT_POSTED", instance=receipt, request=request, metadata={"reference": receipt.reference, "purchase_order": po.reference})
         return success_response(GoodsReceiptSerializer(receipt).data, message="Goods receipt posted." if created else "Existing goods receipt returned.", status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+def _bool_param(request, name):
+    """Tri-state boolean query parameter: absent -> None, "true"/"false" -> bool."""
+    raw = request.query_params.get(name)
+    if raw is None or raw == "":
+        return None
+    if raw.lower() in {"true", "1", "yes"}:
+        return True
+    if raw.lower() in {"false", "0", "no"}:
+        return False
+    raise ValidationError({name: "Use true or false."})
+
+
+def _decimal_param(request, name):
+    raw = request.query_params.get(name)
+    if raw is None or raw == "":
+        return None
+    try:
+        return Decimal(raw)
+    except (InvalidOperation, TypeError) as exc:
+        raise ValidationError({name: "Use a decimal number."}) from exc
+
+
+@extend_schema(
+    tags=["Admin · Inventory"],
+    summary="Product profitability and stock valuation projection",
+    description=(
+        "A read-only, clearly-labelled forward projection built from the immutable "
+        "stock ledger, the goods-receipt cost history and the active recipes. It "
+        "posts nothing and never alters stored amounts. Fields that cannot be "
+        "derived (no cost basis, or no active recipe) are returned as null."
+    ),
+)
+class ProductProfitabilityView(APIView):
+    """Searchable, sortable, paginated product profitability/valuation projection."""
+
+    permission_classes = [HasCapability]
+    required_capabilities = ("inventory.manage", "reports.financial.view")
+    require_any_capability = True
+
+    def get(self, request):
+        sort = request.query_params.get("sort") or "sku"
+        if sort not in SORT_KEYS:
+            raise ValidationError({"sort": f"Use one of: {', '.join(SORT_KEYS)}."})
+        direction = (request.query_params.get("direction") or "asc").lower()
+        if direction not in {"asc", "desc"}:
+            raise ValidationError({"direction": "Use asc or desc."})
+
+        location_id = request.query_params.get("location_id") or None
+        if location_id is not None:
+            try:
+                location_id = int(location_id)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError({"location_id": "Use a numeric location id."}) from exc
+        supplier_id = request.query_params.get("supplier_id") or None
+        if supplier_id is not None:
+            try:
+                supplier_id = int(supplier_id)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError({"supplier_id": "Use a numeric supplier id."}) from exc
+
+        rows = product_profitability_projection(
+            search=(request.query_params.get("search") or "").strip(),
+            location_id=location_id,
+            department=(request.query_params.get("department") or "").strip(),
+            supplier_id=supplier_id,
+            category=(request.query_params.get("category") or "").strip(),
+            low_stock_only=bool(_bool_param(request, "low_stock")),
+            sellable=_bool_param(request, "sellable"),
+            min_margin=_decimal_param(request, "min_margin"),
+        )
+        rows = sort_projection(rows, sort=sort, direction=direction)
+        summary = projection_summary(rows)
+
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(rows, request, view=self)
+        response = paginator.get_paginated_response(ProductProfitabilityRowSerializer(page, many=True).data)
+        # The projection is a projection: say so in the payload so a consumer can
+        # never mistake the figures for posted accounting balances.
+        response.data["summary"] = ProductProfitabilitySummarySerializer(summary).data
+        response.data["projection"] = summary["projection"]
+        return response
+
+
+@extend_schema(tags=["Admin · Inventory"], summary="Filter options for the profitability projection")
+class ProductProfitabilityFiltersView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("inventory.manage", "reports.financial.view")
+    require_any_capability = True
+
+    def get(self, request):
+        return success_response(projection_filter_choices())

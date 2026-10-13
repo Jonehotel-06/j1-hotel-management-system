@@ -97,7 +97,10 @@ class ExpenseApprovalTests(BaseAPITestCase):
         # The maker HOLDS expense.approve — the refusal must come from the
         # two-person rule, not from a missing capability.
         self.assertEqual(response.status_code, 403, response.content)
-        self.assertIn("own sensitive monetary action", response.json()["message"])
+        # The refusal text now names the workflow and the remedy. MANAGER is not
+        # the administrator role, so no override exists for this account.
+        self.assertIn("cannot approve their own", response.json()["message"])
+        self.assertIn("different authorising account", response.json()["message"])
         expense.refresh_from_db()
         self.assertEqual(expense.status, Expense.Status.SUBMITTED, "the API must not self-approve")
 

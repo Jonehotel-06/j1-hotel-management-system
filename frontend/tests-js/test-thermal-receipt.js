@@ -126,3 +126,98 @@ test("HTML print sheet declares the paper size in millimetres", () => {
   const html80 = T.renderHTML(RECEIPT, "80");
   assert.match(html80, /data-paper-mm="80"/);
 });
+
+/* ---------------------------------------------------------------------------
+   Hotel logo on the printed POS receipt.
+
+   A thermal receipt must carry the hotel's branding, but branding must never
+   stop a receipt from printing: an image that fails or stalls is dropped and
+   the receipt still prints.
+   --------------------------------------------------------------------------- */
+
+test("the printed receipt carries the official hotel logo", () => {
+  const { T } = boot("80");
+  const html = T.renderHTML(RECEIPT, "80");
+  assert.match(html, /class="thermal-logo"/);
+  assert.match(html, /assets\/icons\/logo-official\.png/);
+  assert.match(html, /alt="J-ONE Hotel & Lodge"/);
+  assert.match(html, /class="thermal-brand"/);
+  assert.match(html, /text-align:center/);
+});
+
+test("the logo keeps its portrait aspect ratio on both paper widths", () => {
+  const ratio = 507 / 900;
+  for (const width of ["58", "80"]) {
+    const { T } = boot(width);
+    const size = T.LOGO_SIZE[width];
+    assert.ok(Math.abs(size.width / size.height - ratio) < 0.02,
+      `${width}mm logo box must not distort the mark`);
+    // Small enough to leave the roll for the actual sale.
+    assert.ok(size.height <= 80, `${width}mm logo must not waste excessive paper`);
+    const html = T.renderHTML(RECEIPT, width);
+    assert.ok(html.includes(`width="${size.width}" height="${size.height}"`));
+  }
+});
+
+test("the logo is shared, not copied into each layout", () => {
+  const { T } = boot("80");
+  // One source of truth, overridable once by deployment configuration.
+  assert.equal(T.logoSrc(), "../assets/icons/logo-official.png");
+  const ctx2 = makeContext();
+  loadScript(ctx2, "js/thermal-receipt.js");
+  ctx2.window.APP_CONFIG = { RECEIPT_LOGO_SRC: "https://cdn.example.com/jone.png" };
+  assert.equal(ctx2.window.JONE.ThermalReceipt.logoSrc(), "https://cdn.example.com/jone.png");
+  const html = ctx2.window.JONE.ThermalReceipt.renderHTML(RECEIPT, "80");
+  assert.match(html, /https:\/\/cdn\.example\.com\/jone\.png/);
+});
+
+test("a receipt can be rendered without a logo", () => {
+  const { T } = boot("58");
+  const html = T.renderHTML(RECEIPT, "58", { logo: false });
+  assert.doesNotMatch(html, /thermal-logo/);
+  assert.match(html, /thermal-body/);
+});
+
+test("printing still happens when the logo never loads", async () => {
+  const { T } = boot("80");
+  const ctx = T.__ctxForTests || null;
+  // whenImageSettled must resolve even with a stalled image: build a minimal
+  // document stub whose image never fires load or error.
+  const img = { complete: false, naturalWidth: 0, parentNode: null, addEventListener() {} };
+  let called = 0;
+  const stubDoc = { querySelector: () => img };
+  T.whenImageSettled(stubDoc, () => { called += 1; }, 5);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(called, 1, "a stalled logo must not block the print dialog");
+});
+
+test("a failed logo is removed so no broken image reaches the printer", async () => {
+  const { T } = boot("80");
+  const parent = { removed: false, removeChild() { this.removed = true; } };
+  const img = {
+    complete: true, naturalWidth: 0, parentNode: parent, addEventListener() {},
+  };
+  let called = 0;
+  T.whenImageSettled({ querySelector: () => img }, () => { called += 1; });
+  assert.equal(called, 1);
+  assert.equal(parent.removed, true);
+});
+
+test("an already-loaded logo does not delay printing", () => {
+  const { T } = boot("80");
+  const img = { complete: true, naturalWidth: 34, parentNode: { removed: false, removeChild() { this.removed = true; } }, addEventListener() {} };
+  let called = 0;
+  T.whenImageSettled({ querySelector: () => img }, () => { called += 1; });
+  assert.equal(called, 1);
+  assert.equal(img.parentNode.removed, false);
+});
+
+test("the print sheet scopes logo styling to the chosen paper width", () => {
+  const { T } = boot("58");
+  // The injected stylesheet must size the brand block, not the whole page.
+  const src = require("node:fs").readFileSync(
+    require("node:path").join(__dirname, "..", "js", "thermal-receipt.js"), "utf-8"
+  );
+  assert.match(src, /\.thermal-brand \{ width: " \+ PAPER\[width\]\.mm/);
+  assert.match(src, /\.thermal-logo \{ max-width: 100%; height: auto; \}/);
+});

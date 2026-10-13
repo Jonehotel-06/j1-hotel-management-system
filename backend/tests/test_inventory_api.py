@@ -114,9 +114,22 @@ class InventoryApiTests(BaseAPITestCase):
         transition_order(order=order, target_status=PosOrder.Status.READY, actor=self.clerk)
         transition_order(order=order, target_status=PosOrder.Status.DELIVERED, actor=self.clerk)
 
+        # Delivery IS the stock-consumption event, so the hand-off is resolved in
+        # the delivery transaction and the balance follows the sale immediately.
+        # It must never sit in the PENDING queue waiting for a human.
         queue = self.client.get("/api/admin/inventory/consumption-requests/?status=PENDING")
         self.assertEqual(queue.status_code, 200, queue.content)
-        consumption_reference = queue.json()["data"][0]["reference"]
+        self.assertEqual(queue.json()["data"], [], "a delivered sale must not leave a pending hand-off")
+
+        resolved = self.client.get("/api/admin/inventory/consumption-requests/?status=PROCESSED")
+        self.assertEqual(resolved.status_code, 200, resolved.content)
+        consumption_reference = resolved.json()["data"][0]["reference"]
+        self.assertEqual(
+            self.client.get("/api/admin/inventory/balances/").json()["data"][0]["quantity_on_hand"], "1.0000"
+        )
+
+        # The manual endpoint remains available for review/recovery and must be
+        # idempotent: re-processing cannot deduct the same sale twice.
         processed = self.client.post(f"/api/admin/inventory/consumption-requests/{consumption_reference}/process/", {}, format="json")
         self.assertEqual(processed.status_code, 200, processed.content)
         self.assertEqual(processed.json()["data"]["status"], "PROCESSED")

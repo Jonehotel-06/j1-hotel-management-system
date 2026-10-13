@@ -101,7 +101,16 @@ class FinancialSummaryReportTests(BaseAPITestCase):
         )
 
     def test_summary_uses_posted_ledger_lines_without_conflating_measures(self):
-        with self.assertNumQueries(4):
+        # The bounded plan is: one transaction count, one conditional aggregate
+        # across ledger lines, one conditional aggregate by business date, one
+        # grouped revenue aggregate — plus exactly TWO statements for the supplier
+        # payment block: an opening payable balance and the expense-approval
+        # counts. Every supplier-payment measure itself rides inside the existing
+        # conditional aggregate (see settlement_measure_filters), so adding the
+        # block did not multiply the per-measure query count. This number is a
+        # tight budget, not an observation: raising it needs a new documented
+        # aggregate here.
+        with self.assertNumQueries(6):
             report = financial_summary(start_date=self.today, end_date=self.today)
 
         self.assertEqual(report["basis"], "posted_immutable_ledger_business_date")

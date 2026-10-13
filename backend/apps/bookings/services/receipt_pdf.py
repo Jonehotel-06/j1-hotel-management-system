@@ -32,6 +32,8 @@ from decimal import Decimal, InvalidOperation
 
 from django.utils import timezone
 
+from apps.core.formatting import format_money
+
 logger = logging.getLogger("apps")
 
 # ---- Canvas geometry (identical to receipt.js) ----------------------------
@@ -112,14 +114,15 @@ def _as_number(value) -> float:
 
 
 def _money(value) -> str:
-    """₦ + thousands-separated integer amount — same as JONE.formatNaira."""
-    try:
-        n = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError):
-        n = Decimal(0)
-    neg = n < 0
-    whole = int(n.copy_abs().to_integral_value(rounding="ROUND_HALF_UP"))
-    return ("-" if neg else "") + "\u20a6" + f"{whole:,}"
+    """Canonical naira rendering for printed receipts: ``₦165,000.00``.
+
+    Delegates to :func:`apps.core.formatting.format_money` so the printed receipt,
+    the receipt email and the guest PDF can never drift apart again — this function
+    previously rounded kobo away (``₦165,000``), which disagreed with the email
+    receipt for the same transaction and silently dropped a customer's cents.
+    Negatives and zero are preserved by the shared formatter.
+    """
+    return format_money(value, "NGN")
 
 
 def _labelize(value) -> str:

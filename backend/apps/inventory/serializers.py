@@ -95,10 +95,24 @@ class IssueStockSerializer(serializers.Serializer):
 
 
 class PurchaseOrderLineSerializer(serializers.ModelSerializer):
+    # ``base_unit`` is the product's own stock unit and ``quantity_outstanding``
+    # is derived with Decimal arithmetic on the server. Both are additive fields:
+    # they let the UI render "4 BOTTLE" and an exact outstanding quantity instead
+    # of dividing floats in the browser. No stored value is changed.
+    base_unit = serializers.CharField(source="item.base_unit", read_only=True)
+    quantity_outstanding = serializers.SerializerMethodField()
+
     class Meta:
         model = PurchaseOrderLine
-        fields = ["id", "item", "item_sku", "item_name", "quantity_ordered", "quantity_received", "unit_cost", "notes"]
+        fields = [
+            "id", "item", "item_sku", "item_name", "base_unit", "quantity_ordered", "quantity_received",
+            "quantity_outstanding", "unit_cost", "notes",
+        ]
         read_only_fields = fields
+
+    def get_quantity_outstanding(self, obj):
+        outstanding = (obj.quantity_ordered or Decimal("0.0000")) - (obj.quantity_received or Decimal("0.0000"))
+        return str(outstanding if outstanding > 0 else Decimal("0.0000"))
 
 
 class PurchaseOrderListSerializer(serializers.ModelSerializer):
@@ -159,10 +173,15 @@ class GoodsReceiptCreateSerializer(serializers.Serializer):
 
 class GoodsReceiptLineSerializer(serializers.ModelSerializer):
     item_sku = serializers.CharField(source="item.sku", read_only=True)
+    item_name = serializers.CharField(source="item.name", read_only=True)
+    base_unit = serializers.CharField(source="item.base_unit", read_only=True)
+    currency = serializers.CharField(source="goods_receipt.purchase_order.currency", read_only=True, allow_null=True)
     movement_reference = serializers.CharField(source="stock_movement.reference", read_only=True)
     class Meta:
         model = GoodsReceiptLine
-        fields = ["id", "item_sku", "quantity_received", "unit_cost", "movement_reference"]
+        fields = [
+            "id", "item_sku", "item_name", "base_unit", "currency", "quantity_received", "unit_cost", "movement_reference",
+        ]
         read_only_fields = fields
 
 
@@ -271,3 +290,54 @@ class StockRecipeCreateSerializer(serializers.Serializer):
     components = StockRecipeComponentInputSerializer(many=True, required=False, max_length=100)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=1000)
     idempotency_key = serializers.CharField(max_length=128)
+
+
+class ProductProfitabilityRowSerializer(serializers.Serializer):
+    """Read-only projection row.
+
+    Every field is read-only and several are nullable: a null here means "not
+    derivable from stored data" (no cost basis or no active recipe) and must be
+    rendered as an em dash rather than as a zero.
+    """
+
+    projection = serializers.CharField(read_only=True)
+    status = serializers.ChoiceField(choices=["OK", "NOT_SELLABLE", "NO_COST_BASIS"], read_only=True)
+    item_id = serializers.IntegerField(read_only=True)
+    sku = serializers.CharField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    category = serializers.CharField(read_only=True)
+    department = serializers.CharField(read_only=True)
+    base_unit = serializers.CharField(read_only=True)
+    currency = serializers.CharField(read_only=True)
+    location_id = serializers.IntegerField(read_only=True)
+    location_code = serializers.CharField(read_only=True)
+    location_name = serializers.CharField(read_only=True)
+    supplier_id = serializers.IntegerField(read_only=True, allow_null=True)
+    supplier_name = serializers.CharField(read_only=True, allow_null=True)
+    purchase_unit_cost = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True, allow_null=True)
+    cost_basis = serializers.CharField(read_only=True)
+    standard_cost = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True, allow_null=True)
+    latest_receipt_cost = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True, allow_null=True)
+    selling_price = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True, allow_null=True)
+    price_basis = serializers.CharField(read_only=True)
+    recipe_count = serializers.IntegerField(read_only=True)
+    current_stock = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
+    reorder_level = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
+    needs_reorder = serializers.BooleanField(read_only=True)
+    stock_value = serializers.DecimalField(max_digits=20, decimal_places=2, read_only=True, allow_null=True)
+    expected_sales_revenue = serializers.DecimalField(max_digits=20, decimal_places=2, read_only=True, allow_null=True)
+    expected_gross_profit = serializers.DecimalField(max_digits=20, decimal_places=2, read_only=True, allow_null=True)
+    expected_gross_margin_percent = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True, allow_null=True)
+    last_movement_at = serializers.DateTimeField(read_only=True, allow_null=True)
+
+
+class ProductProfitabilitySummarySerializer(serializers.Serializer):
+    projection = serializers.CharField(read_only=True)
+    row_count = serializers.IntegerField(read_only=True)
+    valued_row_count = serializers.IntegerField(read_only=True)
+    sellable_row_count = serializers.IntegerField(read_only=True)
+    unpriced_row_count = serializers.IntegerField(read_only=True)
+    total_stock_value = serializers.DecimalField(max_digits=24, decimal_places=2, read_only=True)
+    total_expected_sales_revenue = serializers.DecimalField(max_digits=24, decimal_places=2, read_only=True)
+    total_expected_gross_profit = serializers.DecimalField(max_digits=24, decimal_places=2, read_only=True)
+    overall_expected_gross_margin_percent = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True, allow_null=True)

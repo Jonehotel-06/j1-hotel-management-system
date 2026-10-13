@@ -6,7 +6,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 
 from apps.accounts.models import User
 from apps.finance.models import ApprovalRequest, FinancialControlPolicy, FinancialTransaction
-from apps.inventory.models import StockConsumptionRequest
+from apps.inventory.models import StockConsumptionRequest, StockMovement
 from apps.finance.services.cash_session_service import close_cash_session, open_cash_session, review_cash_variance
 from apps.finance.services.approval_service import review_approval
 from apps.finance.services.folio_service import folio_balance_queryset
@@ -110,8 +110,18 @@ class PosWorkflowTests(BaseAPITestCase):
         )
         self.assertEqual(PosOrderEvent.objects.filter(order=order, type=PosOrderEvent.Type.CHARGED).count(), 1)
         consumption = StockConsumptionRequest.objects.get(pos_order=order)
-        self.assertEqual(consumption.status, StockConsumptionRequest.Status.PENDING)
+        # Delivery IS the stock-consumption event. The hand-off must therefore
+        # be resolved in the same transaction — it may never be left PENDING,
+        # which was the defect that stopped Stock on Hand from following sales.
+        self.assertNotEqual(consumption.status, StockConsumptionRequest.Status.PENDING)
+        # This fixture configures no stock recipe for FOOD-JOLLOF, so inventory
+        # cannot know what to deplete: the hand-off is parked for review with an
+        # explicit reason instead of silently doing nothing.
+        self.assertEqual(consumption.status, StockConsumptionRequest.Status.FAILED)
+        self.assertIn("FOOD-JOLLOF", consumption.resolution_note)
         self.assertEqual(consumption.payload["lines"][0]["item_sku"], self.item.sku)
+        # No recipe means no deduced quantity, so nothing may be deducted.
+        self.assertFalse(StockMovement.objects.filter(type=StockMovement.Type.POS_CONSUMPTION).exists())
         with self.assertRaisesMessage(ValidationError, "cannot transition"):
             transition_order(order=delivered, target_status=PosOrder.Status.CANCELLED, actor=self.actor)
 

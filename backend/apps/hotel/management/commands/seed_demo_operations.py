@@ -33,6 +33,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.core.formatting import format_money
 from apps.inventory.models import (
     StockItem, StockLocation, StockMovement, Supplier,
 )
@@ -309,7 +310,7 @@ class Command(BaseCommand):
                     defaults={
                         "category": category,
                         "name": name,
-                        "description": f"{description} ({DEMO} price ₦{price} — placeholder; replace with owner-approved price)",
+                        "description": f"{description} ({DEMO} price {format_money(price)} — placeholder; replace with owner-approved price)",
                         "base_price": Decimal(price),
                         "tax_rate_percent": Decimal("0.00"),  # customer-billing tax removal
                         "is_available": True,

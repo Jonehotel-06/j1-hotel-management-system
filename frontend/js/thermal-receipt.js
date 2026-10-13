@@ -22,6 +22,33 @@
   };
   var STORAGE_KEY = "jone.thermal.width";
 
+  /* ---- shared branding -------------------------------------------------- */
+
+  /* The ONE place the printed receipt gets its logo from. Receipts render from
+     /dashboard/*, so the default resolves to the same official asset the staff
+     console, the emailed receipt and the PDF receipt all use. A deployment can
+     override it once (window.APP_CONFIG.RECEIPT_LOGO_SRC or
+     window.JONE.branding.logo) instead of repeating an <img> per template. */
+  var DEFAULT_LOGO_SRC = "../assets/icons/logo-official.png";
+  var LOGO_ALT = "J-ONE Hotel & Lodge";
+
+  /* Printed size per paper width. The mark is portrait (507x900), so the pair
+     is kept at that ratio — a square box would stretch it. Sizes are small on
+     purpose: the header must not eat half the roll. */
+  var LOGO_SIZE = {
+    "58": { width: 34, height: 60 },
+    "80": { width: 42, height: 75 }
+  };
+
+  function logoSrc() {
+    var configured = null;
+    try {
+      configured = (window.APP_CONFIG && window.APP_CONFIG.RECEIPT_LOGO_SRC) ||
+        (window.JONE && window.JONE.branding && window.JONE.branding.logo) || null;
+    } catch (e) { configured = null; }
+    return String(configured || DEFAULT_LOGO_SRC);
+  }
+
   function getWidth() {
     try {
       var saved = String((window.localStorage && window.localStorage.getItem(STORAGE_KEY)) || "");
@@ -160,16 +187,62 @@
   }
 
   /* HTML mirror of renderLines for browser print-preview. */
-  function renderHTML(receipt, width) {
+  function renderHTML(receipt, width, options) {
     width = width || getWidth();
+    options = options || {};
     var lines = renderLines(receipt, width);
     var escaped = lines.map(function (l) {
       return l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }).join("\n");
+    var brand = "";
+    if (options.logo !== false) {
+      var size = LOGO_SIZE[width] || LOGO_SIZE[getWidth()];
+      brand =
+        '<div class="thermal-brand" style="text-align:center; margin:0 0 3px;">' +
+        '<img class="thermal-logo" src="' + escapeAttr(logoSrc()) + '"' +
+        ' alt="' + LOGO_ALT + '" width="' + size.width + '" height="' + size.height + '"' +
+        ' style="display:block; margin:0 auto; width:' + size.width + "px; height:" + size.height +
+        'px; image-rendering:-webkit-optimize-contrast;">' +
+        "</div>";
+    }
     return (
       '<div class="thermal-receipt thermal-' + width + '" data-paper-mm="' + PAPER[width].mm + '">' +
+      brand +
       '<pre class="thermal-body">' + escaped + "</pre></div>"
     );
+  }
+
+  function escapeAttr(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  /* Wait for the logo before printing, but never hang on it.
+     A thermal receipt that prints with no logo is acceptable; one that never
+     prints because an image stalled is not. Whichever of load/error/timeout
+     happens first wins, and a failed image is removed so the printer never
+     emits a broken-image box. */
+  function whenImageSettled(doc, callback, timeoutMs) {
+    var img = doc.querySelector && doc.querySelector("img.thermal-logo");
+    if (!img) { callback(); return; }
+    var done = false;
+    function finish() {
+      if (done) { return; }
+      done = true;
+      callback();
+    }
+    if (img.complete) {
+      if (img.naturalWidth === 0) { img.parentNode && img.parentNode.removeChild(img); }
+      finish();
+      return;
+    }
+    img.addEventListener("load", finish);
+    img.addEventListener("error", function () {
+      if (img.parentNode) { img.parentNode.removeChild(img); }
+      finish();
+    });
+    setTimeout(finish, timeoutMs || 1500);
   }
 
   /* Injects a print sheet and opens the browser print dialog. */
@@ -191,27 +264,43 @@
       "pre.thermal-body { font-family: 'Courier New', ui-monospace, monospace;" +
       " font-size: 11px; line-height: 1.35; width: " + PAPER[width].mm + "mm;" +
       " margin: 0; white-space: pre; overflow: hidden; }" +
-      "</style></head><body>" + renderHTML(receipt, width) + "</body></html>"
+      ".thermal-brand { width: " + PAPER[width].mm + "mm; }" +
+      ".thermal-logo { max-width: 100%; height: auto; }" +
+      "</style></head><body>" +
+      renderHTML(receipt, width, { logo: options.logo }) +
+      "</body></html>"
     );
     doc.close();
-    frame.contentWindow.focus();
-    frame.contentWindow.print();
-    setTimeout(function () {
-      if (frame.parentNode) frame.parentNode.removeChild(frame);
-    }, 1000);
+
+    var cleanup = function () {
+      setTimeout(function () {
+        if (frame.parentNode) { frame.parentNode.removeChild(frame); }
+      }, 1000);
+    };
+    whenImageSettled(doc, function () {
+      try {
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+      } finally {
+        cleanup();
+      }
+    }, options.logoTimeoutMs);
   }
 
   window.JONE = window.JONE || {};
   window.JONE.ThermalReceipt = {
     PAPER: PAPER,
+    LOGO_SIZE: LOGO_SIZE,
     getWidth: getWidth,
     setWidth: setWidth,
+    logoSrc: logoSrc,
     naira: naira,
     padLine: padLine,
     wrapText: wrapText,
     itemRows: itemRows,
     renderLines: renderLines,
     renderHTML: renderHTML,
+    whenImageSettled: whenImageSettled,
     print: print
   };
 })(window);

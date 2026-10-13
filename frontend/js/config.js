@@ -162,6 +162,10 @@
     inventoryItems:               "/api/admin/inventory/items/",
     inventoryMenuItems:           "/api/admin/inventory/menu-items/",
     inventoryBalances:            "/api/admin/inventory/balances/",
+    /* Read-only forward projection (§ "product profitability / valuation").
+       Nothing here posts money; the server labels the payload as a PROJECTION. */
+    inventoryProfitability:       "/api/admin/inventory/profitability/",
+    inventoryProfitabilityFilters:"/api/admin/inventory/profitability/filters/",
     inventoryMovements:           "/api/admin/inventory/movements/",
     inventoryRecipes:             "/api/admin/inventory/recipes/",
     inventoryConsumptionRequests: "/api/admin/inventory/consumption-requests/",
@@ -181,6 +185,8 @@
     financeTransactions: "/api/admin/finance/transactions/",   // immutable posted ledger headers
     financeExpenses:     "/api/admin/finance/expenses/",       // controlled expense drafts/submissions
     financeApprovals:    "/api/admin/finance/approvals/",      // sensitive-money approval requests
+    /* Per-record drill-down. API.getOne appends the escaped reference. */
+    financeExpenseDetail:"/api/admin/finance/expenses/",
     reportsRevenue:      "/api/admin/reports/revenue/", // retained for legacy consumers
     reportsOccupancy:    "/api/admin/reports/occupancy/",
     reportsBookings:     "/api/admin/reports/bookings/",

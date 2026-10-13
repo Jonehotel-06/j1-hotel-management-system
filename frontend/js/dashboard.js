@@ -1858,6 +1858,16 @@
   window.JONE.dashboard = {
     renderSidebar, renderUser, setupSidebar, setupStickyTopbar, renderTopbarBell, renderBottomNav,
     navItemAllowed, notifBadge, statusPill, boot, startLiveRefresh, topbar, NAV, badge, DATA, formModal,
+    /* Shared read-only dialog host. Pages that need a details/drill-down dialog
+       (expense details, receipt details, audit details) use this instead of
+       building their own modal: one markup, one ESC/backdrop contract, one focus
+       move, one mobile rendering. `body` returns the live body element so a page
+       can show a skeleton first and swap in the fetched content. */
+    panel: {
+      open(title, html, actionsHTML, sizeClass) { return openPanel(title, html, actionsHTML, sizeClass); },
+      close() { closePanel(); },
+      body() { return panelHost ? panelHost.querySelector("[data-panel-body]") : null; },
+    },
     /* Test-only seeds: pure sidebar-collapse state mappers (Node harness). */
     _test: {
       sidebarPrefState: (v) => (v === "collapsed" ? "collapsed" : "expanded"),

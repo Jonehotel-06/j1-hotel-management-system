@@ -40,4 +40,12 @@ app.conf.beat_schedule = {
         "task": "apps.finance.tasks.post_previous_night_accommodation",
         "schedule": crontab(hour=0, minute=10),
     },
+    # Safety net for POS-to-inventory stock depletion. Sales deplete stock
+    # inline at delivery; this sweep only resolves hand-offs that could not be
+    # posted then (recipe added later, stock topped up after a shortage, or
+    # sales that predate automatic depletion). Idempotent per POS order.
+    "process-pending-pos-stock-consumption": {
+        "task": "apps.inventory.tasks.process_pending_pos_stock_consumption",
+        "schedule": crontab(minute="*/10"),
+    },
 }

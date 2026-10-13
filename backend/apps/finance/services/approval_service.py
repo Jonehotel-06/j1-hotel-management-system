@@ -9,6 +9,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
+from apps.core.approvals import override_event_details, override_note, require_independent_approver
 from apps.core.utils import hotel_today
 
 from ..models import ApprovalRequest, FinancialControlPolicy, FinancialEvent
@@ -141,18 +142,28 @@ def _review_approval(*, approval, reviewer, approved: bool, review_note="") -> A
     require_separate_approver = approval.policy_snapshot.get(
         "require_separate_approver", policy.require_separate_approver
     )
+    override = None
     if require_separate_approver and approval.requester_id == reviewer.pk:
-        raise PermissionDenied("A requester cannot approve their own sensitive monetary action.")
+        # One central decision (apps.core.approvals): the separate-approver rule
+        # is absolute for every ordinary role, and an administrator may override
+        # it under the configured policy — with the override recorded as
+        # append-only evidence below.
+        override = require_independent_approver(
+            requester=approval.requester, actor=reviewer,
+            workflow=f"{approval.get_type_display().lower()} approval",
+        )
     approval.status = ApprovalRequest.Status.APPROVED if approved else ApprovalRequest.Status.REJECTED
     approval.reviewer = reviewer
     approval.reviewed_at = timezone.now()
-    approval.review_note = review_note or ""
+    approval.review_note = override_note(review_note or "", override)
     approval.save(update_fields=["status", "reviewer", "reviewed_at", "review_note", "updated_at"])
     FinancialEvent.objects.create(
         approval_request=approval,
         type=FinancialEvent.Type.REVIEWED,
         actor=reviewer,
-        details={"approved": bool(approved), "review_note": approval.review_note},
+        details=override_event_details(
+            {"approved": bool(approved), "review_note": approval.review_note}, override,
+        ),
     )
     return approval
 

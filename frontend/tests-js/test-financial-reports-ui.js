@@ -157,9 +157,12 @@ test("reports dashboard requests ledger finance and operational projections conc
   assert.doesNotMatch(page, /reportsRevenue/);
 
   await settle();
-  assert.equal(booted.rp["recognized-revenue"].textContent, "₦100");
-  assert.equal(booted.rp.collections.textContent, "₦110");
-  assert.equal(booted.rp["operating-expenses"].textContent, "₦15");
+  // Financial figures render with thousands separators AND the currency's
+  // decimal precision (₦165,000.00 style). This assertion previously pinned the
+  // separator-less whole-naira rendering the shared formatter was fixed to drop.
+  assert.equal(booted.rp["recognized-revenue"].textContent, "₦100.00");
+  assert.equal(booted.rp.collections.textContent, "₦110.00");
+  assert.equal(booted.rp["operating-expenses"].textContent, "₦15.00");
   assert.match(booted.financeBasis.textContent, /Posted immutable ledger/);
   assert.match(booted.financeBody.innerHTML, /Gross operating result/);
   assert.match(booted.financeBody.innerHTML, /Cash paid-out/);

@@ -71,7 +71,11 @@ class ReceiptPdfDesignTests(SimpleTestCase):
         d, rows = self._rows()
         amount_row = rows[0]
         self.assertEqual(amount_row[0], "Transaction Amount")
-        self.assertEqual(amount_row[1], ["\u20a650,000"])  # ₦50,000, latest payment
+        # §9: the printed receipt uses the SAME canonical rendering as the receipt
+        # email — naira symbol, thousands separators and the kobo the payment
+        # actually has. This assertion previously pinned an integer-only "₦50,000"
+        # that silently dropped a customer's cents and disagreed with the email.
+        self.assertEqual(amount_row[1], ["\u20a650,000.00"])
         self.assertEqual(amount_row[2], "amount")
 
     def test_sender_and_beneficiary_lines(self):
@@ -99,10 +103,25 @@ class ReceiptPdfDesignTests(SimpleTestCase):
     def test_payment_summary_lines(self):
         d, _ = self._rows()
         self.assertEqual(d["summary_lines"], [
-            "Booking total: \u20a675,000",
-            "Amount paid: \u20a650,000",
-            "Outstanding balance: \u20a625,000",
+            "Booking total: \u20a675,000.00",
+            "Amount paid: \u20a650,000.00",
+            "Outstanding balance: \u20a625,000.00",
         ])
+
+    def test_kobo_negative_and_zero_amounts_are_never_rounded_away_or_inverted(self):
+        self.assertEqual(R._money("165000.5"), "\u20a6165,000.50")
+        self.assertEqual(R._money("0.05"), "\u20a60.05")
+        self.assertEqual(R._money(0), "\u20a60.00")
+        self.assertEqual(R._money("-5000"), "-\u20a65,000.00")
+        self.assertEqual(R._money(None), "\u20a60.00")
+        self.assertEqual(R._money("not-a-number"), "\u20a60.00")
+
+    def test_printed_receipt_and_receipt_email_share_one_formatter(self):
+        """The two customer-facing receipts must agree on every amount (§9)."""
+        from apps.bookings.services.receipt_email import format_money as email_money
+
+        for value in ("165000", "165000.5", "0", "0.05", "-2500.25"):
+            self.assertEqual(R._money(value), email_money(value, "NGN"), value)
 
     def test_generated_and_transaction_dates_formatting(self):
         d, _ = self._rows()

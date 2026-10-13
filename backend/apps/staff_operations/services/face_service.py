@@ -24,6 +24,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
+from apps.core.approvals import override_note, require_independent_approver
 from apps.accounts.models import User
 from apps.audit.services import log_action
 
@@ -110,25 +111,35 @@ def request_enrollment(*, staff: User, actor: User, descriptor) -> FaceTemplate:
 def approve_enrollment(*, template: FaceTemplate, approver: User) -> FaceTemplate:
     if not has_capability(approver, "attendance.manage"):
         raise PermissionDenied("Approving facial enrollment requires attendance management rights.")
-    if approver.pk == template.staff_id:
+    try:
+        override = require_independent_approver(
+            requester=template.staff, actor=approver, workflow="facial enrollment",
+        )
+    except PermissionDenied:
         log_action(actor=approver, action="FACE_ENROLLMENT_DENIED", instance=template,
                    metadata={"staff_id": template.staff_id, "reason": "self_approval"})
-        raise PermissionDenied("Facial enrollment must be approved by a different user.")
+        raise
     with transaction.atomic():
         locked = FaceTemplate.objects.select_for_update().get(pk=template.pk)
         if locked.status != FaceTemplate.Status.PENDING:
             raise ValidationError({"status": "Only pending enrollments can be approved."})
         for previous in FaceTemplate.objects.select_for_update().filter(staff_id=locked.staff_id, status=FaceTemplate.Status.ACTIVE):
             _clear(previous, FaceTemplate.Status.REVOKED, decided_by=approver, note="replaced by a newer approved enrollment")
+        if override:
+            locked.decision_note = override_note(locked.decision_note, override)[:200]
         locked.status = FaceTemplate.Status.ACTIVE
         locked.decided_at = timezone.now()
         locked.decided_by = approver
         locked.expires_at = locked.decided_at + timedelta(days=retention_days())
+        fields = ["status", "decided_at", "decided_by", "expires_at", "updated_at"]
+        if override:
+            fields.append("decision_note")
         try:
-            locked.save(update_fields=["status", "decided_at", "decided_by", "expires_at", "updated_at"])
+            locked.save(update_fields=fields)
         except IntegrityError as exc:  # pragma: no cover - guarded by the lock above
             raise ValidationError({"status": "This staff member already has an active enrollment."}) from exc
-    log_action(actor=approver, action="FACE_ENROLLMENT_APPROVED", instance=locked, metadata={"staff_id": locked.staff_id})
+    log_action(actor=approver, action="FACE_ENROLLMENT_APPROVED", instance=locked,
+               metadata={"staff_id": locked.staff_id, **({"admin_override": override} if override else {})})
     return locked
 
 

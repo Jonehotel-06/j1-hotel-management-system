@@ -68,6 +68,8 @@
     <section class="kpi-grid is-loading" data-finance-kpis aria-busy="true" aria-label="Ledger financial summary">
       <div class="kpi"><div class="kpi-label">Recognized revenue</div><div class="kpi-value" data-rp="recognized-revenue">--</div><div class="kpi-sub" data-rp="recognized-revenue-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Collections</div><div class="kpi-value" data-rp="collections">--</div><div class="kpi-sub" data-rp="collections-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Supplier payments made</div><div class="kpi-value" data-rp="supplier-payments">--</div><div class="kpi-sub" data-rp="supplier-payments-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Outstanding payables</div><div class="kpi-value" data-rp="outstanding-payables">--</div><div class="kpi-sub" data-rp="outstanding-payables-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Operating expenses</div><div class="kpi-value" data-rp="operating-expenses">--</div><div class="kpi-sub" data-rp="operating-expenses-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Refunds</div><div class="kpi-value" data-rp="refunds">--</div><div class="kpi-sub" data-rp="refunds-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Payments made</div><div class="kpi-value" data-rp="payments-made">--</div><div class="kpi-sub">Cash paid-out + net salaries</div></div>
@@ -103,7 +105,7 @@
       <section class="panel" style="border:1px solid var(--color-border);">
         <div class="panel-head"><h2>Expenses</h2></div>
         <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-          <thead><tr><th>Reference</th><th>Payee</th><th>Amount</th><th>Status</th></tr></thead>
+          <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Payee</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Status</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
           <tbody data-tbody="acct-expenses"></tbody>
         </table></div></div>
       </section>
@@ -188,7 +190,19 @@
     { label:"Payroll payment reversals", key:"payroll_payment_reversals" },
     { label:"Net salary paid", key:"net_payroll_payments" },
     { label:"Gross operating result", key:"gross_operating_result" },
-    { label:"Actual payments made", key:"actual_payments_made" }
+    { label:"Actual payments made", key:"actual_payments_made" },
+    /* Supplier-payment stages, read from the nested supplier_payments block so the
+       table distinguishes goods received, invoice recognized, payment approved and
+       money actually disbursed. No amount is repeated across stages, and a stage
+       that does not apply shows a dash. */
+    { label:"Supplier invoices recognized", key:"supplier_payments.supplier_invoices_recognized" },
+    { label:"Supplier payments made", key:"supplier_payments.supplier_payments_made" },
+    { label:"Operating expenses paid (cash out)", key:"supplier_payments.operating_expenses_paid" },
+    { label:"Net salary paid (cash out)", key:"supplier_payments.net_payroll_paid" },
+    { label:"Other cash disbursements", key:"supplier_payments.other_cash_disbursements" },
+    { label:"Total cash disbursed", key:"supplier_payments.total_cash_disbursements" },
+    { label:"Supplier payables raised", key:"supplier_payments.supplier_payables_raised" },
+    { label:"Outstanding supplier payables", key:"supplier_payments.outstanding_supplier_payables" }
   ];
 
   function setKpi(name,val){
@@ -243,7 +257,13 @@
   }
 
   function metric(report,key){
-    var value=report&&report[key];
+    /* Resolve a dotted path ("supplier_payments.supplier_payments_made") so the
+       nested supplier-payment stage measures are read through the SAME helper as
+       a top-level measure instead of duplicating this lookup. */
+    var value=report;
+    String(key||"").split(".").forEach(function(part){
+      value=(value===null||value===undefined)?undefined:value[part];
+    });
     return value&&typeof value==="object"&&!Array.isArray(value) ? value : { amount:value };
   }
 
@@ -298,7 +318,7 @@
   }
 
   function resetFinanceKpis(){
-    ["recognized-revenue","collections","operating-expenses","refunds","payments-made","operating-result"].forEach(function(name){
+    ["recognized-revenue","collections","operating-expenses","refunds","payments-made","operating-result","supplier-payments","outstanding-payables"].forEach(function(name){
       setKpi(name,"--");
       setKpi(name+"-sub","");
     });
@@ -320,14 +340,22 @@
       setKpi(item.name,formatMoney(metricAmount(latest.financial,item.key),currency));
       setKpi(item.name+"-sub",transactionLabel(metricTransactions(latest.financial,item.key)));
     });
+    /* Supplier payments and payables come from the dedicated supplier_payments
+       block, which separates the invoice stage from the disbursement stage. A
+       measure that does not exist renders as a dash, never as a fabricated zero. */
+    var supplier=(latest.financial.supplier_payments)||{};
+    setKpi("supplier-payments",supplier.supplier_payments_made==null?"--":formatMoney(supplier.supplier_payments_made,currency));
+    setKpi("supplier-payments-sub","Invoices recognized "+formatMoney(supplier.supplier_invoices_recognized||0,currency));
+    setKpi("outstanding-payables",supplier.outstanding_supplier_payables==null?"--":formatMoney(supplier.outstanding_supplier_payables,currency));
+    setKpi("outstanding-payables-sub",supplier.payable_settlement_posting_available===false?"Credited balance; no settlement posting exists yet":"No outstanding balance");
     if(financeBasis){
       financeBasis.textContent="Posted immutable ledger · Business date · "+currency+" · "+String(latest.financial.ledger_transactions||0)+" ledger transaction"+((latest.financial.ledger_transactions||0)===1?"":"s");
     }
     if(dt){
       var depts=latest.financial.by_department||[];
       dt.innerHTML=depts.length ? depts.map(function(row){
-        return "<tr><td>"+JONE.esc(row.label||row.account_code||"—")+"</td><td class=\\\"num\\\">"+JONE.esc(formatMoney(row.amount,currency))+"</td><td class=\\\"hide-sm num\\\">"+JONE.esc((row.percent_of_recognized_revenue||"0")+"%")+"</td></tr>";
-      }).join("") : "<tr><td colspan=\\\"3\\\"><div class=\\\"empty-state\\\"><h3>No recognized revenue in this period</h3></div></td></tr>";
+        return "<tr><td>"+JONE.esc(row.label||row.account_code||"—")+"</td><td class=\"num\">"+JONE.esc(formatMoney(row.amount,currency))+"</td><td class=\"hide-sm num\">"+JONE.esc((row.percent_of_recognized_revenue||"0")+"%")+"</td></tr>";
+      }).join("") : "<tr><td colspan=\"3\"><div class=\"empty-state\"><h3>No recognized revenue in this period</h3></div></td></tr>";
     }
     if(!ft) return;
     ft.innerHTML=FINANCE_MEASURES.map(function(item){
@@ -408,11 +436,98 @@
     // Accepts either the shared API envelope ({data,pagination}) or the bare array.
     function rowsOf(payload){return listRows(payload&&!Array.isArray(payload)&&payload.data!==undefined?payload.data:payload);}
     function moneyCell(v){return formatMoney(v, reportCurrency(latest.financial));}
+  /* One delegated listener for every row's details button: rows are re-rendered
+     on each load, so a per-row listener would leak and go stale. */
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest ? event.target.closest("[data-expense-details]") : null;
+    if (!button) return;
+    event.preventDefault();
+    openExpenseDetails(button.getAttribute("data-expense-details"), button);
+  });
+  /* ---------------------- Expense details drill-down ----------------------
+     Every expense record opens a details dialog that distinguishes what was
+     INCURRED from what was actually PAID, discloses the attachment, and shows the
+     full append-only audit history. It never offers a second payment action for an
+     expense that has already posted. The dialog reuses the shared read-only panel
+     host (skeleton -> content -> error), so ESC, backdrop click, focus movement
+     and the mobile rendering are the same as every other dialog in the console. */
+  var EXPENSE_STATUS_PAID = { POSTED: true };
+  function expenseDetailRow(label, value, opts) {
+    opts = opts || {};
+    return '<div class="profile-row"><dt>' + JONE.esc(label) + '</dt><dd' +
+      (opts.numeric ? ' class="num"' : '') + '>' + value + '</dd></div>';
+  }
+  function expenseDetailText(value) {
+    return (value === null || value === undefined || value === "") ? "\u2014" : JONE.esc(value);
+  }
+  function expenseDetailHtml(detail, currency) {
+    var events = Array.isArray(detail.events) ? detail.events : [];
+    var paid = !!EXPENSE_STATUS_PAID[detail.status];
+    var commitment = paid
+      ? '<p class="caption">Money has moved for this expense. It cannot be paid a second time; a further payment would need its own controlled record.</p>'
+      : '<p class="caption">Recorded, but no money has left the hotel for it yet.</p>';
+    var attachment = detail.receipt_url
+      ? '<a class="btn btn-sm btn-outline" href="' + JONE.esc(detail.receipt_url) + '" target="_blank" rel="noopener noreferrer">Open attachment</a>'
+      : '<span class="caption">No attachment on this record.</span>';
+    var timeline = events.length
+      ? '<ol class="detail-timeline">' + events.map(function (event) {
+          return '<li><strong>' + JONE.esc(event.type || "Event") + '</strong>' +
+            '<div class="caption">' + JONE.esc(JONE.formatDateTime(event.created_at)) +
+            (event.actor_email ? ' \u00b7 ' + JONE.esc(event.actor_email) : '') + '</div>' +
+            (event.details ? '<div class="caption cell-clamp">' + JONE.esc(JSON.stringify(event.details)) + '</div>' : '') +
+            '</li>';
+        }).join("") + '</ol>'
+      : '<p class="caption">No audit events recorded for this expense.</p>';
+    return '<div class="profile-grid">' +
+      expenseDetailRow("Amount", JONE.esc(moneyCell(detail.amount, currency)), { numeric: true }) +
+      expenseDetailRow("Currency", expenseDetailText(detail.currency)) +
+      expenseDetailRow("Status", JONE.dashboard.statusPill(detail.status)) +
+      expenseDetailRow("Category", expenseDetailText(detail.category)) +
+      expenseDetailRow("Accounting class", expenseDetailText(detail.accounting_class)) +
+      expenseDetailRow("Payment method", expenseDetailText(detail.payment_method)) +
+      expenseDetailRow("Payee / supplier", expenseDetailText(detail.payee)) +
+      expenseDetailRow("Supplier reference", expenseDetailText(detail.supplier_reference)) +
+      expenseDetailRow("Incurred on", expenseDetailText(detail.incurred_on)) +
+      expenseDetailRow("Requested by", expenseDetailText(detail.requested_by_email)) +
+      expenseDetailRow("Approved by", expenseDetailText(detail.approved_by_email)) +
+      expenseDetailRow("Approved at", detail.approved_at ? JONE.esc(JONE.formatDateTime(detail.approved_at)) : "\u2014") +
+      expenseDetailRow("Approval reference", expenseDetailText(detail.approval_reference)) +
+      expenseDetailRow("Cash session", expenseDetailText(detail.cash_session_reference)) +
+      expenseDetailRow("Posted by", expenseDetailText(detail.posted_by_email)) +
+      expenseDetailRow("Posted at", detail.posted_at ? JONE.esc(JONE.formatDateTime(detail.posted_at)) : "\u2014") +
+      expenseDetailRow("Financial transaction", expenseDetailText(detail.financial_reference)) +
+      expenseDetailRow("Created", detail.created_at ? JONE.esc(JONE.formatDateTime(detail.created_at)) : "\u2014") +
+      '</div>' + commitment +
+      (detail.description ? '<h4 class="detail-section-title">Description</h4><p>' + JONE.esc(detail.description) + '</p>' : "") +
+      (detail.notes ? '<h4 class="detail-section-title">Notes</h4><p>' + JONE.esc(detail.notes) + '</p>' : "") +
+      '<h4 class="detail-section-title">Attachment</h4><p>' + attachment + '</p>' +
+      '<h4 class="detail-section-title">Audit history</h4>' + timeline;
+  }
+  async function openExpenseDetails(reference, trigger) {
+    if (!reference) return;
+    var currency = reportCurrency(latest.financial);
+    var title = "Expense " + reference;
+    // Open on a skeleton so the dialog never flashes empty, then swap in the
+    // record. aria-busy keeps a screen reader informed while the request is out.
+    JONE.dashboard.panel.open(title, '<div class="loading-skeleton" aria-busy="true" aria-live="polite">Loading expense details\u2026</div>');
+    var body = JONE.dashboard.panel.body();
+    try {
+      var response = await window.API.getOne("financeExpenseDetail", reference);
+      var detail = (response && response.data) || {};
+      if (body) body.innerHTML = expenseDetailHtml(detail, currency);
+      if (JONE.icons && body) JONE.icons.inject(body);
+    } catch (err) {
+      if (body) body.innerHTML = '<div class="empty-state"><h3>Expense details unavailable</h3><p>' +
+        JONE.esc(financeErrorMessage(err)) + '</p></div>';
+    }
+    if (trigger && trigger.focus) trigger.focus({ preventScroll: true });
+  }
+
     getReport(window.APP_CONFIG.API_ENDPOINTS.financeExpenses,{start:dates.from,end:dates.to}).then(function(response){
       if(requestId!==loadSequence||!ex) return;
       var rows=rowsOf(response);
       if(!Array.isArray(rows)) rows=[];
-      ex.innerHTML=rows.length?rows.map(function(row){return "<tr><td>"+JONE.esc(row.reference||"—")+"</td><td>"+JONE.esc(row.payee||"—")+"</td><td class=\"num\">"+JONE.esc(moneyCell(row.amount))+"</td><td>"+JONE.esc(row.status||"—")+"</td></tr>";}).join(""):"<tr><td colspan=\"4\"><div class=\"empty-state\"><h3>No expenses in this period</h3></div></td></tr>";
+      ex.innerHTML=rows.length?rows.map(function(row){return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.amount))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"cell-nowrap\"><div class=\"row-actions\"><button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-details=\""+JONE.esc(row.reference||"")+"\" aria-label=\"View details for expense "+JONE.esc(row.reference||"")+"\">Details</button></div></td></tr>";}).join(""):"<tr><td colspan=\"5\"><div class=\"empty-state\"><h3>No expenses in this period</h3></div></td></tr>";
     },function(err){ if(requestId===loadSequence&&ex) DATA.error(ex,"Expenses couldn't be loaded",financeErrorMessage(err),4); });
     getReport(window.APP_CONFIG.API_ENDPOINTS.financeCashSessions,{}).then(function(response){
       if(requestId!==loadSequence||!cash) return;

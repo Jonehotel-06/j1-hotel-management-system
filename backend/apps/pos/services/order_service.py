@@ -478,8 +478,15 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
     if target_status == PosOrder.Status.DELIVERED:
         # Inventory owns recipe resolution and stock balances. POS only emits a
         # source-keyed immutable hand-off from its frozen order-line snapshot.
-        from apps.inventory.services.inventory_service import request_pos_stock_consumption
-        request_pos_stock_consumption(order=order, actor=actor)
+        #
+        # The hand-off is then resolved IN THE SAME TRANSACTION, because
+        # delivery IS this repository's stock-consumption event. Leaving it
+        # PENDING (the previous behaviour) meant no stock-consuming sales
+        # channel ever reduced Stock on Hand until somebody opened the
+        # inventory console and pressed Process.
+        from apps.inventory.services.inventory_service import consume_stock_for_delivered_order
+
+        consume_stock_for_delivered_order(order=order, actor=actor)
     PosOrderEvent.objects.create(order=order, type=event_type, actor=actor)
     return order
 

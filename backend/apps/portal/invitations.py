@@ -50,6 +50,62 @@ def portal_login_url() -> str:
     return f"{_portal_frontend_url()}/portal/login.html"
 
 
+def invitation_email_bodies(invitation, guest_first_name: str = "", *, stay=None):
+    """The guest-portal invitation as ``(text_body, html_body)``.
+
+    The invitation used to be sent as plain text with no HTML alternative, so
+    the most visible message the hotel sends a guest arrived as unstyled,
+    monospaced text (and, during local testing, carried a raw development URL).
+    It now renders through the shared J-ONE branded email builder, which:
+
+    * uses the same header lockup, logo handling and footer as the payment
+      receipt and every other guest notice;
+    * renders a prominent, accessible sign-in call to action with a plain-text
+      URL fallback underneath it;
+    * uses only table-based layout and inline CSS — no web fonts, scripts or
+      external stylesheets — so it survives Gmail, Outlook and mobile clients.
+
+    This promotes no capability the portal does not have: the copy is
+    deliberately limited to the folio, room-service and request-tracking
+    features the guest can actually reach.
+    """
+    from apps.core.email_design import render_notice_email
+
+    greeting = f"Dear {guest_first_name}," if guest_first_name else "Dear guest,"
+    login_url = portal_login_url()
+    details = []
+    if stay is not None:
+        booking = getattr(stay, "booking", None)
+        if booking is not None and getattr(booking, "booking_reference", ""):
+            details.append({"label": "Booking reference", "value": booking.booking_reference})
+        if getattr(stay, "reference", ""):
+            details.append({"label": "Stay reference", "value": stay.reference})
+
+    text_body, html_body = render_notice_email(
+        category="Guest portal",
+        title="Manage your J-ONE stay online",
+        greeting=greeting,
+        paragraphs=[
+            "Your guest portal is ready. It gives you a direct view of your stay "
+            "without needing to call the front desk.",
+            "Through the portal you can view your folio, request room service, and "
+            "track the requests you have already raised.",
+            "Sign in with the email address you gave at check-in. For your security "
+            "we will send a one-time sign-in link to that address — there is no "
+            "password to remember.",
+        ],
+        details=details,
+        cta_label="Open the guest portal",
+        cta_url=login_url,
+        footnote=(
+            "If you did not check in with this email address, you can ignore this "
+            "message — no action is required and no account has been created."
+        ),
+        preheader="Your J-ONE guest portal is ready — view your folio and request room service.",
+    )
+    return text_body, html_body
+
+
 def mask_email(email: str) -> str:
     local, _, domain = (email or "").partition("@")
     if not domain:
@@ -104,10 +160,12 @@ def _deliver(invitation: GuestPortalInvitation, *, actor_id=None) -> GuestPortal
     invitation.save(update_fields=["recipient_email", "status", "attempts", "last_attempt_at", "last_error_code", "updated_at"])
     first_name = (getattr(stay.guest, "first_name", "") or "").strip()
     try:
+        text_body, html_body = invitation_email_bodies(invitation, first_name, stay=stay)
         log = send_email_safe(
             "Manage your stay with J-ONE Hotel & Lodge",
-            copy_text_for(invitation, first_name),
+            text_body,
             [email],
+            html_message=html_body,
             kind=INVITATION_KIND,
             booking_reference=getattr(stay.booking, "booking_reference", "") or "",
             created_by=None,

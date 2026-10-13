@@ -44,6 +44,11 @@ class FormattingTests(BaseAPITestCase):
     def test_money_bad_input_is_safe(self):
         self.assertEqual(format_money(None), "₦0.00")
         self.assertEqual(format_money("not-a-number"), "₦0.00")
+        # §9: refunds/reversals must read unambiguously, and the sign sits in front
+        # of the symbol on every channel (email, receipt PDF, web UI).
+        self.assertEqual(format_money("-5000.00"), "-₦5,000.00")
+        self.assertEqual(format_money(Decimal("-0.50")), "-₦0.50")
+        self.assertEqual(format_money("-100.00", "USD"), "-$100.00")
 
     def test_dates_are_human_readable(self):
         self.assertEqual(format_date("2026-09-12"), "12 September 2026")
