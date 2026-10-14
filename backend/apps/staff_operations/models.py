@@ -530,7 +530,8 @@ class StaffPerformanceReview(TimeStampedModel):
 # different privacy and lifecycle rules from ordinary workforce records.
 from .payroll_models import (  # noqa: E402,F401
     PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment, PayrollStatutoryRuleEvent,
-    PayrollStatutoryRuleSet, PayrollTaxIdentity, StaffCompensation,
+    PayrollStatutoryRuleSet, PayrollStockShortageAllocation, PayrollStockShortageCase,
+    PayrollTaxIdentity, StaffCompensation,
 )
 
 # Facial-verification records live in their own module (descriptor-only, retention-bound).

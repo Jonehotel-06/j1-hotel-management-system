@@ -31,6 +31,10 @@ def _new_tax_identity_reference():
     return _payroll_reference("TIN")
 
 
+def _new_shortage_reference():
+    return _payroll_reference("STOCK-MISS")
+
+
 def _default_nigeria_2026_bands():
     """Nigeria Tax Act 2025, Fourth Schedule (annual chargeable income)."""
     return [
@@ -417,6 +421,123 @@ class PayrollLine(models.Model):
 
     def __str__(self):
         return f"{self.period.reference} · {self.employee_code} · {self.net_pay} {self.currency}"
+
+
+class PayrollStockShortageCase(TimeStampedModel):
+    """A missing-stock loss proposed for department-wide payroll recovery.
+
+    Recording a case never deducts pay.  Only an account whose role is
+    ADMIN may approve or reject it; approval snapshots every active or
+    on-leave employee in the department at that moment and splits the loss
+    equally (with deterministic cent remainders).  The resulting allocations
+    are consumed once by the next eligible payroll run.
+    """
+
+    class Status(models.TextChoices):
+        PENDING_ADMIN_APPROVAL = "PENDING_ADMIN_APPROVAL", "Pending admin approval"
+        APPROVED = "APPROVED", "Approved by admin"
+        REJECTED = "REJECTED", "Rejected by admin"
+
+    reference = models.CharField(max_length=64, unique=True, default=_new_shortage_reference, db_index=True)
+    department = models.ForeignKey(
+        "staff_operations.Department", on_delete=models.PROTECT, related_name="payroll_stock_shortage_cases",
+    )
+    department_code = models.CharField(max_length=40, blank=True, default="")
+    department_name = models.CharField(max_length=120, blank=True, default="")
+    stock_count = models.ForeignKey(
+        "inventory.StockCount", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="payroll_stock_shortage_cases",
+    )
+    item_summary = models.CharField(max_length=500)
+    shortage_lines = models.JSONField(default=list, blank=True)
+    incident_date = models.DateField(db_index=True)
+    effective_date = models.DateField(db_index=True)
+    total_amount = models.DecimalField(max_digits=14, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))])
+    currency = models.CharField(max_length=3, default="NGN")
+    evidence_reference = models.CharField(max_length=160)
+    notes = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=28, choices=Status.choices, default=Status.PENDING_ADMIN_APPROVAL, db_index=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="payroll_stock_shortage_cases_created",
+    )
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="payroll_stock_shortage_cases_decided",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.CharField(max_length=1000, blank=True, default="")
+
+    class Meta:
+        ordering = ["-incident_date", "-created_at", "-pk"]
+        indexes = [
+            models.Index(fields=["department", "status", "effective_date"]),
+            models.Index(fields=["status", "effective_date"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            prior = type(self).objects.filter(pk=self.pk).first()
+            if prior:
+                changes = {
+                    field.attname for field in self._meta.concrete_fields
+                    if getattr(prior, field.attname) != getattr(self, field.attname)
+                }
+                allowed = {"updated_at"}
+                if prior.status == self.Status.PENDING_ADMIN_APPROVAL:
+                    allowed |= {"status", "decided_by_id", "decided_at", "decision_note"}
+                if not changes.issubset(allowed):
+                    raise ValidationError("A stock-shortage case can only be decided once it has been recorded.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Stock-shortage responsibility history cannot be deleted.")
+
+    def __str__(self):
+        return f"{self.reference} · {self.department_name or self.department_code} · {self.total_amount} {self.currency}"
+
+
+class PayrollStockShortageAllocation(models.Model):
+    """One employee's immutable share of an admin-approved shortage case."""
+
+    case = models.ForeignKey(PayrollStockShortageCase, on_delete=models.PROTECT, related_name="allocations")
+    staff = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="payroll_stock_shortage_allocations")
+    employee_code = models.CharField(max_length=40, blank=True, default="")
+    employee_name = models.CharField(max_length=201)
+    department = models.CharField(max_length=120, blank=True, default="")
+    amount = models.DecimalField(max_digits=14, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))])
+    applied_payroll_line = models.ForeignKey(
+        "PayrollLine", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="stock_shortage_allocations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["employee_code", "employee_name", "pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["case", "staff"], name="one_shortage_share_per_staff"),
+        ]
+        indexes = [models.Index(fields=["staff", "applied_payroll_line"])]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            prior = type(self).objects.filter(pk=self.pk).first()
+            if prior:
+                changes = {
+                    field.attname for field in self._meta.concrete_fields
+                    if getattr(prior, field.attname) != getattr(self, field.attname)
+                }
+                if not changes.issubset({"applied_payroll_line_id"}):
+                    raise ValidationError("A stock-shortage share is immutable once approved.")
+                if prior.applied_payroll_line_id and self.applied_payroll_line_id != prior.applied_payroll_line_id:
+                    raise ValidationError("A stock-shortage share can be applied to payroll only once.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Stock-shortage shares cannot be deleted.")
+
+    def __str__(self):
+        return f"{self.case.reference} · {self.employee_code} · {self.amount}"
 
 
 class PayrollSalaryPayment(models.Model):

@@ -1,5 +1,5 @@
 # tests/test_demo_seeding.py
-"""Isolated demo-data seeding and the Nigerian payroll rules seed.
+"""Isolated demo-data seeding and simplified payroll checks.
 
 Pins the safety properties the owner brief demands:
 * demo seeding refuses production settings;
@@ -7,8 +7,8 @@ Pins the safety properties the owner brief demands:
 * every synthetic record is DEMO-labelled and isolated;
 * approved demo room prices are preserved (15,000 / 25,000 / 45,000);
 * opening stock exists only as immutable OPENING movements on demo SKUs;
-* the payroll rule set is seeded PENDING_REVIEW with the researched Nigeria
-  Tax Act 2025 values and can only be approved through the two-person workflow.
+* payroll runs use simplified compensation with no government tax or pension
+  calculation;
 """
 from decimal import Decimal
 from io import StringIO
@@ -21,10 +21,7 @@ from apps.accounts.models import User
 from apps.inventory.models import StockItem, StockMovement, StockRecipe, StockRecipeLine, Supplier
 from apps.pos.models import MenuCategory, MenuItem
 from apps.rooms.models import Room, RoomType
-from apps.staff_operations.models import (
-    PayrollStatutoryRuleEvent, PayrollStatutoryRuleSet, ShiftAssignment,
-    ShiftTemplate, StaffProfile,
-)
+from apps.staff_operations.models import ShiftAssignment, ShiftTemplate, StaffProfile
 
 from .base import BaseAPITestCase
 
@@ -93,77 +90,11 @@ class DemoSeedTests(BaseAPITestCase):
                              "demo accounts must not carry usable passwords")
 
 
-class NigeriaPayrollRulesSeedTests(BaseAPITestCase):
-    def _seed(self):
-        out = StringIO()
-        call_command("seed_nigeria_payroll_rules", stdout=out)
-        return out.getvalue()
+class SimplifiedPayrollRunTests(BaseAPITestCase):
+    """End-to-end DRAFT payroll using simplified compensation only.
 
-    def test_rules_are_seeded_pending_review_with_researched_values(self):
-        output = self._seed()
-        self.assertIn("PENDING_REVIEW", output)
-        rule_set = PayrollStatutoryRuleSet.objects.get()
-        self.assertEqual(rule_set.jurisdiction, "NG")
-        self.assertEqual(rule_set.effective_from.isoformat(), "2026-01-01")
-        self.assertEqual(rule_set.status, PayrollStatutoryRuleSet.Status.PENDING_REVIEW)
-        # Nigeria Tax Act 2025 bands (annual chargeable income).
-        self.assertEqual(
-            rule_set.paye_bands,
-            [
-                {"up_to": "800000.00", "rate": "0.0000"},
-                {"up_to": "3000000.00", "rate": "0.1500"},
-                {"up_to": "12000000.00", "rate": "0.1800"},
-                {"up_to": "25000000.00", "rate": "0.2100"},
-                {"up_to": "50000000.00", "rate": "0.2300"},
-                {"up_to": None, "rate": "0.2500"},
-            ],
-        )
-        self.assertEqual(rule_set.minimum_wage_monthly, Decimal("70000.00"))
-        self.assertEqual(rule_set.employee_pension_rate, Decimal("0.0800"))
-        self.assertEqual(rule_set.employer_pension_rate, Decimal("0.1000"))
-        self.assertEqual(rule_set.rent_relief_rate, Decimal("0.2000"))
-        self.assertEqual(rule_set.rent_relief_cap, Decimal("500000.00"))
-        # Sources and legal basis recorded for review; event trail started.
-        self.assertTrue(rule_set.source_references)
-        self.assertIn("Nigeria Tax Act 2025", rule_set.legal_basis)
-        self.assertEqual(
-            PayrollStatutoryRuleEvent.objects.filter(rule_set=rule_set).count(), 1,
-        )
-
-    def test_reseed_is_idempotent(self):
-        self._seed()
-        output = self._seed()
-        self.assertIn("already present", output)
-        self.assertEqual(PayrollStatutoryRuleSet.objects.count(), 1)
-
-    def test_seeded_rules_cannot_be_used_before_independent_approval(self):
-        from apps.staff_operations.services.payroll_service import review_statutory_rule_set
-
-        self._seed()
-        rule_set = PayrollStatutoryRuleSet.objects.get()
-        reviewer = User.objects.create_user(
-            email="rules.reviewer@staff.dev", password="Str0ng!Pass",
-            first_name="Rules", last_name="Reviewer", role=User.Role.ADMIN,
-        )
-        reviewed = review_statutory_rule_set(
-            rule_set=rule_set, reviewer=reviewer, approved=True,
-            review_note="Confirmed against Nigeria Tax Act 2025 and PRA 2014.",
-        )
-        self.assertEqual(reviewed.status, PayrollStatutoryRuleSet.Status.APPROVED)
-        # A reviewed ruleset is immutable: further edits are refused.
-        reviewed.paye_bands = []
-        with self.assertRaises(Exception):
-            reviewed.save()
-
-
-class SeededRulesetPayrollRunTests(BaseAPITestCase):
-    """End-to-end DRAFT payroll computed by the command-seeded rule set.
-
-    This is the B4 'safest next action' executed in the isolated test
-    environment: seed the researched rules, have an independent reviewer
-    approve them, then run a draft period and verify the computed statutory
-    amounts against the researched maths. No real employee is involved and no
-    real payment is made — everything is synthetic and confined to the test DB.
+    No real employee is involved and no real payment is made — everything is
+    synthetic and confined to the test DB.
     """
 
     def setUp(self):
@@ -189,100 +120,48 @@ class SeededRulesetPayrollRunTests(BaseAPITestCase):
         profile.employment_start = self.today
         profile.save(update_fields=["department", "employment_start", "updated_at"])
 
-    def test_draft_period_computes_from_the_seeded_rule_set(self):
-        from decimal import Decimal
-
-        from apps.staff_operations.models import PayrollTaxIdentity, StaffCompensation
-
-        call_command("seed_nigeria_payroll_rules", stdout=StringIO())
-        rule_set = PayrollStatutoryRuleSet.objects.get()
-        # Independent review through the API (proposer is the system/none;
-        # reviewer is a distinct authorised person).
-        self.auth(self.reviewer)
-        response = self.client.post(
-            f"/api/admin/staff-operations/payroll/statutory-rules/{rule_set.reference}/review/",
-            {"approved": True,
-             "review_note": "Verified against Nigeria Tax Act 2025 and PRA 2014 for isolated QA."},
-            format="json",
-        )
-        self.assertEqual(response.status_code, 200, response.content)
-        rule_set.refresh_from_db()
-        self.assertEqual(rule_set.status, PayrollStatutoryRuleSet.Status.APPROVED)
-
+    def test_draft_period_uses_simplified_compensation_without_a_tax_id(self):
         self.auth(self.creator)
-        tin = self.client.post("/api/admin/staff-operations/payroll/tax-identities/", {
-            "staff_id": self.employee.pk, "tax_id": f"NG-TIN-{self.employee.pk}",
-            "effective_from": self.today.isoformat(),
-            "registered_on": self.today.isoformat(),
-            "evidence_reference": f"TIN-{self.employee.pk}",
-        }, format="json")
-        self.assertEqual(tin.status_code, 201, tin.content)
-        self.assertTrue(PayrollTaxIdentity.objects.filter(staff=self.employee).exists())
-
+        self.assertEqual(
+            self.client.get("/api/admin/staff-operations/payroll/statutory-rules/").status_code, 404,
+        )
+        self.assertEqual(
+            self.client.get("/api/admin/staff-operations/payroll/tax-identities/").status_code, 404,
+        )
         comp = self.client.post("/api/admin/staff-operations/payroll/compensation/", {
             "staff_id": self.employee.pk, "effective_from": self.today.isoformat(),
             "currency": "NGN", "basic_salary": "250000.00",
             "housing_allowance": "25000.00", "transport_allowance": "15000.00",
-            "overtime_rate": "0.00", "pension_applicable": True,
-            "minimum_wage_applicable": True,
+            "overtime_rate": "0.00",
         }, format="json")
         self.assertEqual(comp.status_code, 201, comp.content)
+        self.assertNotIn("pension_applicable", comp.json()["data"])
+        self.assertNotIn("minimum_wage_applicable", comp.json()["data"])
 
         period = self.client.post("/api/admin/staff-operations/payroll/periods/", {
             "starts_on": self.today.isoformat(), "ends_on": self.today.isoformat(),
-            "department": "Housekeeping", "idempotency_key": "seeded-rules-draft-001",
+            "department": "Housekeeping", "idempotency_key": "simplified-draft-001",
             "adjustments": [],
         }, format="json")
         self.assertIn(period.status_code, (200, 201), period.content)
         line = period.json()["data"]["lines"][0]
-
-        # Pensionable = 250,000 + 25,000 + 15,000 = 290,000 → employee 8% = 23,200;
-        # employer 10% = 29,000. PAYE uses the engine's documented proration:
-        # expected_periods = 13 − current month; projected chargeable =
-        # monthly pensionable × periods × 0.92 (pension relief), banded at the
-        # NTA 2025 rates, divided back over the periods.
-        self.assertEqual(Decimal(line["pensionable_pay"]), Decimal("290000.00"))
-        self.assertEqual(Decimal(line["employee_pension"]), Decimal("23200.00"))
-        self.assertEqual(Decimal(line["employer_pension"]), Decimal("29000.00"))
-        self.assertFalse(line["tax_snapshot"]["minimum_wage_exempt"])
-        from apps.staff_operations.services.payroll_service import progressive_tax
-
-        expected_periods = Decimal(13 - self.today.month)
-        projected_chargeable = Decimal("290000.00") * expected_periods * Decimal("0.92")
-        annual_tax, _ = progressive_tax(projected_chargeable, rule_set.paye_bands)
-        expected_monthly = (annual_tax / expected_periods).quantize(
-            Decimal("0.01"), rounding="ROUND_HALF_UP"
-        )
-        self.assertEqual(Decimal(line["paye_tax"]), expected_monthly)
-        # Sanity band: chargeable sits just above the ₦800k tax-free band in a
-        # 3-period projection, so PAYE must be positive but below 15% of it.
-        self.assertGreater(Decimal(line["paye_tax"]), Decimal("0.00"))
-        # The draft is clearly a draft: nothing is finalised or paid.
+        self.assertEqual(Decimal(line["gross_pay"]), Decimal("290000.00"))
+        self.assertEqual(Decimal(line["deductions_total"]), Decimal("0.00"))
+        self.assertEqual(Decimal(line["net_pay"]), Decimal("290000.00"))
+        self.assertNotIn("paye_tax", line)
+        self.assertNotIn("employee_pension", line)
+        self.assertNotIn("tax_snapshot", line)
         self.assertEqual(period.json()["data"]["status"], "DRAFT")
 
     def test_manual_deductions_cannot_smuggle_statutory_labels(self):
-        call_command("seed_nigeria_payroll_rules", stdout=StringIO())
-        rule_set = PayrollStatutoryRuleSet.objects.get()
-        self.auth(self.reviewer)
-        self.client.post(
-            f"/api/admin/staff-operations/payroll/statutory-rules/{rule_set.reference}/review/",
-            {"approved": True, "review_note": "Approved for isolated QA only."},
-            format="json",
-        )
         self.auth(self.creator)
-        self.client.post("/api/admin/staff-operations/payroll/tax-identities/", {
-            "staff_id": self.employee.pk, "tax_id": f"NG-TIN-{self.employee.pk}",
-            "effective_from": self.today.isoformat(), "registered_on": self.today.isoformat(),
-            "evidence_reference": f"TIN-{self.employee.pk}",
-        }, format="json")
         self.client.post("/api/admin/staff-operations/payroll/compensation/", {
             "staff_id": self.employee.pk, "effective_from": self.today.isoformat(),
             "currency": "NGN", "basic_salary": "60000.00", "overtime_rate": "0.00",
-            "pension_applicable": True, "minimum_wage_applicable": True,
         }, format="json")
         response = self.client.post("/api/admin/staff-operations/payroll/periods/", {
             "starts_on": self.today.isoformat(), "ends_on": self.today.isoformat(),
-            "department": "Housekeeping", "idempotency_key": "seeded-rules-guard-001",
+            "department": "Housekeeping", "idempotency_key": "simplified-guard-001",
             "adjustments": [{
                 "staff_id": self.employee.pk, "overtime_hours": "0",
                 "allowances": [], "bonus": "0.00",

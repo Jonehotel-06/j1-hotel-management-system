@@ -21,8 +21,8 @@ from apps.core.responses import success_response
 from apps.finance.models import CashSession
 
 from .models import (
-    PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment, PayrollStatutoryRuleEvent,
-    PayrollStatutoryRuleSet, PayrollTaxIdentity, StaffCompensation, StaffProfile,
+    PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment,
+    PayrollStockShortageCase, StaffCompensation, StaffProfile,
 )
 from .payroll_serializers import (
     PayrollPeriodCreateSerializer,
@@ -33,12 +33,10 @@ from .payroll_serializers import (
     PayrollSalaryPaymentCreateSerializer,
     PayrollSalaryPaymentReversalSerializer,
     PayrollSalaryPaymentSerializer,
-    PayrollStatutoryRuleReviewSerializer,
-    PayrollStatutoryRuleSetCreateSerializer,
-    PayrollStatutoryRuleSetDetailSerializer,
-    PayrollStatutoryRuleSetSerializer,
-    PayrollTaxIdentityCreateSerializer,
-    PayrollTaxIdentitySerializer,
+    PayrollStockShortageCreateSerializer,
+    PayrollStockShortageDecisionSerializer,
+    PayrollStockShortageDetailSerializer,
+    PayrollStockShortageSerializer,
     StaffCompensationCreateSerializer,
     StaffCompensationSerializer,
     MyPayslipSerializer,
@@ -46,13 +44,12 @@ from .payroll_serializers import (
 from .services.payroll_service import (
     create_compensation,
     create_payroll_period,
-    create_payroll_tax_identity,
-    create_statutory_rule_set,
+    create_stock_shortage_case,
+    decide_stock_shortage_case,
     pay_payroll_period,
     record_payroll_salary_payment,
     reverse_payroll_salary_payment,
     review_payroll_period,
-    review_statutory_rule_set,
     submit_payroll_period,
 )
 
@@ -69,7 +66,7 @@ def _payroll_line_queryset():
         PayrollSalaryPayment.objects.filter(line_id=OuterRef("pk"), reversal_of__isnull=False)
         .order_by().values("line_id").annotate(total=Sum("amount")).values("total")[:1]
     )
-    return PayrollLine.objects.select_related("staff", "compensation", "tax_identity").annotate(
+    return PayrollLine.objects.select_related("staff", "compensation").annotate(
         _salary_recorded=Coalesce(Subquery(recorded, output_field=PAYROLL_MONEY), Value(Decimal("0.00"), output_field=PAYROLL_MONEY), output_field=PAYROLL_MONEY),
         _salary_reversed=Coalesce(Subquery(reversed_amount, output_field=PAYROLL_MONEY), Value(Decimal("0.00"), output_field=PAYROLL_MONEY), output_field=PAYROLL_MONEY),
     ).annotate(
@@ -88,7 +85,7 @@ def _payroll_queryset(*, detail=False):
         .order_by().values("line__period_id").annotate(total=Sum("amount")).values("total")[:1]
     )
     queryset = PayrollPeriod.objects.select_related(
-        "created_by", "reviewed_by", "approved_by", "paid_by", "replaces", "cash_session", "statutory_rules",
+        "created_by", "reviewed_by", "approved_by", "paid_by", "replaces", "cash_session",
         "accrual_transaction", "payment_transaction",
     ).annotate(
         line_count=Count("lines"),
@@ -110,16 +107,6 @@ def _period(reference, *, detail=False):
     value = (_payroll_queryset(detail=detail).filter(reference=reference).first())
     if value is None:
         raise NotFound("Payroll run not found.")
-    return value
-
-
-def _rule_set(reference, *, detail=False):
-    queryset = PayrollStatutoryRuleSet.objects.select_related("created_by", "reviewed_by")
-    if detail:
-        queryset = queryset.prefetch_related(Prefetch("events", queryset=PayrollStatutoryRuleEvent.objects.select_related("actor")))
-    value = queryset.filter(reference=reference).first()
-    if value is None:
-        raise NotFound("Statutory payroll ruleset not found.")
     return value
 
 
@@ -176,10 +163,6 @@ class StaffCompensationListCreateView(APIView):
             housing_allowance=data["housing_allowance"],
             transport_allowance=data["transport_allowance"],
             overtime_rate=data["overtime_rate"],
-            pension_applicable=data["pension_applicable"],
-            pension_applicability_note=data["pension_applicability_note"],
-            minimum_wage_applicable=data["minimum_wage_applicable"],
-            minimum_wage_applicability_note=data["minimum_wage_applicability_note"],
             notes=data["notes"],
         )
         log_action(
@@ -192,116 +175,114 @@ class StaffCompensationListCreateView(APIView):
         ))
 
 
-@extend_schema(tags=["Admin · Payroll"], summary="View or record confidential staff Tax ID registration")
-class PayrollTaxIdentityListCreateView(APIView):
+def _shortage_queryset(*, detail=False):
+    queryset = PayrollStockShortageCase.objects.select_related(
+        "department", "stock_count", "created_by", "decided_by",
+    )
+    if detail:
+        queryset = queryset.prefetch_related("allocations__staff", "allocations__applied_payroll_line__period")
+    return queryset
+
+
+def _shortage(reference, *, detail=False):
+    value = _shortage_queryset(detail=detail).filter(reference=reference).first()
+    if value is None:
+        raise NotFound("Stock-shortage case not found.")
+    return value
+
+
+@extend_schema(tags=["Admin · Payroll"], summary="List or record a department stock-shortage case")
+class PayrollStockShortageListCreateView(APIView):
     permission_classes = [HasCapability]
-    required_capability = "payroll.manage"
+    required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve", "inventory.manage")
+    require_any_capability = True
     pagination_class = StandardPagination
 
     def get(self, request):
-        queryset = PayrollTaxIdentity.objects.select_related("staff", "created_by", "staff__staff_profile").order_by(
-            "staff__last_name", "staff__first_name", "-effective_from", "-pk"
-        )
-        if staff_id := request.query_params.get("staff_id"):
-            queryset = queryset.filter(staff_id=staff_id)
-        if department := request.query_params.get("department"):
-            queryset = queryset.filter(staff__staff_profile__department__iexact=department)
+        queryset = _shortage_queryset().order_by("-incident_date", "-created_at", "-pk")
+        if status_filter := request.query_params.get("status"):
+            queryset = queryset.filter(status=status_filter.upper())
+        if department_id := request.query_params.get("department_id"):
+            queryset = queryset.filter(department_id=department_id)
         if search := request.query_params.get("search"):
             queryset = queryset.filter(
-                Q(staff__email__icontains=search) | Q(staff__first_name__icontains=search)
-                | Q(staff__last_name__icontains=search) | Q(staff__staff_profile__employee_code__icontains=search)
+                Q(reference__icontains=search) | Q(item_summary__icontains=search)
+                | Q(department_name__icontains=search) | Q(department_code__icontains=search)
             )
-        return _page(self, request, queryset, PayrollTaxIdentitySerializer)
+        return _page(self, request, queryset, PayrollStockShortageSerializer)
 
     def post(self, request):
-        serializer = PayrollTaxIdentityCreateSerializer(data=request.data)
+        serializer = PayrollStockShortageCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        staff = User.objects.filter(pk=data["staff_id"]).first()
-        if staff is None:
-            raise NotFound("Staff account not found.")
-        identity = create_payroll_tax_identity(
-            staff=staff, actor=request.user, tax_id=data["tax_id"],
-            effective_from=data["effective_from"], registered_on=data["registered_on"],
+        case = create_stock_shortage_case(
+            actor=request.user,
+            department_id=data["department_id"],
+            item_summary=data["item_summary"],
+            total_amount=data.get("total_amount"),
+            stock_count_reference=data["stock_count_reference"],
+            incident_date=data["incident_date"],
+            effective_date=data["effective_date"],
             evidence_reference=data["evidence_reference"],
-            change_reported_on=data.get("change_reported_on"),
-            change_reason=data.get("change_reason", ""), notes=data.get("notes", ""),
+            notes=data["notes"],
         )
         log_action(
-            actor=request.user, action="PAYROLL_TAX_ID_RECORDED", instance=identity, request=request,
-            metadata={"reference": identity.reference, "staff_id": staff.pk, "effective_from": identity.effective_from.isoformat(), "evidence_reference": identity.evidence_reference, "change_reported_on": identity.change_reported_on.isoformat() if identity.change_reported_on else ""},
+            actor=request.user, action="PAYROLL_STOCK_SHORTAGE_CASE_CREATED", instance=case, request=request,
+            metadata={
+                "reference": case.reference, "department": case.department_name,
+                "department_code": case.department_code, "total_amount": str(case.total_amount),
+                "stock_count": case.stock_count.reference if case.stock_count else "",
+            },
         )
-        result = PayrollTaxIdentity.objects.select_related("staff", "created_by", "staff__staff_profile").get(pk=identity.pk)
         return _private_response(success_response(
-            PayrollTaxIdentitySerializer(result).data,
-            message="Confidential Tax ID registration recorded; only its masked form is shown here.",
+            PayrollStockShortageDetailSerializer(_shortage(case.reference, detail=True)).data,
+            message="Stock-shortage case recorded for Admin approval. No payroll deduction has been made yet.",
             status=status.HTTP_201_CREATED,
         ))
 
 
-@extend_schema(tags=["Admin · Payroll"], summary="View or propose effective-dated statutory payroll rules")
-class PayrollStatutoryRuleSetListCreateView(APIView):
+@extend_schema(tags=["Admin · Payroll"], summary="View a department stock-shortage case and its shares")
+class PayrollStockShortageDetailView(APIView):
     permission_classes = [HasCapability]
-    required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve", "payroll.rules.manage", "payroll.rules.review")
-    require_any_capability = True
-    pagination_class = StandardPagination
-
-    def get(self, request):
-        queryset = PayrollStatutoryRuleSet.objects.select_related("created_by", "reviewed_by").order_by("-effective_from", "-created_at", "-pk")
-        if status_filter := request.query_params.get("status"):
-            queryset = queryset.filter(status=status_filter.upper())
-        page = StandardPagination()
-        items = page.paginate_queryset(queryset, request, view=self)
-        response = page.get_paginated_response(PayrollStatutoryRuleSetSerializer(items, many=True).data)
-        return _private_response(response)
-
-    def post(self, request):
-        if not has_capability(request.user, "payroll.rules.manage"):
-            raise PermissionDenied("This user cannot propose statutory payroll rules.")
-        serializer = PayrollStatutoryRuleSetCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        rule_set = create_statutory_rule_set(actor=request.user, **serializer.validated_data)
-        log_action(
-            actor=request.user, action="PAYROLL_STATUTORY_RULES_PROPOSED", instance=rule_set, request=request,
-            metadata={"reference": rule_set.reference, "jurisdiction": rule_set.jurisdiction, "effective_from": rule_set.effective_from.isoformat(), "source_references": rule_set.source_references},
-        )
-        return _private_response(success_response(
-            PayrollStatutoryRuleSetDetailSerializer(_rule_set(rule_set.reference, detail=True)).data,
-            message="Statutory payroll rules proposed for independent review.", status=status.HTTP_201_CREATED,
-        ))
-
-
-@extend_schema(tags=["Admin · Payroll"], summary="View an immutable statutory payroll ruleset and review history")
-class PayrollStatutoryRuleSetDetailView(APIView):
-    permission_classes = [HasCapability]
-    required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve", "payroll.rules.manage", "payroll.rules.review")
+    required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve", "inventory.manage")
     require_any_capability = True
 
     def get(self, request, reference):
-        return _private_response(success_response(PayrollStatutoryRuleSetDetailSerializer(_rule_set(reference, detail=True)).data))
+        return _private_response(success_response(
+            PayrollStockShortageDetailSerializer(_shortage(reference, detail=True)).data
+        ))
 
 
-@extend_schema(tags=["Admin · Payroll"], summary="Independently approve or reject proposed statutory payroll rules")
-class PayrollStatutoryRuleSetReviewView(APIView):
-    permission_classes = [HasCapability]
-    required_capability = "payroll.rules.review"
+@extend_schema(tags=["Admin · Payroll"], summary="Admin-only decision for a department stock-shortage case")
+class PayrollStockShortageDecisionView(APIView):
+    """Only the ADMIN role may make every department employee responsible."""
+
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, reference):
-        rule_set = _rule_set(reference)
-        serializer = PayrollStatutoryRuleReviewSerializer(data=request.data)
+        serializer = PayrollStockShortageDecisionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        rule_set = review_statutory_rule_set(
-            rule_set=rule_set, reviewer=request.user,
-            approved=serializer.validated_data["approved"],
-            review_note=serializer.validated_data["review_note"],
+        data = serializer.validated_data
+        case = decide_stock_shortage_case(
+            case=_shortage(reference), actor=request.user,
+            approved=data["approved"], decision_note=data["decision_note"],
         )
         log_action(
-            actor=request.user, action="PAYROLL_STATUTORY_RULES_REVIEWED", instance=rule_set, request=request,
-            metadata={"reference": rule_set.reference, "status": rule_set.status, "review_note": rule_set.review_note},
+            actor=request.user,
+            action="PAYROLL_STOCK_SHORTAGE_APPROVED" if data["approved"] else "PAYROLL_STOCK_SHORTAGE_REJECTED",
+            instance=case, request=request,
+            metadata={
+                "reference": case.reference, "department": case.department_name,
+                "total_amount": str(case.total_amount), "staff_count": case.allocations.count(),
+                "decision_note": case.decision_note,
+            },
         )
         return _private_response(success_response(
-            PayrollStatutoryRuleSetDetailSerializer(_rule_set(rule_set.reference, detail=True)).data,
-            message="Statutory payroll rule review recorded.",
+            PayrollStockShortageDetailSerializer(_shortage(case.reference, detail=True)).data,
+            message=(
+                "Admin approved the department-wide stock-shortage shares. They will be deducted once by the next eligible payroll run."
+                if data["approved"] else "Admin rejected the stock-shortage case. No payroll deduction will be made."
+            ),
         ))
 
 
@@ -630,16 +611,11 @@ class PayrollPayslipView(APIView):
             rows.append(["Allowance · " + escape(str(item.get("label", ""))), str(item.get("amount", "0.00"))])
         if line.bonus > Decimal("0.00"):
             rows.append(["Bonus", str(line.bonus)])
-        rows.append(["Gross cash pay", str(line.gross_pay)])
-        for item in line.benefits_in_kind:
-            if Decimal(str(item.get("period_taxable_value", "0.00"))) > Decimal("0.00"):
-                rows.append(["Non-cash taxable benefit · " + escape(str(item.get("description", ""))), str(item.get("period_taxable_value", "0.00"))])
-        if line.taxable_benefits > Decimal("0.00"):
-            rows.append(["Gross taxable emoluments (cash + benefits)", str(line.taxable_gross_pay)])
-        rows.append(["Deductions from cash pay", ""])
+        rows.append(["Gross pay", str(line.gross_pay)])
+        rows.append(["Deductions", ""])
         for item in line.deductions:
             rows.append(["Deduction · " + escape(str(item.get("label", ""))), "−" + str(item.get("amount", "0.00"))])
-        rows.extend([["Total deductions", str(line.deductions_total)], ["NET CASH PAY", str(line.net_pay)]])
+        rows.extend([["Total deductions", str(line.deductions_total)], ["NET PAY", str(line.net_pay)]])
         pay = Table(rows, colWidths=[125 * mm, 40 * mm])
         pay.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#373435")),

@@ -63,8 +63,6 @@ CAPABILITY_DEFINITIONS = (
     ("payroll.view", "View payroll", "Payroll", "View payroll run and compensation records."),
     ("payroll.manage", "Prepare payroll", "Payroll", "Maintain compensation records and prepare payroll runs."),
     ("payroll.approve", "Approve payroll", "Payroll", "Independently approve a submitted payroll run."),
-    ("payroll.rules.manage", "Propose statutory payroll rules", "Payroll", "Create immutable effective-dated statutory rules for independent review."),
-    ("payroll.rules.review", "Review statutory payroll rules", "Payroll", "Independently review and approve statutory payroll rules against legal sources."),
     ("reports.financial.view", "View financial reports", "Reports", "View financial reporting and exports."),
     ("audit.view", "View audit records", "Security", "View immutable audit history."),
     ("terminal.manage", "Manage workstation registry", "Security", "Register, label, and deactivate informational workstations."),
@@ -90,7 +88,7 @@ ROLE_CAPABILITY_CODES = {
         "procurement.manage", "procurement.approve", "staff.profile.manage", "staff.view", "staff.manage",
         "shift.manage", "attendance.clock",
         "attendance.manage", "leave.request", "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
-        "payroll.rules.manage", "payroll.rules.review", "reports.financial.view", "terminal.manage", "service_qr.manage",
+        "reports.financial.view", "terminal.manage", "service_qr.manage",
     }),
     "RECEPTIONIST": frozenset({
         "booking.read", "booking.manage", "stay.check_in", "stay.check_out", "folio.view", "folio.charge.post",
@@ -128,7 +126,7 @@ ROLE_CAPABILITY_CODES = {
         "procurement.approve", "staff.profile.manage", "staff.view", "staff.manage", "shift.manage",
         "attendance.clock", "attendance.manage",
         "leave.request", "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
-        "payroll.rules.manage", "payroll.rules.review", "reports.financial.view", "terminal.manage", "service_qr.manage",
+        "reports.financial.view", "terminal.manage", "service_qr.manage",
     }),
     "RESTAURANT_MANAGER": frozenset({
         "restaurant.order.manage", "restaurant.table.manage", "restaurant.menu.manage", "payment.capture",
@@ -163,7 +161,7 @@ ROLE_CAPABILITY_CODES = {
         "account.view", "folio.view", "folio.charge.post", "finance.controls.manage", "payment.read", "payment.capture",
         "payment.refund.request", "payment.refund.approve", "cash_session.open", "cash_session.close",
         "expense.manage", "expense.approve", "payroll.view", "payroll.manage", "payroll.approve",
-        "payroll.rules.manage", "payroll.rules.review", "reports.financial.view",
+        "reports.financial.view",
     }),
     "ACCOUNTANT": frozenset({
         "folio.view", "folio.charge.post", "payment.read", "payment.capture", "payment.refund.request", "expense.manage",
@@ -172,7 +170,7 @@ ROLE_CAPABILITY_CODES = {
     "HR_MANAGER": frozenset({
         "staff.profile.manage", "staff.view", "staff.manage", "shift.manage", "attendance.clock", "attendance.manage",
         "leave.request",
-        "leave.approve", "payroll.view", "payroll.manage", "payroll.approve", "payroll.rules.manage",
+        "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
     }),
     "SECURITY": frozenset({"guest_request.manage", "attendance.clock"}),
     "PROCUREMENT_OFFICER": frozenset({"procurement.manage", "attendance.clock", "leave.request"}),

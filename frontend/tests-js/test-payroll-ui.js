@@ -13,11 +13,12 @@ test("payroll endpoints are centralized and payroll navigation is capability-sco
   const config = fs.readFileSync(path.join(FRONTEND, "js", "config.js"), "utf8");
   const nav = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
   assert.match(config, /payrollCompensation:\s*"\/api\/admin\/staff-operations\/payroll\/compensation\/"/);
-  assert.match(config, /payrollStatutoryRules:\s*"\/api\/admin\/staff-operations\/payroll\/statutory-rules\/"/);
-  assert.match(config, /payrollTaxIdentities:\s*"\/api\/admin\/staff-operations\/payroll\/tax-identities\/"/);
+  assert.match(config, /payrollStockShortages:\s*"\/api\/admin\/staff-operations\/payroll\/stock-shortages\/"/);
+  assert.doesNotMatch(config, /payrollStatutoryRules|payrollTaxIdentities/);
   assert.match(config, /payrollPeriods:\s*"\/api\/admin\/staff-operations\/payroll\/periods\/"/);
   assert.match(config, /payrollPayslips:\s*"\/api\/admin\/staff-operations\/payroll\/payslips\/"/);
-  assert.match(nav, /label: "Payroll"[\s\S]*capabilities: \["payroll\.view", "payroll\.manage", "payroll\.approve", "payroll\.rules\.manage", "payroll\.rules\.review"\]/);
+  assert.match(nav, /label: "Payroll"[\s\S]*capabilities: \["payroll\.view", "payroll\.manage", "payroll\.approve"\]/);
+  assert.doesNotMatch(nav, /payroll\.rules\.(manage|review)/);
 });
 
 test("employee salary-payment API helpers escape nested references and keep requests centralized", async () => {
@@ -49,7 +50,7 @@ test("employee salary-payment API helpers escape nested references and keep requ
   assert.equal(requests[2].init.method, "POST");
 });
 
-test("payroll page uses private no-store reads and controlled maker-checker/ledger actions", () => {
+test("payroll page uses simplified salary terms and controlled maker-checker/ledger actions", () => {
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "payroll.html"), "utf8");
   assert.match(page, /boot\(\["admin","manager","general_manager","accounts_manager","accountant","hr_manager"\]\)/);
   assert.match(page, /loadCapabilities\(\)/);
@@ -61,20 +62,12 @@ test("payroll page uses private no-store reads and controlled maker-checker/ledg
   assert.match(page, /resourceAction\("payrollPeriods",reference,"pay"/);
   assert.match(page, /API\.getBlob\(/);
   assert.match(page, /API\.create\("payrollCompensation"/);
-  assert.match(page, /API\.create\("payrollStatutoryRules"/);
-  assert.match(page, /resourceAction\("payrollStatutoryRules",reference,"review"/);
-  assert.match(page, /prior_ytd/);
-  assert.doesNotMatch(page, /allowances_json/);
-  assert.doesNotMatch(page, /deductions_json/);
-  assert.doesNotMatch(page, /benefits_json/);
-  assert.doesNotMatch(page, /tax_claims_json/);
-  assert.doesNotMatch(page, /paye_bands_json/);
-  assert.match(page, /API\.create\("payrollTaxIdentities"/);
-  assert.match(page, /Nigeria 2026 PAYE and pension rules/);
-  assert.match(page, /independent legal\/compliance reviewer/);
-  assert.match(page, /benefits_in_kind/);
-  assert.match(page, /<th[^>]*>Cash gross<\/th>/);
-  assert.match(page, /<th>Net cash<\/th>/);
+  assert.match(page, /Government tax and pension calculations are not part of this payroll system/);
+  assert.doesNotMatch(page, /payrollStatutoryRules|payrollTaxIdentities/);
+  assert.doesNotMatch(page, /pension_applicable|minimum_wage_applicable|prior_ytd|benefits_in_kind|tax_claims/);
+  assert.doesNotMatch(page, /Statutory rules|Tax IDs|PAYE withheld|Employer pension/);
+  assert.match(page, /<th class="hide-sm">Gross<\/th>/);
+  assert.match(page, /<th>Net<\/th>/);
   assert.match(page, /PARTIALLY_PAID/);
   assert.match(page, /salary_amount_paid/);
   assert.match(page, /salary_balance/);
@@ -82,6 +75,21 @@ test("payroll page uses private no-store reads and controlled maker-checker/ledg
   assert.match(page, /reversePayrollSalaryPayment/);
   assert.match(page, /newIdempotencyKey\("salary-payment"\)/);
   assert.match(page, /record only a payment already made/);
-  assert.match(page, /Allowances \/ benefits \/ deductions/);
-  assert.match(page, /within 30 days/);
+  assert.match(page, /Allowances \/ deductions/);
+});
+
+test("stock shortages require an Admin role decision and never deduct when recorded", () => {
+  const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "payroll.html"), "utf8");
+  assert.match(page, /data-payroll-tab="shortages"/);
+  assert.match(page, /Department stock shortages/);
+  assert.match(page, /Recording a case does not deduct anyone's pay/);
+  assert.match(page, /Only an account with the <strong>Admin<\/strong> role can approve it/);
+  assert.match(page, /isAdmin=String\(\(me&&me\.role\)\|\|""\)\.toLowerCase\(\)==="admin"/);
+  assert.match(page, /row\.status==="PENDING_ADMIN_APPROVAL"&&isAdmin/);
+  assert.match(page, /API\.create\("payrollStockShortages"/);
+  assert.match(page, /API\.getOne\("payrollStockShortages"/);
+  assert.match(page, /resourceAction\("payrollStockShortages",reference,"decision"/);
+  assert.match(page, /Approve — divide equally across all department staff/);
+  assert.match(page, /Reject — make no payroll deduction/);
+  assert.match(page, /No payroll deduction has been made yet/);
 });

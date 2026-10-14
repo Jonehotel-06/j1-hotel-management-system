@@ -271,8 +271,7 @@
     attendanceClock:       "/api/admin/staff-operations/attendance/clock/",
     leaveRequests:         "/api/admin/staff-operations/leave-requests/",
     payrollCompensation:   "/api/admin/staff-operations/payroll/compensation/",
-    payrollTaxIdentities:  "/api/admin/staff-operations/payroll/tax-identities/",
-    payrollStatutoryRules: "/api/admin/staff-operations/payroll/statutory-rules/",
+    payrollStockShortages: "/api/admin/staff-operations/payroll/stock-shortages/",
     payrollPeriods:       "/api/admin/staff-operations/payroll/periods/",
     /* Payroll (client) — the signed-in user's OWN approved payslips. */
     payrollPayslips:      "/api/admin/staff-operations/payroll/payslips/",
