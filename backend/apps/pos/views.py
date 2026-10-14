@@ -22,6 +22,7 @@ from .models import (
     RestaurantTable, RestaurantTableSession,
 )
 from .serializers import (
+    BarcodeLookupSerializer,
     CashSessionCloseSerializer,
     CashSessionOpenSerializer,
     KitchenTicketSerializer,
@@ -202,6 +203,67 @@ class PosMenuView(APIView):
             )
         ).order_by("sort_order", "name")
         return success_response(MenuCategoryMenuSerializer(categories, many=True).data)
+
+
+@extend_schema(tags=["Admin · POS"], summary="Resolve one scanned barcode to a sellable menu item")
+class PosBarcodeLookupView(APIView):
+    """Narrow, single-product lookup for USB HID barcode scanners.
+
+    One indexed query per scan (barcode/SKU) instead of downloading the
+    whole catalogue. The response carries the server-stored selling price;
+    checkout still re-prices every line in ``order_service``.
+    """
+
+    permission_classes = [HasCapability]
+    required_capabilities = ("pos.order.manage", "restaurant.order.manage", "bar.order.manage")
+    require_any_capability = True
+
+    def get(self, request):
+        from rest_framework.exceptions import ValidationError
+
+        from .services.barcode_service import barcode_lookup_payload
+
+        code = request.query_params.get("barcode") or request.query_params.get("code") or ""
+        mode = (request.query_params.get("mode") or "").strip().upper()
+        area = (request.query_params.get("area") or "").strip().upper()
+        if mode and mode not in PosOrder.Mode.values:
+            raise ValidationError({"mode": "Enter a valid POS order mode."})
+        if area and area not in MenuCategory.ServiceArea.values:
+            raise ValidationError({"area": "Area must be RESTAURANT or BAR."})
+        if mode:
+            # Reuse the order-mode permission map: a bartender scanning in
+            # BAR mode must not resolve restaurant-only products, and the
+            # sale itself would be rejected by order_service anyway.
+            _ensure_order_mode(request.user, mode)
+            if mode == PosOrder.Mode.BAR:
+                service_areas = {MenuCategory.ServiceArea.BAR}
+            elif mode == PosOrder.Mode.ROOM_SERVICE:
+                service_areas = {MenuCategory.ServiceArea.RESTAURANT, MenuCategory.ServiceArea.BAR}
+            else:
+                service_areas = {MenuCategory.ServiceArea.RESTAURANT}
+        elif area:
+            if area == MenuCategory.ServiceArea.BAR and not (
+                has_capability(request.user, "pos.order.manage") or has_capability(request.user, "bar.order.manage")
+            ):
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("You do not have access to the bar menu.")
+            if area == MenuCategory.ServiceArea.RESTAURANT and not (
+                has_capability(request.user, "pos.order.manage") or has_capability(request.user, "restaurant.order.manage")
+            ):
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("You do not have access to the restaurant menu.")
+            service_areas = {area}
+        else:
+            allowed_modes = _allowed_order_modes(request.user)
+            service_areas = set()
+            if {PosOrder.Mode.BAR, PosOrder.Mode.ROOM_SERVICE} & allowed_modes:
+                service_areas.add(MenuCategory.ServiceArea.BAR)
+            if allowed_modes - {PosOrder.Mode.BAR}:
+                service_areas.add(MenuCategory.ServiceArea.RESTAURANT)
+            if has_capability(request.user, "pos.order.manage"):
+                service_areas = {MenuCategory.ServiceArea.RESTAURANT, MenuCategory.ServiceArea.BAR}
+        payload = barcode_lookup_payload(code, service_areas=service_areas)
+        return success_response(BarcodeLookupSerializer(payload).data)
 
 
 @extend_schema(tags=["Admin · POS"], summary="Manage POS menu categories")

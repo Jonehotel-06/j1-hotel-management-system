@@ -6,7 +6,7 @@ from apps.core.storage import absolute_media_url
 from .models import (
     AttendanceEvent, AttendanceRecord, Department, LeaveRequest, LeaveRequestEvent, PayrollEvent, PayrollLine,
     PayrollPeriod, ShiftAssignment, ShiftAssignmentEvent, ShiftTemplate, StaffCompensation,
-    StaffDisciplinaryRecord, StaffDocument, StaffProfile,
+    StaffDisciplinaryRecord, StaffDocument, StaffPerformanceReview, StaffProfile,
 )
 
 
@@ -392,3 +392,29 @@ class LeaveReviewSerializer(serializers.Serializer):
 
 class LeaveCancelSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+
+
+class StaffPerformanceReviewSerializer(serializers.ModelSerializer):
+    """Manager-authored review. No confidential/internal-notes field exists
+    on this representation, so it is safe to reuse for the employee's own
+    finalized reviews."""
+
+    staff_name = serializers.CharField(source="staff.full_name", read_only=True)
+    reviewer_name = serializers.CharField(source="reviewer.full_name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = StaffPerformanceReview
+        fields = [
+            "id", "reference", "staff", "staff_name", "reviewer", "reviewer_name",
+            "period_start", "period_end", "review_date", "rating",
+            "strengths", "areas_for_improvement", "objectives", "improvement_actions",
+            "follow_up_date", "status", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "reference", "staff_name", "reviewer", "reviewer_name", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        start = attrs.get("period_start", getattr(self.instance, "period_start", None))
+        end = attrs.get("period_end", getattr(self.instance, "period_end", None))
+        if start and end and end < start:
+            raise serializers.ValidationError({"period_end": "Review period must end on or after it starts."})
+        return attrs

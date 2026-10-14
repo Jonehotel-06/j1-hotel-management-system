@@ -43,6 +43,10 @@ class MenuItem(TimeStampedModel):
     category = models.ForeignKey(MenuCategory, on_delete=models.PROTECT, related_name="items")
     name = models.CharField(max_length=180)
     sku = models.CharField(max_length=64, unique=True, db_index=True)
+    # Dedicated printed/scanner barcode (EAN/UPC or Code 128 payload). NULL
+    # means "no dedicated barcode assigned"; existing SKU labels keep working
+    # because the barcode lookup also resolves the unique SKU exactly.
+    barcode = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
     description = models.TextField(blank=True, default="")
     base_price = models.DecimalField(max_digits=12, decimal_places=2, validators=[POSITIVE_MONEY])
     currency = models.CharField(max_length=3, default="NGN")
@@ -61,6 +65,14 @@ class MenuItem(TimeStampedModel):
             models.Index(fields=["category", "is_active", "is_available"]),
             models.Index(fields=["is_active", "is_available", "sort_order"]),
         ]
+
+    def save(self, *args, **kwargs):
+        # Normalize once at the persistence boundary: trim whitespace and
+        # store blank as NULL so the unique constraint never sees "" twice.
+        # Leading zeros are preserved (meaningful for EAN/UPC).
+        if self.barcode is not None:
+            self.barcode = str(self.barcode).strip() or None
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.name} ({self.sku})"

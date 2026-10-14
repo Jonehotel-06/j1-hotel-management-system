@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import payroll_views, views, views_face, views_biometrics
+from . import payroll_views, views, views_face, views_biometrics, views_self_profile
 
 app_name = "staff_operations"
 
@@ -9,6 +9,9 @@ urlpatterns = [
     path("departments/<int:pk>/", views.DepartmentDetailView.as_view(), name="department-detail"),
     path("departments/<str:code_or_slug>/dashboard-summary/", views.DepartmentDashboardSummaryView.as_view(), name="department-dashboard-summary"),
     path("department-dashboard/", views.DepartmentDashboardSummaryView.as_view(), name="department-dashboard"),
+    path("my-profile/", views_self_profile.MyStaffProfileView.as_view(), name="my-profile"),
+    path("performance-reviews/", views.StaffPerformanceReviewListCreateView.as_view(), name="performance-reviews"),
+    path("performance-reviews/<str:reference>/", views.StaffPerformanceReviewDetailView.as_view(), name="performance-review-detail"),
     path("profiles/", views.StaffProfileListCreateView.as_view(), name="profiles"),
     path("profiles/<int:pk>/", views.StaffProfileDetailView.as_view(), name="profile-detail"),
     path("staff/<int:user_id>/full-profile/", views.StaffComprehensiveProfileView.as_view(), name="staff-full-profile"),

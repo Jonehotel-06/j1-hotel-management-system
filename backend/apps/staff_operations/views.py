@@ -15,7 +15,7 @@ from apps.core.responses import success_response
 from .models import (
     AttendanceEvent, AttendanceRecord, Department, LeaveRequest, LeaveRequestEvent,
     PayrollLine, PayrollPeriod, PayrollSalaryPayment, ShiftAssignment, ShiftAssignmentEvent,
-    ShiftTemplate, StaffCompensation, StaffDisciplinaryRecord, StaffDocument, StaffProfile,
+    ShiftTemplate, StaffCompensation, StaffDisciplinaryRecord, StaffDocument, StaffPerformanceReview, StaffProfile,
 )
 from apps.core.exceptions import FaceVerificationFailedError
 from .services import face_service, fingerprint_service
@@ -26,7 +26,7 @@ from .serializers import (
     LeaveRequestListSerializer, LeaveReviewSerializer, ShiftAssignmentCreateSerializer,
     ShiftAssignmentDetailSerializer, ShiftAssignmentListSerializer, ShiftCancelSerializer,
     ShiftTemplateSerializer, StaffDisciplinaryRecordSerializer, StaffDocumentSerializer,
-    StaffProfileCreateSerializer, StaffProfileSerializer,
+    StaffPerformanceReviewSerializer, StaffProfileCreateSerializer, StaffProfileSerializer,
 )
 from .services.staff_operations_service import (
     cancel_leave, cancel_shift_assignment, clock_attendance, create_shift_assignment, ensure_staff_profile,
@@ -944,6 +944,12 @@ class StaffComprehensiveProfileView(APIView):
             context={"request": request},
         ).data
 
+        performance_reviews = StaffPerformanceReviewSerializer(
+            StaffPerformanceReview.objects.select_related("staff", "reviewer").filter(staff=staff)[:50],
+            many=True,
+            context={"request": request},
+        ).data
+
         # Documents
         documents = StaffDocumentSerializer(
             StaffDocument.objects.select_related("staff", "uploaded_by")
@@ -1022,6 +1028,7 @@ class StaffComprehensiveProfileView(APIView):
             },
             "salary_payments": salary_section,
             "disciplinary": disciplinary_records,
+            "performance_reviews": performance_reviews,
             "leave_shifts": {
                 "leave_requests": leave_requests,
                 "shifts": recent_shifts,
@@ -1388,3 +1395,75 @@ class StaffDocumentDetailView(APIView):
         log_action(actor=request.user, action="STAFF_DOCUMENT_ARCHIVED", instance=doc, request=request)
         return success_response({"reference": doc.reference, "is_active": False}, message="Staff document removed from active profile.")
 
+
+
+@extend_schema(tags=["Admin · Staff operations"], summary="List or record staff performance reviews")
+class StaffPerformanceReviewListCreateView(APIView):
+    """Manager-side review register. Employees never use this endpoint:
+    they receive only their own FINALIZED reviews via ``my-profile/``."""
+
+    permission_classes = [HasCapability]
+    required_capabilities = ("staff.view", "staff.profile.manage")
+    require_any_capability = True
+
+    def get(self, request):
+        queryset = StaffPerformanceReview.objects.select_related("staff", "reviewer").all()
+        if staff_id := request.query_params.get("staff_id"):
+            queryset = queryset.filter(staff_id=staff_id)
+        if status_value := request.query_params.get("status"):
+            queryset = queryset.filter(status=status_value.upper())
+        return _page(self, request, queryset, StaffPerformanceReviewSerializer)
+
+    def post(self, request):
+        if not has_capability(request.user, "staff.profile.manage") and request.user.role != User.Role.ADMIN:
+            raise PermissionDenied("Recording performance reviews requires staff profile management authority.")
+        serializer = StaffPerformanceReviewSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        staff_obj = serializer.validated_data["staff"]
+        if getattr(staff_obj, "role", None) == User.Role.GUEST:
+            raise PermissionDenied("Performance reviews can only be recorded for staff members.")
+        import secrets
+
+        from django.utils import timezone
+
+        now = timezone.now()
+        reference = f"PERF-{now:%Y%m%d}-{secrets.token_hex(3).upper()}"
+        while StaffPerformanceReview.objects.filter(reference=reference).exists():
+            reference = f"PERF-{now:%Y%m%d}-{secrets.token_hex(3).upper()}"
+        review = serializer.save(reference=reference, reviewer=request.user)
+        log_action(
+            actor=request.user, action="STAFF_PERFORMANCE_REVIEW_RECORDED", instance=review, request=request,
+            metadata={"reference": review.reference, "staff_id": review.staff_id, "status": review.status},
+        )
+        return success_response(
+            StaffPerformanceReviewSerializer(review, context={"request": request}).data,
+            message="Performance review recorded.", status=status.HTTP_201_CREATED,
+        )
+
+
+class StaffPerformanceReviewDetailView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "staff.profile.manage"
+
+    def get(self, request, reference: str):
+        review = StaffPerformanceReview.objects.select_related("staff", "reviewer").filter(reference=reference).first()
+        if review is None:
+            raise NotFound("Performance review not found.")
+        return success_response(StaffPerformanceReviewSerializer(review, context={"request": request}).data)
+
+    def patch(self, request, reference: str):
+        review = StaffPerformanceReview.objects.filter(reference=reference).first()
+        if review is None:
+            raise NotFound("Performance review not found.")
+        if review.status == StaffPerformanceReview.Status.FINALIZED:
+            # A finalized review is the employee-visible record of record;
+            # corrections are new reviews, not silent edits.
+            raise PermissionDenied("Finalized performance reviews cannot be edited; record a new review instead.")
+        serializer = StaffPerformanceReviewSerializer(review, data=request.data, partial=True, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        review = serializer.save()
+        log_action(actor=request.user, action="STAFF_PERFORMANCE_REVIEW_UPDATED", instance=review, request=request)
+        return success_response(
+            StaffPerformanceReviewSerializer(review, context={"request": request}).data,
+            message="Performance review updated.",
+        )

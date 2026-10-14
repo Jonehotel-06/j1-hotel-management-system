@@ -3,8 +3,9 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.core.models import TimeStampedModel
@@ -473,6 +474,56 @@ class StaffDocument(TimeStampedModel):
 
     def __str__(self):
         return f"{self.reference} · {self.staff.full_name} · {self.title}"
+
+
+class StaffPerformanceReview(TimeStampedModel):
+    """Manager performance review; only FINALIZED reviews reach the employee.
+
+    This is the smallest maintainable review record: the system previously
+    had no performance-review model at all (only a PERFORMANCE_REVIEW
+    document category). Drafts stay manager-side, employees can never edit
+    a review through the self-service profile, and there is deliberately no
+    free-text confidential-notes field on the employee-facing serializer.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        FINALIZED = "FINALIZED", "Finalized"
+
+    reference = models.CharField(max_length=64, unique=True, db_index=True)
+    staff = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="performance_reviews")
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="performance_reviews_given"
+    )
+    period_start = models.DateField(null=True, blank=True)
+    period_end = models.DateField(null=True, blank=True)
+    review_date = models.DateField(default=hotel_today, db_index=True)
+    rating = models.PositiveSmallIntegerField(
+        null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    strengths = models.TextField(blank=True, default="")
+    areas_for_improvement = models.TextField(blank=True, default="")
+    objectives = models.TextField(blank=True, default="")
+    improvement_actions = models.TextField(blank=True, default="")
+    follow_up_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT, db_index=True)
+
+    class Meta:
+        ordering = ["-review_date", "-pk"]
+        indexes = [models.Index(fields=["staff", "status", "review_date"])]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(rating__isnull=True) | (Q(rating__gte=1) & Q(rating__lte=5)),
+                name="performance_review_rating_1_to_5",
+            ),
+            models.CheckConstraint(
+                condition=Q(period_start__isnull=True) | Q(period_end__isnull=True) | Q(period_end__gte=models.F("period_start")),
+                name="performance_review_period_order",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.reference} · {self.staff.full_name} · {self.status}"
 
 
 # Kept in a focused module because compensation and payroll evidence have

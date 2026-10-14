@@ -87,6 +87,7 @@
           <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="documents">8. Documents</button>
           <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="permissions">9. Permissions &amp; Access</button>
           <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="audit">10. Activity &amp; Audit</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-sp-tab="performance">11. Performance Reviews</button>
         </div>
       </section>
 
@@ -188,6 +189,17 @@
         <div class="panel-body" id="sp-permissions-body"></div>
       </section>
 
+      <section class="panel" id="sp-pane-performance" style="display:none;">
+        <div class="panel-head"><h2>Performance Reviews</h2><div class="panel-actions"><button class="btn btn-sm" type="button" id="sp-btn-new-review">Record Review</button></div></div>
+        <div class="panel-body"><p class="caption">Only FINALIZED reviews are shown to the employee in their self-service profile.</p></div>
+        <div class="panel-body no-pad">
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>Reference</th><th>Review Date</th><th>Period</th><th>Rating</th><th>Strengths</th><th>Areas to Improve</th><th>Status</th></tr></thead>
+            <tbody id="sp-performance-rows"></tbody>
+          </table></div>
+        </div>
+      </section>
+
       <section class="panel" id="sp-pane-audit" style="display:none;">
         <div class="panel-head"><h2>Employee Activity &amp; Audit Trail</h2></div>
         <div class="panel-body no-pad">
@@ -225,7 +237,7 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
   var initialTab = params.get("tab") || "overview";
   var fullData = null;
 
-  var panes = ["overview","personal","employment","biometrics","salary","disciplinary","leave_shifts","documents","permissions","audit"];
+  var panes = ["overview","personal","employment","biometrics","salary","disciplinary","leave_shifts","documents","permissions","audit","performance"];
   function switchTab(tab){
     panes.forEach(function(p){
       var el = document.getElementById("sp-pane-" + p);
@@ -424,6 +436,18 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
           '<td><div class="row-actions">' + dl + '<button class="btn btn-sm btn-danger" type="button" data-doc-remove="' + JONE.esc(doc.reference) + '">Remove</button></div></td>' +
         '</tr>';
       }).join("");
+    }
+
+    var perfRows = document.getElementById("sp-performance-rows");
+    var perfList = d.performance_reviews || [];
+    if (perfRows) {
+      if (!perfList.length) {
+        JONE.dashboard.DATA.empty(perfRows, "star", "No performance reviews", "Record a review; only finalized reviews are visible to the employee.", 7);
+      } else {
+        perfRows.innerHTML = perfList.map(function(r){
+          return '<tr><td><code>' + JONE.esc(r.reference) + '</code></td><td>' + JONE.esc(r.review_date || "—") + '</td><td>' + JONE.esc((r.period_start || "—") + ' → ' + (r.period_end || "—")) + '</td><td>' + JONE.esc(r.rating == null ? "—" : r.rating + " / 5") + '</td><td>' + JONE.esc(r.strengths || "—") + '</td><td>' + JONE.esc(r.areas_for_improvement || "—") + '</td><td>' + JONE.dashboard.statusPill(r.status) + '</td></tr>';
+        }).join("");
+      }
     }
 
     var ap = d.account_permissions || {};
@@ -748,6 +772,35 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
         var ep = window.APP_CONFIG.API_ENDPOINTS.users + encodeURIComponent(userId) + "/permissions/";
         await window.API.post(ep, vals);
         JONE.ui.toast("Capability override updated.", "success");
+        loadFullProfile();
+      }
+    });
+  });
+
+  var newReviewBtn = document.getElementById("sp-btn-new-review");
+  if (newReviewBtn) newReviewBtn.addEventListener("click", async function(){
+    await JONE.dashboard.formModal({
+      title: "Record Performance Review",
+      submitText: "Save Review",
+      wide: true,
+      fields: [
+        { name: "period_start", label: "Review Period Start", type: "date" },
+        { name: "period_end", label: "Review Period End", type: "date" },
+        { name: "review_date", label: "Review Date", type: "date", required: true },
+        { name: "rating", label: "Rating (1–5)", type: "number" },
+        { name: "strengths", label: "Strengths & Positive Observations", type: "textarea", rows: 3 },
+        { name: "areas_for_improvement", label: "Areas Requiring Improvement", type: "textarea", rows: 3 },
+        { name: "objectives", label: "Documented Objectives", type: "textarea", rows: 2 },
+        { name: "improvement_actions", label: "Agreed Improvement Actions", type: "textarea", rows: 2 },
+        { name: "follow_up_date", label: "Follow-up / Review Date", type: "date" },
+        { name: "status", label: "Status", type: "select", required: true, options: [{ value: "DRAFT", label: "Draft (not visible to employee)" }, { value: "FINALIZED", label: "Finalized (visible to employee)" }] }
+      ],
+      onSubmit: async function(vals){
+        Object.keys(vals).forEach(function(k){ if (vals[k] === "") delete vals[k]; });
+        vals.staff = Number(userId);
+        if (vals.rating) vals.rating = Number(vals.rating);
+        await window.API.create("staffPerformanceReviews", vals);
+        JONE.ui.toast("Performance review recorded.", "success");
         loadFullProfile();
       }
     });

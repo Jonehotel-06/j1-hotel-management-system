@@ -213,6 +213,7 @@
 
     /* POS & room service (capability-gated server-side) */
     posMenu:             "/api/admin/pos/menu/",
+    posBarcodeLookup:    "/api/admin/pos/menu/barcode-lookup/",
     posMenuCategories:   "/api/admin/pos/menu/categories/",
     posMenuItems:        "/api/admin/pos/menu/items/",
     posMenuModifiers:    "/api/admin/pos/menu/modifiers/",
@@ -242,6 +243,8 @@
     maintenanceWorkOrders: "/api/admin/maintenance/",
     staffDirectory:        "/api/admin/users/directory/",
     permissionsMatrix:     "/api/admin/users/permissions-matrix/",
+    myStaffProfile:        "/api/admin/staff-operations/my-profile/",
+    staffPerformanceReviews: "/api/admin/staff-operations/performance-reviews/",
     staffProfiles:         "/api/admin/staff-operations/profiles/",
     staffFullProfile:      "/api/admin/staff-operations/staff/",
     departments:           "/api/admin/staff-operations/departments/",

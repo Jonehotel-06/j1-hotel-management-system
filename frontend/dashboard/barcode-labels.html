@@ -68,12 +68,18 @@
       return;
     }
     container.innerHTML = items.map(function(item) {
-      var sku = item.sku || item.item_sku || ("SKU-" + item.id);
-      var svg = JONE.barcode.generateBarcodeSvg(sku, { height: 42, barWidth: 2 });
+      var sku = item.barcode || item.sku || item.item_sku || ("SKU-" + item.id);
+      var svg;
+      try {
+        svg = JONE.barcode.generateBarcodeSvg(sku, { height: 42, barWidth: 2 });
+      } catch (e) {
+        svg = '<p>Barcode value cannot be encoded as Code 128. Correct the product barcode first.</p>';
+      }
       return '<div class="label-card">' +
         '<h4>' + JONE.esc(item.name || item.item_name || "Product") + '</h4>' +
         '<p>' + (item.base_price ? '₦' + JONE.esc(item.base_price) : (item.base_unit || "Unit")) + '</p>' +
         svg +
+        '<p>Code 128 · ' + JONE.esc(sku) + '</p>' +
         '</div>';
     }).join("");
   }

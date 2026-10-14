@@ -25,10 +25,33 @@ class MenuItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = MenuItem
         fields = [
-            "id", "category", "category_name", "name", "sku", "description", "base_price", "currency",
+            "id", "category", "category_name", "name", "sku", "barcode", "description", "base_price", "currency",
             "tax_rate_percent", "preparation_minutes", "is_available", "is_active", "sort_order", "modifiers",
         ]
         read_only_fields = fields
+
+
+class BarcodeLookupSerializer(serializers.Serializer):
+    """Server-authoritative answer to one scanned barcode.
+
+    Price and identity always come from the stored menu item; stock figures
+    are read from the existing recipe/balance projection and never imply a
+    sale has happened.
+    """
+
+    menu_item_id = serializers.IntegerField()
+    name = serializers.CharField()
+    sku = serializers.CharField()
+    barcode = serializers.CharField(allow_null=True)
+    matched_by = serializers.ChoiceField(choices=["barcode", "sku"])
+    category_id = serializers.IntegerField()
+    category_name = serializers.CharField()
+    service_area = serializers.CharField()
+    base_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    currency = serializers.CharField()
+    is_available = serializers.BooleanField()
+    modifiers = MenuModifierSerializer(many=True)
+    stock = serializers.DictField()
 
 
 class MenuCategoryMenuSerializer(serializers.ModelSerializer):
@@ -308,9 +331,17 @@ class MenuItemManageSerializer(serializers.ModelSerializer):
     class Meta:
         model = MenuItem
         fields = [
-            "id", "category", "name", "sku", "description", "base_price", "currency", "tax_rate_percent",
+            "id", "category", "name", "sku", "barcode", "description", "base_price", "currency", "tax_rate_percent",
             "preparation_minutes", "is_available", "is_active", "sort_order",
         ]
+
+    def validate_barcode(self, value):
+        from .barcode import validate_barcode
+
+        try:
+            return validate_barcode(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
 
 class MenuModifierManageSerializer(serializers.ModelSerializer):

@@ -86,6 +86,46 @@
   </div>
 </section>
 
+<section class="panel" data-my-profile>
+  <div class="panel-head"><h2>My employment records</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" id="ss-refresh">Refresh</button></div></div>
+  <div class="panel-body">
+    <p class="caption">Read-only records held for your own staff account. Salary, disciplinary, roster and review records can only be changed through the existing authorised workflows.</p>
+    <div id="ss-loading"><div class="loading-block"><div class="spinner" role="status"></div><p class="muted">Loading your records&hellip;</p></div></div>
+    <div id="ss-error" style="display:none;"></div>
+    <div id="ss-content" style="display:none;">
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:1rem;" role="tablist" aria-label="My records">
+        <button class="btn btn-sm" type="button" role="tab" aria-selected="true" data-ss-tab="overview">Overview</button>
+        <button class="btn btn-sm btn-ghost" type="button" role="tab" aria-selected="false" data-ss-tab="employment">Personal &amp; Employment</button>
+        <button class="btn btn-sm btn-ghost" type="button" role="tab" aria-selected="false" data-ss-tab="salary">Salary &amp; Payslips</button>
+        <button class="btn btn-sm btn-ghost" type="button" role="tab" aria-selected="false" data-ss-tab="attendance">Attendance</button>
+        <button class="btn btn-sm btn-ghost" type="button" role="tab" aria-selected="false" data-ss-tab="shifts">Shifts</button>
+        <button class="btn btn-sm btn-ghost" type="button" role="tab" aria-selected="false" data-ss-tab="leave">Leave</button>
+        <button class="btn btn-sm btn-ghost" type="button" role="tab" aria-selected="false" data-ss-tab="disciplinary">Offences &amp; Disciplinary</button>
+        <button class="btn btn-sm btn-ghost" type="button" role="tab" aria-selected="false" data-ss-tab="performance">Performance Reviews</button>
+        <button class="btn btn-sm btn-ghost" type="button" role="tab" aria-selected="false" data-ss-tab="guest">Guest Feedback</button>
+        <button class="btn btn-sm btn-ghost" type="button" role="tab" aria-selected="false" data-ss-tab="documents">Documents &amp; Other</button>
+      </div>
+      <section data-ss-panel="overview"><div id="ss-overview"></div></section>
+      <section data-ss-panel="employment" hidden><div id="ss-employment"></div></section>
+      <section data-ss-panel="salary" hidden><div id="ss-salary"></div></section>
+      <section data-ss-panel="attendance" hidden>
+        <div class="form-grid fg-2">
+          <div class="field"><label class="field-label" for="ss-att-from">Attendance from</label><input class="input" id="ss-att-from" type="date"></div>
+          <div class="field"><label class="field-label" for="ss-att-to">Attendance to</label><input class="input" id="ss-att-to" type="date"></div>
+        </div>
+        <button class="btn btn-sm btn-outline" type="button" id="ss-att-apply">Apply date range</button>
+        <div id="ss-attendance" style="margin-top:1rem;"></div>
+      </section>
+      <section data-ss-panel="shifts" hidden><div id="ss-shifts"></div></section>
+      <section data-ss-panel="leave" hidden><div id="ss-leave"></div><p><a class="btn btn-sm btn-outline" href="workforce.html">Open leave &amp; attendance workspace</a></p></section>
+      <section data-ss-panel="disciplinary" hidden><div id="ss-disciplinary"></div></section>
+      <section data-ss-panel="performance" hidden><div id="ss-performance"></div></section>
+      <section data-ss-panel="guest" hidden><div id="ss-guest"></div></section>
+      <section data-ss-panel="documents" hidden><div id="ss-documents"></div></section>
+    </div>
+  </div>
+</section>
+
 <section class="panel" style="max-width:680px;">
   <div class="panel-head"><h2>Change password</h2></div>
   <div class="panel-body">
@@ -215,7 +255,132 @@
     }finally{ JONE.releaseGuard(btn); }
   });
 
+  /* ---- Staff self-service records (GET myStaffProfile; owner is resolved
+     by the server from the session — no staff id is sent or trusted). ---- */
+  var ssData = null;
+  function esc(v){ return JONE.esc(v == null || v === "" ? "Not provided" : v); }
+  function fmtDate(v){ return v ? JONE.formatDate(v, "mid") : "Not provided"; }
+  function fmtDateTime(v){ return v ? JONE.formatDateTime(v) : "Not provided"; }
+  function money(v, c){ return v == null || v === "" ? "Not provided" : JONE.formatNaira(v); }
+  function kv(pairs){
+    return '<div class="grid grid-3" style="gap:0.85rem;">' + pairs.map(function(p){
+      return '<div class="card card-pad"><div class="caption muted">' + JONE.esc(p[0]) + '</div><div style="font-weight:600;margin-top:0.2rem;">' + esc(p[1]) + '</div></div>';
+    }).join("") + "</div>";
+  }
+  function emptyState(title, text){ return '<div class="empty-state"><h3>' + JONE.esc(title) + "</h3><p>" + JONE.esc(text) + "</p></div>"; }
+  function table(headers, rows){
+    if (!rows.length) return "";
+    return '<div class="table-wrap" tabindex="0" role="region" aria-label="Records table"><table class="table"><thead><tr>' +
+      headers.map(function(h){ return "<th>" + JONE.esc(h) + "</th>"; }).join("") + "</tr></thead><tbody>" + rows.join("") + "</tbody></table></div>";
+  }
+  function switchSsTab(tab){
+    document.querySelectorAll("[data-ss-panel]").forEach(function(p){ p.hidden = p.getAttribute("data-ss-panel") !== tab; });
+    document.querySelectorAll("[data-ss-tab]").forEach(function(b){
+      var active = b.getAttribute("data-ss-tab") === tab;
+      b.classList.toggle("btn-ghost", !active); b.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }
+  document.querySelectorAll("[data-ss-tab]").forEach(function(b){ b.addEventListener("click", function(){ switchSsTab(b.getAttribute("data-ss-tab")); }); });
+
+  function renderSelfService(d){
+    ssData = d || {};
+    var p = ssData.profile || {}, u = ssData.user || {}, ov = ssData.overview || {};
+    var nextShift = ov.next_shift ? (fmtDateTime(ov.next_shift.planned_start_at) + " · " + (ov.next_shift.department || "")) : "No upcoming shift assigned";
+    var latestPay = ov.latest_payslip ? (ov.latest_payslip.period_reference + " · " + ov.latest_payslip.payment_status) : "No approved payslip yet";
+    $("ss-overview").innerHTML = kv([
+      ["Employment status", ov.employment_status || p.employment_status], ["Employee ID", ov.employee_code || p.employee_code],
+      ["Department", ov.department], ["Job title", ov.job_title || p.job_title], ["Next scheduled shift", nextShift],
+      ["Recent attendance", ov.recent_attendance ? (fmtDate(ov.recent_attendance.business_date) + " · " + ov.recent_attendance.status) : "No attendance recorded"],
+      ["Upcoming approved leave", ov.upcoming_approved_leave ? (fmtDate(ov.upcoming_approved_leave.start_date) + " – " + fmtDate(ov.upcoming_approved_leave.end_date)) : "None"],
+      ["Latest payslip status", latestPay], ["Pending leave requests", String(ov.pending_leave_requests == null ? 0 : ov.pending_leave_requests)],
+      ["Attendance this month", (ov.attendance_this_month ? ov.attendance_this_month.days_recorded : 0) + " day(s) recorded"]
+    ]);
+    $("ss-employment").innerHTML = kv([
+      ["Full name", u.full_name], ["Staff / employee ID", p.employee_code], ["Job title", p.job_title],
+      ["Department", p.department_name || p.department], ["Employment status", p.employment_status], ["Employment type", p.employment_type],
+      ["Employment commenced", fmtDate(p.employment_start)], ["Work location", p.work_location], ["Assigned workstation", p.assigned_workstation_name],
+      ["Reporting manager", p.reporting_manager_name], ["Work email", u.email], ["Phone", u.phone],
+      ["Emergency contact", p.emergency_contact_name], ["Emergency relationship", p.emergency_contact_relationship], ["Emergency phone", p.emergency_contact_phone],
+      ["Responsibilities / role description", p.job_description], ["Fingerprint status (status only)", p.fingerprint_status]
+    ]);
+    var sal = ssData.salary || {};
+    var comp = sal.current_compensation;
+    var payslipRows = (sal.payslips || []).map(function(r){
+      return "<tr><td><strong>" + esc(r.period_reference) + "</strong><br><small>" + esc(fmtDate(r.period_starts_on)) + " – " + esc(fmtDate(r.period_ends_on)) + '</small></td><td>' + esc(money(r.gross_pay)) + "</td><td>" + esc(money(r.deductions_total)) + "</td><td>" + esc(money(r.net_pay)) + "</td><td>" + esc(money(r.salary_amount_paid)) + "</td><td>" + esc(money(r.salary_balance)) + "</td><td>" + esc(r.payment_status) + '</td><td><button class="btn btn-sm btn-outline" type="button" data-ss-payslip="' + esc(r.period_reference) + '">Payslip PDF</button></td></tr>';
+    });
+    $("ss-salary").innerHTML =
+      (sal.configured && comp ? kv([["Basic salary", money(comp.basic_salary)], ["Housing allowance", money(comp.housing_allowance)], ["Transport allowance", money(comp.transport_allowance)], ["Overtime rate / hour", money(comp.overtime_rate)], ["Effective from", fmtDate(comp.effective_from)], ["Currency", comp.currency]]) : emptyState("No salary configured yet", sal.message || "No payroll compensation has been configured for your account yet. Contact HR or Accounts.")) +
+      "<h3>Approved payslips &amp; payment status</h3>" +
+      (payslipRows.length ? table(["Period", "Gross", "Deductions", "Net payable", "Paid", "Balance", "Payment status", ""], payslipRows) : emptyState("No approved payslips yet", "Your payslip appears here after payroll is approved. Approval is not the same as payment already made.")) +
+      ((sal.payments || []).length ? "<h3>Recorded salary payments</h3>" + table(["Reference", "Period", "Amount", "Method", "Date", "Status"], sal.payments.map(function(r){ return "<tr><td>" + esc(r.reference) + "</td><td>" + esc(r.period_reference) + "</td><td>" + esc(money(r.amount)) + "</td><td>" + esc(r.method) + "</td><td>" + esc(fmtDate(r.payment_date)) + "</td><td>" + esc(r.status) + "</td></tr>"; })) : "");
+    var attRows = (ssData.attendance || []).map(function(r){
+      return "<tr><td>" + esc(fmtDate(r.business_date)) + "</td><td>" + esc(r.shift_reference) + "</td><td>" + esc(fmtDateTime(r.clock_in_at)) + "</td><td>" + esc(fmtDateTime(r.clock_out_at)) + "</td><td>" + esc(r.status) + "</td><td>" + esc(r.worked_minutes == null ? null : String(r.worked_minutes)) + "</td></tr>";
+    });
+    $("ss-attendance").innerHTML = (attRows.length ? table(["Date", "Shift", "Clock in", "Clock out", "Status", "Worked mins"], attRows) : emptyState("No attendance records", "No attendance records were found for the selected range.")) +
+      '<p class="caption">This month: ' + esc(String((ssData.attendance_summary || {}).days_recorded || 0)) + " day(s), " + esc(String((ssData.attendance_summary || {}).worked_minutes || 0)) + " worked minutes. Attendance is recorded only through the authorised workstation process.</p>";
+    var shiftRows = (ssData.shifts || []).map(function(r){
+      return "<tr><td>" + esc(r.reference) + "</td><td>" + esc(fmtDateTime(r.planned_start_at)) + "</td><td>" + esc(fmtDateTime(r.planned_end_at)) + "</td><td>" + esc(r.department) + "</td><td>" + esc(r.location) + "</td><td>" + esc(r.status) + "</td></tr>";
+    });
+    $("ss-shifts").innerHTML = shiftRows.length ? table(["Reference", "Starts", "Ends", "Department", "Location", "Status"], shiftRows) : emptyState("No shifts assigned", "No shift has been assigned to you yet.");
+    var leave = ssData.leave || {};
+    var leaveRows = (leave.requests || []).map(function(r){
+      return "<tr><td>" + esc(r.reference) + "</td><td>" + esc(r.type) + "</td><td>" + esc(fmtDate(r.start_date)) + " – " + esc(fmtDate(r.end_date)) + "</td><td>" + esc(String(r.days == null ? "" : r.days)) + "</td><td>" + esc(fmtDate(r.created_at)) + "</td><td>" + esc(r.status) + "</td><td>" + esc(r.approver_name || r.reviewer_email) + "</td></tr>";
+    });
+    $("ss-leave").innerHTML = '<p class="caption">' + esc(leave.balance_note) + "</p>" + (leaveRows.length ? table(["Reference", "Type", "Dates", "Days", "Submitted", "Status", "Approver"], leaveRows) : emptyState("No leave requests", "You have no recorded leave requests."));
+    var discRows = (ssData.disciplinary || []).map(function(r){
+      var findingNote = r.finding === "CONFIRMED" ? "Confirmed finding" : (r.finding === "DISMISSED" ? "Dismissed / exonerated" : "Allegation / under review — not a proven offence");
+      return "<tr><td><strong>" + esc(r.reference) + "</strong><br><small>" + esc(fmtDateTime(r.incident_at)) + "</small></td><td>" + esc(r.category) + "<br><small>" + esc(r.summary) + "</small></td><td>" + esc(r.status) + "<br><small>" + esc(findingNote) + "</small></td><td>" + esc(r.disciplinary_action) + "</td><td>" + esc(r.deduction_approved ? money(r.approved_deduction_amount) : "No approved deduction") + "</td><td>" + esc(r.appeal_status) + "</td></tr>";
+    });
+    $("ss-disciplinary").innerHTML = discRows.length ? table(["Reference & date", "Category & summary", "Status & finding", "Action / warning", "Approved deduction", "Appeal"], discRows) : emptyState("No disciplinary records available", "No disciplinary records available.");
+    var perfRows = (ssData.performance_reviews || []).map(function(r){
+      return "<tr><td>" + esc(fmtDate(r.review_date)) + "<br><small>" + esc(fmtDate(r.period_start)) + " – " + esc(fmtDate(r.period_end)) + "</small></td><td>" + esc(r.reviewer_name) + "</td><td>" + esc(r.rating == null ? null : String(r.rating) + " / 5") + "</td><td>" + esc(r.strengths) + "</td><td>" + esc(r.areas_for_improvement) + "</td><td>" + esc(r.improvement_actions) + "</td><td>" + esc(fmtDate(r.follow_up_date)) + "</td><td>" + esc(r.status) + "</td></tr>";
+    });
+    $("ss-performance").innerHTML = perfRows.length ? table(["Review date & period", "Reviewer", "Rating", "Strengths", "Areas to improve", "Agreed actions", "Follow-up", "Status"], perfRows) : emptyState("No performance reviews", "No finalized performance review has been recorded for you yet.");
+    var guest = ssData.guest_reviews || {};
+    $("ss-guest").innerHTML = emptyState("No guest feedback attributed to you", guest.note || "Guest reviews are not attributed to individual staff members in this system.");
+    function docRows(rows){ return rows.map(function(r){ return "<tr><td>" + esc(r.reference) + "</td><td>" + esc(r.category) + "</td><td>" + esc(r.title) + "</td><td>" + esc(fmtDate(r.issued_date)) + "</td><td>" + esc(fmtDate(r.expiry_date)) + "</td></tr>"; }); }
+    var docs = ssData.documents || [], training = ssData.training_and_certifications || [], equipment = ssData.assigned_equipment || [], expenses = ssData.expense_claims || [];
+    $("ss-documents").innerHTML =
+      "<h3>Documents</h3>" + (docs.length ? table(["Reference", "Category", "Title", "Issued", "Expiry"], docRows(docs)) : emptyState("No documents recorded", "No non-confidential employment documents are recorded for you.")) +
+      "<h3>Training &amp; certifications</h3>" + (training.length ? table(["Reference", "Category", "Title", "Issued", "Expiry / due"], docRows(training)) : emptyState("No training records", "No training or certification records are recorded for you.")) +
+      "<h3>Assigned equipment / company property</h3>" + (equipment.length ? table(["Reference", "Category", "Title", "Issued", "Expiry"], docRows(equipment)) : emptyState("No equipment assigned", "No equipment assignment is recorded for you.")) +
+      "<h3>My expense / reimbursement claims</h3>" + (expenses.length ? table(["Reference", "Category", "Amount", "Status", "Incurred"], expenses.map(function(r){ return "<tr><td>" + esc(r.reference) + "</td><td>" + esc(r.category) + "</td><td>" + esc(money(r.amount, r.currency)) + "</td><td>" + esc(r.status) + "</td><td>" + esc(fmtDate(r.incurred_on)) + "</td></tr>"; })) : emptyState("No expense claims", "No expense or reimbursement claim in your name is recorded."));
+  }
+
+  async function loadSelfService(){
+    var loading = $("ss-loading"), errorBox = $("ss-error"), content = $("ss-content");
+    if (!loading) return;
+    loading.style.display = ""; errorBox.style.display = "none"; content.style.display = "none";
+    try {
+      var params = {};
+      if ($("ss-att-from").value) params.attendance_from = $("ss-att-from").value;
+      if ($("ss-att-to").value) params.attendance_to = $("ss-att-to").value;
+      var res = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.myStaffProfile, { params: params, cache: "no-store" });
+      renderSelfService(res.data || {});
+      loading.style.display = "none"; content.style.display = "";
+      if (window.JONE && JONE.icons) JONE.icons.inject(content);
+    } catch (err) {
+      loading.style.display = "none";
+      errorBox.innerHTML = '<div class="empty-state"><h3>Your records couldn\'t be loaded</h3><p>' + JONE.esc((err && err.message) || "Please refresh the page.") + "</p></div>";
+      errorBox.style.display = "";
+    }
+  }
+  var refreshBtn = $("ss-refresh"); if (refreshBtn) refreshBtn.addEventListener("click", loadSelfService);
+  var attApply = $("ss-att-apply"); if (attApply) attApply.addEventListener("click", loadSelfService);
+  var salaryHost = $("ss-salary");
+  if (salaryHost) salaryHost.addEventListener("click", async function(e){
+    var btn = e.target.closest("[data-ss-payslip]"); if (!btn) return;
+    try {
+      var blob = await window.API.getBlob(window.APP_CONFIG.API_ENDPOINTS.payrollPayslips + encodeURIComponent(btn.getAttribute("data-ss-payslip")) + "/", { cache: "no-store" });
+      var blobData = blob && blob.data ? blob.data : blob;
+      var url = URL.createObjectURL(blobData), a = document.createElement("a");
+      a.href = url; a.download = "payslip-" + btn.getAttribute("data-ss-payslip") + ".pdf";
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    } catch (err) { JONE.ui.toast((err && err.message) || "The payslip could not be downloaded.", "error"); }
+  });
+
   load();
+  loadSelfService();
 })();
 
 </script>

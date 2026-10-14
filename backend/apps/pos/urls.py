@@ -6,6 +6,7 @@ app_name = "pos"
 
 urlpatterns = [
     path("menu/", views.PosMenuView.as_view(), name="menu"),
+    path("menu/barcode-lookup/", views.PosBarcodeLookupView.as_view(), name="menu-barcode-lookup"),
     path("menu/categories/", views.PosMenuCategoryManagementView.as_view(), name="menu-categories"),
     path("menu/categories/<int:pk>/", views.PosMenuCategoryManagementDetailView.as_view(), name="menu-category-detail"),
     path("menu/items/", views.PosMenuItemManagementView.as_view(), name="menu-items"),
