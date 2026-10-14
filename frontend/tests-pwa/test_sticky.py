@@ -11,9 +11,41 @@ localStorage.setItem('jone.auth', JSON.stringify({
 sessionStorage.setItem('jone.session', JSON.stringify({access:'x.y.z', refresh:'r'}));
 """
 
+
+# ---------------------------------------------------------------------------
+# The stub session carries a placeholder token, so the REAL API refuses it and
+# the auth guard bounces the browser between /dashboard and /login.html while
+# this suite is mid-evaluate ("Execution context was destroyed" — the crash this
+# suite used to report). Answer the API at the network boundary instead, exactly
+# like tests-pwa/test_tables_and_update.py does, so the stubbed session is
+# consistent with what the page sees and the sticky assertions can run.
+# ---------------------------------------------------------------------------
+EMPTY = {"success": True, "data": {"results": []}, "pagination": None}
+CAPABILITIES = {"success": True, "data": []}
+PROFILE = {"success": True, "data": {"id": 1, "email": "a@b.c", "first_name": "Ada",
+                                     "last_name": "Staff", "role": "ADMIN", "is_active": True}}
+REFRESH = {"success": True, "data": {"access": "stub-access", "refresh": "stub-refresh"}}
+
+
+def stub_api(page):
+    import json as _json
+    import re as _re
+    def handler(route):
+        url = route.request.url
+        if "/api/auth/capabilities/" in url:
+            body = CAPABILITIES
+        elif "/api/auth/token/refresh/" in url:
+            body = REFRESH
+        elif "/api/auth/me" in url or "/api/admin/profile" in url:
+            body = PROFILE
+        else:
+            body = EMPTY
+        route.fulfill(status=200, content_type="application/json", body=_json.dumps(body))
+    page.route(_re.compile(r".*/api/.*"), handler)
+
 with sync_playwright() as pw:
     b=pw.chromium.launch(); ctx=b.new_context(viewport={"width":1280,"height":800})
-    p=ctx.new_page(); p.add_init_script(STUB)
+    p=ctx.new_page(); p.add_init_script(STUB); stub_api(p)
     p.goto("http://127.0.0.1:8080/dashboard/index.html", wait_until="load")
     p.wait_for_timeout(1500)
     check("stayed on dashboard (auth stub ok)", "/dashboard/" in p.url, p.url)

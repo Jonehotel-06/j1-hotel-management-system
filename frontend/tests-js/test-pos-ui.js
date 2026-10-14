@@ -104,7 +104,11 @@ test("POS page requires a bounded in-house guest search and registered session f
   assert.match(page, /if\(action==="CANCELLED"\)/);
   assert.doesNotMatch(page, /setInterval\s*\(/);
   assert.match(page, /dashboard\.startLiveRefresh/);
-  assert.match(page, /idempotency_key:state\.orderKey/);
+  // The idempotency key belongs to ONE order content: unchanged content keeps the
+  // key (a retry can never duplicate the draft) while any edit gets a fresh one
+  // (an idempotent replay can never silently discard the change).
+  assert.match(page, /if\(state\.orderKeyContent!==orderContent\)\{state\.orderKey=newKey\(\);state\.orderKeyContent=orderContent;\}/);
+  assert.match(page, /payload\.idempotency_key=state\.orderKey;/);
   assert.match(page, /order_reference/);
 });
 

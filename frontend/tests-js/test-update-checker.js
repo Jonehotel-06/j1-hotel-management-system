@@ -195,4 +195,75 @@ test("no embedded version marker: checker stays inert", async () => {
 });
 
 
+test("refresh now does NOT dismiss the release before the refresh is proven", async () => {
+  /* The reported failure mode: "Refresh now" marked the version as handled, the
+     reload did not actually pick the release up (blocked storage / a proxy still
+     serving the old document), and the operator was then stranded on stale code
+     with no way to be told again. The dismissal must only record an explicit
+     "Not now"; a refresh records an ATTEMPT instead. */
+  const ctx = makeContext({ hostname: "www.jonehotel.test", pathname: "/index.html" });
+  ctx.window.JONE_VERSION = "1.1.0";
+  let reloaded = 0;
+  ctx.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ version: "1.2.0" }) });
+  loadScript(ctx, "js/utils.js");
+  ctx.window.JONE = ctx.window.JONE || {};
+  ctx.window.JONE.ui = { modal: { open() {}, close() {} }, toast() {} };
+  ctx.window.JONE.pwa = {
+    isCriticalFlowActive: () => false,
+    refreshToLatest(reload) { reload(); },
+  };
+  ctx.location.reload = () => { reloaded += 1; };
+  loadScript(ctx, "js/update-checker.js");
+
+  ctx.window.JONE.updateChecker._internals.showUpdateModal("1.2.0");
+  const refreshBtn = ctx.document._created.find(
+    (el) => el.tagName === "BUTTON" && /Refresh now/i.test(el.textContent)
+  );
+  (refreshBtn.listeners.click || []).forEach((fn) => fn({}));
+
+  assert.equal(reloaded, 1, "exactly one reload");
+  assert.equal(ctx.localStorage.getItem("jone.update.dismissedVersion"), null,
+    "a refresh attempt must not dismiss the release");
+  assert.equal(ctx.sessionStorage.getItem("jone.update.refreshAttempted"), "1.2.0",
+    "the attempt is remembered so the prompt can come back with clearer guidance");
+});
+
+test("a release is re-offered once with guidance when the refresh did not take effect", async () => {
+  const t = bootContext({ latest: "1.2.0", loaded: "1.1.0" });
+  t.ctx.sessionStorage.setItem("jone.update.refreshAttempted", "1.2.0");
+  await t.ctx.window.JONE.updateChecker.check(true);
+  assert.equal(t.modalOpened(), 1, "a failed refresh must be reported again, not hidden");
+  const hint = t.ctx.document._created.find(
+    (el) => el.tagName === "P" && /already tried|cached copy/i.test(el.textContent || "")
+  );
+  assert.ok(hint, "the second prompt explains why the release is still pending");
+});
+
+test("running the deployed release clears both markers", async () => {
+  const t = bootContext({ latest: "1.2.0", loaded: "1.2.0" });
+  t.ctx.localStorage.setItem("jone.update.dismissedVersion", "1.2.0");
+  t.ctx.sessionStorage.setItem("jone.update.refreshAttempted", "1.2.0");
+  await t.ctx.window.JONE.updateChecker.check(true);
+  assert.equal(t.ctx.localStorage.getItem("jone.update.dismissedVersion"), null);
+  assert.equal(t.ctx.sessionStorage.getItem("jone.update.refreshAttempted"), null);
+  assert.equal(t.modalOpened(), 0);
+});
+
+test("not now still dismisses that release only", async () => {
+  const ctx = makeContext({ hostname: "www.jonehotel.test", pathname: "/index.html" });
+  ctx.window.JONE_VERSION = "1.1.0";
+  ctx.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ version: "1.2.0" }) });
+  loadScript(ctx, "js/utils.js");
+  ctx.window.JONE = ctx.window.JONE || {};
+  ctx.window.JONE.ui = { modal: { open() {}, close() {} }, toast() {} };
+  ctx.window.JONE.pwa = { isCriticalFlowActive: () => false };
+  loadScript(ctx, "js/update-checker.js");
+  ctx.window.JONE.updateChecker._internals.showUpdateModal("1.2.0");
+  const laterBtn = ctx.document._created.find(
+    (el) => el.tagName === "BUTTON" && /Not now/i.test(el.textContent)
+  );
+  (laterBtn.listeners.click || []).forEach((fn) => fn({}));
+  assert.equal(ctx.localStorage.getItem("jone.update.dismissedVersion"), "1.2.0");
+});
+
 test.after(() => { require("./harness").disposeAll(); });

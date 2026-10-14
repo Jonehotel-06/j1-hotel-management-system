@@ -105,11 +105,15 @@
     const name = user.full_name || user.name || user.username || user.email || "Staff";
     const roleRaw = String(user.role || "staff").toLowerCase().replace(/_/g, " ");
     const role = roleRaw.charAt(0).toUpperCase() + roleRaw.slice(1);
+    /* The identity block is the caller's OWN profile link. Sign-out stays a
+       separate control, so the two can never be confused or swallowed. */
     c.innerHTML =
-      (user.profile_image_url
-        ? '<img class="dash-avatar" src="' + JONE.esc(user.profile_image_url) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-flex\';">' : '') +
-      '<div class="dash-avatar"' + (user.profile_image_url ? ' style="display:none;"' : '') + '>' + JONE.esc(JONE.initials(name)) + "</div>" +
-      '<div><div class="dash-user-name">' + JONE.esc(name) + '</div><div class="dash-user-role">' + JONE.esc(role) + "</div></div>";
+      '<a class="dash-user-link" href="profile.html" aria-label="Open my profile (' + JONE.esc(name) + ')">' +
+        (user.profile_image_url
+          ? '<img class="dash-avatar" src="' + JONE.esc(user.profile_image_url) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-flex\';">' : '') +
+        '<div class="dash-avatar"' + (user.profile_image_url ? ' style="display:none;"' : '') + '>' + JONE.esc(JONE.initials(name)) + "</div>" +
+        '<div class="dash-user-copy"><div class="dash-user-name">' + JONE.esc(name) + '</div><div class="dash-user-role">' + JONE.esc(role) + "</div></div>" +
+      "</a>";
   }
 
   /* ------------------------------- Sidebar toggle --------------------------

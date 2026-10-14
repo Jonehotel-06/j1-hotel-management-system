@@ -59,6 +59,23 @@
     TERMINAL: "jone.terminal.reference"
   },
 
+  /* Fingerprint capture source for this deployment.
+
+     "hardware" (default, required in production): probes come only from the
+     department reader bridge exposed as window.JoneFingerprintReader.capture().
+     Without a reader the biometric pages refuse and point the operator at the
+     supervised fallback — the browser never invents a fingerprint.
+
+     "simulated": lab/demo only. A deployment sets it through the
+     deployment-owned runtime config (window.__APP_CONFIG__.BIOMETRIC_READER_MODE)
+     so the value does not travel with the static bundle. It must never be
+     enabled where real attendance is recorded, because a simulated template is
+     indistinguishable from a captured one to the API. */
+  BIOMETRIC_READER_MODE: (typeof runtimeConfig.BIOMETRIC_READER_MODE === "string"
+    && runtimeConfig.BIOMETRIC_READER_MODE.trim())
+    ? runtimeConfig.BIOMETRIC_READER_MODE.trim().toLowerCase()
+    : "hardware",
+
   /* Department subdomain routing map (Priority 5 / Part F2) */
   DEPARTMENT_SUBDOMAINS: {
     manager: {

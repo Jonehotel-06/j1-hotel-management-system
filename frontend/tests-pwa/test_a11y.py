@@ -44,14 +44,48 @@ with sync_playwright() as pw:
               p.eval_on_selector(".pwa-banner-close","e=>!!e.getAttribute('aria-label')"))
         check("banner decorative img has empty alt",
               p.eval_on_selector(".pwa-banner img","e=>e.getAttribute('alt')===''"))
-    # keyboard activation of install control
-    activated = p.evaluate("""async () => {
-        const el = document.querySelector('.mobile-drawer [data-pwa-install]') ||
-                   document.querySelector('[data-pwa-install]');
-        el.hidden = false; el.focus();
-        return document.activeElement === el;
+    # Keyboard reachability of the install controls, in the states a user meets
+    # them. The drawer control sits inside a CLOSED drawer, which the shell keeps
+    # aria-hidden + inert + visibility:hidden on purpose (audit N11): no element
+    # there can take focus, and that is the correct behaviour — not a defect.
+    # So assert all three states: closed drawer (must stay unreachable), the
+    # footer control (must be reachable), and the drawer once it is open.
+    states = p.evaluate("""async () => {
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        const drawer = document.querySelector('.mobile-drawer');
+        const inDrawer = drawer && drawer.querySelector('[data-pwa-install]');
+        const footer = document.querySelector('.site-footer [data-pwa-install]');
+        const toggle = document.querySelector('.menu-toggle');
+        const out = {};
+        if (inDrawer) {
+            inDrawer.hidden = false;
+            inDrawer.focus();
+            out.closedDrawerFocusable = document.activeElement === inDrawer;
+            out.closedDrawerAriaHidden = drawer.getAttribute('aria-hidden');
+        }
+        if (footer) { footer.hidden = false; footer.focus(); out.footerFocusable = document.activeElement === footer; }
+        if (toggle && inDrawer) {
+            toggle.click();
+            await sleep(400);
+            out.openDrawerAriaHidden = drawer.getAttribute('aria-hidden');
+            inDrawer.focus();
+            out.openDrawerFocusable = document.activeElement === inDrawer;
+            toggle.click();                 // leave the page exactly as found
+            await sleep(300);
+            out.restoredClosed = drawer.getAttribute('aria-hidden') === 'true';
+        }
+        return out;
     }""")
-    check("install control is focusable", activated)
+    if states.get("closedDrawerFocusable") is not None:
+        check("closed drawer: install control is not focusable (aria-hidden + inert)",
+              states.get("closedDrawerFocusable") is False and states.get("closedDrawerAriaHidden") == "true",
+              str(states))
+    if states.get("footerFocusable") is not None:
+        check("footer install control is keyboard focusable", states.get("footerFocusable") is True, str(states))
+    if states.get("openDrawerFocusable") is not None:
+        check("open drawer: install control is keyboard focusable",
+              states["openDrawerFocusable"] is True and states.get("openDrawerAriaHidden") == "false"
+              and states.get("restoredClosed") is True, str(states))
     check("install controls are real <button>s",
           p.eval_on_selector_all("[data-pwa-install]","els=>els.every(e=>e.tagName==='BUTTON')"))
     check("install controls have accessible names",

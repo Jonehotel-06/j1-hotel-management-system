@@ -142,7 +142,15 @@ test("the printed receipt carries the official hotel logo", () => {
   assert.match(html, /assets\/icons\/logo-official\.png/);
   assert.match(html, /alt="J-ONE Hotel & Lodge"/);
   assert.match(html, /class="thermal-brand"/);
-  assert.match(html, /text-align:center/);
+  // The receipt markup carries the brand; the CENTERING lives in the injected
+  // print sheet (the brand is a centered flex row), so assert it where it is —
+  // a receipt that prints a left-aligned logo is the regression this guards.
+  const src = require("node:fs").readFileSync(
+    require("node:path").join(__dirname, "..", "js", "thermal-receipt.js"), "utf-8"
+  );
+  const brandRule = src.slice(src.indexOf('".thermal-brand {"'), src.indexOf('".thermal-logo {"'));
+  assert.match(brandRule, /justify-content:center/, "brand row is centered");
+  assert.match(brandRule, /text-align:center/, "brand text/image is centered");
 });
 
 test("the logo keeps its portrait aspect ratio on both paper widths", () => {
@@ -218,6 +226,10 @@ test("the print sheet scopes logo styling to the chosen paper width", () => {
   const src = require("node:fs").readFileSync(
     require("node:path").join(__dirname, "..", "js", "thermal-receipt.js"), "utf-8"
   );
-  assert.match(src, /\.thermal-brand \{ width: " \+ PAPER\[width\]\.mm/);
-  assert.match(src, /\.thermal-logo \{ max-width: 100%; height: auto; \}/);
+  // The brand fills the roll and the logo is sized from the chosen paper width
+  // (58 mm / 80 mm) instead of leaking page-wide styling into the print sheet.
+  assert.match(src, /\.thermal-brand \{[\s\S]{0,200}?width:100%/, "brand fills the roll width");
+  assert.match(src, /\.thermal-logo \{[\s\S]{0,160}?width:" \+ LOGO_SIZE\[width\]\.width \+ "px/,
+    "logo width comes from the chosen paper width");
+  assert.match(src, /\.thermal-logo \{[\s\S]{0,240}?max-width:100%/, "logo can never overflow the paper");
 });

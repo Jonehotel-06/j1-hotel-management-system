@@ -67,12 +67,14 @@ class FingerprintBiometricsTests(BaseAPITestCase):
         fingerprint_service.approve_fingerprint_enrollment(template=tpl, approver=self.supervisor)
 
         # 1. Clock with non-matching probe fails
+        # The desk key is present because operational staff clock AT the
+        # Receptionist Desktop (audit N4); the fingerprint gate is unchanged.
         self.auth(self.worker)
         res_fail = self.client.post("/api/admin/staff-operations/attendance/clock/", {
             "action": "CLOCK_IN",
             "idempotency_key": "fp-clock-1",
             "fingerprint_probe": DIFFERENT_PROBE,
-        }, format="json")
+        }, format="json", HTTP_X_JONE_DESKTOP_KEY=self.desk_key)
         self.assertEqual(res_fail.status_code, 422)
 
         # 2. Clock with matching probe succeeds
@@ -80,7 +82,7 @@ class FingerprintBiometricsTests(BaseAPITestCase):
             "action": "CLOCK_IN",
             "idempotency_key": "fp-clock-2",
             "fingerprint_probe": MATCHING_PROBE,
-        }, format="json")
+        }, format="json", HTTP_X_JONE_DESKTOP_KEY=self.desk_key)
         self.assertIn(res_ok.status_code, (200, 201))
 
     def test_temporary_workstation_credential_issuance_and_login(self):
@@ -89,6 +91,15 @@ class FingerprintBiometricsTests(BaseAPITestCase):
             staff=self.worker, actor=self.worker, minutiae=VALID_MINUTIAE
         )
         fingerprint_service.approve_fingerprint_enrollment(template=tpl, approver=self.supervisor)
+
+        # A credential is minted for an ACTIVE attendance session (audit N6C), so
+        # the employee clocks in at the desk first — exactly the production flow.
+        fingerprint_service.reception_attendance_workstation_action(
+            action="CLOCK_IN",
+            probe=MATCHING_PROBE,
+            workstation_reference=self.workstation.reference,
+            email=self.worker.email,
+        )
 
         # 1. Issue temporary credential from approved workstation
         self.unauth()

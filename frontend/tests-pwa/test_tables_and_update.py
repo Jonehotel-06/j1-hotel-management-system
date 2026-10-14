@@ -200,9 +200,19 @@ def run_update_flow(pw):
         with page.expect_navigation(wait_until="load"):
             page.click(".update-dialog button.btn-accent")
         check("refresh now: page reloaded", True, "")
-        # Session/localStorage survives the refresh (Task 16).
-        keep = page.evaluate("() => localStorage.getItem('jone.update.dismissedVersion')")
-        check("refresh now: storage intact (dismissal recorded)", keep == "9.9.9", str(keep))
+        # Session/localStorage survives the refresh (Task 16). Pressing Refresh
+        # is deliberately NOT a dismissal (only "Not now" suppresses a release):
+        # the attempt is remembered in sessionStorage so a browser that still
+        # runs the old build is re-prompted once with clearer guidance instead of
+        # being forced into a reload loop.
+        keep = page.evaluate("""() => ({
+            attempts: sessionStorage.getItem('jone.update.refreshAttempted'),
+            dismissed: localStorage.getItem('jone.update.dismissedVersion'),
+            session: !!sessionStorage.getItem('jone.session') || sessionStorage.length > 0,
+        })""")
+        check("refresh now: storage intact and the attempt is remembered, not dismissed",
+              keep["attempts"] == "9.9.9" and keep["dismissed"] in (None, "") and keep["session"],
+              str(keep))
     ctx.close()
 
     # C) Dashboard: staff receive the modal too.

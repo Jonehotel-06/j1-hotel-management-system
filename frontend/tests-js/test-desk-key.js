@@ -58,11 +58,28 @@ test("login sends the desk key header only when a key is saved", async () => {
   }
 });
 
-test("login page contains the desk setup panel wired to auth.js", () => {
+test("ordinary sign-in offers NO desktop-key setup, and keeps the access-code path", () => {
   const html = fs.readFileSync(path.join(FRONTEND, "login.html"), "utf8");
+  // Desk-key setup belongs to the Receptionist Desktop ADMIN/ENROLMENT workflow
+  // (dashboard/terminals.html). Ordinary staff sign in with their credentials or
+  // the 6-digit code issued after clock-in; they are never asked to configure a
+  // workstation key — and the sign-in page must not expose one at all.
   for (const id of ["desk-setup", "desk-key", "desk-key-save", "desk-key-clear", "desk-key-status"]) {
-    assert.ok(html.includes(`id="${id}"`), `login.html is missing #${id}`);
+    assert.ok(!html.includes(`id="${id}"`), `login.html must not expose #${id}`);
   }
+  assert.ok(!/X-JONE-Desktop-Key/.test(html), "the sign-in page must not handle the desk key itself");
   assert.ok(html.indexOf("js/auth.js") !== -1, "login.html must load js/auth.js");
-  assert.ok(!/desk-key[^>]*value=/.test(html), "the desk key input must never be pre-filled");
+  assert.ok(html.includes('id="access-code-login-form"'), "the 6-digit access-code sign-in stays available");
+});
+
+test("the desk key is enrolled from the authorised workstation administration page", () => {
+  const html = fs.readFileSync(path.join(FRONTEND, "dashboard", "terminals.html"), "utf8");
+  assert.ok(html.includes("Receptionist Desktop enrolment"), "the enrolment panel must exist where keys are issued");
+  for (const hook of ["data-desktop-enrol-save", "data-desktop-enrol-clear", "data-desktop-enrol-state"]) {
+    assert.ok(html.includes(hook), `terminals.html is missing ${hook}`);
+  }
+  assert.match(html, /Auth\.setReceptionistDesktopKey\(/, "the page stores the key through auth.js");
+  assert.match(html, /setReceptionistDesktopKey\(""\)/, "the page can remove the key from this browser");
+  // The page is already gated to the roles that hold terminal.manage.
+  assert.match(html, /boot\(\["admin","manager","general_manager"\]\)/);
 });

@@ -44,6 +44,7 @@
         <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
         <div class="dash-title" data-dash-title>
           <h1>Audit Logs</h1>
+          <p>Immutable record of staff actions</p>
         </div>
       </div>
       <div class="dash-topbar-right">
@@ -79,7 +80,7 @@
 <script src="../js/auth.js?v=1.1.12"></script>
 <script src="../js/hotel-data.js?v=1.1.12"></script>
 <script src="../js/navigation.js?v=1.1.12"></script>
-<script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script>
+<script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script><script src="../js/audit-detail.js?v=1.1.12"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("admin");
@@ -106,14 +107,27 @@
         '<td class="caption cell-nowrap">'+JONE.formatDateTime(e.created_at)+'</td>'+
         '<td>'+JONE.esc(user(e))+'</td>'+
         '<td class="cell-nowrap"><span class="badge">'+JONE.esc(String(e.action||"").replace(/_/g," "))+'</span></td>'+
-        '<td class="hide-sm cell-clamp"><a href="'+href+'" title="'+JONE.esc(summary)+'">'+JONE.esc(summary)+'</a></td>'+
+        '<td class="hide-sm cell-clamp"><a href="'+href+'" title="'+JONE.esc(summary)+'" data-audit-open="'+JONE.esc(e.id)+'" data-audit-action="'+JONE.esc(String(e.action||""))+'">'+JONE.esc(summary)+'</a></td>'+
         '<td class="hide-sm caption cell-nowrap">'+JONE.esc(e.ip_address||"")+'</td>'+
         // Always-visible action so the detail can be opened on phones too.
-        '<td class="cell-nowrap"><a class="btn btn-sm btn-outline" href="'+href+'" aria-label="View audit event '+JONE.esc(e.id)+'"><span data-icon="eye" data-size="14"></span><span class="hide-sm"> View</span></a></td>'+
+        '<td class="cell-nowrap"><a class="btn btn-sm btn-outline" href="'+href+'" data-audit-open="'+JONE.esc(e.id)+'" data-audit-action="'+JONE.esc(String(e.action||""))+'" aria-label="View audit event '+JONE.esc(e.id)+'"><span data-icon="eye" data-size="14"></span><span class="hide-sm"> View</span></a></td>'+
       '</tr>';
     }).join("");
     JONE.icons.inject(tbody);
   }
+
+  /* Opening an event in the modal keeps the operator's filter, page and
+     keyboard position. The href stays on the link, so the full detail page
+     remains reachable (no JS, middle-click, "Open full page" in the dialog). */
+  tbody.addEventListener("click",function(event){
+    var link=event.target.closest("[data-audit-open]");
+    if(!link)return;
+    if(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.button!==0)return;
+    if(!(window.JONE&&JONE.auditDetail&&JONE.auditDetail.open))return;
+    event.preventDefault();
+    var action=link.getAttribute("data-audit-action")||"";
+    JONE.auditDetail.open(link.getAttribute("data-audit-open"),{title:action?action.replace(/_/g," "):"Audit event"});
+  });
 
   /* Server-driven paging: the action filter and page both travel in the
      request; a filter change restarts at page 1. */

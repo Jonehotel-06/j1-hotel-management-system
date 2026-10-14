@@ -34,6 +34,13 @@
 
   var VERSION_URL = "/version.json";
   var DISMISS_KEY = "jone.update.dismissedVersion";
+  /* Set when "Refresh now" is pressed, cleared as soon as the loaded build
+     actually IS the deployed version. If the reload did not pick the release up
+     (blocked storage, a proxy still serving the old document, an offline
+     moment), the prompt is allowed to come back instead of leaving the operator
+     silently stranded on stale code – which is what marking it dismissed before
+     the refresh proved itself used to do. */
+  var ATTEMPT_KEY = "jone.update.refreshAttempted";
   var REGULAR_INTERVAL_MS = 15 * 60 * 1000;   // slow background cadence
   var FOCUS_MIN_INTERVAL_MS = 5 * 60 * 1000;  // foreground re-check floor
   var modalShown = false;
@@ -70,6 +77,18 @@
   }
   function markDismissed(version) {
     try { localStorage.setItem(DISMISS_KEY, String(version)); } catch (_) {}
+  }
+  function clearDismissed() {
+    try { localStorage.removeItem(DISMISS_KEY); } catch (_) {}
+  }
+  function markRefreshAttempted(version) {
+    try { sessionStorage.setItem(ATTEMPT_KEY, String(version)); } catch (_) {}
+  }
+  function refreshAttempted(version) {
+    try { return sessionStorage.getItem(ATTEMPT_KEY) === String(version); } catch (_) { return false; }
+  }
+  function clearRefreshAttempt() {
+    try { sessionStorage.removeItem(ATTEMPT_KEY); } catch (_) {}
   }
 
   /* A safe moment: not a sensitive PUBLIC flow page, no critical flow in
@@ -155,7 +174,9 @@
     hint.className = "muted";
     hint.style.margin = "0.75rem 0 0";
     hint.style.fontSize = "0.85rem";
-    hint.textContent = "Your booking details are safe — nothing is lost by refreshing.";
+    hint.textContent = refreshAttempted(latest)
+      ? "A refresh was already tried for this version, so this browser may still be using a cached copy. Refresh again, or ask an administrator to clear this site's cache."
+      : "Your booking details are safe — nothing is lost by refreshing.";
 
     var actions = document.createElement("div");
     actions.className = "modal-actions";
@@ -198,7 +219,11 @@
       // OLD worker's stale-while-revalidate caches on the very next paint.
       refreshBtn.disabled = true;
       refreshBtn.innerHTML = '<span class="btn-spinner"></span> Refreshing\u2026';
-      markDismissed(latest);
+      // Deliberately NOT dismissed here: only the user saying "Not now" (or
+      // closing the dialog) suppresses this release. The attempt marker lets a
+      // failed refresh re-prompt once with clearer guidance instead of looping.
+      markRefreshAttempted(latest);
+      clearDismissed();
       var reloadNow = function () {
         try { window.location.reload(); } catch (_) { window.location.href = window.location.pathname; }
       };
@@ -254,7 +279,12 @@
     if (!mine) { log("no embedded version marker; skipping"); return Promise.resolve(null); }
     return fetchLatestVersion()
       .then(function (latest) {
-        if (!latest || latest === mine) return null;
+        if (!latest || latest === mine) {
+          // Running the deployed release: nothing pending, nothing to nag about.
+          clearDismissed();
+          clearRefreshAttempt();
+          return null;
+        }
         log("deployed version", latest, "≠ loaded version", mine);
         if (latest === dismissedVersion()) return null;     // already handled
         if (document.visibilityState !== "visible") { rememberPending(latest, false); return null; }

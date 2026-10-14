@@ -158,6 +158,19 @@
   color: var(--color-danger);
 }
 .field.has-error .field-error { display: block; }
+/* Form-level (standalone) error banner — not bound to a single .field, so the
+   `.field.has-error` rule above can never show it. Used where a whole form or
+   panel reports one actionable failure (e.g. the POS "Create draft" form). */
+.field-error.is-banner {
+  display: block;
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--color-danger);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+}
+.field-error.is-banner:empty { display: none; }
 
 .hint { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--color-text-muted); }
 

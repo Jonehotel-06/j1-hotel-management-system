@@ -91,7 +91,7 @@
               <fieldset class="field" style="margin-top:.2rem;"><legend class="field-label">Modifiers</legend><div class="check-grid" data-pos-modifiers><span class="caption">Choose a menu item to see available modifiers.</span></div></fieldset>
               <div style="display:flex;justify-content:flex-end;margin-top:.45rem;"><button class="btn btn-sm btn-outline" id="pos-add-line" type="button"><span data-icon="plus" data-size="15"></span> Add to order</button></div>
               <div class="pos-cart" data-pos-cart aria-live="polite"></div>
-              <div class="field-error" data-pos-create-error hidden></div>
+              <div class="field-error is-banner" data-pos-create-error role="alert" tabindex="-1" hidden></div>
               <div style="display:flex;justify-content:flex-end;margin-top:1rem;"><button class="btn btn-accent" type="submit" id="pos-create"><span data-icon="receipt" data-size="16"></span> Create draft</button></div>
             </form>
           </div>
@@ -157,7 +157,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   var selectedStayLabel=document.querySelector("[data-pos-selected-stay]");
   var createError=document.querySelector("[data-pos-create-error]");
   var serviceRequestReference=new URLSearchParams(window.location.search||"").get("service_request")||"";
-  var state={page:1,menu:[],itemsById:{},cart:[],selectedStay:null,orderKey:newKey(),drawer:null,menuArea:null,menuRequest:0,restaurantTables:[],tableSessions:[],selectedTableSession:null,openTableSessionKey:newKey(),serviceRequestReference:serviceRequestReference,serviceRequest:null};
+  var state={page:1,menu:[],itemsById:{},cart:[],selectedStay:null,orderKey:newKey(),orderKeyContent:"",drawer:null,menuArea:null,menuRequest:0,restaurantTables:[],tableSessions:[],selectedTableSession:null,openTableSessionKey:newKey(),serviceRequestReference:serviceRequestReference,serviceRequest:null};
 
   function endpoint(name){ return window.APP_CONFIG&&window.APP_CONFIG.API_ENDPOINTS&&window.APP_CONFIG.API_ENDPOINTS[name]; }
   function listItems(res){ return window.API.normalizeList(res.data,res.pagination).items||[]; }
@@ -171,7 +171,11 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     try{return new Intl.NumberFormat("en",{style:"currency",currency:currency||"NGN",maximumFractionDigits:2}).format(Number(value));}catch(_){return String(value);}
   }
   function label(value){return String(value||"—").toLowerCase().replace(/_/g," ");}
-  function setCreateError(message){if(!createError)return;createError.hidden=!message;createError.textContent=message||"";}
+  // The banner is the single place "Create draft" reports a problem. `hidden`
+  // alone is not enough — the element carries .field-error (display:none) and is
+  // not inside a .field, so it also needs the .is-banner class to be painted.
+  function setCreateError(message,options){if(!createError)return;var text=message||"";createError.textContent=text;createError.hidden=!text;if(text&&options&&options.focus){try{createError.focus({preventScroll:false});}catch(_){}}}
+  function reportCreateFailure(message,options){setCreateError(message,{focus:true});JONE.ui.toast(message,"error",{title:(options&&options.title)||"POS draft not created"});}
   function hasCapability(code, fallbackRoles){
     var auth=window.Auth;
     if(auth&&auth.state&&auth.state.capabilitiesLoaded) return !!(auth.hasCapability&&auth.hasCapability(code));
@@ -256,20 +260,26 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     var modifiers=(item&&item.modifiers)||[];
     target.innerHTML=modifiers.length?modifiers.map(function(mod){return '<label style="display:flex;gap:.45rem;align-items:center;"><input type="checkbox" value="'+JONE.esc(mod.id)+'" data-pos-modifier> '+JONE.esc(mod.name)+' <span class="caption">('+JONE.esc(money(mod.price_delta,item.currency))+')</span></label>';}).join(''):'<span class="caption">No modifiers for this item.</span>';
   }
-  function renderItemChoices(){
+  function renderItemChoices(preferredItemId){
     var select=document.getElementById("pos-item");
     var rows=menuItemsForCategory();
+    var previous=preferredItemId==null?String(select.value||""):String(preferredItemId||"");
     select.disabled=!rows.length;
     select.innerHTML=rows.length?'<option value="">Choose an item</option>'+rows.map(function(item){return '<option value="'+JONE.esc(item.id)+'">'+JONE.esc(item.name)+' · '+JONE.esc(money(item.base_price,item.currency))+'</option>';}).join(''):'<option value="">No available menu items</option>';
+    // Keep the operator's choice when the reloaded menu still offers it.
+    if(previous&&rows.some(function(item){return String(item.id)===previous;}))select.value=previous;
     renderModifiers();
   }
   function renderMenu(){
     var category=document.getElementById("pos-category");
+    var item=document.getElementById("pos-item");
+    var previousCategory=String(category.value||""),previousItem=String(item&&item.value||"");
     state.itemsById={};
     state.menu.forEach(function(group){(group.items||[]).forEach(function(item){state.itemsById[String(item.id)]=item;});});
     category.innerHTML=state.menu.length?state.menu.map(function(group){return '<option value="'+JONE.esc(group.id)+'">'+JONE.esc(group.name)+'</option>';}).join(''):'<option value="">No available menu items</option>';
     category.disabled=!state.menu.length;
-    renderItemChoices();
+    if(previousCategory&&state.menu.some(function(group){return String(group.id)===previousCategory;}))category.value=previousCategory;
+    renderItemChoices(previousItem);
   }
   async function loadMenu(area){
     var params=area?{area:area}:{};
@@ -613,18 +623,31 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   cartEl.addEventListener("click",function(event){var button=event.target.closest("[data-pos-remove-line]");if(!button)return;state.cart.splice(Number(button.getAttribute("data-pos-remove-line")),1);renderCart();});
   document.getElementById("pos-create-form").addEventListener("submit",async function(event){
     event.preventDefault();setCreateError("");
-    if(state.serviceRequestReference&&!state.serviceRequest){setCreateError("The linked QR request has not been verified. Return to Guest requests and reopen the action.");return;}
-    if(state.serviceRequest&&state.serviceRequest.pos_order_reference){setCreateError("This QR request already has a linked POS order.");return;}
-    if(state.serviceRequest&&["RESTAURANT","BAR"].indexOf(mode())<0){setCreateError("A table QR request can create only a restaurant or bar draft.");return;}
-    if(!state.cart.length){setCreateError("Add at least one menu item before creating the draft.");return;}
-    if(mode()==="ROOM_SERVICE"&&!state.selectedStay){setCreateError("Select an in-house guest for room service.");return;}
-    if(mode()==="RESTAURANT"&&!state.selectedTableSession){setCreateError("Select an open registered table session for restaurant dine-in.");return;}
+    if(state.serviceRequestReference&&!state.serviceRequest){reportCreateFailure("The linked QR request has not been verified. Return to Guest requests and reopen the action.");return;}
+    if(state.serviceRequest&&state.serviceRequest.pos_order_reference){reportCreateFailure("This QR request already has a linked POS order.");return;}
+    if(state.serviceRequest&&["RESTAURANT","BAR"].indexOf(mode())<0){reportCreateFailure("A table QR request can create only a restaurant or bar draft.");return;}
+    if(!state.cart.length){reportCreateFailure("Add at least one menu item before creating the draft.");return;}
+    if(mode()==="ROOM_SERVICE"&&!state.selectedStay){reportCreateFailure("Select an in-house guest for room service.");return;}
+    if(mode()==="RESTAURANT"&&!state.selectedTableSession){reportCreateFailure("Select an open registered table session for restaurant dine-in.");return;}
     var button=document.getElementById("pos-create");if(!JONE.guardSubmit(button))return;
-    var payload={mode:mode(),lines:state.cart.map(function(line){return{menu_item_id:line.menu_item_id,quantity:line.quantity,modifier_ids:line.modifier_ids,notes:line.notes};}),idempotency_key:state.orderKey,guest_name:(document.getElementById("pos-guest").value||"").trim(),table_number:mode()==="BAR"?(document.getElementById("pos-table").value||"").trim():"",table_session_reference:mode()==="RESTAURANT"?state.selectedTableSession:"",delivery_location:(document.getElementById("pos-delivery").value||"").trim(),notes:""};
+    var payload={mode:mode(),lines:state.cart.map(function(line){return{menu_item_id:line.menu_item_id,quantity:line.quantity,modifier_ids:line.modifier_ids,notes:line.notes};}),guest_name:(document.getElementById("pos-guest").value||"").trim(),table_number:mode()==="BAR"?(document.getElementById("pos-table").value||"").trim():"",table_session_reference:mode()==="RESTAURANT"?state.selectedTableSession:"",delivery_location:(document.getElementById("pos-delivery").value||"").trim(),notes:""};
     if(state.selectedStay)payload.stay_id=state.selectedStay.id;
     if(state.serviceRequest){payload.service_request_reference=state.serviceRequest.reference;if(mode()==="BAR")payload.table_number=state.serviceRequest.table_number;}
-    try{var res=await window.API.create("posOrders",payload);var order=res.data||{};JONE.ui.toast(state.serviceRequest?"POS draft "+(order.reference||"created")+" linked to request "+state.serviceRequest.reference+". Review it before submission.":"POS draft "+(order.reference||"created")+" created. Submit it when the order is final.","success");state.cart=[];state.selectedStay=null;state.orderKey=newKey();if(state.serviceRequestReference){state.serviceRequestReference="";state.serviceRequest=null;showServiceRequestNotice("");var cleanUrl=new URL(window.location.href);cleanUrl.searchParams.delete("service_request");window.history.replaceState(null,document.title,cleanUrl.pathname+cleanUrl.search+cleanUrl.hash);}selectedStayLabel.textContent="No in-house guest selected.";stayResults.innerHTML="";document.getElementById("pos-create-form").reset();document.getElementById("pos-mode").value=allowedModes()[0]||"";renderRestaurantSessions();state.menuArea=null;updateMode();renderCart();loadOrders();}
-    catch(err){setCreateError((err&&err.message)||"The POS draft could not be created.");}
+    var orderContent=JSON.stringify(payload);
+    if(state.orderKeyContent!==orderContent){state.orderKey=newKey();state.orderKeyContent=orderContent;}
+    payload.idempotency_key=state.orderKey;
+    try{var res=await window.API.create("posOrders",payload);var order=res.data||{};setCreateError("");JONE.ui.toast(state.serviceRequest?"POS draft "+(order.reference||"created")+" linked to request "+state.serviceRequest.reference+". Review it before submission.":"POS draft "+(order.reference||"created")+" created. Submit it when the order is final.","success");state.cart=[];state.selectedStay=null;state.orderKey=newKey();if(state.serviceRequestReference){state.serviceRequestReference="";state.serviceRequest=null;showServiceRequestNotice("");var cleanUrl=new URL(window.location.href);cleanUrl.searchParams.delete("service_request");window.history.replaceState(null,document.title,cleanUrl.pathname+cleanUrl.search+cleanUrl.hash);}selectedStayLabel.textContent="No in-house guest selected.";stayResults.innerHTML="";document.getElementById("pos-create-form").reset();document.getElementById("pos-mode").value=allowedModes()[0]||"";renderRestaurantSessions();state.menuArea=null;state.orderKeyContent="";updateMode();renderCart();loadOrders();}
+    catch(err){
+      // The cart is deliberately preserved: the operator can correct the problem
+      // and press Create draft again. The same idempotency key is reused while
+      // the order content is unchanged, so a request whose response was lost can
+      // be retried without creating a duplicate draft.
+      var kind=err&&err.kind,message=(err&&err.message)||"The POS draft could not be created.";
+      if(kind==="timeout"||kind==="network"||kind==="offline"){
+        message="The POS draft could not be sent ("+(kind==="timeout"?"the server did not answer in time":"the connection failed")+"). Your cart is unchanged — press Create draft again: the same order key is reused, so no duplicate draft is created.";
+      }
+      reportCreateFailure(message);
+    }
     finally{JONE.releaseGuard(button);}
   });
   document.getElementById("pos-apply").addEventListener("click",function(){loadOrders(1);});

@@ -455,10 +455,36 @@ class AttendanceRecordDetailView(APIView):
         return success_response(AttendanceRecordDetailSerializer(_attendance_or_404(request, reference, detail=True)).data)
 
 
+def _assert_reception_workstation(request):
+    """Attendance for operational staff is recorded AT the Receptionist Desktop.
+
+    The Receptionist Desktop key is validated on the server (never by user
+    agent, IP address or screen size), so a personal phone holding a normal
+    staff session cannot clock itself — or anyone else — in or out. Management
+    roles keep their existing device freedom, exactly as they do for sign-in
+    (apps.accounts.desktop_policy).
+    """
+    from apps.accounts.desktop_policy import (
+        presented_desktop_key,
+        receptionist_desktop_for_key,
+        receptionist_desktop_required,
+    )
+
+    if not receptionist_desktop_required(request.user):
+        return None
+    if receptionist_desktop_for_key(presented_desktop_key(request)) is not None:
+        return None
+    raise PermissionDenied(
+        "Attendance is recorded at the Receptionist Desktop. Ask the front desk to clock you "
+        "in and give you your 6-digit workstation access code."
+    )
+
+
 @extend_schema(tags=["Admin · Staff operations"], summary="Record the caller's source-keyed server-timestamped attendance action")
 class AttendanceClockView(APIView):
     permission_classes = [HasCapability]; required_capability = "attendance.clock"
     def post(self, request):
+        _assert_reception_workstation(request)
         serializer = AttendanceClockSerializer(data=request.data); serializer.is_valid(raise_exception=True); data = serializer.validated_data
         probe = request.data.get("face_probe")
         fingerprint_probe = request.data.get("fingerprint_probe")
@@ -608,8 +634,8 @@ class DepartmentDashboardSummaryView(APIView):
     permission_classes = [HasCapability]
     required_capabilities = (
         "attendance.clock", "attendance.manage", "staff.view", "staff.profile.manage",
-        "booking.read", "pos.order", "kitchen.queue.view", "housekeeping.task.view",
-        "guest_request.manage", "inventory.view", "procurement.manage", "finance.view",
+        "booking.read", "pos.order.manage", "kitchen.queue.view", "housekeeping.task.manage",
+        "guest_request.manage", "procurement.manage",
         "reports.financial.view", "payment.read", "inventory.manage",
     )
     require_any_capability = True
@@ -805,7 +831,6 @@ class StaffComprehensiveProfileView(APIView):
             or has_capability(request.user, "payroll.view")
             or has_capability(request.user, "payroll.manage")
             or has_capability(request.user, "payroll.approve")
-            or has_capability(request.user, "payroll.pay")
         )
         salary_section = {"authorized": can_view_salary}
         if can_view_salary:

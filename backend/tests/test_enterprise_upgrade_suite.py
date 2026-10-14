@@ -19,6 +19,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.capabilities import capability_codes_for_user
+from apps.accounts.desktop_policy import issue_desktop_key
 from apps.accounts.models import User, Workstation
 from apps.bookings.models import Booking
 from apps.inventory.models import (
@@ -392,6 +393,13 @@ class Priority2BiometricAttendanceAndNumericWorkstationCodeTests(TestCase):
             last_name="Chef",
             role=User.Role.CHEF,
         )
+        # The reception terminal answers only to an enrolled Receptionist Desktop
+        # (or a management session): the desk key below is that enrolment.
+        self.front_desk = Workstation.objects.create(
+            name="Enterprise Reception Desk", department=Workstation.Department.FRONT_DESK
+        )
+        self.desk_key = issue_desktop_key(self.front_desk)
+        self.front_desk.save()
         StaffProfile.objects.update_or_create(
             user=self.chef,
             defaults={
@@ -422,6 +430,7 @@ class Priority2BiometricAttendanceAndNumericWorkstationCodeTests(TestCase):
                 "workstation_reference": "WS-KITCHEN-01",
             },
             format="json",
+            HTTP_X_JONE_DESKTOP_KEY=self.desk_key,
         )
         self.assertEqual(clock_in_resp.status_code, 200)
         res_data = clock_in_resp.data["data"]
@@ -462,6 +471,7 @@ class Priority2BiometricAttendanceAndNumericWorkstationCodeTests(TestCase):
                 "minutiae": self.minutiae,
             },
             format="json",
+            HTTP_X_JONE_DESKTOP_KEY=self.desk_key,
         )
         self.assertEqual(clock_out_resp.status_code, 200)
         self.assertEqual(clock_out_resp.data["data"]["attendance_status"], "COMPLETED")

@@ -83,6 +83,16 @@
 /* The name/role stack must be allowed to shrink so long names truncate
    instead of shoving the avatar or overflowing the sidebar. */
 .dash-sidebar-footer [data-dash-user] > div:last-child { min-width: 0; flex: 1; }
+/* Identity link (own profile). Inherits the footer colours and shows a visible
+   keyboard focus ring; hover keeps the row legible on the dark sidebar. */
+.dash-user-link {
+  display: flex; align-items: center; gap: 0.7rem; min-width: 0; width: 100%;
+  color: inherit; text-decoration: none; border-radius: var(--radius-sm);
+  padding: 0.25rem; margin: -0.25rem;
+}
+.dash-user-link:hover .dash-user-name { color: var(--color-accent); }
+.dash-user-link:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.dash-user-copy { min-width: 0; flex: 1; }
 .dash-avatar {
   width: 32px; height: 32px; border-radius: 50%;
   background: var(--color-accent); color: var(--color-accent-ink);
@@ -115,6 +125,12 @@
   gap: var(--sp-3);
   padding: 0.75rem 1.5rem;
   border-bottom: 1px solid transparent;
+  /* Opaque first: a browser that supports -webkit-backdrop-filter (so the
+     @supports fallback below does not apply) but NOT color-mix() would drop the
+     declaration below and render the bar with NO background at all — the bar
+     looked missing where content sits flush under it (audit logs). Supported
+     browsers still win the cascade and get the translucent treatment. */
+  background: var(--color-surface);
   background: color-mix(in srgb, var(--color-surface) 85%, transparent);
   backdrop-filter: saturate(1.3) blur(10px);
   -webkit-backdrop-filter: saturate(1.3) blur(10px);
@@ -286,7 +302,8 @@ body.drawer-open .dash-main { overflow: hidden; }
   body[data-sidebar="collapsed"] .dash-sidebar-footer [data-dash-user] {
     display: flex; justify-content: center;
   }
-  body[data-sidebar="collapsed"] .dash-sidebar-footer [data-dash-user] > div:last-child { display: none; }
+  body[data-sidebar="collapsed"] .dash-sidebar-footer .dash-user-copy { display: none; }
+  body[data-sidebar="collapsed"] .dash-sidebar-footer .dash-user-link { width: auto; gap: 0; }
   body[data-sidebar="collapsed"] .dash-sidebar-footer [data-logout] {
     width: auto !important;          /* the shell's inline width:100% */
     padding: 0.4rem 0.55rem !important;

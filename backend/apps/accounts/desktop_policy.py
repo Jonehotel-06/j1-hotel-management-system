@@ -64,6 +64,16 @@ def sign_in_policy_applies(user: User) -> bool:
     return user.role not in STAFF_SIGN_IN_EXEMPT_ROLES
 
 
+def receptionist_desktop_required(user: User) -> bool:
+    """True when the Receptionist Desktop is the ONLY place this account may act.
+
+    The same management exception as sign-in, expressed as the ONE predicate the
+    attendance APIs share, so "who counts as management" can never drift between
+    the sign-in policy and the attendance policy.
+    """
+    return sign_in_policy_applies(user)
+
+
 def receptionist_desktop_for_key(raw_key: str) -> Workstation | None:
     """Resolve an active FRONT_DESK workstation from its presented key."""
     raw_key = str(raw_key or "").strip()

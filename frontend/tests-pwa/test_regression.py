@@ -135,10 +135,20 @@ with sync_playwright() as pw:
     check("no token in localStorage", "SECRET_ACCESS_TOKEN" not in ls and "SECRET_REFRESH" not in ls)
 
     # --- no secrets shipped in frontend assets -------------------------------
+    # Provider prefixes are flagged anywhere they appear. Credential WORDS
+    # (password / secret / token / smtp) are flagged only when they are assigned
+    # a value — the word alone is legitimate (`/api/auth/password/change/` is an
+    # endpoint path, and prose in a comment is not a credential). The previous
+    # bare-substring scan flagged that endpoint and could never go green.
+    import re
+    PROVIDER_MARKERS = ("sk_live", "sk_test", "pk_live", "paystack_secret", "aws_secret",
+                        "secret_key", "smtp_password", "smtp_pass")
+    ASSIGNED = re.compile(
+        r"""(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|smtp|access[_-]?key)\b\s*[:=]\s*["'][^"']{1,}["']""")
     for f in ["/sw.js", "/js/pwa.js", "/manifest.webmanifest", "/js/runtime-config.js", "/js/config.js"]:
         txt = page.request.get(BASE + f).text()
-        bad = [k for k in ("sk_live", "sk_test", "SECRET_KEY", "PAYSTACK_SECRET", "AWS_SECRET",
-                           "password", "smtp") if k.lower() in txt.lower()]
+        bad = [m for m in PROVIDER_MARKERS if m in txt.lower()]
+        bad += [m.group(0)[:48] for m in ASSIGNED.finditer(txt)]
         check("no secrets in " + f, not bad, str(bad))
 
     # --- update strategy: no forced reload during a critical flow ------------

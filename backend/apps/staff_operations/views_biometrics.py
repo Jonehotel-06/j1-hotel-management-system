@@ -160,36 +160,62 @@ class TemporaryWorkstationCredentialIssueView(APIView):
 
 
 def _resolve_reception_terminal(request):
-    """Resolve an authorised Reception Attendance Workstation from desktop key or authenticated receptionist/manager."""
+    """Resolve the Reception Attendance Workstation for this request.
+
+    The normal — and only unprivileged — path is a presented Receptionist
+    Desktop key (``X-JONE-Desktop-Key``) that belongs to an active FRONT_DESK
+    workstation.
+
+    A management session may operate the terminal without the key because
+    management is already exempt from Receptionist Desktop sign-in
+    (``apps.accounts.desktop_policy.STAFF_SIGN_IN_EXEMPT_ROLES``), but the
+    session must still resolve to a REGISTERED active workstation: the endpoint
+    never invents a terminal reference, so attendance can never be attributed to
+    a workstation that does not exist.
+
+    Ordinary staff can never resolve a terminal here. A personal phone holding a
+    normal staff session has neither the desktop key nor ``attendance.manage``,
+    so it cannot clock anybody in through this API — the restriction is enforced
+    server side, not by user agent, IP address or screen size.
+    """
+    from apps.accounts.desktop_policy import STAFF_SIGN_IN_EXEMPT_ROLES
     from apps.accounts.models import Workstation
 
-    terminal_key = presented_desktop_key(request)
-    workstation = receptionist_desktop_for_key(terminal_key)
+    workstation = receptionist_desktop_for_key(presented_desktop_key(request))
     if workstation is not None:
         return workstation.reference, workstation
 
     user = getattr(request, "user", None)
-    if user and getattr(user, "is_authenticated", False):
-        if has_capability(user, "attendance.manage") or has_capability(user, "attendance.clock") or has_capability(user, "booking.checkin"):
-            ws_ref = (
-                (request.data.get("workstation_reference") if hasattr(request.data, "get") else "")
-                or request.query_params.get("workstation_reference")
-                or request.headers.get("X-JONE-Terminal")
-                or ""
-            ).strip()
-            ws = None
-            if ws_ref:
-                ws = Workstation.objects.filter(reference=ws_ref, is_active=True).first()
-            if ws is None:
-                ws = (
-                    Workstation.objects.exclude(sign_in_key_hash="").filter(is_active=True).first()
-                    or Workstation.objects.filter(is_active=True).first()
-                )
-            return (ws.reference if ws else (ws_ref or "WS-RECEPTION-MAIN")), ws
+    if not (user and getattr(user, "is_authenticated", False)):
+        raise PermissionDenied(
+            "Reception Attendance Workstation requires an approved Receptionist Desktop key."
+        )
+    if user.role not in STAFF_SIGN_IN_EXEMPT_ROLES:
+        raise PermissionDenied(
+            "Attendance can only be recorded at an enrolled Receptionist Desktop. "
+            "Ask an administrator to enrol this browser."
+        )
 
-    raise PermissionDenied(
-        "Reception Attendance Workstation requires an approved Receptionist Desktop key or authorised Front Desk / Management session."
-    )
+    ws_ref = (
+        (request.data.get("workstation_reference") if hasattr(request.data, "get") else "")
+        or request.query_params.get("workstation_reference")
+        or request.headers.get("X-JONE-Terminal")
+        or ""
+    ).strip()
+    ws = Workstation.objects.filter(reference=ws_ref, is_active=True).first() if ws_ref else None
+    if ws is None:
+        ws = (
+            Workstation.objects.exclude(sign_in_key_hash="")
+            .filter(is_active=True, department=Workstation.Department.FRONT_DESK)
+            .first()
+            or Workstation.objects.exclude(sign_in_key_hash="").filter(is_active=True).first()
+        )
+    if ws is None:
+        raise PermissionDenied(
+            "No active Receptionist Desktop workstation is registered. Register the front desk "
+            "workstation and issue its desktop key before recording attendance."
+        )
+    return ws.reference, ws
 
 
 class ReceptionAttendanceTerminalView(APIView):
@@ -291,6 +317,11 @@ class ReceptionAttendanceTerminalView(APIView):
         ws_reference, _ws = _resolve_reception_terminal(request)
         action = (request.data.get("action") or "CLOCK_IN").strip().upper()
         probe = request.data.get("fingerprint_probe") or request.data.get("probe") or request.data.get("minutiae")
+        manual_override_reason = str(request.data.get("manual_override_reason") or "")
+        failure_classification = str(
+            request.data.get("failure_classification") or request.data.get("classification") or ""
+        )
+        failure_note = str(request.data.get("note") or "")
         email = (request.data.get("email") or "").strip()
         employee_code = (request.data.get("employee_code") or "").strip()
         staff_id = request.data.get("staff_id")
@@ -305,6 +336,9 @@ class ReceptionAttendanceTerminalView(APIView):
                 employee_code=employee_code,
                 staff_id=int(staff_id) if staff_id else None,
                 actor=request.user if getattr(request.user, "is_authenticated", False) else None,
+                manual_override_reason=manual_override_reason,
+                classification=failure_classification,
+                note=failure_note,
             )
         except DjangoValidationError as exc:
             _raise_django(exc)

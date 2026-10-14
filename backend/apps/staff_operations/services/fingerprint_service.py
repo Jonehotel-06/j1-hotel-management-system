@@ -38,6 +38,14 @@ MAX_MINUTIAE_POINTS = 200
 DEFAULT_MATCH_THRESHOLD = 70.0  # Min score out of 100
 DEFAULT_TEMP_CRED_TTL_MINUTES = 15
 
+# Supervisor attendance fallback (audit N6). A recorded biometric failure is
+# what makes a *manager* fallback legitimate; administrators may authorise one
+# without a prior attempt because they carry the privileged exception. Ordinary
+# employees can never issue a fallback code, for anyone.
+DEFAULT_MANUAL_FALLBACK_WINDOW_MINUTES = 30
+MIN_MANUAL_REASON_LENGTH = 10
+
+
 
 class FingerprintOutcome:
     VERIFIED = "VERIFIED"
@@ -49,6 +57,33 @@ class FingerprintOutcome:
     MANUAL_OVERRIDE = "MANUAL_OVERRIDE"
 
     PASSING = frozenset({VERIFIED, MANUAL_OVERRIDE})
+    # Capture / hardware failures. These are TECHNICAL: they say nothing about
+    # whether the finger matched, which is why they – and only they – can make a
+    # manager attendance fallback legitimate.
+    DEVICE_UNAVAILABLE = "DEVICE_UNAVAILABLE"
+    DEVICE_FAULT = "DEVICE_FAULT"
+    CAPTURE_TIMEOUT = "CAPTURE_TIMEOUT"
+    UNSUPPORTED_DEVICE = "UNSUPPORTED_DEVICE"
+    INTEGRATION_ERROR = "INTEGRATION_ERROR"
+
+
+# The classifications an approved workstation may report when the reader could
+# not produce a probe at all. Nothing here claims a fingerprint was captured.
+FALLBACK_FAILURE_CLASSES = frozenset({
+    FingerprintOutcome.DEVICE_UNAVAILABLE,
+    FingerprintOutcome.DEVICE_FAULT,
+    FingerprintOutcome.CAPTURE_TIMEOUT,
+    FingerprintOutcome.UNSUPPORTED_DEVICE,
+    FingerprintOutcome.INTEGRATION_ERROR,
+})
+
+
+# What a manager fallback may be based on. A plain mismatch (NO_MATCH) is
+# deliberately absent – a wrong finger is not a hardware failure – and so is
+# NOT_ENROLLED/TEMPLATE_EXPIRED, which are closed by enrolling, not by handing
+# out a fallback code. An invalid/incomplete capture and every reported capture
+# or integration failure are included (audit N7).
+QUALIFYING_FAILURE_OUTCOMES = FALLBACK_FAILURE_CLASSES | frozenset({FingerprintOutcome.PROBE_INVALID})
 
 
 def fingerprint_verification_required() -> bool:
@@ -570,6 +605,88 @@ def get_staff_biometric_status(staff: User) -> dict:
     }
 
 
+def mint_temporary_workstation_credential(
+    *,
+    staff: User,
+    workstation_reference: str,
+    attendance_record=None,
+    issue_numeric_code: bool = True,
+    issued_by: User | None = None,
+    mode: str = "BIOMETRIC",
+) -> dict:
+    """Mint the single-use temporary workstation credential (token + numeric code).
+
+    The ONE implementation of credential creation: the biometric terminal path
+    and the supervised manual-fallback path both mint through here, so expiry,
+    supersede/revoke semantics, code hashing and auditing can never drift apart.
+    ``issued_by`` is the account the audit trail names; the fallback path names
+    the authorising supervisor, the biometric path names the staff member.
+    """
+    if not staff.is_active:
+        raise PermissionDenied("Inactive staff accounts cannot receive workstation credentials.")
+    profile = getattr(staff, "staff_profile", None)
+    if profile and profile.employment_status in ("SUSPENDED", "INACTIVE", "ON_LEAVE"):
+        raise PermissionDenied(
+            f"Staff member is currently {profile.employment_status.lower()} and cannot receive workstation credentials."
+        )
+
+    raw_token = f"jone-temp-{secrets.token_urlsafe(32)}"
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    numeric_code = _generate_numeric_access_code() if issue_numeric_code else ""
+    numeric_hash = _hash_numeric_code(numeric_code) if numeric_code else ""
+    dept_code = staff_department_code(staff)
+    ttl = int(getattr(settings, "TEMPORARY_WORKSTATION_CREDENTIAL_TTL_MINUTES", DEFAULT_TEMP_CRED_TTL_MINUTES))
+    now = timezone.now()
+    expires_at = now + timedelta(minutes=ttl)
+
+    if attendance_record is None:
+        from ..models import AttendanceRecord
+
+        attendance_record = (
+            AttendanceRecord.objects.filter(staff=staff, clock_out_at__isnull=True)
+            .order_by("-clock_in_at")
+            .first()
+        )
+    if attendance_record is None:
+        raise ValidationError({
+            "attendance": "Clock in at the Receptionist Desktop before a workstation access code can be issued."
+        })
+
+    with transaction.atomic():
+        # Invalidate old unused/active temporary credentials for this user
+        TemporaryWorkstationCredential.objects.filter(
+            staff=staff, session_active=True
+        ).update(
+            is_used=True,
+            session_active=False,
+            revoked_at=now,
+            revoked_reason="SUPERSEDED",
+        )
+        cred = TemporaryWorkstationCredential.objects.create(
+            staff=staff,
+            workstation_reference=workstation_reference,
+            credential_token_hash=token_hash,
+            numeric_code_hash=numeric_hash,
+            department=dept_code,
+            attendance_record=attendance_record,
+            expires_at=expires_at,
+            session_active=True,
+        )
+
+    log_action(actor=issued_by or staff, action="TEMPORARY_WORKSTATION_CREDENTIAL_ISSUED", instance=cred,
+               metadata={"staff_id": staff.pk, "workstation": workstation_reference, "department": dept_code,
+                         "mode": mode})
+    return {
+        "credential_id": cred.pk,
+        "temporary_token": raw_token,
+        "access_code": numeric_code,
+        "expires_at": expires_at.isoformat(),
+        "department": dept_code,
+        "workstation": workstation_reference,
+        "attendance_reference": attendance_record.reference if attendance_record else None,
+    }
+
+
 def issue_temporary_workstation_credential(
     *,
     staff: User,
@@ -622,59 +739,120 @@ def issue_temporary_workstation_credential(
         workstation_reference=workstation_reference,
     )
 
-    raw_token = f"jone-temp-{secrets.token_urlsafe(32)}"
-    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-    numeric_code = _generate_numeric_access_code() if issue_numeric_code else ""
-    numeric_hash = _hash_numeric_code(numeric_code) if numeric_code else ""
-    dept_code = staff_department_code(staff)
-    ttl = int(getattr(settings, "TEMPORARY_WORKSTATION_CREDENTIAL_TTL_MINUTES", DEFAULT_TEMP_CRED_TTL_MINUTES))
-    now = timezone.now()
-    expires_at = now + timedelta(minutes=ttl)
+    details = mint_temporary_workstation_credential(
+        staff=staff,
+        workstation_reference=workstation_reference,
+        attendance_record=attendance_record,
+        issue_numeric_code=issue_numeric_code,
+        issued_by=staff,
+        mode="BIOMETRIC",
+    )
+    details["match_score"] = score
+    if return_details:
+        return details
+    return details["temporary_token"], details["expires_at"]
 
-    if attendance_record is None:
-        from ..models import AttendanceRecord
 
-        attendance_record = (
-            AttendanceRecord.objects.filter(staff=staff, clock_out_at__isnull=True)
-            .order_by("-clock_in_at")
+def record_failed_attempt(
+    *,
+    staff: User,
+    workstation_reference: str = "",
+    classification: str,
+    note: str = "",
+    actor: User | None = None,
+) -> FingerprintVerificationAttempt:
+    """Record that a fingerprint attempt was made and the capture itself failed.
+
+    This is the ONLY way a hardware/capture failure enters the evidence trail:
+    an approved workstation (desktop key) or a management session reports the
+    classification from the fixed allowlist. Nothing here asserts that a
+    fingerprint was captured or matched — the outcome says the opposite — and the
+    report is audited, so it can never be used to fabricate a verification.
+    """
+    outcome = str(classification or "").strip().upper()
+    if outcome not in FALLBACK_FAILURE_CLASSES:
+        raise ValidationError({
+            "failure_classification": "Report DEVICE_UNAVAILABLE, DEVICE_FAULT, CAPTURE_TIMEOUT, "
+                                      "UNSUPPORTED_DEVICE or INTEGRATION_ERROR."
+        })
+    attempt = FingerprintVerificationAttempt.objects.create(
+        staff=staff,
+        action="ATTEMPT_FAILED",
+        outcome=outcome,
+        source_key=f"fp-attempt-failed:{staff.pk}:{secrets.token_hex(6)}",
+        workstation_reference=workstation_reference or "",
+    )
+    log_action(
+        actor=actor or staff,
+        action="ATTENDANCE_FINGERPRINT_FAILED",
+        instance=attempt,
+        metadata={
+            "staff_id": staff.pk,
+            "outcome": outcome,
+            "workstation": workstation_reference,
+            "note": str(note or "")[:200],
+        },
+    )
+    return attempt
+
+
+def lookup_staff_by_identifier(*, staff: User | None = None, staff_id=None, email: str = "", employee_code: str = "") -> User | None:
+    """Resolve an active staff account from an explicit terminal identifier.
+
+    The shared lookup for every terminal action: one implementation, so the
+    biometric path and the supervised fallback path can never disagree about
+    which account an identifier names.
+    """
+    resolved = staff
+    if resolved is None and staff_id:
+        resolved = User.objects.select_related("staff_profile", "staff_profile__department_ref").filter(pk=staff_id).first()
+    if resolved is None and (email or "").strip():
+        resolved = (
+            User.objects.select_related("staff_profile", "staff_profile__department_ref")
+            .filter(email__iexact=email.strip())
             .first()
         )
-
-    with transaction.atomic():
-        # Invalidate old unused/active temporary credentials for this user
-        TemporaryWorkstationCredential.objects.filter(
-            staff=staff, session_active=True
-        ).update(
-            is_used=True,
-            session_active=False,
-            revoked_at=now,
-            revoked_reason="SUPERSEDED",
+    if resolved is None and (employee_code or "").strip():
+        resolved = (
+            User.objects.select_related("staff_profile", "staff_profile__department_ref")
+            .filter(staff_profile__employee_code__iexact=employee_code.strip())
+            .first()
         )
-        cred = TemporaryWorkstationCredential.objects.create(
-            staff=staff,
-            workstation_reference=workstation_reference,
-            credential_token_hash=token_hash,
-            numeric_code_hash=numeric_hash,
-            department=dept_code,
-            attendance_record=attendance_record,
-            expires_at=expires_at,
-            session_active=True,
-        )
+    return resolved
 
-    log_action(actor=staff, action="TEMPORARY_WORKSTATION_CREDENTIAL_ISSUED", instance=cred,
-               metadata={"staff_id": staff.pk, "workstation": workstation_reference, "department": dept_code})
-    if return_details:
-        return {
-            "credential_id": cred.pk,
-            "temporary_token": raw_token,
-            "access_code": numeric_code,
-            "expires_at": expires_at.isoformat(),
-            "department": dept_code,
-            "workstation": workstation_reference,
-            "match_score": score,
-            "attendance_reference": attendance_record.reference if attendance_record else None,
-        }
-    return raw_token, expires_at.isoformat()
+
+def _manual_fallback_terminal_action(
+    *,
+    actor: User | None,
+    workstation_reference: str,
+    reason: str,
+    staff: User | None = None,
+    staff_id=None,
+    email: str = "",
+    employee_code: str = "",
+) -> dict:
+    """Record the attendance of a supervised fallback and mint its 6-digit code.
+
+    Order matters: the supervisor's authority, the reason and the recorded
+    failure evidence are all verified BEFORE anything is written, so a refused
+    fallback can never leave an attendance record behind. Clock-in is attributed
+    to the staff member (their attendance record), while the authorising
+    supervisor is named in the audit trail and in the credential metadata.
+    """
+    from .attendance_fallback_service import issue_manual_fallback_code
+
+    resolved_staff = lookup_staff_by_identifier(staff=staff, staff_id=staff_id, email=email, employee_code=employee_code)
+    if resolved_staff is None:
+        raise ValidationError(
+            {"staff": "Identify the staff member (email, employee code or id) for a supervised fallback."}
+        )
+    return issue_manual_fallback_code(
+        staff=resolved_staff,
+        actor=actor,
+        reason=reason,
+        workstation_reference=workstation_reference,
+        clock_in=True,
+    )
 
 
 def reception_attendance_workstation_action(
@@ -687,6 +865,9 @@ def reception_attendance_workstation_action(
     employee_code: str = "",
     staff_id: int | None = None,
     actor: User | None = None,
+    manual_override_reason: str = "",
+    classification: str = "",
+    note: str = "",
 ) -> dict:
     """Execute Reception Attendance Workstation verification, clock-in/out, break, and numeric code issuance."""
     from ..models import AttendanceRecord
@@ -698,24 +879,57 @@ def reception_attendance_workstation_action(
         "BREAK_END": "BREAK_ENDED",
     }
     action_norm = action_aliases.get(action_norm, action_norm)
-    valid_actions = {"VERIFY_STATUS", "CLOCK_IN", "CLOCK_OUT", "BREAK_STARTED", "BREAK_ENDED", "ISSUE_CODE"}
+    valid_actions = {
+        "VERIFY_STATUS", "CLOCK_IN", "CLOCK_OUT", "BREAK_STARTED", "BREAK_ENDED", "ISSUE_CODE",
+        "MANUAL_FALLBACK", "RECORD_FAILURE",
+    }
     if action_norm not in valid_actions:
-        raise ValidationError({"action": "Action must be VERIFY_STATUS, CLOCK_IN, BREAK_START, BREAK_END, CLOCK_OUT, or ISSUE_CODE."})
+        raise ValidationError({
+            "action": "Action must be VERIFY_STATUS, CLOCK_IN, BREAK_START, BREAK_END, CLOCK_OUT, "
+                      "ISSUE_CODE, MANUAL_FALLBACK, or RECORD_FAILURE."
+        })
+
+    # A supervised fallback never carries a probe: it is the recorded failure of
+    # the probe path. It is handled before probe validation for that reason.
+    if action_norm == "RECORD_FAILURE":
+        failed_staff = lookup_staff_by_identifier(staff=staff, staff_id=staff_id, email=email, employee_code=employee_code)
+        if failed_staff is None:
+            raise ValidationError(
+                {"staff": "Identify the staff member (email, employee code or id) whose capture failed."}
+            )
+        attempt = record_failed_attempt(
+            staff=failed_staff,
+            workstation_reference=workstation_reference,
+            classification=classification,
+            note=note,
+            actor=actor,
+        )
+        return {
+            "action": "RECORD_FAILURE",
+            "status": "ATTEMPT_FAILED",
+            "outcome": attempt.outcome,
+            "staff_id": failed_staff.pk,
+            "staff_email": failed_staff.email,
+            "staff_name": failed_staff.full_name,
+            "employee_code": getattr(getattr(failed_staff, "staff_profile", None), "employee_code", ""),
+            "workstation": workstation_reference,
+        }
+
+    if action_norm == "MANUAL_FALLBACK":
+        return _manual_fallback_terminal_action(
+            actor=actor,
+            workstation_reference=workstation_reference,
+            reason=manual_override_reason,
+            staff=staff,
+            staff_id=staff_id,
+            email=email,
+            employee_code=employee_code,
+        )
 
     probe_data = validate_minutiae_data(probe)
 
     # Resolve staff by explicit identifier or 1:N biometric template matching
-    resolved_staff = staff
-    if resolved_staff is None and staff_id:
-        resolved_staff = User.objects.select_related("staff_profile", "staff_profile__department_ref").filter(pk=staff_id).first()
-    if resolved_staff is None and (email or "").strip():
-        resolved_staff = User.objects.select_related("staff_profile", "staff_profile__department_ref").filter(email__iexact=email.strip()).first()
-    if resolved_staff is None and (employee_code or "").strip():
-        resolved_staff = (
-            User.objects.select_related("staff_profile", "staff_profile__department_ref")
-            .filter(staff_profile__employee_code__iexact=employee_code.strip())
-            .first()
-        )
+    resolved_staff = lookup_staff_by_identifier(staff=staff, staff_id=staff_id, email=email, employee_code=employee_code)
     if resolved_staff is None:
         best_score = 0.0
         best_template = None
@@ -1011,30 +1225,41 @@ def authenticate_numeric_workstation_code(
         if profile and profile.employment_status in ("SUSPENDED", "INACTIVE", "ON_LEAVE"):
             raise PermissionDenied(f"Staff member is currently {profile.employment_status.lower()}.")
 
+        # Refusals that MUST be audited are collected here and raised after this
+        # atomic block: an audit row written inside it would be rolled back by
+        # the very refusal it records, so security-relevant events (code sharing,
+        # cross-department attempts) would never reach the audit trail.
+        refusal = None
+
         # Prevent code sharing: if caller specified email or employee_code, it MUST belong to this employee
         if (email or "").strip() and staff.email.lower() != email.strip().lower():
-            log_action(
-                actor=staff,
-                action="WORKSTATION_CODE_SHARING_BLOCKED",
-                instance=cred,
-                metadata={"presented_email": email.strip().lower(), "owner_id": staff.pk},
+            refusal = (
+                "Workstation access code belongs to a different employee.",
+                {"presented_email": email.strip().lower(), "owner_id": staff.pk},
             )
-            raise PermissionDenied("Workstation access code belongs to a different employee.")
-
-        if (employee_code or "").strip():
-            owner_code = (profile.employee_code if profile else "").strip().lower()
-            if owner_code != employee_code.strip().lower():
-                log_action(
-                    actor=staff,
-                    action="WORKSTATION_CODE_SHARING_BLOCKED",
-                    instance=cred,
-                    metadata={"presented_employee_code": employee_code.strip(), "owner_id": staff.pk},
-                )
-                raise PermissionDenied("Workstation access code belongs to a different employee.")
+        elif (employee_code or "").strip() and (profile.employee_code if profile else "").strip().lower() != employee_code.strip().lower():
+            refusal = (
+                "Workstation access code belongs to a different employee.",
+                {"presented_employee_code": employee_code.strip(), "owner_id": staff.pk},
+            )
 
         # Check active attendance / clock-out expiration
-        if not cred.session_active or cred.revoked_at is not None:
+        if refusal is not None:
+            pass
+        elif not cred.session_active or cred.revoked_at is not None:
             raise PermissionDenied("Workstation access code has expired upon clock-out or been revoked.")
+
+        # A numeric code is a ONE-TIME ticket with its own validity window (the
+        # token path has always enforced both). The dashboard SESSION it opens
+        # deliberately outlives the code — it lasts for the work period and ends
+        # at clock-out — but the code itself must never be replayable, or a code
+        # read over a shoulder could sign a second device in later.
+        if cred.expires_at and cred.expires_at <= now:
+            raise PermissionDenied("Workstation access code has expired. Ask the front desk for a new code.")
+        if cred.is_used:
+            raise PermissionDenied(
+                "Workstation access code has already been used. Ask the front desk to re-issue one."
+            )
 
         open_att = (
             AttendanceRecord.objects.filter(staff=staff, clock_out_at__isnull=True)
@@ -1051,17 +1276,25 @@ def authenticate_numeric_workstation_code(
         if (workstation_reference or "").strip() and cred.workstation_reference != workstation_reference.strip():
             raise PermissionDenied("Workstation access code is not valid for this workstation.")
 
-        if (department or "").strip() and not is_staff_authorized_for_department(staff, department):
-            log_action(
-                actor=staff,
-                action="CROSS_DEPARTMENT_CODE_ACCESS_BLOCKED",
-                instance=cred,
-                metadata={"target_department": department, "staff_department": cred.department},
+        if refusal is None and (department or "").strip() and not is_staff_authorized_for_department(staff, department):
+            refusal = (
+                "Workstation access code is not authorized for this department dashboard.",
+                {"target_department": department, "staff_department": cred.department},
             )
-            raise PermissionDenied("Workstation access code is not authorized for this department dashboard.")
 
-        cred.is_used = True
-        cred.used_at = now
-        cred.save(update_fields=["is_used", "used_at", "updated_at"])
-        return cred
+        if refusal is None:
+            cred.is_used = True
+            cred.used_at = now
+            cred.save(update_fields=["is_used", "used_at", "updated_at"])
+
+    if refusal is not None:
+        message, metadata = refusal
+        action = (
+            "CROSS_DEPARTMENT_CODE_ACCESS_BLOCKED"
+            if "department dashboard" in message
+            else "WORKSTATION_CODE_SHARING_BLOCKED"
+        )
+        log_action(actor=cred.staff, action=action, instance=cred, metadata=metadata)
+        raise PermissionDenied(message)
+    return cred
 

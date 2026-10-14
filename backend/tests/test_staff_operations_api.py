@@ -4,7 +4,8 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from apps.accounts.models import User
+from apps.accounts.desktop_policy import issue_desktop_key
+from apps.accounts.models import User, Workstation
 from apps.staff_operations.models import AttendanceEvent, AttendanceRecord, LeaveRequest
 
 from .base import BaseAPITestCase
@@ -12,14 +13,31 @@ from .factories import make_staff
 
 
 class StaffOperationsApiTests(BaseAPITestCase):
+    """The worker's clocks are issued AT the Receptionist Desktop (audit N4):
+    every clock request below carries that desk's key, as the desk browser does.
+    """
+
     def setUp(self):
         super().setUp()
         self.manager = make_staff("staff-api-manager@staff.dev", role=User.Role.MANAGER)
         self.worker = make_staff("staff-api-worker@staff.dev", role=User.Role.HOUSEKEEPING)
+        self.workstation = Workstation.objects.create(
+            name="Staff API Desk", department=Workstation.Department.FRONT_DESK
+        )
+        self.desk_key = issue_desktop_key(self.workstation)
+        self.workstation.save()
+
+    def clock_post(self, payload, **extra):
+        """POST to the attendance clock with the desk key the desk browser sends."""
+        extra.setdefault("format", "json")
+        return self.client.post(
+            "/api/admin/staff-operations/attendance/clock/", payload,
+            HTTP_X_JONE_DESKTOP_KEY=self.desk_key, **extra,
+        )
 
     def test_worker_can_clock_and_request_own_leave_while_manager_reviews(self):
         self.auth(self.worker)
-        clocked_in = self.client.post("/api/admin/staff-operations/attendance/clock/", {
+        clocked_in = self.clock_post({
             "action": "CLOCK_IN", "idempotency_key": "api-clock-in",
         }, format="json")
         self.assertEqual(clocked_in.status_code, 201, clocked_in.content)
@@ -59,7 +77,7 @@ class StaffOperationsApiTests(BaseAPITestCase):
         def act(action, key, expected, phrase=None):
             """POST one transition. Accepted transitions answer 201; only an
             idempotent replay of the same source key answers 200."""
-            response = self.client.post(clock, {"action": action, "idempotency_key": key}, format="json")
+            response = self.clock_post({"action": action, "idempotency_key": key}, format="json")
             self.assertEqual(response.status_code, expected, f"{action}: {response.content}")
             if phrase:
                 # The API keeps the human-readable reason in ``errors`` and a
@@ -129,9 +147,9 @@ class StaffOperationsApiTests(BaseAPITestCase):
         """
         self.auth(self.worker)
         clock = "/api/admin/staff-operations/attendance/clock/"
-        first = self.client.post(clock, {"action": "CLOCK_IN", "idempotency_key": "hr002-retry"}, format="json")
+        first = self.clock_post({"action": "CLOCK_IN", "idempotency_key": "hr002-retry"}, format="json")
         self.assertEqual(first.status_code, 201, first.content)
-        second = self.client.post(clock, {"action": "CLOCK_IN", "idempotency_key": "hr002-retry"}, format="json")
+        second = self.clock_post({"action": "CLOCK_IN", "idempotency_key": "hr002-retry"}, format="json")
         self.assertEqual(second.status_code, 200, second.content)
         self.assertEqual(first.json()["data"]["reference"], second.json()["data"]["reference"])
         self.assertEqual(AttendanceRecord.objects.filter(staff=self.worker).count(), 1)

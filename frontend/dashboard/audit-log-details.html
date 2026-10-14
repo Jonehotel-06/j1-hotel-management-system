@@ -78,7 +78,7 @@
 <script src="../js/auth.js?v=1.1.12"></script>
 <script src="../js/hotel-data.js?v=1.1.12"></script>
 <script src="../js/navigation.js?v=1.1.12"></script>
-<script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script>
+<script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script><script src="../js/audit-detail.js?v=1.1.12"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("admin");
@@ -88,16 +88,13 @@
   "use strict";
   var el = document.querySelector("[data-detail]");
 
+  /* The event body is rendered by the SHARED renderer (js/audit-detail.js) that
+     the audit-log modal also uses, so the page and the dialog can never show a
+     different view of the same immutable record. */
   function showError(title, msg){
-    el.innerHTML = '<div class="empty-state"><span data-icon="alertTriangle" data-size="34"></span><h3>' +
-      JONE.esc(title) + '</h3><p>' + JONE.esc(msg || "Please try again.") + '</p>' +
-      '<a class="btn btn-sm btn-outline" href="audit-logs.html" style="margin-top:0.75rem;">Back to audit logs</a></div>';
+    el.innerHTML = JONE.auditDetail.errorBlock(title, msg) +
+      '<a class="btn btn-sm btn-outline" href="audit-logs.html" style="margin-top:0.75rem;">Back to audit logs</a>';
     JONE.icons.inject(el);
-  }
-
-  function fieldRow(label, value){
-    return '<div class="field"><div class="field-label">' + JONE.esc(label) + '</div>' +
-      '<div class="audit-value">' + JONE.esc(value == null || value === "" ? "\u2014" : value) + '</div></div>';
   }
 
   async function load(){
@@ -108,27 +105,10 @@
       var a = res.data || {};
       var titleEl = document.querySelector("[data-title]");
       if (titleEl) titleEl.textContent = String(a.action || "Audit event").replace(/_/g, " ");
-      var rows = [
-        ["Event", a.action ? String(a.action).replace(/_/g, " ") : null],
-        ["Time", a.created_at ? JONE.formatDateTime(a.created_at) : null],
-        ["Actor", a.actor_name || a.actor_email || "System"],
-        ["Actor email", a.actor_email],
-        ["Object", ((a.object_type || "") + " " + (a.object_id || "")).trim()],
-        ["IP address", a.ip_address],
-        ["Summary", a.summary]
-      ];
-      el.innerHTML =
-        '<div class="form-grid fg-2">' + rows.map(function(r){ return fieldRow(r[0], r[1]); }).join("") + '</div>' +
-        '<div class="form-grid fg-2" style="margin-top:1rem;">' +
-          '<div><h3 style="font-size:var(--fs-md);margin-bottom:0.5rem;">Changes</h3>' +
-          '<pre class="audit-json">' + JONE.esc(JSON.stringify(a.changes || {}, null, 2)) + '</pre></div>' +
-          '<div><h3 style="font-size:var(--fs-md);margin-bottom:0.5rem;">Metadata</h3>' +
-          '<pre class="audit-json">' + JONE.esc(JSON.stringify(a.metadata || {}, null, 2)) + '</pre></div>' +
-        '</div>';
+      el.innerHTML = JONE.auditDetail.render(a);
     } catch (err) {
-      if (err && err.status === 404) showError("Audit event not found", "This audit event does not exist.");
-      else if (err && err.status === 403) showError("Access denied", "Only administrators can view audit events.");
-      else showError("Audit event could not be loaded", (err && err.message) || "Please try again in a moment.");
+      var copy = JONE.auditDetail.errorCopy(err);
+      showError(copy[0], copy[1]);
     }
   }
   load();

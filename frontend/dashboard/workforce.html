@@ -33,7 +33,8 @@
     <div class="panel-head">
       <div>
         <h2>Reception Biometric Attendance &amp; Numeric Workstation Code Console</h2>
-        <p class="caption muted">Scan staff fingerprint to clock in, start/end break, clock out (which immediately expires workstation access codes), or issue a 6-digit numeric workstation code.</p>
+        <p class="caption muted">Scan staff fingerprint to clock in, start/end break, clock out (which immediately expires workstation access codes), or issue a 6-digit numeric workstation code. Attendance is recorded only at an enrolled Receptionist Desktop: this page works here when this browser carries a desktop key, or for a management account, and always re-checks on the server.</p>
+        <p class="caption" data-wf-rt-desktop-state role="status" aria-live="polite" style="margin-top:0.35rem;"></p>
       </div>
     </div>
     <div class="panel-body">
@@ -55,6 +56,24 @@
         <div class="card card-pad" id="wf-rt-result">
           <p class="caption muted">Scan a staff member's fingerprint on the left to verify attendance status or issue a 6-digit numeric workstation access code.</p>
         </div>
+      </div>
+      <div class="card card-pad" data-wf-rt-fallback hidden style="margin-top:1.25rem;">
+        <h3 style="font-size:var(--fs-md);margin:0 0 0.35rem;">Supervised fallback (manager / administrator)</h3>
+        <p class="caption muted">Use only when the scanner or the employee's finger genuinely cannot be read. A manager fallback needs the recorded failure from the failed scan above; an administrator may authorise one without a prior attempt. Every fallback is audited with your account and this reason, and the issued code is single-use and expires when the employee clocks out. Ordinary staff can never issue one.</p>
+        <div class="form-grid fg-2" style="margin-top:0.75rem;align-items:end;">
+          <div class="field">
+            <label class="field-label" for="wf-rt-fallback-identifier">Employee code or email</label>
+            <input class="input" id="wf-rt-fallback-identifier" type="text" placeholder="e.g. STF-... or staff@jonehotel.com">
+          </div>
+          <div class="field">
+            <label class="field-label" for="wf-rt-fallback-reason">Reason (at least 10 characters)</label>
+            <input class="input" id="wf-rt-fallback-reason" type="text" maxlength="200" placeholder="e.g. scanner faulty at front desk, supervisor approved">
+          </div>
+        </div>
+        <div class="row-actions" style="margin-top:0.75rem;">
+          <button class="btn btn-sm btn-accent" type="button" data-wf-rt-fallback-issue>Issue fallback code</button>
+        </div>
+        <p class="caption" data-wf-rt-fallback-state role="status" aria-live="polite" style="margin-top:0.5rem;"></p>
       </div>
     </div>
   </section>
@@ -112,7 +131,7 @@ function activeRecord(){return state.attendanceItems.filter(function(row){return
 function renderClockSummary(){var summary=document.querySelector("[data-wf-attendance-summary]"),note=document.querySelector("[data-wf-attendance-summary-note]"),actions=document.querySelector("[data-wf-clock-actions]");if(document.getElementById("wf-attendance-date").value!==hotelToday()){summary.textContent="Viewing historical attendance";note.textContent="Return to today's business date to use personal clock controls.";actions.innerHTML="";return;}if(isManager&&document.getElementById("wf-attendance-scope").value==="team"){summary.textContent="Viewing team attendance";note.textContent="Switch to My attendance to use your personal clock controls.";actions.innerHTML="";return;}var record=activeRecord();actions.innerHTML="";if(!record){summary.textContent="You are not clocked in";note.textContent="Clocking actions are server-timestamped and retained as immutable evidence.";clockButton("CLOCK_IN","Clock in","",actions);return;}if(record.status==="ON_BREAK"){summary.textContent="You are on break";note.textContent="Break started "+dateTime(record.active_break_started_at)+". End the break before clocking out.";clockButton("BREAK_ENDED","End break","",actions);return;}summary.textContent="You are on duty";note.textContent="Clocked in "+dateTime(record.clock_in_at)+(record.shift_reference?" for "+record.shift_reference:"")+".";clockButton("BREAK_STARTED","Start break","btn-outline",actions);clockButton("CLOCK_OUT","Clock out","",actions);}
 function clockButton(action,label,klass,mount){var button=document.createElement("button");button.type="button";button.className="btn btn-sm "+(klass||"");button.dataset.wfClock=action;button.textContent=label;mount.appendChild(button);}
 async function loadAttendance(page){if(page!=null)setPage("attendance",page);DATA.loading(attendanceRows);try{var params={page:currentPage("attendance"),page_size:JONE.dashboard.pageSize()},day=document.getElementById("wf-attendance-date").value,status=document.getElementById("wf-attendance-status").value,scope=isManager?document.getElementById("wf-attendance-scope").value:"mine";if(day)params.business_date=day;if(status)params.status=status;if(scope==="mine"&&me.id)params.staff_id=me.id;var response=await window.API.list("attendance",params),items=OPS.listItems(response);state.attendanceItems=items;renderClockSummary();if(!items.length){DATA.empty(attendanceRows,"clock","No attendance records found","Clock in to start your current attendance record, or change the filters.",7);}else{attendanceRows.innerHTML=items.map(function(row){return '<tr><td><strong>'+JONE.esc(row.staff_name||row.staff_email)+'</strong><br><small>'+JONE.esc(row.shift_reference||"No scheduled shift")+'</small></td><td>'+JONE.esc(date(row.business_date))+'</td><td>'+JONE.dashboard.statusPill(row.status)+'</td><td>'+JONE.esc(dateTime(row.clock_in_at))+'</td><td class="hide-sm">'+JONE.esc(dateTime(row.clock_out_at))+'</td><td class="hide-sm">'+JONE.esc(row.worked_minutes==null?"—":row.worked_minutes+" min")+'</td><td><button class="btn btn-sm btn-outline" type="button" data-wf-attendance-view="'+JONE.esc(row.reference)+'">View</button></td></tr>';}).join("");}renderPager("[data-wf-attendance-pagination]",items,response,loadAttendance,"attendance");}catch(err){state.attendanceItems=[];renderClockSummary();DATA.error(attendanceRows,"Attendance couldn't be loaded",(err&&err.message)||"Please try again in a moment.",7);}}
-async function clock(action){try{await window.API.create("attendanceClock",{action:action,idempotency_key:OPS.newIdempotencyKey("attendance-"+String(action).toLowerCase())});JONE.ui.toast(human(action)+" recorded.","success");loadAttendance(1);}catch(err){JONE.ui.toast((err&&err.message)||"The attendance action couldn't be recorded.","error");}}
+async function clock(action){var deskKey=window.Auth&&window.Auth.receptionistDesktopKey?window.Auth.receptionistDesktopKey():"";var opts=deskKey?{headers:{"X-JONE-Desktop-Key":deskKey}}:{};try{await window.API.create("attendanceClock",{action:action,idempotency_key:OPS.newIdempotencyKey("attendance-"+String(action).toLowerCase())},opts);JONE.ui.toast(human(action)+" recorded.","success");loadAttendance(1);}catch(err){JONE.ui.toast((err&&err.message)||"The attendance action couldn't be recorded.","error");}}
 async function viewAttendance(reference){var body=JONE.el("div",{class:"loading-skeleton",textContent:"Loading attendance record…"});JONE.ui.modal.open({title:"Attendance "+reference,body:body,size:"modal-lg"});try{var record=(await window.API.getOne("attendance",reference)).data||{};body.innerHTML='<dl class="profile-grid"><div><dt>Staff</dt><dd>'+JONE.esc(record.staff_name||record.staff_email)+'</dd></div><div><dt>Status</dt><dd>'+JONE.dashboard.statusPill(record.status)+'</dd></div><div><dt>Clock in</dt><dd>'+JONE.esc(dateTime(record.clock_in_at))+'</dd></div><div><dt>Clock out</dt><dd>'+JONE.esc(dateTime(record.clock_out_at))+'</dd></div><div><dt>Break minutes</dt><dd>'+JONE.esc(record.accumulated_break_minutes||0)+'</dd></div><div><dt>Worked minutes</dt><dd>'+JONE.esc(record.worked_minutes==null?"—":record.worked_minutes)+'</dd></div></dl><h4>Immutable event history</h4><div class="timeline">'+(record.events||[]).map(function(event){return '<div class="timeline-item"><strong>'+JONE.esc(human(event.type))+'</strong><span>'+JONE.esc(dateTime(event.occurred_at))+(event.actor_email?" · "+JONE.esc(event.actor_email):"")+'</span></div>';}).join("")+'</div>'; }catch(err){body.innerHTML='<div class="empty-state"><h3>Attendance record unavailable</h3><p>'+JONE.esc((err&&err.message)||"Please try again.")+'</p></div>';}}
 async function loadLeave(page){if(page!=null)setPage("leave",page);DATA.loading(leaveRows);try{var params={page:currentPage("leave"),page_size:JONE.dashboard.pageSize()},status=document.getElementById("wf-leave-status").value;if(status)params.status=status;var response=await window.API.list("leaveRequests",params),items=OPS.listItems(response);if(!items.length){DATA.empty(leaveRows,"calendar","No leave requests found","Request leave when you need time away, or change the filter.",7);}else{leaveRows.innerHTML=items.map(function(row){var controls='<button class="btn btn-sm btn-outline" type="button" data-wf-leave-view="'+JONE.esc(row.reference)+'">View</button>';if(row.status==="PENDING"&&isManager&&String(row.staff)!==String(me.id))controls+='<button class="btn btn-sm btn-accent" type="button" data-wf-leave-review="'+JONE.esc(row.reference)+'">Review</button>';if(["PENDING","APPROVED"].includes(row.status)&&(String(row.staff)===String(me.id)||isManager))controls+='<button class="btn btn-sm btn-outline" type="button" data-wf-leave-cancel="'+JONE.esc(row.reference)+'">Cancel</button>';return '<tr><td><strong>'+JONE.esc(row.reference)+'</strong><br><small>'+JONE.esc(row.reason||"—")+'</small></td><td>'+JONE.esc(row.staff_name||row.staff_email)+'</td><td>'+JONE.esc(date(row.start_date))+" – "+JONE.esc(date(row.end_date))+'</td><td>'+JONE.esc(human(row.type))+'</td><td>'+JONE.dashboard.statusPill(row.status)+'</td><td class="hide-sm">'+JONE.esc(row.reviewer_email||"—")+'</td><td><div class="row-actions">'+controls+'</div></td></tr>';}).join("");}renderPager("[data-wf-leave-pagination]",items,response,loadLeave,"leave");}catch(err){DATA.error(leaveRows,"Leave requests couldn't be loaded",(err&&err.message)||"Please try again in a moment.",7);}}
 async function newLeave(){var result=await JONE.dashboard.formModal({title:"Request leave",submitText:"Submit request",wide:true,values:{type:"ANNUAL",start_date:hotelToday(),end_date:hotelToday()},fields:[{name:"type",label:"Leave type",type:"select",required:true,options:[{value:"ANNUAL",label:"Annual"},{value:"SICK",label:"Sick"},{value:"PERSONAL",label:"Personal"},{value:"UNPAID",label:"Unpaid"},{value:"OTHER",label:"Other"}]},{name:"start_date",label:"First day",type:"date",required:true},{name:"end_date",label:"Last day",type:"date",required:true},{name:"reason",label:"Reason",type:"textarea",rows:3}],onSubmit:async function(values){if(values.end_date<values.start_date)throw new Error("The last leave day cannot be before the first.");values.idempotency_key=OPS.newIdempotencyKey("leave-request");await window.API.create("leaveRequests",values);return{message:"Leave request submitted."};}});if(result){JONE.ui.toast("Leave request submitted.","success");loadLeave(1);}}
@@ -139,6 +158,47 @@ document.querySelector("[data-wf-payslip-refresh]")&&document.querySelector("[da
 document.querySelector("[data-wf-payslip-rows]")&&document.querySelector("[data-wf-payslip-rows]").addEventListener("click",function(event){var b=event.target.closest("[data-wf-payslip-download]");if(b)downloadPayslip(b.getAttribute("data-wf-payslip-download"));});document.querySelector("[data-wf-attendance-refresh]").addEventListener("click",function(){loadAttendance();});document.querySelector("[data-wf-attendance-apply]").addEventListener("click",function(){loadAttendance(1);});document.getElementById("wf-attendance-date").addEventListener("change",function(){loadAttendance(1);});document.getElementById("wf-attendance-status").addEventListener("change",function(){loadAttendance(1);});if(isManager)document.getElementById("wf-attendance-scope").addEventListener("change",function(){loadAttendance(1);});document.querySelector("[data-wf-clock-actions]").addEventListener("click",function(event){var button=event.target.closest("button");if(button&&button.dataset.wfClock)clock(button.dataset.wfClock);});document.querySelector("[data-wf-new-leave]").addEventListener("click",newLeave);document.querySelector("[data-wf-leave-apply]").addEventListener("click",function(){loadLeave(1);});document.getElementById("wf-leave-status").addEventListener("change",function(){loadLeave(1);});document.querySelector("[data-wf-new-shift]").addEventListener("click",newShift);document.querySelector("[data-wf-shift-apply]").addEventListener("click",function(){loadShifts(1);});document.getElementById("wf-shift-status").addEventListener("change",function(){loadShifts(1);});document.querySelector("[data-wf-new-template]").addEventListener("click",newTemplate);document.querySelector("[data-wf-new-profile]").addEventListener("click",newProfile);document.querySelector("[data-wf-profile-apply]").addEventListener("click",function(){loadProfiles(1);});document.getElementById("wf-profile-status").addEventListener("change",function(){loadProfiles(1);});document.getElementById("wf-profile-search").addEventListener("input",JONE.debounce(function(){loadProfiles(1);},350));
 attendanceRows.addEventListener("click",function(event){var button=event.target.closest("button");if(button&&button.dataset.wfAttendanceView)viewAttendance(button.dataset.wfAttendanceView);});leaveRows.addEventListener("click",function(event){var button=event.target.closest("button");if(!button)return;if(button.dataset.wfLeaveView)viewLeave(button.dataset.wfLeaveView);else if(button.dataset.wfLeaveReview)reviewLeave(button.dataset.wfLeaveReview);else if(button.dataset.wfLeaveCancel)cancelLeave(button.dataset.wfLeaveCancel);});shiftRows.addEventListener("click",function(event){var button=event.target.closest("button");if(!button)return;if(button.dataset.wfShiftView)viewShift(button.dataset.wfShiftView);else if(button.dataset.wfShiftCancel)cancelShift(button.dataset.wfShiftCancel);});templateRows.addEventListener("click",function(event){var button=event.target.closest("button");if(button&&button.dataset.wfTemplateEdit)editTemplate(button.dataset.wfTemplateEdit);});profileRows.addEventListener("click",function(event){var button=event.target.closest("button");if(button&&button.dataset.wfProfileEdit)editProfile(button.dataset.wfProfileEdit);});
 document.getElementById("wf-attendance-date").value=hotelToday();loadAttendance(1);
+(function(){
+  var stateLine=document.querySelector("[data-wf-rt-desktop-state]");
+  var enrol=!!(window.Auth&&window.Auth.receptionistDesktopKey&&window.Auth.receptionistDesktopKey());
+  var management=!!(window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager","general_manager"]));
+  if(stateLine)stateLine.textContent=enrol
+    ?"This browser is enrolled as a Receptionist Desktop."
+    :management
+      ?"No desktop key in this browser: as a management account you can still operate the terminal, and every action is audited."
+      :"This browser is not an enrolled Receptionist Desktop, so the server will refuse to record attendance here.";
+  var fallback=document.querySelector("[data-wf-rt-fallback]");
+  if(fallback)fallback.hidden=!management;
+  var fallbackState=document.querySelector("[data-wf-rt-fallback-state]");
+  var issue=document.querySelector("[data-wf-rt-fallback-issue]");
+  if(!issue)return;
+  issue.addEventListener("click",async function(){
+    var idVal=(document.getElementById("wf-rt-fallback-identifier").value||"").trim();
+    var reason=(document.getElementById("wf-rt-fallback-reason").value||"").trim();
+    if(!idVal){JONE.ui.toast("Enter the employee code or email address of the staff member.","warning");return;}
+    if(reason.length<10){JONE.ui.toast("Give a reason of at least 10 characters.","warning");return;}
+    if(!JONE.guardSubmit(issue))return;
+    try{
+      var payload={action:"MANUAL_FALLBACK",manual_override_reason:reason};
+      if(idVal.indexOf("@")!==-1)payload.email=idVal;else payload.employee_code=idVal;
+      var res=await JONE.biometrics.executeReceptionTerminalAction(payload);
+      var box=document.getElementById("wf-rt-result");
+      if(box&&res){
+        box.innerHTML='<div><strong>'+JONE.esc(res.staff_name||"—")+'</strong> ('+JONE.esc(res.employee_code||"—")+')</div>'+
+          '<div class="caption muted">Supervised fallback · '+JONE.esc(res.authority||"")+' · evidence: '+JONE.esc(res.evidence||"")+'</div>'+
+          (res.access_code?'<div style="margin-top:0.65rem;padding:0.75rem;border:1px dashed var(--color-primary,#373435);border-radius:8px;text-align:center;"><div class="caption muted">6-DIGIT NUMERIC ACCESS CODE</div><div data-reception-issued-code style="font-size:1.6rem;font-weight:800;letter-spacing:0.28em;">'+JONE.esc(res.access_code)+'</div></div>':'')+
+          (res.expires_at?'<p class="caption muted" style="margin-top:0.5rem;">Valid until '+JONE.esc(dateTime(res.expires_at))+'. It is single-use and is cancelled the moment the employee clocks out.</p>':'');
+      }
+      if(fallbackState)fallbackState.textContent="Fallback code issued by "+((window.Auth.state&&window.Auth.state.user&&window.Auth.state.user.email)||"you")+" and recorded in the audit trail.";
+      JONE.ui.toast("Supervised fallback code issued.","success");
+      loadAttendance(1);
+    }catch(err){
+      var message=(err&&err.message)||"The fallback code could not be issued.";
+      if(fallbackState)fallbackState.textContent=message;
+      JONE.ui.toast(message,"error");
+    }finally{JONE.releaseGuard(issue);}
+  });
+})();
 document.querySelectorAll("button[data-wf-rt-action]").forEach(function(btn){
   btn.addEventListener("click",async function(){
     var action=btn.getAttribute("data-wf-rt-action");
@@ -152,7 +212,8 @@ document.querySelectorAll("button[data-wf-rt-action]").forEach(function(btn){
       if(box&&res){
         box.innerHTML='<div><strong>'+JONE.esc(res.staff_name||"—")+'</strong> ('+JONE.esc(res.employee_code||"—")+')</div>'+
           '<div class="caption muted">'+JONE.esc(res.department||"—")+' · '+JONE.esc(res.attendance_status||res.status||"")+'</div>'+
-          (res.access_code?'<div style="margin-top:0.65rem;padding:0.75rem;border:1px dashed var(--color-primary,#373435);border-radius:8px;text-align:center;"><div class="caption muted">6-DIGIT NUMERIC ACCESS CODE</div><div data-reception-issued-code style="font-size:1.6rem;font-weight:800;letter-spacing:0.28em;">'+JONE.esc(res.access_code)+'</div></div>':'');
+          (res.access_code?'<div style="margin-top:0.65rem;padding:0.75rem;border:1px dashed var(--color-primary,#373435);border-radius:8px;text-align:center;"><div class="caption muted">6-DIGIT NUMERIC ACCESS CODE</div><div data-reception-issued-code style="font-size:1.6rem;font-weight:800;letter-spacing:0.28em;">'+JONE.esc(res.access_code)+'</div></div>':'')+
+          (res.access_code&&res.expires_at?'<p class="caption muted" style="margin-top:0.5rem;">Valid until '+JONE.esc(dateTime(res.expires_at))+'. Single-use; cancelled on clock-out.</p>':'');
       }
       JONE.ui.toast("Biometric "+action.toLowerCase().replace(/_/g," ")+" completed.","success");
       loadAttendance(1);

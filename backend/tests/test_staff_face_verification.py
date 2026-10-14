@@ -12,7 +12,8 @@ from django.db import IntegrityError, transaction
 from django.test import override_settings
 from django.utils import timezone
 
-from apps.accounts.models import User
+from apps.accounts.desktop_policy import issue_desktop_key
+from apps.accounts.models import User, Workstation
 from apps.audit.models import AuditLog
 from apps.staff_operations.face_models import FaceTemplate, FaceVerificationAttempt
 from apps.staff_operations.models import AttendanceRecord
@@ -146,11 +147,20 @@ class FaceEnrollmentWorkflowTests(BaseAPITestCase):
 
 
 class FaceClockGateTests(BaseAPITestCase):
+    """Operational staff clock at the Receptionist Desktop (audit N4), so the
+    clock requests here carry the desk key exactly as the desk browser does.
+    What this class still pins is the FACE gate in front of the clock."""
+
     def setUp(self):
         super().setUp()
         self.worker = make_staff("face-clock@staff.dev", role=User.Role.HOUSEKEEPING)
         self.manager = make_staff("face-clock-mgr@staff.dev", role=User.Role.MANAGER)
         self.admin = make_staff("face-clock-admin@staff.dev", role=User.Role.ADMIN)
+        self.workstation = Workstation.objects.create(
+            name="Face Gate Desk", department=Workstation.Department.FRONT_DESK
+        )
+        self.desk_key = issue_desktop_key(self.workstation)
+        self.workstation.save()
         self.template = self._active_template(ENROLLED)
 
     def _active_template(self, descriptor):
@@ -160,7 +170,10 @@ class FaceClockGateTests(BaseAPITestCase):
 
     def _clock(self, action="CLOCK_IN", key="k1", **extra):
         self.auth(self.worker)
-        return self.client.post(CLOCK, {"action": action, "idempotency_key": key, **extra}, format="json")
+        return self.client.post(
+            CLOCK, {"action": action, "idempotency_key": key, **extra},
+            format="json", HTTP_X_JONE_DESKTOP_KEY=self.desk_key,
+        )
 
     def test_matching_probe_allows_clock_in_and_records_verified_attempt(self):
         response = self._clock(face_probe=SAME_FACE, idempotency_key="match-1")
