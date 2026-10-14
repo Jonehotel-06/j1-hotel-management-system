@@ -9,6 +9,7 @@ for an already-enrolled demo account, and the item-9 reload probe.
 """
 import asyncio
 import json
+import os
 import sys
 from datetime import datetime
 
@@ -91,6 +92,17 @@ async def new_page(browser, session, *, viewport=(1440, 900), extras=(), route_v
 async def goto(page, path):
     await page.goto(BASE + path, wait_until="networkidle")
     await page.wait_for_timeout(900)
+
+
+async def ui_subject_from_page(page, subject_id):
+    """The email of the UI subject, read from the profile page the flow just used."""
+    email = await page.evaluate(r"""() => {
+        const node = document.querySelector('[data-sp-email], #sp-email, .sp-meta');
+        const text = (node ? node.textContent : document.body.textContent) || "";
+        const match = text.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+        return match ? match[0] : "";
+    }""")
+    return email or f"profile id {subject_id}"
 
 
 async def main():
@@ -183,10 +195,19 @@ async def main():
         record(6, "manager sees the supervised fallback control", fallback_visible,
                f"fallback card visible={fallback_visible}")
 
-        # Enrol the demo staff member from the staff profile with the SAME capture
-        # path the terminal uses (item 1's UI + item 5's UI in one flow), then
-        # clock them in at the terminal.
-        await goto(page, "/dashboard/staff-profile.html?id=7")
+        # Enrol a staff member from the staff profile with the SAME capture path a
+        # terminal uses (item 1's UI), then clock them in at the terminal.
+        #
+        # The subject belongs to THIS script: an enrolment supersedes the previous
+        # template, and the capture here comes from the browser (a simulated reader
+        # in test mode), which does not match the deterministic probe the API-level
+        # driver verifies against ITS subject. Sharing one account between the two
+        # drivers looked like a product failure (403 NO_MATCH) and was really a
+        # test-isolation collision — enrolment AND the terminal verify below must
+        # therefore use the same, dedicated account.
+        ui_subject_id = os.environ.get("JONE_VERIFY_UI_SUBJECT_ID", "20")
+        ui_subject_email = os.environ.get("JONE_VERIFY_UI_SUBJECT_EMAIL", "")
+        await goto(page, f"/dashboard/staff-profile.html?id={ui_subject_id}")
         await page.click('[data-sp-tab="biometrics"]')
         await page.wait_for_selector("#sp-btn-enroll-fp", state="visible", timeout=30000)
         await page.click("#sp-btn-enroll-fp")
@@ -200,7 +221,7 @@ async def main():
         await goto(page, "/dashboard/workforce.html")
         await page.click('[data-wf-tab="reception-terminal"]')
         await page.wait_for_timeout(400)
-        await page.fill("#wf-rt-identifier", BAR)
+        await page.fill("#wf-rt-identifier", ui_subject_email or await ui_subject_from_page(page, ui_subject_id))
         await page.click('[data-wf-rt-action="CLOCK_IN"]')
         try:
             await page.wait_for_selector("[data-reception-issued-code]", timeout=30000)

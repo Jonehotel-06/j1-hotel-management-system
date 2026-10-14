@@ -270,6 +270,20 @@ def main():
     chef_tok = token(CHEF, headers={"X-JONE-Desktop-Key": DESK_KEY})
     print("· window 1 tokens acquired (admin, bar@desk, manager, chef)")
 
+    # ------------------------------------- precondition: the desk subject's probe
+    # The desk chain below verifies a deterministic probe against the subject's
+    # most recent ACTIVE template, and an enrolment supersedes the previous one —
+    # so any other enrolment of this account (a UI walkthrough, a colleague) would
+    # make the probe stop matching. Re-assert the probe template here, with the
+    # product's own enrolment call, so this driver is self-sufficient.
+    bar_id_pre = fresh_id(BAR, admin_tok)
+    r = requests.post(ADMIN_NS + "/fingerprint/staff/%s/" % bar_id_pre,
+                      json={"action": "enroll", "minutiae": VALID_MINUTIAE,
+                            "finger_position": "RIGHT_INDEX", "auto_approve": True},
+                      headers=auth(admin_tok), timeout=60)
+    print("· precondition: probe template for %s -> HTTP %s (%s)"
+          % (BAR, r.status_code, data_of(r).get("enrollment_status")))
+
     # ------------------------------------------------------------- item 1
     pool = Pool(admin_tok)
     print("· subject pool:", pool.describe())

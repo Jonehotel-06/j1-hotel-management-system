@@ -38,6 +38,14 @@ export JONE_VERIFY_EMAIL_ADMIN=admin@jonehotel.local      # …_MANAGER, _HR, _R
 export JONE_VERIFY_WORKSTATION=WS-RECEPTION-MAIN
 ```
 
+Extra variables used by individual drivers:
+
+```bash
+JONE_VERIFY_ALLOW_MIGRATION=1          # required by verify_capability_migration.py
+JONE_VERIFY_UI_SUBJECT_ID=20           # staff profile the UI driver enrols from (default: the demo housekeeper)
+JONE_VERIFY_UI_SUBJECT_EMAIL=…         # same person, when the profile page cannot be parsed for the email
+```
+
 Use the seeded role accounts of your environment. In this checkout's demo data the
 seeded roles share one password while the `demo.*` accounts use another — the
 scripts detect that situation rather than assuming it (see *Statefulness* below).
@@ -52,6 +60,8 @@ scripts detect that situation rather than assuming it (see *Statefulness* below)
 | `verify_room_service_live.py` | 8 | Room service against a real in-house stay (created through the staff booking API), then cleaned up: the draft is cancelled and the booking checked out with the balance preserved. |
 | `repro_pos.py` | 8 | The original defect reproduction: an invalid submit must show a visible error, a valid one must return 201 and keep the cart until the server confirms. |
 | `negative_control_secret_scan.py` | — | Proves the tightened secret scan in `tests-pwa/test_regression.py` still fails on planted credentials (and stops flagging the legitimate `/api/auth/password/change/` path). |
+| `verify_release_bump.py` | 9 / §F.5 | Deployment pre-flight on a **copy** of the frontend: `build.py` must be idempotent (a rebuild must not rewrite pages — that is how a hand-edited page would get clobbered), `--bump patch` must move `version.json`, `js/version.js` and the service-worker cache in lockstep and re-stamp every page, the built output must pass `validate.py`, and a browser still on the OLD release must be offered the new one. No credentials needed. |
+| `verify_capability_migration.py` | 1 | Drives `accounts/0021` **backwards and forwards** against the local database and probes the API at each step: the reverse reproduces the original 403, the re-apply restores the grants. This is the falsifiable version of the item-1 root cause, and it exercises the rollback step in §F of the report. Needs `JONE_VERIFY_ALLOW_MIGRATION=1` — it migrates a database, so point it at a development one only. |
 | `close_open_shifts.py` | — | Maintenance: clocks out attendance windows left open by a verification run, at the desk. Dry run by default; `--apply` to act. |
 
 Everything goes through the application's own API — no ORM writes, no direct SQL,
@@ -93,6 +103,14 @@ somebody in, record a capture failure. Consequences:
 * If a pool is exhausted, `close_open_shifts.py` shows what is left open and
   closes it (at the desk, as the subject, or with a manager's terminal authority
   for accounts whose password this environment does not use).
+* **Keep the drivers' subjects apart.** An enrolment supersedes the previous
+  template for that account, so a subject enrolled by one driver stops matching
+  the deterministic probe another driver verifies. When the UI driver and the API
+  driver shared one account, that collision surfaced as a product-looking
+  `403 NO_MATCH`. Each driver now owns its subject: the API driver re-asserts its
+  probe template for `bar@…` before the desk chain, and the UI driver enrols and
+  verifies the same dedicated account (a demo housekeeper by default), which is
+  excluded from the API driver's pool.
 
 ## Deleting this directory
 

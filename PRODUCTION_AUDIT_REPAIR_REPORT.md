@@ -2,7 +2,7 @@
 
 **Repository:** `https://github.com/Jonehotel-06/j1-hotel-management-system`
 **Base commit:** `49911ed` (`Update staff-profile.html`, 2026-10-14 05:35 +0100), branch `main`
-**Audit date:** 2026-10-14 · **Changes state:** applied in the working tree, **not committed/pushed** — 34 modified files and 14 new paths (11 code/tests + this report + `docs/ATTENDANCE_WORKSTATION_SETUP.md` + `tools/verification/`, which holds the eight verification drivers and their README). Delete `tools/verification/` if you would rather not carry them; nothing else imports them. Review with `git status` / `git diff`
+**Audit date:** 2026-10-14 · **Changes state:** applied in the working tree, **not committed/pushed** — 34 modified files and 14 new paths (11 code/tests + this report + `docs/ATTENDANCE_WORKSTATION_SETUP.md` + `tools/verification/`, which holds the nine verification drivers and their README). Delete `tools/verification/` if you would rather not carry them; nothing else imports them. Review with `git status` / `git diff`
 **Report scope:** the 11 reported items only. Nothing outside them was redesigned, refactored or re-architected.
 
 ---
@@ -95,10 +95,33 @@ Docs: `docs/ATTENDANCE_WORKSTATION_SETUP.md` *(new)* — desk enrolment/rotation
 | Frontend validator | `python frontend/validate.py` | **ALL OK** (68 HTML files, 30 standalone JS files) |
 | JS unit tests (node:test) | `node --test tests-js/test-*.js` (40 files) | **251 passed, 0 failed, 1 skipped** |
 | PWA suite (Playwright) — **fully green** | `python tests-pwa/<script>.py` | `test_pwa` **153/153**, `test_tables_and_update` **61/61**, `test_stickyhdr` **66/66**, `test_multi_room_ui` **46/46**, `test_sticky` **21/21**, `test_ios` **16/16**, `test_a11y` **16/16**, `test_regression` **88/88**, `test_update` **6/6**, `test_paystack` **5/5**, `test_table_layout` **OK**, `test_installability` **no critical manifest errors** |
-| Live API verification | `tools/verification/api_verify_items.py` (items 1,4,5,6,7 end-to-end) | **26 passed · 0 failed · 0 not executed** — the earlier 25-check version reported 25/25; one check was added (below), and the script is now repeatable |
+| Live API verification | `tools/verification/api_verify_items.py` (items 1,4,5,6,7 end-to-end) | **26 passed · 0 failed · 0 not executed** on a clean subject pool (the earlier 25-check version reported 25/25; one check was added — below — and the script is now self-sufficient and repeatable) |
+| Release pre-flight (§F.3) | `tools/verification/verify_release_bump.py` | **7/7** — see below |
+| Migration reversibility | `tools/verification/verify_capability_migration.py` | **6/6** — `migrate accounts 0020` runs clean, deactivates the two capability rows and drops the role grants; the rolled-back database reproduces the reported symptom for an administrator (**403**); `migrate accounts 0021` restores the grants identically and the same call answers **200**; head is `0021` afterwards |
 | Headless browser verification | `tools/verification/verify_ui_items.py` (items 1,2,3,5,6,9,10,11 + capture contract) | **26/26 checks passed** (re-verified after the move into the repository) |
 | POS — all four modes | `tools/verification/verify_pos_modes.py` (item 8) | **4/4** — table below |
 | POS error visibility | `tools/verification/repro_pos.py` | invalid submit → **visible** error box (`display:block`, text present); valid submit → **201**, cart cleared only after confirmation, draft in list, no console errors |
+
+**The deployment steps that can be tested without a production host have been.**
+`tools/verification/verify_release_bump.py` works on a copy of the frontend and
+found the release step sound: `build.py` with no bump is **idempotent** (0 of 70
+pages rewritten — which is also why the hand-edits in this change set survive a
+rebuild); `--bump patch` moves `version.json`, `js/version.js` and the service
+worker's `CACHE_VERSION` together (`1.1.12 → 1.1.13`) and re-stamps every asset
+reference on every page; the built output passes `validate.py`; and a browser
+still running the old release, served the new `version.json`, raises the
+"A new version is available" prompt with both actions — item 9's machinery, on a
+real bump rather than a mocked one. With the migration round-trip below and the
+smoke tests in (F), the only deployment step left unverified is the one that needs
+the deployed Vercel host (F.6).
+
+**The item-1 root cause is falsifiable, not asserted.** `tools/verification/verify_capability_migration.py`
+drives the migration backwards and forwards: with `accounts/0020` applied the two
+capability rows are inactive, the role grants are gone, and the biometric status
+read that started this audit answers **403 for an administrator** — the reported
+symptom, reproduced by removing exactly this change. Re-applying `0021` restores
+the same eight grants and the call answers **200**. The rollback step in §F is
+therefore tested before anyone needs it in an incident.
 
 One behaviour was confirmed while making the driver repeatable, and is now pinned by a
 standing check: **an administrator enrolling their own fingerprint gets
@@ -152,6 +175,12 @@ Nothing in the report is claimed as passing that was not executed. `tests-js/tes
 
 **Remaining risks**
 * Fingerprint capture depends on reader/bridge availability (documented; fallback covers outages).
+* **Driver subjects must stay apart (a lesson for whoever maintains `tools/verification/`).**
+  An enrolment supersedes the previous template for that account, so a subject enrolled
+  by one driver stops matching the deterministic probe another driver verifies. Two of
+  these drivers sharing `bar@…` produced a product-looking `403 NO_MATCH`; it was
+  test-isolation, not a defect. Each driver now owns its subject, and the API driver
+  re-asserts its probe template before the desk chain.
 * The Vercel ↔ Django rewrite form is the one thing a unit test cannot settle. Two mechanisms matter: with `destination: .../api/$1` the client's trailing slash must survive to Django (every call site sends one — asserted), and Django's `APPEND_SLASH` only redirects GET/HEAD, so a slash-less **POST** would be answered 301 → converted to GET and silently lose its body. Run the one-line check in (F.6) from the deployed host before the next deploy; the check that used to fail is now a skipped, live-only assertion instead of a red build.
 * The only non-green assertion left anywhere is the **skipped, live-only Vercel rewrite check**: it is an open action item before the next deploy (run F.6), not evidence that same-origin API calls work. Treat the deployed check as mandatory release gating until it is green against the real host.
 * Unseeded legacy capability references were re-checked: `booking.checkin`, `housekeeping.task.view`, `inventory.view`, `finance.view`, `payroll.pay` have **zero references** anywhere in the codebase (nothing to retire); `pos.order` appears only as part of `pos.order.manage`.
@@ -163,7 +192,7 @@ Nothing in the report is claimed as passing that was not executed. `tests-js/tes
 
 1. **Review & commit** — the repairs are uncommitted in this working tree (`git status`: 34 modified, 14 new paths). Nothing under `backend/apps/`, `frontend/js/`, `frontend/css/` or `frontend/dashboard/` moved in the last two passes: the later changes are test-harness corrections (`tests-pwa/`), the verification drivers (`tools/verification/`) and documentation. Suggested single commit message: *"Audit repair: attendance workstation enforcement, biometric capture integrity, POS draft errors, audit modal, sidebar profile link, desk enrolment relocation"*.
 2. **Backend** — deploy, then `python manage.py migrate` (applies `accounts.0021_staff_records_capabilities`; additive and reversible with `python manage.py migrate accounts 0020`). No model/schema change, no data deletion.
-3. **Frontend release** — `python frontend/build.py --bump` (or your usual release step) so `version.json`, `sw.js` `CACHE_VERSION` and the `?v=` stamps move together; then deploy the `frontend/` directory. Users on the old build get the item-9 prompt and a working **Refresh now**.
+3. **Frontend release** — `python frontend/build.py --bump` (or your usual release step) so `version.json`, `sw.js` `CACHE_VERSION` and the `?v=` stamps move together; then deploy the `frontend/` directory. Users on the old build get the item-9 prompt and a working **Refresh now**. This step is verified on a throwaway copy by `tools/verification/verify_release_bump.py` (**7/7**): a plain `build.py` run is idempotent (no spurious diffs, and rebuilt pages keep every hand-edit byte-for-byte), `--bump patch` moves all three version sources in lockstep and re-stamps every page. **Do not run `build.py` against the working tree expecting a clean state to prove the deploy is safe — it is a no-op by design; the throwaway check is the one that exercises the bump.**
 4. **Desk enrolment** — per front-desk browser: Staff → Workstations → *Issue desktop key* → paste into **Receptionist Desktop enrolment** on that PC. Verify the console shows *"This browser is enrolled as a Receptionist Desktop."*
 5. **Reader or fallback** — install the reader bridge on reception PCs, or decide to run the supervised fallback during reader outages. Leave `BIOMETRIC_READER_MODE` at its default.
 6. **Verify the Vercel ↔ Django path from the deployed host** (the red test above):
@@ -190,6 +219,8 @@ deleted.
 | Artefact | What it proves |
 |---|---|
 | `tools/verification/api_verify_items.py` | items 1, 4, 5, 6, 7 end-to-end against the running API — **26 checks** (see the note below) |
+| `tools/verification/verify_capability_migration.py` | drives `accounts/0021` **back and forward** and probes the API at each step — **6 checks**; the reverse reproduces the original 403, the re-apply restores it |
+| `tools/verification/verify_release_bump.py` | the whole release step on a throwaway copy — **7 checks**: `build.py` idempotence, the version bump in lockstep, re-stamping, validation, and an old tab being offered the new release |
 | `tools/verification/verify_ui_items.py` | items 1, 2, 3, 5, 6, 9, 10, 11 in headless Chromium against the live backend — **26 checks** |
 | `tools/verification/verify_pos_modes.py` | item 8 in takeaway / bar / restaurant, database-checked, self-cleaning — **4 checks** |
 | `tools/verification/verify_room_service_live.py` | item 8, room service against a real in-house stay (booking → check-in through the staff API) — **1 check** |

@@ -99,6 +99,42 @@ writes an `ATTENDANCE_FINGERPRINT_FAILED` audit entry). A plain `NO_MATCH` — a
 wrong finger — never qualifies; that is what re-enrolment and supervision are
 for. A refused fallback writes **nothing**: no attendance record, no code.
 
+### When no reader is attached at all
+
+A browser with no reader bridge refuses to fabricate a capture: pressing
+**Clock In & Issue 6-Digit Code** shows *"No fingerprint reader is available on
+this workstation…"* and **no request is sent** — the failure happens on the
+client, before the API. Signing in as an administrator does not change that:
+the admin privileges are *server-side* authority, they cannot supply the
+biometric itself. What the admin gets instead is the fallback above, which needs
+no capture.
+
+Note the consequence on such a station: **Clock Out (Expire Code) is also a
+capture action**, so it cannot be used either. End a shift from the employee's
+own desk sign-in instead — `Workforce → Attendance → Clock out`, which is a
+desk-authenticated self-clock and needs no probe; that cancels the access code
+and preserves the attendance history. Re-enrol the reader as soon as possible;
+until then every clock-in goes through the supervised fallback, which is what it
+exists for. (On the fallback card itself the button is *Issue fallback code* and
+the record appears immediately as `ON_DUTY`; the code is shown with its TTL.)
+
+One more consequence, verified against the running system: the desk terminal can
+only clock somebody **out** whose finger it can verify, so a staff member who has
+**no template at all** cannot be clocked out by the terminal (it answers 403).
+The fallback will still clock them *in* and issue a code — the intended order is
+to enrol staff first and keep the fallback for reader outages — so if a
+non-enrolled person is ever clocked in this way, close the window from their own
+desk sign-in (`Workforce → Attendance → Clock out`) or enrol them and close it
+from the terminal.
+
+There is deliberately **no button on the console** for `RECORD_FAILURE` today —
+it is an API action — so a **manager** cannot record device evidence from a
+reader-less station and therefore cannot self-serve a fallback there either.
+Administrators can, via the exception above. Wiring a *Record capture failure*
+control into the console (and a supervised clock-out that does not require a
+probe) is the small follow-up this document is flagging, not something the
+repair work pretended to fix.
+
 ## 5. Attendance codes
 
 * Issued by the server (`mint_temporary_workstation_credential`), bound to one
