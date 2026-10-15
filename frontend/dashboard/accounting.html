@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.12">
+<link rel="stylesheet" href="../css/main.css?v=1.1.13">
 
 </head>
 <body>
@@ -167,17 +167,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.12"></script>
-<script src="../js/config.js?v=1.1.12"></script>
-<script src="../js/utils.js?v=1.1.12"></script>
-<script src="../js/icons.js?v=1.1.12"></script>
-<script src="../js/api.js?v=1.1.12"></script>
-<script src="../js/theme.js?v=1.1.12"></script>
-<script src="../js/ui.js?v=1.1.12"></script>
-<script src="../js/auth.js?v=1.1.12"></script>
-<script src="../js/hotel-data.js?v=1.1.12"></script>
-<script src="../js/navigation.js?v=1.1.12"></script>
-<script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script>
+<script src="../js/runtime-config.js?v=1.1.13"></script>
+<script src="../js/config.js?v=1.1.13"></script>
+<script src="../js/utils.js?v=1.1.13"></script>
+<script src="../js/icons.js?v=1.1.13"></script>
+<script src="../js/api.js?v=1.1.13"></script>
+<script src="../js/theme.js?v=1.1.13"></script>
+<script src="../js/ui.js?v=1.1.13"></script>
+<script src="../js/auth.js?v=1.1.13"></script>
+<script src="../js/hotel-data.js?v=1.1.13"></script>
+<script src="../js/navigation.js?v=1.1.13"></script>
+<script src="../js/dashboard.js?v=1.1.13"></script><script src="../js/table-fit.js?v=1.1.13"></script>
 <script>
   JONE.ui.initChrome();
   // boot() redirects receptionists to 403.html. If a navigation is ever
@@ -520,6 +520,19 @@
   function expenseDetailText(value) {
     return (value === null || value === undefined || value === "") ? "\u2014" : JONE.esc(value);
   }
+  /* Audit-event payloads are evidence, but raw JSON dumps have unbreakable
+     tokens that blow out the dialog on phones. Render them as labelled
+     lines instead: same facts, readable, and wrap-safe. */
+  function eventDetailsHtml(details) {
+    if (!details) return "";
+    if (typeof details !== "object") return '<div class="caption">' + JONE.esc(String(details)) + "</div>";
+    return Object.keys(details).map(function (key) {
+      var value = details[key];
+      var text = value !== null && typeof value === "object" ? JSON.stringify(value) : String(value);
+      return '<div class="caption"><strong>' + JONE.esc(key.replace(/_/g, " ")) + ":</strong> " + JONE.esc(text) + "</div>";
+    }).join("");
+  }
+
   function expenseDetailHtml(detail, currency) {
     var events = Array.isArray(detail.events) ? detail.events : [];
     var paid = !!EXPENSE_STATUS_PAID[detail.status];
@@ -534,7 +547,7 @@
           return '<li><strong>' + JONE.esc(event.type || "Event") + '</strong>' +
             '<div class="caption">' + JONE.esc(JONE.formatDateTime(event.created_at)) +
             (event.actor_email ? ' \u00b7 ' + JONE.esc(event.actor_email) : '') + '</div>' +
-            (event.details ? '<div class="caption cell-clamp">' + JONE.esc(JSON.stringify(event.details)) + '</div>' : '') +
+            (event.details ? '<div class="detail-event-details">' + eventDetailsHtml(event.details) + '</div>' : '') +
             '</li>';
         }).join("") + '</ol>'
       : '<p class="caption">No audit events recorded for this expense.</p>';
@@ -1014,8 +1027,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.12"></script>
-<script src="../js/version.js?v=1.1.12"></script>
-<script src="../js/update-checker.js?v=1.1.12"></script>
+<script src="../js/pwa.js?v=1.1.13"></script>
+<script src="../js/version.js?v=1.1.13"></script>
+<script src="../js/update-checker.js?v=1.1.13"></script>
 </body>
 </html>

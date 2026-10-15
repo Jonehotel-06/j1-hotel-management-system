@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<script>
+/* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
+(function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Approvals | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/dashboard/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Staff">
+<link rel="stylesheet" href="../css/main.css?v=1.1.13">
+
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand">
+      <img src="../assets/icons/logo-official.svg" alt="" width="30" height="42">
+      <span>
+        <span class="brand-word">J-ONE</span><br>
+        <span class="brand-sub">Staff Console</span>
+      </span>
+    </div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer">
+      <div data-dash-user></div>
+      <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
+        <span data-icon="logOut" data-size="16"></span> Sign out
+      </button>
+    </div>
+  </aside>
+  <div class="dash-main">
+    <header class="dash-topbar">
+      <div class="dash-topbar-left">
+        <button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button>
+        <div class="dash-title" data-dash-title>
+          <h1>Approvals</h1>
+          <p>Everything waiting for a decision — expenses, payroll, leave, refunds and more, in one place.</p>
+        </div>
+      </div>
+      <div class="dash-topbar-right">
+        <div class="dash-topbar-actions" data-topbar-actions></div>
+        <button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false">
+          <span class="icon-moon" data-icon="moon" data-size="18"></span>
+          <span class="icon-sun" data-icon="sun" data-size="18"></span>
+        </button>
+      </div>
+    </header>
+    <main class="dash-content">
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Waiting for you</h2>
+          <div class="panel-actions">
+            <span class="caption" data-approvals-total>Loading…</span>
+            <button class="btn btn-sm btn-outline" type="button" data-approvals-refresh>Refresh</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <p class="caption" style="margin:0;">This inbox only lists queues <strong>you</strong> are allowed to decide, oldest first. Open a queue to review and decide it — approvals themselves still happen on their own pages, under their usual rules (including maker-checker: you cannot approve your own request).</p>
+        </div>
+      </section>
+
+      <div data-approvals aria-live="polite"></div>
+    </main>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.13"></script>
+<script src="../js/config.js?v=1.1.13"></script>
+<script src="../js/utils.js?v=1.1.13"></script>
+<script src="../js/icons.js?v=1.1.13"></script>
+<script src="../js/api.js?v=1.1.13"></script>
+<script src="../js/theme.js?v=1.1.13"></script>
+<script src="../js/ui.js?v=1.1.13"></script>
+<script src="../js/auth.js?v=1.1.13"></script>
+<script src="../js/hotel-data.js?v=1.1.13"></script>
+<script src="../js/navigation.js?v=1.1.13"></script>
+<script src="../js/dashboard.js?v=1.1.13"></script><script src="../js/table-fit.js?v=1.1.13"></script>
+<script>
+  JONE.ui.initChrome();
+  var __approvalsAllowed = JONE.dashboard.boot(["admin", "manager", "general_manager", "accounts_manager", "accountant", "hr_manager", "inventory_clerk", "storekeeper", "procurement_officer", "front_desk_supervisor"]);
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+(function(){
+  "use strict";
+  if (!__approvalsAllowed) return;
+  var wrap = document.querySelector("[data-approvals]");
+  var totalEl = document.querySelector("[data-approvals-total]");
+  var refreshBtn = document.querySelector("[data-approvals-refresh]");
+
+  function money(amount, currency) {
+    return amount === "" || amount == null ? "—" : JONE.formatNaira(amount);
+  }
+
+  function section(cat) {
+    var rows = (cat.items || []).map(function(item) {
+      return '<tr><td class="cell-nowrap"><strong>' + JONE.esc(item.reference || "—") + "</strong><br><small>" +
+        JONE.esc(item.title || "") + '</small></td><td class="cell-clamp">' + JONE.esc(item.detail || "—") +
+        '</td><td class="cell-nowrap">' + JONE.esc(item.requested_by || "—") + '</td><td class="cell-nowrap">' +
+        JONE.esc(item.requested_at ? JONE.formatDateTime(item.requested_at) : "—") + '</td><td class="num cell-nowrap">' +
+        JONE.esc(money(item.amount, item.currency)) + "</td></tr>";
+    }).join("");
+    var more = cat.count > (cat.items || []).length
+      ? '<p class="caption" style="margin:.75rem 0 0;">Showing the oldest ' + (cat.items || []).length + " of " + cat.count + " — open the queue to see the rest.</p>" : "";
+    return '<section class="panel" style="margin-top:1.25rem;">' +
+      '<div class="panel-head"><h2>' + JONE.esc(cat.label) + '</h2>' +
+      '<div class="panel-actions"><span class="caption">' + cat.count + ' pending</span>' +
+      '<a class="btn btn-sm" href="' + JONE.esc(cat.href) + '">Open queue</a></div></div>' +
+      (rows
+        ? '<div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="' + JONE.esc(cat.label) + '"><table class="table"><thead><tr><th>Reference</th><th>Detail</th><th>Requested by</th><th>Waiting since</th><th class="num">Amount</th></tr></thead><tbody>' + rows + "</tbody></table></div></div>" + (more ? '<div class="panel-body" style="padding-top:.5rem;">' + more + "</div>" : "")
+        : '<div class="panel-body"><p class="caption" style="margin:0;">Nothing waiting in this queue.</p></div>') +
+      "</section>";
+  }
+
+  async function load() {
+    wrap.innerHTML = '<div class="loading-block"><div class="spinner" role="status"></div><p class="muted">Loading approvals…</p></div>';
+    try {
+      var res = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.reportsApprovals);
+      var data = res.data || {};
+      var categories = data.categories || [];
+      var total = Number(data.total_pending || 0);
+      totalEl.textContent = total === 0 ? "All caught up" : total + (total === 1 ? " item" : " items") + " waiting for your decision";
+      if (!categories.length) {
+        wrap.innerHTML = '<section class="panel" style="margin-top:1.25rem;"><div class="panel-body"><div class="empty-state"><h3>No approval queues assigned to you</h3><p>When a queue you can decide has something waiting, it will appear here.</p></div></div></section>';
+        return;
+      }
+      wrap.innerHTML = (total === 0
+        ? '<section class="panel" style="margin-top:1.25rem;"><div class="panel-body"><p class="text-success" style="margin:0;"><strong>All caught up.</strong> Nothing is waiting for your approval right now.</p></div></section>'
+        : "") + categories.map(section).join("");
+      JONE.icons.inject(wrap);
+    } catch (err) {
+      totalEl.textContent = "";
+      wrap.innerHTML = '<section class="panel" style="margin-top:1.25rem;"><div class="panel-body"><div class="empty-state"><h3>Approvals couldn\'t be loaded</h3><p>' + JONE.esc((err && err.message) || "Please try again in a moment.") + "</p></div></div></section>";
+    }
+  }
+
+  if (refreshBtn) refreshBtn.addEventListener("click", load);
+  load();
+})();
+</script>
+<script src="../js/pwa.js?v=1.1.13"></script>
+<script src="../js/version.js?v=1.1.13"></script>
+<script src="../js/update-checker.js?v=1.1.13"></script>
+</body>
+</html>

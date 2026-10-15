@@ -323,6 +323,7 @@
     reportsRevenue:      "/api/admin/reports/revenue/", // retained for legacy consumers
     reportsOccupancy:    "/api/admin/reports/occupancy/",
     reportsBookings:     "/api/admin/reports/bookings/",
+    reportsApprovals:    "/api/admin/reports/approvals/",   // approvals inbox: everything awaiting a decision
 
     /* Authoritative availability search (public; used by staff too) */
     availability:  "/api/rooms/availability/",

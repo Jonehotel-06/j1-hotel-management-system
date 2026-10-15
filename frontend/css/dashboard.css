@@ -2027,3 +2027,7 @@ body.receipt-view-page .receipt-utility-actions .btn-outline:hover {
   border-left: 2px solid var(--color-border);
 }
 .detail-timeline > li:last-child { border-left-color: var(--color-primary); }
+.detail-timeline > li { min-width: 0; }
+.detail-timeline .caption { overflow-wrap: anywhere; }
+.detail-event-details { display: grid; gap: 0.15rem; margin-top: 0.25rem; min-width: 0; }
+.detail-event-details .caption { overflow-wrap: anywhere; }

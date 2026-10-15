@@ -12,6 +12,7 @@
   const NAV = [
     { group: "Overview", items: [
       { label: "Dashboard", href: "index.html", icon: "layout", view: "dashboard" },
+      { label: "Approvals", href: "approvals.html", icon: "checkCircle", view: "approvals", capabilities: ["expense.approve", "payment.refund.approve", "payroll.approve", "leave.approve", "inventory.adjust.approve", "procurement.approve"], roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant", "hr_manager", "inventory_clerk", "storekeeper", "procurement_officer"] },
     ]},
     { group: "Operations", items: [
       { label: "Bookings", href: "bookings.html", icon: "calendar", view: "bookings" },
@@ -86,7 +87,9 @@
         const active = current.endsWith("/" + it.href);
         if (active) cls += " is-active";
         const badge = it.view === "notifications"
-          ? '<span class="count notif-count" data-notif-badge hidden></span>' : "";
+          ? '<span class="count notif-count" data-notif-badge hidden></span>'
+          : it.view === "approvals"
+            ? '<span class="count approvals-count" data-approvals-badge hidden></span>' : "";
         html += '<a class="' + cls + '" href="' + it.href + '"' +
           (active ? ' aria-current="page"' : "") +
           ' data-base-label="' + JONE.esc(it.label) + '">' +
@@ -302,6 +305,26 @@
      One centralized refresh path (spec §21): a single request per page load
      (plus explicit refreshes after read/mark-all actions), fanned out to
      every badge target — sidebar item, bottom-nav item, topbar control. */
+  /* Approvals badge: how many decisions are waiting for this user. The
+     backend only counts queues the caller may decide, so the number is
+     always personal. Failures are silent — the badge is a convenience. */
+  let approvalsBadgeInflight = null;
+  function refreshApprovalsBadge() {
+    if (!document.querySelector("[data-approvals-badge]") || !window.API || !window.APP_CONFIG) return;
+    const endpoint = (window.APP_CONFIG.API_ENDPOINTS || {}).reportsApprovals;
+    if (!endpoint || approvalsBadgeInflight) return;
+    approvalsBadgeInflight = window.API.get(endpoint).then((res) => {
+      const total = Number((res && res.data && res.data.total_pending) || 0);
+      // Query at paint time: the sidebar re-renders once capabilities load,
+      // and painting into the replaced nodes would lose the count.
+      document.querySelectorAll("[data-approvals-badge]").forEach((badge) => {
+        badge.textContent = total > 99 ? "99+" : String(total);
+        badge.hidden = total <= 0;
+      });
+    }).catch(() => { /* badge is a convenience; the Approvals page is the source of truth */ })
+      .finally(() => { approvalsBadgeInflight = null; });
+  }
+
   const notifBadge = (() => {
     let lastCount = null;
     let inflight = null;
@@ -696,12 +719,14 @@
         renderSidebar("[data-dash-nav]");
         window.JONE.nav && window.JONE.nav.initDashboardNav();
         if (window.JONE.nav) window.JONE.nav.markActive(document);
+        refreshApprovalsBadge();
       }).catch(() => { /* role-filtered navigation remains a safe UX fallback */ });
     }
     // Most pages need one badge request, fanned out to every badge target.
     // A page that already fetches an authoritative unread count can defer this
     // and call notifBadge.set(count), avoiding a duplicate API round trip.
     if (!options.deferNotificationBadge) notifBadge.refresh();
+    refreshApprovalsBadge();
     enhanceScrollRegions();
     const subCtx = window.Auth && typeof window.Auth.getSubdomainContext === "function"
       ? window.Auth.getSubdomainContext() : null;
