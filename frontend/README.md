@@ -37,8 +37,9 @@ persisted per visitor.
 - **CSS3** with custom properties (design tokens) and a mobile-first, responsive grid
 - **Vanilla JavaScript** (ES modules not required; pattern-based IIFE modules on `window`)
 - **REST API** via a single centralized layer (`js/api.js`)
-- **Progressive Web App** — installable, with an offline fallback and a conservative service worker
-  (plain `sw.js` + `manifest.webmanifest`; no Workbox, no bundler, no added dependency)
+- **Progressive Web App** — the staff dashboard is installable, with an offline fallback and a
+  conservative service worker (plain `sw.js` + `dashboard/manifest.webmanifest`; no Workbox, no
+  bundler, no added dependency). The public website is deliberately not installable.
 - No build step at runtime — optional `build.py` inlines shared chrome for zero component-request overhead
 - `dev_server.py` — tiny zero-dependency dev server that serves the static site and proxies
   `/api/` + `/media/` to the Django backend, so the site runs exactly as in production (same-origin API)
@@ -106,8 +107,8 @@ frontend/
 ├── favicon/              # official favicons (supplied)
 ├── favicon/icon-192.png, icon-512.png            # PWA install icons (purpose: any)
 ├── favicon/icon-maskable-192.png, -512.png       # PWA maskable icons (Android adaptive)
-├── manifest.webmanifest  # PWA web app manifest (served from the site root)
-├── sw.js                 # service worker (MUST stay at the root for scope "/")
+├── dashboard/manifest.webmanifest  # staff-dashboard PWA manifest (scope "/dashboard/")
+├── sw.js                 # service worker script (registered only with scope "/dashboard/")
 ├── offline.html          # offline fallback page
 ├── vercel.json           # Vercel static config: MIME types, cache + security headers
 ├── robots.txt
@@ -385,32 +386,37 @@ so caching is deliberately conservative: static shell assets only.
 
 | File | Purpose |
 | ---- | ------- |
-| `manifest.webmanifest` | Web app manifest (name, icons, `start_url`, `scope`, shortcuts) |
-| `sw.js`                | Service worker — **must remain at the site root** |
+| `dashboard/manifest.webmanifest` | Staff-dashboard web app manifest (name, icons, `start_url`, `scope`) |
+| `sw.js`                | Service worker — script stays at the site root; registration scope is `/dashboard/` only |
 | `offline.html`         | Branded offline fallback page |
 | `js/pwa.js`            | The *only* place that registers the SW; also the install UI |
 | `favicon/icon-*.png`   | 192/512 install icons + maskable variants, generated from the official mark |
 
 ### Manifest
 
-- `name`: `J-ONE HOTEL & LODGE` · `short_name`: `J-ONE Hotel`
-- `start_url`: `/index.html` — the installed app opens the **public hotel website**, never a
-  dashboard route (which would be a broken, login-gated entry point).
-- `scope`: `/` — the whole site, so in-app navigation to `/rooms.html`, `/booking.html` etc. stays
-  inside the installed app.
+- `name`: `J-ONE Staff Dashboard` · `short_name`: `J-ONE Staff`
+- `start_url`: `/dashboard/index.html` — the installed app opens the **staff dashboard**. Staff
+  still sign in normally; the PWA changes neither authentication nor authorization.
+- `scope`: `/dashboard/` — only the staff console is inside the installed app.
 - `display`: `standalone`; `theme_color` `#373435`; `background_color` `#F8F9FA`.
 - Icons: 192×192 and 512×512 with `purpose: "any"`, plus separate **maskable** icons whose artwork
   sits inside the Android safe zone so the mark is never clipped or distorted.
 
-Every page — root, `/dashboard/`, and `/portal/` alike — references it with the **root-absolute** path
-`/manifest.webmanifest`, so one identical tag is correct at every directory depth.
+Only dashboard pages reference `/dashboard/manifest.webmanifest`. Public pages and the guest
+portal link no manifest and carry no standalone-web-app metadata, so guests are never offered a
+site install. Browsers may still expose their own manual bookmark / “Add to Home Screen” menu,
+which no website can remove; a J-ONE app installed from an earlier public release likewise stays
+on that device until its owner removes it.
 
 ### Service-worker caching strategy
+
+`js/pwa.js` registers the worker only from dashboard pages, with scope `/dashboard/`. Public and
+portal pages are therefore never controlled by it. Public pages load `js/pwa.js` only for its
+connectivity helpers and to unregister the legacy root-scoped worker earlier releases created.
 
 | Request | Strategy | Why |
 | ------- | -------- | --- |
 | Precached shell (CSS, core JS, icons, `offline.html`) | Cache-first | Small, versioned, safe to serve stale |
-| Public HTML pages | **Network-first**, cached copy as fallback | Stays fresh; still readable offline once visited |
 | Local images | Stale-while-revalidate, **capped at 40 entries** | Fast repeat views without unbounded growth |
 | `/api/**` | **Never intercepted** | Availability, bookings, payments, auth — always live |
 | `/media/**` | Never intercepted | Backend-owned uploads |
@@ -426,11 +432,12 @@ tokens, and any request carrying an `Authorization` header.
 
 ### Offline behaviour
 
-- A page you have already visited opens from cache.
-- A page you have not visited falls back to **`offline.html`** — *not* `index.html`; this is a
-  multi-page site, so URLs are never rewritten to an SPA shell.
-- `/dashboard/*` and `/portal/*` offline show the branded offline page (containing no staff or
-  guest data) rather than the browser's error screen.
+- Public guest pages are not service-worker controlled, so offline they behave like ordinary web
+  pages; booking and payment actions still fail closed with a plain-language message and are
+  never queued.
+- `/dashboard/*` offline shows the branded offline page (containing no staff data) rather than the
+  browser's error screen. `/portal/*` remains deliberately outside the worker, so its
+  memory-only session is never replayed or discarded by a worker-driven reload.
 - Booking, availability and payment actions are blocked with a plain-language message
   ("An internet connection is required to complete a booking…"). **Nothing is ever queued for
   later** — a silently deferred booking or payment would be unsafe.
@@ -460,15 +467,16 @@ JONE.pwa.endCriticalFlow();     // when it completes or aborts
 
 ### Installation
 
-**Android (Chrome/Edge)** — `beforeinstallprompt` is captured and the default mini-infobar
-suppressed. A hotel-branded "Install J-ONE Hotel App" control appears in the mobile drawer and the
-footer, plus a dismissible banner on the homepage only (dismissal is remembered for 30 days).
-Nothing is shown once the app is installed.
+**Android (Chrome/Edge)** — on dashboard pages, `beforeinstallprompt` is captured and the default
+mini-infobar suppressed. A branded “Install J-ONE Staff App” control appears in the dashboard
+sidebar, plus a dismissible banner on the dashboard home only (dismissal is remembered for 30
+days). Nothing is shown once the app is installed. Public guest pages link no manifest and show
+no install control or banner.
 
-**iOS/iPadOS (Safari)** — iOS exposes no install event, so tapping the same control opens
+**iOS/iPadOS (Safari)** — iOS exposes no install event, so tapping the dashboard control opens
 instructions: **Share → Add to Home Screen**. Android-specific wording is never shown to iOS users.
-`apple-touch-icon` and the Apple meta tags are in place for the home-screen icon, title and status
-bar.
+`apple-touch-icon` and the Apple meta tags are present on dashboard pages for the home-screen icon,
+title and status bar.
 
 The install UI uses the project's existing Lucide SVG icons (no emoji), real `<button>` elements
 with accessible names and visible focus states, and works in both light and dark themes.
@@ -480,9 +488,11 @@ cd frontend && python3 dev_server.py 5500 http://127.0.0.1:8000
 # → http://127.0.0.1:5500   (localhost counts as a secure context)
 ```
 
-In Chrome DevTools → **Application**: check *Manifest* (no errors, icons render), *Service Workers*
-(activated, scope `/`), and *Cache Storage* (only `jone-v*` caches — confirm no `/api/` or
-`/dashboard/` entries). Use the **Offline** checkbox in the Network panel to exercise the fallback.
+In Chrome DevTools → **Application**: from a dashboard page check *Manifest* (no errors, icons
+render), *Service Workers* (activated, scope `/dashboard/`), and *Cache Storage* (only `jone-v*`
+caches — confirm no `/api/` entries and no dashboard HTML; the dashboard manifest itself is a
+static asset). From a public page confirm there is no manifest and no service-worker registration.
+Use the **Offline** checkbox in the Network panel to exercise the fallback.
 
 > `file://` will not work — service workers require `http://localhost` or HTTPS.
 
@@ -557,15 +567,15 @@ same-origin empty value or a public API origin for that environment.
 | Output directory    | *(leave empty)*            |
 | Install command     | *(leave empty)*            |
 
-The root directory **must** be `frontend`, because `sw.js` and `manifest.webmanifest` have to be
-served from the deployed site root (`/sw.js`, `/manifest.webmanifest`) for the service worker to
-control the whole site.
+The root directory **must** be `frontend`, because `sw.js` has to be served from the deployed site
+root (`/sw.js`) and the staff manifest from `/dashboard/manifest.webmanifest`. The worker is
+registered only with scope `/dashboard/`; it never controls the public site.
 
 `vercel.json` (in `frontend/`) supplies:
 
 - the correct MIME types — `application/javascript` for `/sw.js`,
-  `application/manifest+json` for `/manifest.webmanifest`;
-- `Service-Worker-Allowed: /` so the worker's scope is the entire site;
+  `application/manifest+json` for `/dashboard/manifest.webmanifest`;
+- `Service-Worker-Allowed: /dashboard/` so the worker's maximum scope is the staff dashboard;
 - `Cache-Control: must-revalidate` on HTML, `sw.js` and the manifest, so a deploy is picked up
   immediately, and longer caching for `/assets/` and `/favicon/`;
 - `Cache-Control: no-store` for deployment-owned `/js/runtime-config.js` and everything under
@@ -603,7 +613,8 @@ control the whole site.
   page asset stamps. Do not edit the cache version by hand. Locally, use
   DevTools → Application → Service Workers → *Update on reload* / *Unregister*.
 - **Manifest 404 or "not installable"** — the Vercel **root directory must be `frontend`** so that
-  `/manifest.webmanifest` and `/sw.js` resolve at the site root. Installation also requires HTTPS.
+  `/dashboard/manifest.webmanifest` and `/sw.js` resolve at their deployed paths. Installation is
+  offered only from dashboard pages and also requires HTTPS.
 - **Blank content / "Unable to reach servers"** — the API origin is incorrect or the backend is down.
   Verify the deployed `runtime-config.js` `API_BASE_URL`, its no-store response header, and backend
   CORS. Public pages show a clear error state (or hide a section) rather than inventing records.

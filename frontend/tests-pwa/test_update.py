@@ -1,7 +1,7 @@
 # tests-pwa/test_update.py
 """Verify the SW update lifecycle: new version waits, old caches are purged,
 and activation only happens when the page asks for it."""
-import re, sys, time
+import json, re, sys, time
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
@@ -13,23 +13,49 @@ orig = SW.read_text()
 CUR = re.search(r'CACHE_VERSION = "([^"]+)"', orig).group(1)
 NEXT = "jone-testv-next"
 BASE = "http://127.0.0.1:8080"
+STUB = """
+localStorage.setItem('jone.auth', JSON.stringify({
+  email:'a@b.c', first_name:'Ada', last_name:'Staff', role:'ADMIN', permissions:[]}));
+sessionStorage.setItem('jone.session', JSON.stringify({access:'x.y.z', refresh:'r'}));
+"""
 out = []
 def check(n, ok, d=""):
     out.append((n, ok, d))
 
+def stub_api(page):
+    def handler(route):
+        url = route.request.url
+        if "/api/auth/capabilities/" in url:
+            body = {"success": True, "data": []}
+        elif "/api/auth/token/refresh/" in url:
+            body = {"success": True, "data": {"access": "stub-access", "refresh": "stub-refresh"}}
+        elif "/api/auth/me" in url or "/api/admin/profile" in url:
+            body = {"success": True, "data": {"id": 1, "email": "a@b.c", "first_name": "Ada",
+                                              "last_name": "Staff", "role": "ADMIN", "is_active": True}}
+        else:
+            body = {"success": True, "data": {"results": []}, "pagination": None}
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+    page.route(re.compile(r".*/api/.*"), handler)
+
 try:
     with sync_playwright() as pw:
         b = pw.chromium.launch(); ctx = b.new_context(service_workers="allow"); p = ctx.new_page()
-        p.goto(BASE + "/index.html", wait_until="load"); p.wait_for_timeout(1500)
+        stub_api(p); p.add_init_script(STUB)
+        p.goto(BASE + "/dashboard/index.html", wait_until="load"); p.wait_for_timeout(1500)
         v1 = p.evaluate("async()=> (await caches.keys())")
         check("current caches created", any(CUR in k for k in v1), f"{CUR} -> {v1}")
+
+        # Hold a critical flow so js/pwa.js cannot auto-apply the waiting
+        # worker mid-assertion (its documented safe-update lock). The worker
+        # itself still has no self.skipWaiting().
+        p.evaluate("() => JONE.pwa.beginCriticalFlow()")
 
         # Deploy "v2"
         SW.write_text(orig.replace(f'const CACHE_VERSION = "{CUR}"', f'const CACHE_VERSION = "{NEXT}"'))
         time.sleep(0.4)
 
         state = p.evaluate("""async () => {
-            const r = await navigator.serviceWorker.getRegistration();
+            const r = await navigator.serviceWorker.getRegistration("/dashboard/");
             await r.update();
             await new Promise(res => setTimeout(res, 1500));
             return { waiting: !!r.waiting, active: r.active && r.active.state,
@@ -42,7 +68,7 @@ try:
 
         # Page explicitly authorises the swap.
         p.evaluate("""async () => {
-            const r = await navigator.serviceWorker.getRegistration();
+            const r = await navigator.serviceWorker.getRegistration("/dashboard/");
             if (r.waiting) r.waiting.postMessage({ type: 'SKIP_WAITING' });
         }""")
         p.wait_for_timeout(2500)

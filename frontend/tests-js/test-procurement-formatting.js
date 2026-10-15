@@ -52,8 +52,8 @@ test("quantities render with the product's unit and measured precision", () => {
   assert.equal(win.qty("0.0000", "CRATE"), "0 CRATE");
   // The unit string is the product's own configured stock unit, shown as stored;
   // the PRECISION is what varies by unit, never the value.
-  assert.equal(win.qty("1.2500", "KG"), "1.250 KG");
-  assert.equal(win.qty("2.5000", "L"), "2.500 L");
+  assert.equal(win.qty("1.2500", "KG"), "1.25 KG");
+  assert.equal(win.qty("2.5000", "L"), "2.5 L");
   assert.equal(win.qty("3.5000", ""), "3.5");
   assert.equal(win.qty("0.0500", ""), "0.05");
 });

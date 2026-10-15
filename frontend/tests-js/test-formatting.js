@@ -80,13 +80,17 @@ test("whole-unit products show no decimals", () => {
   assert.equal(J.formatStockQuantity("20.0000", { base_unit: "BOTTLE" }), "20 BOTTLE");
 });
 
-test("measured products keep their configured precision", () => {
+test("quantities never show trailing zeros (staff display rule)", () => {
   const J = boot();
-  // 1.250 must not become 1, and must not lose its significant zeroes.
-  assert.equal(J.formatQuantity("1.250", { unit: "KG" }), "1.250 KG");
-  assert.equal(J.formatQuantity("2.500", { unit: "L" }), "2.500 L");
-  assert.equal(J.formatQuantity("2.5", { unit: "LITRE" }), "2.500 LITRE");
-  assert.equal(J.formatQuantity("0.1500", { unit: "L" }), "0.150 L");
+  // 20 reads as 20 for every unit; significant decimals are kept (1.25, 0.15).
+  assert.equal(J.formatQuantity("1.250", { unit: "KG" }), "1.25 KG");
+  assert.equal(J.formatQuantity("2.500", { unit: "L" }), "2.5 L");
+  assert.equal(J.formatQuantity("2.5", { unit: "LITRE" }), "2.5 LITRE");
+  assert.equal(J.formatQuantity("0.1500", { unit: "L" }), "0.15 L");
+  assert.equal(J.formatQuantity("20.0000", { unit: "KG" }), "20 KG");
+  assert.equal(J.trimQuantityValue("20.0000"), "20");
+  assert.equal(J.trimQuantityValue("1.2500"), "1.25");
+  assert.equal(J.trimQuantityValue("0.5000"), "0.5");
 });
 
 test("an explicit precision overrides the unit default", () => {
@@ -107,13 +111,13 @@ test("movement signs read clearly: +20 received, -4 issued", () => {
   const J = boot();
   assert.equal(J.formatQuantity("20.0000", { unit: "BOTTLE", signed: true }), "+20 BOTTLE");
   assert.equal(J.formatQuantity("-4.0000", { unit: "BOTTLE", signed: true }), "\u22124 BOTTLE");
-  assert.equal(J.formatQuantity("-0.1500", { unit: "L", signed: true }), "\u22120.150 L");
+  assert.equal(J.formatQuantity("-0.1500", { unit: "L", signed: true }), "\u22120.15 L");
   assert.equal(J.formatQuantity("0.0000", { unit: "BOTTLE", signed: true }), "0 BOTTLE");
 });
 
 test("the unit label can be suppressed and the raw value is never modified", () => {
   const J = boot();
-  assert.equal(J.formatQuantity("2.500", { unit: "L", showUnit: false }), "2.500");
+  assert.equal(J.formatQuantity("2.500", { unit: "L", showUnit: false }), "2.5");
   const raw = "2.5000";
   J.formatQuantity(raw, { unit: "L" });
   assert.equal(raw, "2.5000", "formatting must never mutate its input");

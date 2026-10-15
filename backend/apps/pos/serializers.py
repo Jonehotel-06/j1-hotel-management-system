@@ -335,6 +335,48 @@ class MenuItemManageSerializer(serializers.ModelSerializer):
             "preparation_minutes", "is_available", "is_active", "sort_order",
         ]
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        # Selling below supplier cost loses money on every sale, so a menu
+        # price may only be saved when it covers the known purchase cost of
+        # what one sale consumes (recipe components, or the stock item that is
+        # the product itself). When no supplier cost is on record there is
+        # nothing honest to compare against and the price is left to staff.
+        # Only a create or an actual price change is checked: editing an
+        # unrelated field (barcode, availability, ...) must not be blocked by
+        # a price that was set before the cost was recorded.
+        if self.instance is not None and "base_price" not in attrs:
+            return attrs
+        price = attrs.get("base_price", getattr(self.instance, "base_price", None))
+        if price is None:
+            return attrs
+        probe = self.instance or MenuItem(
+            sku=attrs.get("sku", ""), name=attrs.get("name", ""),
+        )
+        if self.instance is not None:
+            probe = MenuItem(
+                pk=self.instance.pk,
+                sku=attrs.get("sku", self.instance.sku),
+                name=attrs.get("name", self.instance.name),
+            )
+        from apps.inventory.services.valuation_service import menu_item_cost_basis
+
+        basis = menu_item_cost_basis(probe)
+        if basis is None:
+            return attrs
+        currency = str(attrs.get("currency", getattr(self.instance, "currency", "NGN")) or "NGN").upper()
+        if basis["currencies"] and basis["currencies"] != {currency}:
+            return attrs  # never compare prices across currencies
+        cost = basis["cost"]
+        if price < cost:
+            raise serializers.ValidationError({
+                "base_price": (
+                    f"Selling price {price} is below the supplier cost {cost} for this product. "
+                    "Enter a price equal to or higher than the purchase cost."
+                )
+            })
+        return attrs
+
     def validate_barcode(self, value):
         from .barcode import validate_barcode
 

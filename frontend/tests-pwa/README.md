@@ -28,9 +28,11 @@ refresh → back-navigation with a server-quoted total; a backend-VERIFIED payme
 Step 6 while failed/pending/abandoned/errored verifications never navigate and never claim success;
 and the room cards fitting 320–430px with no horizontal overflow, desktop layout unchanged.
 
-The safety-critical assertions are in `test_pwa.py` and `test_paystack.py`: no `/api/` or
-`/dashboard/` entry may appear in any cache, offline booking/payment must fail rather than return a
-cached "success", and the offline fallback must be `offline.html` (never `index.html`).
+The safety-critical assertions are in `test_pwa.py` and `test_paystack.py`: no `/api/` entry and no
+dashboard HTML may appear in any cache (the static dashboard manifest itself is precached),
+offline booking/payment must fail rather than return a cached "success", and the dashboard offline
+fallback must be `offline.html` (never `index.html`). `test_pwa.py` also asserts the public site has
+no manifest, no service-worker registration, and no install controls.
 
 `test_sticky.py` stubs a staff session in `localStorage`/`sessionStorage` to get past the auth
 guard. Note the dashboard scrolls inside `.dash-main`, **not** the window, so it asserts against

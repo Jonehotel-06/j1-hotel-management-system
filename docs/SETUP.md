@@ -250,10 +250,11 @@ celery -A config beat -l info
 ```
 
 Email delivery remains synchronous and does not require the worker. The
-frontend is a static deployment: publish `frontend/` with `sw.js` and
-`manifest.webmanifest` at the site root, preserve explicit `.html` routes, and
-apply the no-store portal headers above. The included `frontend/vercel.json` is
-an optional static-host example, not a deployment requirement.
+frontend is a static deployment: publish `frontend/` with `sw.js` at the site
+root and the staff-only manifest at `/dashboard/manifest.webmanifest`, preserve
+explicit `.html` routes, and apply the no-store portal headers above. The
+included `frontend/vercel.json` is an optional static-host example, not a
+deployment requirement.
 
 ## 5. Release workflow
 

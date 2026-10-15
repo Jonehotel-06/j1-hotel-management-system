@@ -55,6 +55,15 @@ class StockItem(TimeStampedModel):
     name = models.CharField(max_length=255)
     category = models.CharField(max_length=120, blank=True, default="", db_index=True)
     base_unit = models.CharField(max_length=30, default="UNIT")
+    # Optional supplier packaging, recorded so staff can receive stock the way
+    # it is actually bought (a pack or bag of loose pieces) while the ledger
+    # always counts and costs the item's base unit. ``units_per_pack`` is how
+    # many base units one pack/bag contains; ``pack_price`` is the last actual
+    # price paid for one pack/bag. Both are references only: the authoritative
+    # purchase cost remains the goods-receipt ledger and ``standard_cost`` is
+    # always expressed per ONE base unit.
+    units_per_pack = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(Decimal("0.01"))])
+    pack_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(ZERO)])
     reorder_level = models.DecimalField(max_digits=14, decimal_places=4, default=ZERO, validators=[MinValueValidator(ZERO)])
     standard_cost = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
     currency = models.CharField(max_length=3, default="NGN")

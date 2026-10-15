@@ -117,7 +117,7 @@ with sync_playwright() as pw:
             const c = await caches.open(n);
             for (const req of await c.keys()) {
                 const u = new URL(req.url).pathname;
-                if (u.startsWith('/api/') || u.startsWith('/dashboard/')) bad.push('url:' + u);
+                if (u.startsWith('/api/') || (u.startsWith('/dashboard/') && u.endsWith('.html'))) bad.push('url:' + u);
                 if (req.headers.get('authorization')) bad.push('authheader:' + u);
                 const res = await c.match(req);
                 if (res && /text|json|javascript/.test(res.headers.get('content-type')||'')) {
@@ -145,7 +145,7 @@ with sync_playwright() as pw:
                         "secret_key", "smtp_password", "smtp_pass")
     ASSIGNED = re.compile(
         r"""(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|smtp|access[_-]?key)\b\s*[:=]\s*["'][^"']{1,}["']""")
-    for f in ["/sw.js", "/js/pwa.js", "/manifest.webmanifest", "/js/runtime-config.js", "/js/config.js"]:
+    for f in ["/sw.js", "/js/pwa.js", "/dashboard/manifest.webmanifest", "/js/runtime-config.js", "/js/config.js"]:
         txt = page.request.get(BASE + f).text()
         bad = [m for m in PROVIDER_MARKERS if m in txt.lower()]
         bad += [m.group(0)[:48] for m in ASSIGNED.finditer(txt)]

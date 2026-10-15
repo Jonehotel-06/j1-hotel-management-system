@@ -2,6 +2,11 @@
 /* ==========================================================================
    J-ONE HOTEL & LODGE — service worker.
 
+   This worker is registered by js/pwa.js ONLY from staff dashboard pages,
+   with scope "/dashboard/": the installable PWA is the staff dashboard, and
+   the worker can therefore only control dashboard pages. Public guest pages
+   link no manifest, register no worker, and are never controlled by it.
+
    DESIGN RULES (deliberately conservative — this is a live booking system):
 
    1. The Django backend is the ONLY source of truth. No /api/ request is ever
@@ -12,9 +17,9 @@
       verified guest portal (/portal/), and bearer-link QR request page are
       network-only for navigations, so private/staff data or bearer-bearing
       forms are never replayed from shared Cache Storage.
-   3. Only immutable-ish, public, static assets are cached: our own CSS, JS,
-      icons and a small set of local images — plus previously visited public
-      HTML pages (network-first) and the offline fallback page.
+   3. Only immutable-ish static assets are cached: our own CSS, JS, icons and
+      a small set of local images, plus the offline fallback page. Dashboard
+      HTML itself is never cached (rule 2).
    4. Caches are versioned; every activation deletes every cache that does not
       belong to the current version.
    5. The new worker does NOT call skipWaiting() on its own. It waits until the
@@ -67,7 +72,7 @@ const PRECACHE_URLS = [
   "/favicon/icon-192.png",
   "/favicon/icon-512.png",
   "/assets/icons/logo-official.svg",
-  "/manifest.webmanifest"
+  "/dashboard/manifest.webmanifest"
 ];
 
 /* Bounded runtime image cache (public marketing imagery only). */

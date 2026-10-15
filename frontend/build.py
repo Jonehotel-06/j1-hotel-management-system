@@ -97,12 +97,22 @@ PUBLIC_PAGES = [
 PORTAL_PAGES = ["portal/login.html", "portal/index.html"]
 QR_SERVICE_PAGES = ["qr-service.html"]
 
-PWA_HEAD = (
-    '<link rel="manifest" href="/manifest.webmanifest">\n'
+# The installable PWA is the staff dashboard only. Public guest pages and the
+# guest portal intentionally receive no manifest link and no standalone-web-app
+# metadata, so the site never offers guests an app install.
+DASHBOARD_PWA_HEAD = (
+    '<link rel="manifest" href="/dashboard/manifest.webmanifest">\n'
     '<meta name="apple-mobile-web-app-capable" content="yes">\n'
     '<meta name="mobile-web-app-capable" content="yes">\n'
     '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">\n'
-    '<meta name="apple-mobile-web-app-title" content="J-ONE Hotel">'
+    '<meta name="apple-mobile-web-app-title" content="J-ONE Staff">'
+)
+
+_PWA_META_NAMES = (
+    "apple-mobile-web-app-capable",
+    "mobile-web-app-capable",
+    "apple-mobile-web-app-status-bar-style",
+    "apple-mobile-web-app-title",
 )
 
 
@@ -190,23 +200,43 @@ def _ensure_version_scripts(raw, depth):
     return raw
 
 
-def _ensure_pwa(raw, depth=""):
-    """Idempotently guarantee the PWA head metadata and js/pwa.js are present.
+def _strip_pwa_head(raw):
+    """Remove every manifest link / standalone-web-app meta, wherever it is.
 
-    The manifest is referenced with a ROOT-ABSOLUTE path so the very same tag is
-    correct at every directory depth (root pages and /dashboard/ alike).
+    Pages are then re-equipped strictly by area: dashboard pages get the
+    dashboard manifest; public pages get nothing installable.
     """
-    if 'rel="manifest"' not in raw:
+    raw = re.sub(r'\s*<link rel="manifest"[^>]*>', "", raw)
+    for name in _PWA_META_NAMES:
+        raw = re.sub(r'\s*<meta name="%s"[^>]*>' % name, "", raw)
+    return raw
+
+
+def _ensure_pwa(raw, depth="", is_dashboard=False):
+    """Idempotently apply the dashboard-only PWA wiring and js/pwa.js.
+
+    Dashboard pages link /dashboard/manifest.webmanifest (scope /dashboard/).
+    Public pages keep js/pwa.js only for its connectivity helpers, update
+    plumbing and legacy root-worker cleanup — with no manifest link they are
+    not installable and show no install UI.
+    """
+    raw = _strip_pwa_head(raw)
+    if is_dashboard:
         m = re.search(r'<link rel="apple-touch-icon"[^>]*>', raw)
         anchor = m.group(0) if m else None
         if anchor is None:
-            m = re.search(r'<link rel="stylesheet" href="[^"]*main\.css">', raw)
+            m = re.search(r'<link rel="stylesheet"[^>]*>', raw)
             anchor = m.group(0) if m else None
         if anchor:
-            raw = raw.replace(anchor, anchor + "\n" + PWA_HEAD, 1)
+            raw = raw.replace(anchor, anchor + "\n" + DASHBOARD_PWA_HEAD, 1)
+        else:
+            raw = raw.replace("</head>", DASHBOARD_PWA_HEAD + "\n</head>", 1)
     if 'name="theme-color"' not in raw:
         raw = raw.replace('<link rel="icon"',
                           '<meta name="theme-color" content="#373435">\n<link rel="icon"', 1)
+        if 'name="theme-color"' not in raw:
+            raw = raw.replace("</head>",
+                              '<meta name="theme-color" content="#373435">\n</head>', 1)
     raw = re.sub(
         r'<script src="(?:\.\./)?js/pwa\.js(?:\?[^"]*)?"></script>',
         f'<script src="{depth}js/pwa.js"></script>',
@@ -287,7 +317,7 @@ def build(path, version):
     # localStorage theme boot, or update-checker there: a reload could discard
     # an opaque portal session or an issued QR bearer before it is printed.
     if not is_memory_only_page:
-        raw = _ensure_pwa(raw, depth=depth)
+        raw = _ensure_pwa(raw, depth=depth, is_dashboard=path.startswith("dashboard/"))
         raw = _ensure_version_scripts(raw, depth)
 
     # --- Version wiring ------------------------------------------------------

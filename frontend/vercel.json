@@ -15,12 +15,12 @@
         },
         {
           "key": "Service-Worker-Allowed",
-          "value": "/"
+          "value": "/dashboard/"
         }
       ]
     },
     {
-      "source": "/manifest.webmanifest",
+      "source": "/dashboard/manifest.webmanifest",
       "headers": [
         {
           "key": "Content-Type",

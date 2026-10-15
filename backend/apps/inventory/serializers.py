@@ -1,5 +1,5 @@
 """Bounded inventory/procurement API representations and command validation."""
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from rest_framework import serializers
 
@@ -39,14 +39,35 @@ class SupplierSerializer(serializers.ModelSerializer):
 
 class StockItemSerializer(serializers.ModelSerializer):
     preferred_supplier_name = serializers.CharField(source="preferred_supplier.name", read_only=True, allow_null=True)
+    # What one pack/bag costs at the per-piece standard cost; display-only.
+    pack_cost = serializers.SerializerMethodField()
 
     class Meta:
         model = StockItem
         fields = [
-            "id", "sku", "name", "category", "base_unit", "reorder_level", "standard_cost", "currency",
+            "id", "sku", "name", "category", "base_unit", "units_per_pack", "pack_price", "pack_cost",
+            "reorder_level", "standard_cost", "currency",
             "preferred_supplier", "preferred_supplier_name", "is_active", "notes", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "pack_cost", "created_at", "updated_at"]
+
+    def get_pack_cost(self, obj):
+        if obj.units_per_pack and obj.standard_cost:
+            return str((obj.standard_cost * obj.units_per_pack).quantize(Decimal("0.01")))
+        return None
+
+    def validate(self, attrs):
+        # Staff may record the actual pack price and the pieces it contains
+        # instead of doing the division themselves: when no per-piece cost was
+        # entered, the standard cost (always per ONE base unit) is derived
+        # from the pack price. An explicit per-piece price always wins, so a
+        # corrected piece price is never silently overwritten.
+        pack_price = attrs.get("pack_price", getattr(self.instance, "pack_price", None))
+        units_per_pack = attrs.get("units_per_pack", getattr(self.instance, "units_per_pack", None))
+        standard_cost = attrs.get("standard_cost", getattr(self.instance, "standard_cost", None))
+        if pack_price and units_per_pack and not standard_cost:
+            attrs["standard_cost"] = (pack_price / units_per_pack).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return attrs
 
 
 class StockBalanceSerializer(serializers.ModelSerializer):
@@ -135,12 +156,13 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
     # they let the UI render "4 BOTTLE" and an exact outstanding quantity instead
     # of dividing floats in the browser. No stored value is changed.
     base_unit = serializers.CharField(source="item.base_unit", read_only=True)
+    units_per_pack = serializers.DecimalField(source="item.units_per_pack", max_digits=10, decimal_places=2, read_only=True, allow_null=True)
     quantity_outstanding = serializers.SerializerMethodField()
 
     class Meta:
         model = PurchaseOrderLine
         fields = [
-            "id", "item", "item_sku", "item_name", "base_unit", "quantity_ordered", "quantity_received",
+            "id", "item", "item_sku", "item_name", "base_unit", "units_per_pack", "quantity_ordered", "quantity_received",
             "quantity_outstanding", "unit_cost", "notes",
         ]
         read_only_fields = fields
@@ -247,11 +269,12 @@ class StockConsumptionRequestSerializer(serializers.ModelSerializer):
 class StockCountLineSerializer(serializers.ModelSerializer):
     item_sku = serializers.CharField(source="item.sku", read_only=True)
     item_name = serializers.CharField(source="item.name", read_only=True)
+    base_unit = serializers.CharField(source="item.base_unit", read_only=True)
     adjustment_movement_reference = serializers.CharField(source="adjustment_movement.reference", read_only=True, allow_null=True)
 
     class Meta:
         model = StockCountLine
-        fields = ["id", "item", "item_sku", "item_name", "expected_quantity", "counted_quantity", "variance", "adjustment_movement_reference"]
+        fields = ["id", "item", "item_sku", "item_name", "base_unit", "expected_quantity", "counted_quantity", "variance", "adjustment_movement_reference"]
         read_only_fields = fields
 
 
@@ -289,10 +312,11 @@ class StockCountSubmitSerializer(serializers.Serializer):
 class StockRecipeLineSerializer(serializers.ModelSerializer):
     item_sku = serializers.CharField(source="item.sku", read_only=True)
     item_name = serializers.CharField(source="item.name", read_only=True)
+    base_unit = serializers.CharField(source="item.base_unit", read_only=True)
 
     class Meta:
         model = StockRecipeLine
-        fields = ["id", "item", "item_sku", "item_name", "quantity_per_menu_unit"]
+        fields = ["id", "item", "item_sku", "item_name", "base_unit", "quantity_per_menu_unit"]
         read_only_fields = fields
 
 

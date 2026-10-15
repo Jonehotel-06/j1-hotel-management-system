@@ -51,7 +51,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.db.models import DecimalField, F, Q, Sum
 
-from apps.pos.models import MenuCategory
+from apps.pos.models import MenuCategory, MenuItem
 
 from ..models import GoodsReceiptLine, StockBalance, StockItem, StockMovement, StockRecipe
 
@@ -163,7 +163,7 @@ def _recipe_basis(item_ids):
     queries regardless of how many rows the page holds.
     """
     if not item_ids:
-        return {}, {}
+        return {}, {}, {}
     recipes = (
         StockRecipe.objects.filter(
             is_active=True, tracking_mode=StockRecipe.TrackingMode.COMPONENTS, lines__item_id__in=item_ids,
@@ -174,6 +174,7 @@ def _recipe_basis(item_ids):
     )
     per_item = {}
     departments = {}
+    price_kinds = {}
     for recipe in recipes:
         lines = list(recipe.lines.all())
         if not lines:
@@ -201,9 +202,42 @@ def _recipe_basis(item_ids):
                 continue
             if implied > ZERO:
                 per_item.setdefault(item_id, []).append(implied)
+                price_kinds.setdefault(item_id, "RECIPE_IMPLIED_AVERAGE")
             if area:
                 departments.setdefault(item_id, set()).add(area)
-    return per_item, departments
+    # Direct-sale fallback: most bar/retail products are sold exactly as they
+    # are stocked (one menu item = one stock item) and only acquire a recipe
+    # when the first delivered order auto-links them. Those products still
+    # have a real selling price — the matching active menu item's price — so
+    # their expected revenue and gross profit must show immediately instead of
+    # waiting for a recipe to exist.
+    missing_ids = [item_id for item_id in item_ids if not per_item.get(item_id)]
+    if missing_ids:
+        stock_rows = {
+            row.pk: row for row in StockItem.objects.filter(pk__in=missing_ids).only("pk", "sku", "name")
+        }
+        menu_rows = list(
+            MenuItem.objects.filter(is_active=True).select_related("category")
+            .only("sku", "name", "base_price", "category__service_area")
+        )
+        by_sku = {}
+        by_name = {}
+        for menu in menu_rows:
+            if menu.base_price and menu.base_price > ZERO:
+                by_sku.setdefault(str(menu.sku or "").strip().lower(), menu)
+                by_name.setdefault(str(menu.name or "").strip().lower(), menu)
+        for item_id in missing_ids:
+            item = stock_rows.get(item_id)
+            if item is None:
+                continue
+            menu = by_sku.get(str(item.sku or "").strip().lower()) or by_name.get(str(item.name or "").strip().lower())
+            if menu is None:
+                continue
+            per_item[item_id] = [menu.base_price]
+            price_kinds[item_id] = "MENU_ITEM_MATCH"
+            if menu.category_id:
+                departments.setdefault(item_id, set()).add(menu.category.get_service_area_display())
+    return per_item, departments, price_kinds
 
 
 def product_profitability_projection(*, search="", location_id=None, department="", supplier_id=None,
@@ -230,7 +264,7 @@ def product_profitability_projection(*, search="", location_id=None, department=
     scoped_item_ids = sorted({balance.item_id for balance in balances})
     weighted_cost, latest_cost = _receipt_cost_basis(scoped_item_ids)
     receipt_supplier = _supplier_basis(scoped_item_ids)
-    implied_prices, departments = _recipe_basis(scoped_item_ids)
+    implied_prices, departments, price_kinds = _recipe_basis(scoped_item_ids)
 
     rows = []
     for balance in balances:
@@ -246,7 +280,7 @@ def product_profitability_projection(*, search="", location_id=None, department=
 
         prices = implied_prices.get(item.pk, ())
         selling_price = (sum(prices, ZERO) / Decimal(len(prices))) if prices else None
-        price_basis = "RECIPE_IMPLIED_AVERAGE" if prices else "NO_ACTIVE_RECIPE"
+        price_basis = price_kinds.get(item.pk, "RECIPE_IMPLIED_AVERAGE") if prices else "NO_ACTIVE_RECIPE"
 
         quantity = balance.quantity_on_hand or ZERO
         stock_value = _quantize(quantity * unit_cost, MONEY_QUANTUM) if unit_cost is not None else None
@@ -311,9 +345,9 @@ def product_profitability_projection(*, search="", location_id=None, department=
     if low_stock_only:
         rows = [row for row in rows if row["needs_reorder"]]
     if sellable is True:
-        rows = [row for row in rows if row["price_basis"] == "RECIPE_IMPLIED_AVERAGE"]
+        rows = [row for row in rows if row["price_basis"] != "NO_ACTIVE_RECIPE"]
     elif sellable is False:
-        rows = [row for row in rows if row["price_basis"] != "RECIPE_IMPLIED_AVERAGE"]
+        rows = [row for row in rows if row["price_basis"] == "NO_ACTIVE_RECIPE"]
     if min_margin is not None:
         rows = [
             row for row in rows
@@ -403,8 +437,103 @@ def projection_filter_choices():
     }
 
 
+def _item_purchase_costs(item_ids):
+    """Weighted-average goods-receipt cost per item across all locations."""
+    costs = {}
+    if not item_ids:
+        return costs
+    rows = (
+        StockMovement.objects.filter(
+            type=StockMovement.Type.RECEIPT, item_id__in=item_ids, unit_cost__isnull=False,
+        )
+        .values("item_id")
+        .annotate(
+            cost_total=Sum(F("quantity_delta") * F("unit_cost"), output_field=DecimalField(max_digits=26, decimal_places=6)),
+            quantity_total=Sum("quantity_delta", output_field=DecimalField(max_digits=26, decimal_places=6)),
+        )
+    )
+    for row in rows:
+        if row["quantity_total"] and row["quantity_total"] > ZERO and row["cost_total"] is not None:
+            costs[row["item_id"]] = row["cost_total"] / row["quantity_total"]
+    return costs
+
+
+def _stock_unit_cost(item, receipt_costs):
+    """Best known supplier cost for ONE base unit of ``item`` (``None`` = unknown)."""
+    cost = receipt_costs.get(item.pk)
+    if cost is not None and cost > ZERO:
+        return cost
+    if item.standard_cost and item.standard_cost > ZERO:
+        return item.standard_cost
+    return None
+
+
+def menu_item_cost_basis(menu_item):
+    """Supplier cost of selling ONE unit of ``menu_item``, if it is knowable.
+
+    Resolution order mirrors how stock is actually consumed:
+
+    1. the item's active stock recipes — the cost of one menu unit is the sum
+       of ``quantity_per_menu_unit x supplier cost`` over its components
+       (the highest-cost active recipe is used, so the price covers every
+       location that sells it);
+    2. a stock item that is the same product (matching SKU, else exact name),
+       costed per base unit.
+
+    Costs come from real goods receipts (weighted average) and fall back to
+    the item's standard cost. Returns ``None`` when no cost is on record —
+    callers must not invent one. The result carries the component currencies
+    so a caller can refuse to compare across currencies.
+    """
+    recipes = list(
+        StockRecipe.objects.filter(
+            menu_item_id=menu_item.pk, is_active=True, tracking_mode=StockRecipe.TrackingMode.COMPONENTS,
+        ).prefetch_related("lines__item")
+    ) if menu_item.pk else []
+    component_items = {}
+    for recipe in recipes:
+        for line in recipe.lines.all():
+            component_items[line.item_id] = line.item
+    matched = None
+    if not component_items:
+        matched = (
+            StockItem.objects.filter(is_active=True, sku__iexact=str(menu_item.sku or "").strip()).first()
+            or StockItem.objects.filter(is_active=True, name__iexact=str(menu_item.name or "").strip()).first()
+        )
+        if matched is not None:
+            component_items[matched.pk] = matched
+    if not component_items:
+        return None
+    receipt_costs = _item_purchase_costs(sorted(component_items))
+    if recipes:
+        best = None
+        for recipe in recipes:
+            total = ZERO
+            currencies = set()
+            for line in recipe.lines.all():
+                unit_cost = _stock_unit_cost(line.item, receipt_costs)
+                if unit_cost is None:
+                    total = None
+                    break
+                total += (line.quantity_per_menu_unit or ZERO) * unit_cost
+                currencies.add((line.item.currency or "NGN").upper())
+            if total is not None and total > ZERO and (best is None or total > best[0]):
+                best = (total, currencies)
+        if best is None:
+            return None
+        return {"cost": best[0].quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP), "basis": "RECIPE", "currencies": best[1]}
+    unit_cost = _stock_unit_cost(matched, receipt_costs)
+    if unit_cost is None:
+        return None
+    return {
+        "cost": unit_cost.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP),
+        "basis": "STOCK_ITEM",
+        "currencies": {(matched.currency or "NGN").upper()},
+    }
+
+
 __all__ = [
     "MONEY_QUANTUM", "SORT_KEYS", "PROJECTION_LABEL",
-    "product_profitability_projection", "projection_filter_choices",
+    "menu_item_cost_basis", "product_profitability_projection", "projection_filter_choices",
     "projection_summary", "sort_projection",
 ]

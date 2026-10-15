@@ -98,7 +98,7 @@ test("a not-derivable figure renders as a dash and never as a fabricated zero", 
   assert.equal(win.proj("-5000"), "\u2212\u20a65,000.00", "reversals keep their sign");
   assert.equal(win.projQty(null, {}), "\u2014");
   assert.equal(win.projQty("20.0000", { base_unit: "BOTTLE" }), "20 BOTTLE");
-  assert.equal(win.projQty("2.5000", { base_unit: "L" }), "2.500 L", "measured units keep their precision");
+  assert.equal(win.projQty("2.5000", { base_unit: "L" }), "2.5 L", "quantities show no trailing zeros");
   assert.equal(win.projPercent(null), "\u2014");
   assert.equal(win.projPercent("36.50"), "36.50%");
 });

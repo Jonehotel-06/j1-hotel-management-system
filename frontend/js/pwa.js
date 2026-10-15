@@ -1,10 +1,18 @@
 /* js/pwa.js */
 /* ==========================================================================
    PWA layer — service-worker registration, safe update handling, and the
-   hotel-branded install experience.
+   staff-dashboard install experience.
 
    This is the ONLY place in the frontend that talks to navigator.serviceWorker.
    Pages never register the worker themselves.
+
+   The installable PWA is the STAFF DASHBOARD ONLY. Public guest pages link no
+   web app manifest, never register the worker, and never show install UI —
+   guests are not offered an app install. On those pages this file only
+   provides the connectivity helpers / update plumbing other scripts use, and
+   unregisters the legacy root-scoped worker earlier public releases created.
+   The worker itself is registered with scope "/dashboard/", so it can only
+   ever control dashboard pages.
 
    Safety notes
    - Registration is entirely optional: every failure is swallowed and the site
@@ -22,7 +30,10 @@
   window.JONE = window.JONE || {};
 
   var SW_URL = "/sw.js";
-  var SW_SCOPE = "/";
+  var SW_SCOPE = "/dashboard/";
+  // Installability is a dashboard-only feature (see the header note above).
+  var IS_DASHBOARD = location.pathname === "/dashboard" || location.pathname.indexOf("/dashboard/") === 0;
+  var INSTALL_ENABLED = IS_DASHBOARD;
   var DISMISS_KEY = "jone.pwa.installDismissedAt";
   var DISMISS_DAYS = 30;
 
@@ -215,13 +226,42 @@
   }
 
   /* ---------------------------- Registration -------------------------------- */
+  /* Earlier releases registered the worker at the root scope "/" from public
+     pages. Remove that legacy registration wherever it is found so the public
+     site stops being controlled/installable; the dashboard-scoped
+     registration (if any) is a different registration and is left untouched.
+     A page the legacy worker still controls stays controlled until its next
+     navigation — unregistering never breaks the page in hand. */
+  function unregisterLegacyRootWorker() {
+    if (!isSupported() || !navigator.serviceWorker.getRegistration) return Promise.resolve(false);
+    var rootScope;
+    try { rootScope = new URL("/", location.href).href; } catch (_) { return Promise.resolve(false); }
+    return navigator.serviceWorker.getRegistration("/")
+      .then(function (reg) {
+        if (reg && reg.scope === rootScope) {
+          log("removing legacy root registration:", reg.scope);
+          return reg.unregister();
+        }
+        return false;
+      })
+      .catch(function () { return false; });
+  }
+
   function register() {
     if (!isSupported()) { log("service workers not supported"); return; }
     if (!isSecureOrigin()) { log("insecure origin — registration skipped"); return; }
     if (location.protocol === "file:") return;
 
-    navigator.serviceWorker
-      .register(SW_URL, { scope: SW_SCOPE })
+    if (!IS_DASHBOARD) {
+      // Public guest pages never register the worker (not installable); they
+      // only retire the legacy root registration described above.
+      unregisterLegacyRootWorker();
+      return;
+    }
+
+    unregisterLegacyRootWorker().then(function () {
+      return navigator.serviceWorker.register(SW_URL, { scope: SW_SCOPE });
+    })
       .then(function (reg) {
         registration = reg;
         log("registered, scope:", reg.scope);
@@ -257,14 +297,14 @@
   function iosInstructions() {
     if (!window.JONE || !window.JONE.ui || !window.JONE.ui.modal) return;
     window.JONE.ui.modal.open({
-      title: "Add J-ONE Hotel to your Home Screen",
+      title: "Add J-ONE Staff to your Home Screen",
       body:
         '<ol style="margin:0;padding-left:1.25rem;line-height:1.7;">' +
         "<li>Tap the <strong>Share</strong> button in Safari&rsquo;s toolbar.</li>" +
         "<li>Scroll down and choose <strong>Add to Home Screen</strong>.</li>" +
-        "<li>Tap <strong>Add</strong> &mdash; J-ONE Hotel &amp; Lodge will open like an app.</li>" +
+        "<li>Tap <strong>Add</strong> &mdash; the J-ONE staff dashboard will open like an app.</li>" +
         "</ol>" +
-        '<p style="margin-top:1rem;color:var(--color-text-muted);">Booking and payment still require an internet connection.</p>'
+        '<p style="margin-top:1rem;color:var(--color-text-muted);">The dashboard still requires an internet connection and your staff sign-in.</p>'
     });
   }
 
@@ -275,6 +315,7 @@
   }
 
   function canInstall() {
+    if (!INSTALL_ENABLED) return false;  // public guest pages: never installable
     if (isStandalone()) return false;
     if (deferredPrompt) return true;
     return isIOSSafari();               // iOS: manual Add to Home Screen
@@ -290,6 +331,7 @@
   }
 
   function doInstall(trigger) {
+    if (!INSTALL_ENABLED) return;        // no install path exists off the dashboard
     if (deferredPrompt) {
       var prompt = deferredPrompt;
       deferredPrompt = null;
@@ -312,31 +354,28 @@
     }
   }
 
-  /* Injects the branded install action into the existing mobile drawer and
-     the footer — no new navigation, no redesign. */
+  /* Injects the branded install action into the dashboard sidebar, above the
+     existing Sign out control — dashboard only, no new navigation, no
+     redesign. It stays hidden until an install is actually possible. */
   function injectControls() {
-    if (isStandalone()) return;
+    if (!INSTALL_ENABLED || isStandalone()) return;
 
-    var drawerRow = document.querySelector(".mobile-drawer .mobile-footer-row");
-    if (drawerRow && !drawerRow.querySelector("[data-pwa-install]")) {
+    var sidebarFooter = document.querySelector(".dash-sidebar-footer");
+    if (sidebarFooter && !sidebarFooter.querySelector("[data-pwa-install]")) {
       var b = document.createElement("button");
       b.type = "button";
-      b.className = "btn btn-outline";
+      b.className = "btn btn-sm btn-outline";
       b.setAttribute("data-pwa-install", "");
       b.hidden = true;
-      b.innerHTML = '<span aria-hidden="true">' + icon("download", 18) + "</span> Install J-ONE Hotel App";
-      drawerRow.appendChild(b);
-    }
-
-    var footerBottom = document.querySelector(".site-footer .footer-bottom");
-    if (footerBottom && !footerBottom.querySelector("[data-pwa-install]")) {
-      var link = document.createElement("button");
-      link.type = "button";
-      link.className = "pwa-install-link";
-      link.setAttribute("data-pwa-install", "");
-      link.hidden = true;
-      link.innerHTML = '<span aria-hidden="true">' + icon("download", 16) + "</span> Install J-ONE Hotel App";
-      footerBottom.appendChild(link);
+      b.style.width = "100%";
+      b.style.justifyContent = "center";
+      b.style.marginBottom = "0.5rem";
+      b.style.color = "#D6D5D3";
+      b.style.borderColor = "rgba(255,255,255,0.2)";
+      b.innerHTML = '<span aria-hidden="true">' + icon("download", 16) + "</span> Install J-ONE Staff App";
+      var signOut = sidebarFooter.querySelector("[data-logout]");
+      if (signOut) sidebarFooter.insertBefore(b, signOut);
+      else sidebarFooter.appendChild(b);
     }
 
     document.addEventListener("click", function (e) {
@@ -354,22 +393,23 @@
   }
   function showBanner() {
     if (bannerEl || isStandalone() || recentlyDismissed() || !canInstall()) return;
-    // Only on the public homepage — never on booking, payment or the dashboard.
+    // Only on the dashboard home — never on a public guest page, a booking or
+    // payment flow, or a focused operational screen.
     var p = location.pathname;
-    var onHome = p === "/" || /\/index\.html$/.test(p);
-    if (!onHome || p.indexOf("/dashboard/") === 0) return;
+    var onDashboardHome = p === "/dashboard" || p === "/dashboard/" || /\/dashboard\/index\.html$/.test(p);
+    if (!onDashboardHome) return;
 
     bannerEl = document.createElement("div");
     bannerEl.className = "pwa-banner";
     bannerEl.setAttribute("role", "region");
-    bannerEl.setAttribute("aria-label", "Install the J-ONE Hotel app");
+    bannerEl.setAttribute("aria-label", "Install the J-ONE Staff app");
     bannerEl.innerHTML =
       '<span class="pwa-banner-mark" aria-hidden="true">' +
         '<img src="/favicon/icon-192.png" alt="" width="32" height="32">' +
       "</span>" +
       '<span class="pwa-banner-copy">' +
-        "<strong>Install J-ONE Hotel App</strong>" +
-        "<span>Faster access to rooms, offers and your stays.</span>" +
+        "<strong>Install J-ONE Staff App</strong>" +
+        "<span>Open the staff dashboard like an app.</span>" +
       "</span>" +
       '<button type="button" class="btn btn-sm btn-accent" data-pwa-install>Install</button>' +
       '<button type="button" class="btn-icon btn-ghost pwa-banner-close" aria-label="Dismiss install prompt">' +
@@ -417,6 +457,9 @@
 
   /* --------------------------------- Boot ----------------------------------- */
   window.addEventListener("beforeinstallprompt", function (e) {
+    // Public pages link no manifest, so Chrome does not offer an install
+    // there; this guard also keeps any stray prompt away from guests.
+    if (!INSTALL_ENABLED) return;
     e.preventDefault();               // suppress the default mini-infobar
     deferredPrompt = e;
     syncControls();
@@ -444,6 +487,8 @@
 
   window.JONE.pwa = {
     isSupported: isSupported,
+    installEnabled: INSTALL_ENABLED,
+    swScope: SW_SCOPE,
     isStandalone: isStandalone,
     isIOS: isIOS,
     isOnline: isOnline,

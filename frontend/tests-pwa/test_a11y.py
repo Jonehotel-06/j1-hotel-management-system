@@ -5,6 +5,27 @@ from playwright.sync_api import sync_playwright
 AXE = urllib.request.urlopen("https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.10.2/axe.min.js").read().decode()
 out=[]
 def check(n,ok,d=""): out.append((n,ok,d))
+STUB = """
+localStorage.setItem('jone.auth', JSON.stringify({
+  email:'a@b.c', first_name:'Ada', last_name:'Staff', role:'ADMIN', permissions:[]}));
+sessionStorage.setItem('jone.session', JSON.stringify({access:'x.y.z', refresh:'r'}));
+"""
+
+def stub_api(page):
+    import json as _json, re as _re
+    def handler(route):
+        url = route.request.url
+        if "/api/auth/capabilities/" in url:
+            body = {"success": True, "data": []}
+        elif "/api/auth/token/refresh/" in url:
+            body = {"success": True, "data": {"access": "stub-access", "refresh": "stub-refresh"}}
+        elif "/api/auth/me" in url or "/api/admin/profile" in url:
+            body = {"success": True, "data": {"id": 1, "email": "a@b.c", "first_name": "Ada",
+                                              "last_name": "Staff", "role": "ADMIN", "is_active": True}}
+        else:
+            body = {"success": True, "data": {"results": []}, "pagination": None}
+        route.fulfill(status=200, content_type="application/json", body=_json.dumps(body))
+    page.route(_re.compile(r".*/api/.*"), handler)
 
 with sync_playwright() as pw:
     b=pw.chromium.launch(); ctx=b.new_context(service_workers="allow"); p=ctx.new_page()
@@ -25,8 +46,9 @@ with sync_playwright() as pw:
         const s=getComputedStyle(e); return s.outlineStyle !== 'none' || s.boxShadow !== 'none'; }""")
     check("offline.html: visible focus state", fv)
 
-    # --- install controls on homepage ---
-    p.goto("http://127.0.0.1:8080/index.html", wait_until="load"); p.wait_for_timeout(1200)
+    # --- install controls on the dashboard (the only installable area) ---
+    stub_api(p); p.add_init_script(STUB)
+    p.goto("http://127.0.0.1:8080/dashboard/index.html", wait_until="load"); p.wait_for_timeout(1200)
     p.evaluate("""() => { const e=new Event('beforeinstallprompt');
         e.prompt=()=>{}; e.userChoice=Promise.resolve({outcome:'dismissed'});
         window.dispatchEvent(e); }""")
@@ -44,48 +66,21 @@ with sync_playwright() as pw:
               p.eval_on_selector(".pwa-banner-close","e=>!!e.getAttribute('aria-label')"))
         check("banner decorative img has empty alt",
               p.eval_on_selector(".pwa-banner img","e=>e.getAttribute('alt')===''"))
-    # Keyboard reachability of the install controls, in the states a user meets
-    # them. The drawer control sits inside a CLOSED drawer, which the shell keeps
-    # aria-hidden + inert + visibility:hidden on purpose (audit N11): no element
-    # there can take focus, and that is the correct behaviour — not a defect.
-    # So assert all three states: closed drawer (must stay unreachable), the
-    # footer control (must be reachable), and the drawer once it is open.
+    # Keyboard reachability of the dashboard sidebar install control.
     states = p.evaluate("""async () => {
-        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-        const drawer = document.querySelector('.mobile-drawer');
-        const inDrawer = drawer && drawer.querySelector('[data-pwa-install]');
-        const footer = document.querySelector('.site-footer [data-pwa-install]');
-        const toggle = document.querySelector('.menu-toggle');
+        const control = document.querySelector('.dash-sidebar-footer [data-pwa-install]');
         const out = {};
-        if (inDrawer) {
-            inDrawer.hidden = false;
-            inDrawer.focus();
-            out.closedDrawerFocusable = document.activeElement === inDrawer;
-            out.closedDrawerAriaHidden = drawer.getAttribute('aria-hidden');
-        }
-        if (footer) { footer.hidden = false; footer.focus(); out.footerFocusable = document.activeElement === footer; }
-        if (toggle && inDrawer) {
-            toggle.click();
-            await sleep(400);
-            out.openDrawerAriaHidden = drawer.getAttribute('aria-hidden');
-            inDrawer.focus();
-            out.openDrawerFocusable = document.activeElement === inDrawer;
-            toggle.click();                 // leave the page exactly as found
-            await sleep(300);
-            out.restoredClosed = drawer.getAttribute('aria-hidden') === 'true';
+        if (control) {
+            control.hidden = false;
+            control.focus();
+            out.sidebarFocusable = document.activeElement === control;
+            const s = getComputedStyle(control);
+            out.visibleFocus = s.outlineStyle !== 'none' || s.boxShadow !== 'none';
         }
         return out;
     }""")
-    if states.get("closedDrawerFocusable") is not None:
-        check("closed drawer: install control is not focusable (aria-hidden + inert)",
-              states.get("closedDrawerFocusable") is False and states.get("closedDrawerAriaHidden") == "true",
-              str(states))
-    if states.get("footerFocusable") is not None:
-        check("footer install control is keyboard focusable", states.get("footerFocusable") is True, str(states))
-    if states.get("openDrawerFocusable") is not None:
-        check("open drawer: install control is keyboard focusable",
-              states["openDrawerFocusable"] is True and states.get("openDrawerAriaHidden") == "false"
-              and states.get("restoredClosed") is True, str(states))
+    if states.get("sidebarFocusable") is not None:
+        check("sidebar install control is keyboard focusable", states.get("sidebarFocusable") is True, str(states))
     check("install controls are real <button>s",
           p.eval_on_selector_all("[data-pwa-install]","els=>els.every(e=>e.tagName==='BUTTON')"))
     check("install controls have accessible names",
@@ -94,7 +89,7 @@ with sync_playwright() as pw:
           p.eval_on_selector_all("[data-pwa-install], .pwa-banner",
             "els=>els.every(e=>!/\\p{Extended_Pictographic}/u.test(e.textContent))"))
 
-    # axe on homepage with the PWA UI visible — compare to known baseline set
+    # axe on the dashboard with the PWA UI visible — compare to known baseline set
     p.add_script_tag(content=AXE)
     r2 = p.evaluate("""async()=>{const r=await axe.run(
         {include:[['.pwa-banner'],['[data-pwa-install]']]},{runOnly:['wcag2a','wcag2aa']});

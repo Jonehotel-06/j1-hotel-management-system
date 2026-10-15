@@ -116,9 +116,12 @@ const JONE = (() => {
     if (!Number.isFinite(n)) return "--";
     const unit = opts.unit || "";
     let decimals = quantityPrecision(unit, opts.precision);
-    if (decimals === null) {
-      // Unknown/absent unit: keep every significant decimal the value carries,
-      // but never invent trailing zeros for a whole number.
+    if (decimals === null || !Number.isInteger(opts.precision)) {
+      // Display rule (staff request): quantities read the way people count —
+      // `20`, never `20.0000`. Keep every significant decimal the value
+      // actually carries (`1.25`, `0.5`) but drop trailing zeros for every
+      // unit, whole-count or measured. An explicit `precision` option still
+      // wins for callers that must show a fixed number of places.
       const fraction = raw.split(".")[1] || "";
       const trimmed = fraction.replace(/0+$/, "");
       decimals = Math.min(trimmed.length, MAX_QUANTITY_DECIMALS);
@@ -133,6 +136,16 @@ const JONE = (() => {
     const prefix = negative ? "\u2212" : (showSign && n > 0 ? "+" : "");
     const label = opts.showUnit === false || !unit ? "" : unitSpacing(unit) + unit;
     return `${prefix}${body}${label}`;
+  }
+
+  /* Plain trimmed quantity text for form inputs: `20`, never `20.0000`.
+     String-based so no significant decimal is ever lost to float rounding. */
+  function trimQuantityValue(value) {
+    if (value === null || value === undefined || value === "") return "";
+    const raw = String(value).trim();
+    if (!/^-?\d+(\.\d+)?$/.test(raw)) return raw;
+    const trimmed = raw.replace(/\.?0+$/, "");
+    return trimmed === "-0" ? "0" : trimmed;
   }
 
   /* Convenience wrapper for a stock API row ({ quantity_on_hand, base_unit }). */
@@ -460,7 +473,7 @@ const JONE = (() => {
 
   return {
     formatNaira, formatMoney, CURRENCY_SYMBOLS,
-    formatQuantity, formatStockQuantity, quantityPrecisionFor, WHOLE_COUNT_UNITS,
+    formatQuantity, formatStockQuantity, trimQuantityValue, quantityPrecisionFor, WHOLE_COUNT_UNITS,
     formatDate, formatDateTime, offerPeriod, offerStatusNote,
     offerCriteria, offerDiscountLabel, parseISO, hotelTodayISO, todayISO, nightsBetween, setupDateConstraints,
     $, $$, el, esc, debounce, throttle, storage, bindData, paginate, initials,
