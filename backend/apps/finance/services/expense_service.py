@@ -37,7 +37,7 @@ def _event(*, expense, event_type, actor=None, details=None):
 def create_expense(
     *, actor, category, amount, incurred_on=None, payment_method=Expense.PaymentMethod.BANK_TRANSFER,
     accounting_class=Expense.AccountingClass.OPERATING, currency="NGN", payee="", supplier_reference="",
-    description="", receipt_url="", notes="", idempotency_key=None, cash_session=None,
+    description="", receipt_url="", notes="", idempotency_key=None, cash_session=None, department="",
 ) -> tuple[Expense, bool]:
     """Create or return a source-keyed draft expense without posting money."""
     if not has_capability(actor, "expense.manage"):
@@ -78,7 +78,7 @@ def create_expense(
                     reference=generate_finance_reference("EXP"), idempotency_key=key, category=category[:120],
                     amount=amount, currency=currency, incurred_on=incurred_on or hotel_today(),
                     payment_method=payment_method, accounting_class=accounting_class, payee=(payee or "")[:255],
-                    supplier_reference=(supplier_reference or "")[:120], description=description or "", receipt_url=(receipt_url or "")[:200],
+                    supplier_reference=(supplier_reference or "")[:120], department=(department or "").strip()[:80], description=description or "", receipt_url=(receipt_url or "")[:200],
                     requested_by=actor, notes=notes or "", cash_session=cash_session,
                 )
             break

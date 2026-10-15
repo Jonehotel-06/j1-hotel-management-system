@@ -515,6 +515,10 @@ class Expense(TimeStampedModel):
     currency = models.CharField(max_length=3, default="NGN")
     incurred_on = models.DateField(default=hotel_today, db_index=True)
     payee = models.CharField(max_length=255, blank=True, default="")
+    # Free-text operating department the cost belongs to (Kitchen,
+    # Housekeeping, Maintenance, Front Office, Admin, ...). Reporting and
+    # departmental cost tracking only — never changes posting behaviour.
+    department = models.CharField(max_length=80, blank=True, default="", db_index=True)
     supplier_reference = models.CharField(max_length=120, blank=True, default="")
     description = models.TextField(blank=True, default="")
     receipt_url = models.URLField(blank=True, default="")

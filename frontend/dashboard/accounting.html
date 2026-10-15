@@ -95,7 +95,28 @@
       </section>
     </div>
     <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
-      <div class="panel-head"><h2>Posted ledger transactions</h2></div>
+      <div class="panel-head"><h2>Night audit &amp; daily flash</h2><div class="panel-actions"><input class="input" type="date" id="na-date" data-allow-past aria-label="Night audit date"><button class="btn btn-sm" type="button" id="na-load">Run night audit</button></div></div>
+      <div class="panel-body">
+        <section class="kpi-grid" aria-label="Daily flash">
+          <div class="kpi"><div class="kpi-label">Revenue (day)</div><div class="kpi-value" data-na="revenue">--</div></div>
+          <div class="kpi"><div class="kpi-label">Occupancy</div><div class="kpi-value" data-na="occupancy">--</div><div class="kpi-sub" data-na="rooms">&nbsp;</div></div>
+          <div class="kpi"><div class="kpi-label">ADR</div><div class="kpi-value" data-na="adr">--</div><div class="kpi-sub">Accommodation revenue ÷ occupied rooms</div></div>
+          <div class="kpi"><div class="kpi-label">RevPAR</div><div class="kpi-value" data-na="revpar">--</div><div class="kpi-sub">Accommodation revenue ÷ available rooms</div></div>
+          <div class="kpi"><div class="kpi-label">Tenders captured</div><div class="kpi-value" data-na="tenders">--</div><div class="kpi-sub" data-na="tenders-sub">&nbsp;</div></div>
+          <div class="kpi"><div class="kpi-label">Discrepancies</div><div class="kpi-value" data-na="discrepancies">--</div><div class="kpi-sub">Drawer, room and billing checks</div></div>
+        </section>
+        <div class="panel-grid" style="margin-top:1rem;">
+          <div><h3 style="margin:0 0 .5rem;">Tenders by method</h3><div class="table-wrap"><table class="table"><thead><tr><th>Method</th><th class="num">Captured</th><th class="num">Refunded</th></tr></thead><tbody data-tbody="na-tenders"></tbody></table></div></div>
+          <div><h3 style="margin:0 0 .5rem;">Cash drawers</h3><div class="table-wrap"><table class="table"><thead><tr><th>Drawer</th><th class="num">Expected</th><th class="num">Counted</th><th class="num">Variance</th><th>Status</th></tr></thead><tbody data-tbody="na-drawers"></tbody></table></div></div>
+        </div>
+        <div class="panel-grid" style="margin-top:1rem;">
+          <div><h3 style="margin:0 0 .5rem;">Discrepancies &amp; checks</h3><div data-na-list="discrepancies"><p class="caption">Run the night audit to check drawers, occupied rooms and in-house billing.</p></div></div>
+          <div><h3 style="margin:0 0 .5rem;">In-house folios with balance due</h3><div class="table-wrap"><table class="table"><thead><tr><th>Stay</th><th>Guest</th><th>Room</th><th class="num">Balance</th></tr></thead><tbody data-tbody="na-unbilled"></tbody></table></div></div>
+        </div>
+      </div>
+    </section>
+    <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
+      <div class="panel-head"><h2>Posted ledger transactions</h2><div class="panel-actions"><button class="btn btn-sm" type="button" id="acct-journal"><span data-icon="plus" data-size="15"></span> Post journal entry</button></div></div>
       <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
         <thead><tr><th>Date</th><th>Reference</th><th>Type</th><th>Description</th><th>Status</th></tr></thead>
         <tbody data-tbody="ledger-tx"></tbody>
@@ -104,9 +125,9 @@
     
     <div class="panel-grid" style="margin-top:1.5rem;">
       <section class="panel" style="border:1px solid var(--color-border);">
-        <div class="panel-head"><h2>Expenses</h2></div>
+        <div class="panel-head"><h2>Expenses</h2><div class="panel-actions"><button class="btn btn-sm" type="button" id="acct-create-expense"><span data-icon="plus" data-size="15"></span> Create expense</button></div></div>
         <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-          <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Payee</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Status</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
+          <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Payee</th><th class="cell-nowrap">Department</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Status</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
           <tbody data-tbody="acct-expenses"></tbody>
         </table></div></div>
       </section>
@@ -448,6 +469,12 @@
     event.preventDefault();
     openExpenseDetails(button.getAttribute("data-expense-details"), button);
   });
+  document.addEventListener("click", function (event) {
+    var submit = event.target.closest ? event.target.closest("[data-expense-submit]") : null;
+    if (!submit) return;
+    event.preventDefault();
+    submitExpense(submit.getAttribute("data-expense-submit"));
+  });
   /* ---------------------- Expense details drill-down ----------------------
      Every expense record opens a details dialog that distinguishes what was
      INCURRED from what was actually PAID, discloses the attachment, and shows the
@@ -490,6 +517,7 @@
       expenseDetailRow("Accounting class", expenseDetailText(detail.accounting_class)) +
       expenseDetailRow("Payment method", expenseDetailText(detail.payment_method)) +
       expenseDetailRow("Payee / supplier", expenseDetailText(detail.payee)) +
+      expenseDetailRow("Department", expenseDetailText(detail.department)) +
       expenseDetailRow("Supplier reference", expenseDetailText(detail.supplier_reference)) +
       expenseDetailRow("Incurred on", expenseDetailText(detail.incurred_on)) +
       expenseDetailRow("Requested by", expenseDetailText(detail.requested_by_email)) +
@@ -531,7 +559,7 @@
       if(requestId!==loadSequence||!ex) return;
       var rows=rowsOf(response);
       if(!Array.isArray(rows)) rows=[];
-      ex.innerHTML=rows.length?rows.map(function(row){return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.amount))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"cell-nowrap\"><div class=\"row-actions\"><button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-details=\""+JONE.esc(row.reference||"")+"\" aria-label=\"View details for expense "+JONE.esc(row.reference||"")+"\">Details</button></div></td></tr>";}).join(""):"<tr><td colspan=\"5\"><div class=\"empty-state\"><h3>No expenses in this period</h3></div></td></tr>";
+      ex.innerHTML=rows.length?rows.map(function(row){return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.department||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.amount))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"cell-nowrap\"><div class=\"row-actions\">"+(row.status==="DRAFT"?"<button class=\"btn btn-sm\" type=\"button\" data-expense-submit=\""+JONE.esc(row.reference||"")+"\">Submit</button>":"")+"<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-details=\""+JONE.esc(row.reference||"")+"\" aria-label=\"View details for expense "+JONE.esc(row.reference||"")+"\">Details</button></div></td></tr>";}).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No expenses in this period</h3></div></td></tr>";
     },function(err){ if(requestId===loadSequence&&ex) DATA.error(ex,"Expenses couldn't be loaded",financeErrorMessage(err),4); });
     getReport(window.APP_CONFIG.API_ENDPOINTS.financeCashSessions,{}).then(function(response){
       if(requestId!==loadSequence||!cash) return;
@@ -545,6 +573,218 @@
     },function(err){ if(requestId===loadSequence&&ap) DATA.error(ap,"Approvals couldn't be loaded",financeErrorMessage(err),5); });
 
   }
+
+  /* ------------------------- Create expense -------------------------
+     Records a controlled expense DRAFT through the existing Finance expense
+     workflow (submit -> approve -> post stays with the existing controls).
+     The payee can be a supplier already registered in Procurement, and a
+     product/stock item already in Inventory can be linked: choosing a
+     product classifies the expense as an Inventory asset and names the
+     product in the record, so expenses for things already in the system
+     never need free-typed identities. */
+  async function expenseOptions() {
+    var suppliers = [], items = [];
+    try { suppliers = rowsOf(await window.API.list("suppliers", { page_size: 100 })); } catch (e) { suppliers = []; }
+    try { items = rowsOf(await window.API.list("inventoryItems", { page_size: 100, active: "true" })); } catch (e) { items = []; }
+    return { suppliers: suppliers || [], items: items || [] };
+  }
+  async function createExpense() {
+    var lookups = await expenseOptions();
+    var supplierById = {}, itemById = {};
+    lookups.suppliers.forEach(function (row) { supplierById[String(row.id)] = row; });
+    lookups.items.forEach(function (row) { itemById[String(row.id)] = row; });
+    var fields = [
+      { name: "category", label: "Category", type: "select", required: true, options: [
+        { value: "Inventory purchase", label: "Inventory purchase (products/stock)" },
+        { value: "Food & beverage supplies", label: "Food & beverage supplies" },
+        { value: "Utilities", label: "Utilities" },
+        { value: "Maintenance & repairs", label: "Maintenance & repairs" },
+        { value: "Housekeeping supplies", label: "Housekeeping supplies" },
+        { value: "Office & admin", label: "Office & admin" },
+        { value: "Transport", label: "Transport" },
+        { value: "Other", label: "Other" }
+      ] },
+      { name: "item_id", label: "Product / stock item (optional)", type: "select", options: [{ value: "", label: "Not for a stocked product" }].concat(lookups.items.map(function (row) { return { value: String(row.id), label: (row.sku || "") + " · " + (row.name || "") }; })), help: "Choose a product already in Inventory when this expense buys that product; it is recorded as an inventory asset." },
+      { name: "supplier_id", label: "Supplier / payee from system (optional)", type: "select", options: [{ value: "", label: "Type the payee below instead" }].concat(lookups.suppliers.map(function (row) { return { value: String(row.id), label: (row.name || "") + (row.reference ? " · " + row.reference : "") }; })) },
+      { name: "payee", label: "Payee (if not chosen above)", type: "text" },
+      { name: "department", label: "Department", type: "select", options: [
+        { value: "", label: "Not departmental" }, { value: "Kitchen", label: "Kitchen" },
+        { value: "Restaurant & Bar", label: "Restaurant & Bar" }, { value: "Housekeeping", label: "Housekeeping" },
+        { value: "Front Office", label: "Front Office" }, { value: "Maintenance", label: "Maintenance" },
+        { value: "Admin", label: "Admin" }, { value: "Security", label: "Security" }
+      ], help: "Used for departmental cost reporting; it does not change approval or posting." },
+      { name: "amount", label: "Amount (NGN)", type: "number", step: "0.01", min: "0.01", required: true },
+      { name: "payment_method", label: "Payment method", type: "select", required: true, options: [
+        { value: "BANK_TRANSFER", label: "Bank transfer" }, { value: "CASH", label: "Cash paid out" },
+        { value: "CARD", label: "Card / terminal" }, { value: "PAYABLE", label: "Accounts payable" }
+      ], help: "Cash paid out requires the cash-session reference below." },
+      { name: "cash_session_reference", label: "Cash session reference (cash only)", type: "text" },
+      { name: "incurred_on", label: "Incurred on", type: "date" },
+      { name: "description", label: "Description", type: "textarea", rows: 2 },
+      { name: "notes", label: "Notes", type: "textarea", rows: 2 }
+    ];
+    var result = await JONE.dashboard.formModal({
+      title: "Create expense", submitText: "Save expense draft", wide: true, fields: fields,
+      values: { category: "Inventory purchase", payment_method: "BANK_TRANSFER" },
+      onSubmit: async function (values) {
+        var supplier = supplierById[String(values.supplier_id || "")];
+        var item = itemById[String(values.item_id || "")];
+        var payload = {
+          category: values.category,
+          accounting_class: item ? "INVENTORY" : "OPERATING",
+          payment_method: values.payment_method,
+          amount: String(values.amount),
+          currency: "NGN",
+          payee: supplier ? supplier.name : (values.payee || ""),
+          department: values.department || "",
+          supplier_reference: supplier ? (supplier.reference || "") : "",
+          description: values.description || "",
+          notes: values.notes || "",
+          idempotency_key: "expense-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10)
+        };
+        if (item) payload.description = ("Product: " + (item.sku || "") + " · " + (item.name || "") + (payload.description ? " — " + payload.description : "")).slice(0, 5000);
+        if (values.incurred_on) payload.incurred_on = values.incurred_on;
+        if (values.payment_method === "CASH") {
+          if (!values.cash_session_reference) throw new Error("Cash expenses require a cash-session reference.");
+          payload.cash_session_reference = values.cash_session_reference;
+        }
+        await window.API.create("financeExpenses", payload);
+        return { message: "Expense draft created." };
+      }
+    });
+    if (result) { JONE.ui.toast("Expense draft created. Submit it for approval when ready.", "success"); load(); }
+  }
+  async function submitExpense(reference) {
+    var confirmed = await JONE.ui.confirm({ title: "Submit expense for approval?", message: "The expense " + reference + " will move from draft to submitted for review.", confirmText: "Submit" });
+    if (!confirmed) return;
+    try {
+      await window.API.resourceAction("financeExpenses", reference, "submit", {});
+      JONE.ui.toast("Expense submitted for approval.", "success");
+      load();
+    } catch (err) { JONE.ui.toast((err && err.message) || "The expense could not be submitted.", "error"); }
+  }
+  var createExpenseBtn = document.getElementById("acct-create-expense");
+  if (createExpenseBtn) createExpenseBtn.addEventListener("click", createExpense);
+
+  /* ---------------- Night audit & daily flash ----------------
+     Read-only reconciliation pack for one business day: ledger revenue with
+     ADR/RevPAR, tenders by method, drawer expected-vs-counted, and the
+     occupied-room versus billed-stay checks. Nothing here posts money. */
+  var naDate = document.getElementById("na-date");
+  var naSeq = 0;
+  function naSet(name, value) { var el = document.querySelector("[data-na=\"" + name + "\"]"); if (el) el.textContent = value; }
+  function renderNightAudit(data) {
+    var flash = data.daily_flash || {}, tenders = data.tenders || {};
+    naSet("revenue", moneyCell(flash.total_revenue));
+    naSet("occupancy", (flash.occupancy_percent != null ? flash.occupancy_percent : 0) + "%");
+    naSet("rooms", (flash.occupied_rooms || 0) + " of " + (flash.available_rooms || 0) + " rooms occupied · " + (data.in_house_count || 0) + " in-house");
+    naSet("adr", flash.adr != null ? moneyCell(flash.adr) : "\u2014");
+    naSet("revpar", flash.revpar != null ? moneyCell(flash.revpar) : "\u2014");
+    naSet("tenders", moneyCell(tenders.captured_total));
+    naSet("tenders-sub", "Refunded " + moneyCell(tenders.refunded_total));
+    var discrepancies = data.discrepancies || [];
+    naSet("discrepancies", String(discrepancies.length));
+    var captured = tenders.captured || {}, refunded = tenders.refunded || {};
+    var methods = Array.from(new Set(Object.keys(captured).concat(Object.keys(refunded)))).sort();
+    var tt = document.querySelector("[data-tbody=na-tenders]");
+    if (tt) tt.innerHTML = methods.length ? methods.map(function (m) {
+      return "<tr><td>" + JONE.esc(m.replace(/_/g, " ")) + "</td><td class=\"num\">" + JONE.esc(moneyCell(captured[m])) + "</td><td class=\"num\">" + JONE.esc(moneyCell(refunded[m])) + "</td></tr>";
+    }).join("") : "<tr><td colspan=\"3\"><div class=\"empty-state\"><h3>No POS tenders this day</h3></div></td></tr>";
+    var dt2 = document.querySelector("[data-tbody=na-drawers]");
+    if (dt2) {
+      var drawers = data.cash_drawers || [];
+      dt2.innerHTML = drawers.length ? drawers.map(function (row) {
+        return "<tr><td>" + JONE.esc(row.reference || "\u2014") + "<div class=\"caption\">" + JONE.esc(row.cashier || "") + "</div></td><td class=\"num\">" + JONE.esc(moneyCell(row.expected_cash)) + "</td><td class=\"num\">" + JONE.esc(row.counted_cash != null ? moneyCell(row.counted_cash) : "\u2014") + "</td><td class=\"num\">" + JONE.esc(row.variance != null ? moneyCell(row.variance) : "\u2014") + "</td><td>" + JONE.esc(row.status || "\u2014") + "</td></tr>";
+      }).join("") : "<tr><td colspan=\"5\"><div class=\"empty-state\"><h3>No cash drawers this day</h3></div></td></tr>";
+    }
+    var dl = document.querySelector("[data-na-list=discrepancies]");
+    if (dl) dl.innerHTML = discrepancies.length ? "<ul style=\"margin:0;padding-left:1.1rem;\">" + discrepancies.map(function (d) {
+      return "<li><strong>" + JONE.esc(d.reference || "") + "</strong> \u00b7 " + JONE.esc(d.detail || "") + "</li>";
+    }).join("") + "</ul>" : "<p class=\"caption\">All drawer, room and billing checks passed for this day.</p>";
+    var ut = document.querySelector("[data-tbody=na-unbilled]");
+    if (ut) {
+      var unbilled = data.unbilled_in_house_folios || [];
+      ut.innerHTML = unbilled.length ? unbilled.map(function (row) {
+        return "<tr><td>" + JONE.esc(row.stay_reference || "\u2014") + "</td><td>" + JONE.esc(row.guest || "\u2014") + "</td><td>" + JONE.esc(row.room || "\u2014") + "</td><td class=\"num\">" + JONE.esc(moneyCell(row.folio_balance)) + "</td></tr>";
+      }).join("") : "<tr><td colspan=\"4\"><div class=\"empty-state\"><h3>No in-house balance outstanding</h3></div></td></tr>";
+    }
+  }
+  async function loadNightAudit() {
+    var seq = ++naSeq;
+    try {
+      var params = {};
+      if (naDate && naDate.value) params.date = naDate.value;
+      var response = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.financeNightAudit, { params: params });
+      if (seq === naSeq) renderNightAudit(response.data || {});
+    } catch (err) {
+      if (seq === naSeq) JONE.ui.toast((err && err.message) || "The night audit could not be loaded.", "error");
+    }
+  }
+  var naLoad = document.getElementById("na-load");
+  if (naLoad) naLoad.addEventListener("click", loadNightAudit);
+  if (naDate && !naDate.value) naDate.value = new Date().toLocaleDateString("en-CA");
+  loadNightAudit();
+
+  /* ---------------- Manual journal entries ----------------
+     Balanced adjustments posted to the immutable ledger by senior finance
+     (the API enforces the capability and the debit=credit rule). */
+  function journalLineField(index, accountOptions) {
+    return "<div class=\"journal-line\" style=\"display:grid;grid-template-columns:2fr 1fr 1fr;gap:.5rem;margin-bottom:.5rem;\">" +
+      "<select class=\"select\" data-journal-account=\"" + index + "\" aria-label=\"Account line " + (index + 1) + "\">" + accountOptions + "</select>" +
+      "<select class=\"select\" data-journal-direction=\"" + index + "\" aria-label=\"Direction line " + (index + 1) + "\"><option value=\"DEBIT\"" + (index % 2 ? "" : " selected") + ">Debit</option><option value=\"CREDIT\"" + (index % 2 ? " selected" : "") + ">Credit</option></select>" +
+      "<input class=\"input\" type=\"number\" step=\"0.01\" min=\"0.01\" data-journal-amount=\"" + index + "\" aria-label=\"Amount line " + (index + 1) + "\" placeholder=\"0.00\"></div>";
+  }
+  async function postJournal() {
+    var accounts = [];
+    try {
+      var chart = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.financeChartOfAccounts);
+      accounts = (chart.data && chart.data.accounts) || [];
+    } catch (e) { accounts = []; }
+    var accountOptions = accounts.map(function (a) {
+      return "<option value=\"" + JONE.esc(a.code) + "\">" + JONE.esc(a.label + " (" + a.code + ")") + "</option>";
+    }).join("");
+    var fields = [
+      { name: "journal_lines", label: "Journal lines", type: "custom", required: true, help: "Debits must equal credits. At least one debit and one credit line.", render: function (mount) {
+          mount.innerHTML = [0, 1, 2, 3].map(function (i) { return journalLineField(i, accountOptions); }).join("");
+        }, getValue: function () {
+          var lines = [];
+          document.querySelectorAll("[data-journal-account]").forEach(function (select) {
+            var idx = select.getAttribute("data-journal-account");
+            var amount = document.querySelector("[data-journal-amount=\"" + idx + "\"]");
+            var direction = document.querySelector("[data-journal-direction=\"" + idx + "\"]");
+            var value = amount ? String(amount.value || "").trim() : "";
+            if (!value) return;
+            lines.push({ account_code: select.value, direction: direction ? direction.value : "DEBIT", amount: value });
+          });
+          return { journal_lines: lines };
+        } },
+      { name: "narrative", label: "Narrative (why is this posted?)", type: "textarea", rows: 2, required: true },
+      { name: "business_date", label: "Business date", type: "date", dataAllowPast: true },
+      { name: "source_reference", label: "Source reference (optional)", type: "text" }
+    ];
+    var result = await JONE.dashboard.formModal({
+      title: "Post journal entry", submitText: "Post journal", wide: true, fields: fields,
+      values: {},
+      onSubmit: async function (values) {
+        var lines = values.journal_lines || [];
+        var debits = 0, credits = 0;
+        lines.forEach(function (line) { if (line.direction === "DEBIT") debits += Number(line.amount); else credits += Number(line.amount); });
+        if (lines.length < 2) throw new Error("Enter at least two journal lines with amounts.");
+        if (Math.abs(debits - credits) > 0.001) throw new Error("Journal is not balanced: debits " + debits.toFixed(2) + " do not equal credits " + credits.toFixed(2) + ".");
+        var payload = {
+          narrative: values.narrative, lines: lines,
+          source_reference: values.source_reference || "",
+          idempotency_key: "journal-" + Date.now() + "-" + Math.random().toString(36).slice(2, 10)
+        };
+        if (values.business_date) payload.business_date = values.business_date;
+        await window.API.create("financeJournals", payload);
+        return { message: "Journal posted to the ledger." };
+      }
+    });
+    if (result) { JONE.ui.toast("Journal posted. It is now part of the immutable ledger.", "success"); load(); loadNightAudit(); }
+  }
+  var journalBtn = document.getElementById("acct-journal");
+  if (journalBtn) journalBtn.addEventListener("click", postJournal);
 
   load();
 

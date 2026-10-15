@@ -354,9 +354,32 @@ body.drawer-open .dash-main { overflow: hidden; }
 
 @media (max-width: 1024px) {
   .dash-bottom-nav { display: flex; }
-  /* Content must never hide behind the fixed bottom nav. */
+  /* Content must never hide behind the fixed bottom nav. The clearance is
+     the nav's rendered height (48px touch target + labels + padding) plus
+     the device safe area, with headroom for enlarged device font sizes;
+     scroll-padding gives the same clearance to anchored/keyboard focus. */
   body.has-bottom-nav .dash-content {
-    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+  }
+  body.has-bottom-nav .dash-main {
+    scroll-padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Installed-app (standalone) only: with no browser chrome the dynamic
+   viewport can extend under the system gesture/navigation area, which is
+   why page bottoms disappeared behind the bottom nav in the installed app
+   while the same pages were fine in the browser. Use the SMALL viewport
+   height (always fully visible) and add extra clearance above the nav. */
+@media (display-mode: standalone) {
+  .dash { height: 100svh; }
+  @media (max-width: 1024px) {
+    body.has-bottom-nav .dash-content {
+      padding-bottom: calc(6.5rem + env(safe-area-inset-bottom, 0px));
+    }
+    body.has-bottom-nav .dash-main {
+      scroll-padding-bottom: calc(6.5rem + env(safe-area-inset-bottom, 0px));
+    }
   }
 }
 
@@ -848,6 +871,40 @@ body.drawer-open .dash-main { overflow: hidden; }
   word-break: break-word;
 }
 @media (max-width: 720px) { .table td.cell-clamp { max-width: 22ch; } }
+
+/* Phones (staff screenshots): with many columns sharing a 600px-minimum
+   table, ordinary values shredded word-by-word and rows grew tall and
+   congested. On small screens a data table now sizes to its content and
+   scrolls horizontally inside .table-wrap instead: every value stays on
+   ONE line (a reference or amount never breaks mid-token or mid-phrase),
+   while deliberately clamped prose cells and empty/loading states still
+   wrap inside their bounded width. Card-restacked .table-staff is excluded
+   (its cells wrap inside each card by design). */
+@media (max-width: 720px) {
+  .table-wrap .table:not(.table-staff) { width: max-content; min-width: 100%; }
+  .table-wrap .table:not(.table-staff) td,
+  .table-wrap .table:not(.table-staff) th { white-space: nowrap; }
+  .table-wrap .table:not(.table-staff) td.cell-clamp { white-space: normal; max-width: 26ch; }
+  .table-wrap .table:not(.table-staff) td:has(> .empty-state),
+  .table-wrap .table:not(.table-staff) td:has(.loading-skeleton) { white-space: normal; min-width: 16rem; }
+}
+
+/* Dark-mode button text (staff screenshots): the active-tab rules painted
+   #fff text on var(--color-primary)/var(--color-accent), which are LIGHT
+   surfaces in the dark theme, so the label vanished. Tab-active states now
+   always pair the surface with its matching ink token in both themes. */
+.op-tabs .btn.is-active,
+.payroll-tab[aria-selected="true"],
+button[data-staff-tab].is-active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-primary-ink);
+}
+.payroll-tab[aria-selected="true"] {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-ink);
+}
 
 .nowrap-ellipsis {
   display: block; max-width: 100%;

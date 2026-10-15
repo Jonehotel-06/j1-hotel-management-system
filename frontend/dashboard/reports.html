@@ -89,11 +89,34 @@
         </table></div></div>
       </section>
     </div>
-    <div style="margin-top:1.5rem;display:flex;gap:0.75rem;">
+    <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
+      <div class="panel-head"><h2>Accounts receivable aging</h2><div class="panel-actions"><span class="caption">Guest balances still unpaid, aged from check-in</span></div></div>
+      <div class="panel-body">
+        <section class="kpi-grid" aria-label="AR aging summary">
+          <div class="kpi"><div class="kpi-label">Total outstanding</div><div class="kpi-value" data-ar="total">--</div></div>
+          <div class="kpi"><div class="kpi-label">Current (0–30d)</div><div class="kpi-value" data-ar="current">--</div></div>
+          <div class="kpi"><div class="kpi-label">31–60 days</div><div class="kpi-value" data-ar="days_31_60">--</div></div>
+          <div class="kpi"><div class="kpi-label">61–90 days</div><div class="kpi-value" data-ar="days_61_90">--</div></div>
+          <div class="kpi"><div class="kpi-label">Over 90 days</div><div class="kpi-value" data-ar="over_90">--</div></div>
+        </section>
+        <div class="table-wrap" style="margin-top:1rem;"><table class="table">
+          <thead><tr><th class="cell-nowrap">Booking</th><th class="cell-clamp">Guest</th><th class="cell-nowrap">Check-in</th><th class="num cell-nowrap">Balance due</th><th class="num cell-nowrap">Age (days)</th><th class="cell-nowrap">Bucket</th></tr></thead>
+          <tbody data-tbody="report-ar-aging"></tbody>
+        </table></div>
+      </div>
+    </section>
+    <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
+      <div class="panel-head"><h2>Expense records</h2><div class="panel-actions"><span class="caption">Controlled Finance expense records in this period</span></div></div>
+      <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
+        <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-nowrap">Incurred</th><th class="cell-clamp">Payee</th><th class="cell-nowrap">Department</th><th class="cell-nowrap">Category</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Status</th></tr></thead>
+        <tbody data-tbody="report-expenses"></tbody>
+      </table></div></div>
+    </section>
+    <div style="margin-top:1.5rem;display:flex;gap:0.75rem;flex-wrap:wrap;">
       <button class="btn btn-sm btn-outline" id="export-csv" type="button"><span data-icon="download" data-size="16"></span> Export CSV</button>
       <button class="btn btn-sm btn-outline" id="export-xlsx" type="button">Export Excel</button>
       <button class="btn btn-sm btn-outline" id="export-pdf" type="button">Export PDF</button>
-      <span class="caption" style="align-self:center;">Exports the ledger financial measures and operational report data currently shown above.</span>
+      <span class="caption" style="align-self:center;">Exports the ledger financial measures, operational report data and expense records currently shown above.</span>
     </div>
   </div>
 </section>
@@ -126,12 +149,13 @@
   var DATA=JONE.dashboard.DATA;
   var ft=document.querySelector("[data-tbody=report-finance]");
   var bt=document.querySelector("[data-tbody=report-bookings]");
+  var et=document.querySelector("[data-tbody=report-expenses]");
   var financeKpis=document.querySelector("[data-finance-kpis]");
   var financeBasis=document.querySelector("[data-finance-basis]");
   var range=document.getElementById("rp-range");
   var fromEl=document.getElementById("rp-from");
   var toEl=document.getElementById("rp-to");
-  var latest={ financial:null, bookings:null, occupancy:null };
+  var latest={ financial:null, bookings:null, occupancy:null, expenses:null };
   var operationalPending={ bookings:false, occupancy:false };
   var loadSequence=0;
 
@@ -296,6 +320,35 @@
     if(ft) DATA.error(ft,"Financial summary couldn't be loaded",financeErrorMessage(err),3,false);
   }
 
+  function renderArAging(response){
+    var data=(response&&response.data)||{};
+    latest.arAging=data;
+    var currency=data.currency||reportCurrency(latest.financial);
+    function bucketTotal(key){var b=(data.buckets||[]).find(function(x){return x.key===key;});return b?formatMoney(b.total,currency):"\u2014";}
+    function setAr(name,value){var el=document.querySelector("[data-ar=\""+name+"\"]");if(el)el.textContent=value;}
+    setAr("total",formatMoney(data.total_outstanding,currency));
+    setAr("current",bucketTotal("current"));
+    setAr("days_31_60",bucketTotal("days_31_60"));
+    setAr("days_61_90",bucketTotal("days_61_90"));
+    setAr("over_90",bucketTotal("over_90"));
+    var at=document.querySelector("[data-tbody=report-ar-aging]");
+    if(!at) return;
+    var labels={ current:"Current (0\u201330 days)", days_31_60:"31\u201360 days", days_61_90:"61\u201390 days", over_90:"Over 90 days" };
+    var items=data.items||[];
+    at.innerHTML=items.length?items.map(function(row){
+      return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.booking_reference||"\u2014")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.guest||"\u2014")+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.check_in||"\u2014")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(formatMoney(row.balance_due,currency))+"</td><td class=\"num cell-nowrap\">"+JONE.esc(row.age_days)+"</td><td class=\"cell-nowrap\">"+JONE.esc(labels[row.bucket]||row.bucket||"\u2014")+"</td></tr>";
+    }).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No guest balances outstanding</h3><p>Every booking is fully paid.</p></div></td></tr>";
+  }
+  function renderExpenses(response){
+    var rows=(response&&response.data&&(response.data.results||response.data))||[];
+    if(!Array.isArray(rows)) rows=[];
+    latest.expenses=rows;
+    if(!et) return;
+    var currency=reportCurrency(latest.financial);
+    et.innerHTML=rows.length?rows.map(function(row){
+      return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.incurred_on||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.department||"—")+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.category||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(formatMoney(row.amount,row.currency||currency))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td></tr>";
+    }).join(""):"<tr><td colspan=\"7\"><div class=\"empty-state\"><h3>No expense records in this period</h3></div></td></tr>";
+  }
   function updateOperationalSummary(){
     var bookingText=operationalPending.bookings ? "Loading bookings…" : "Bookings unavailable";
     var occupancyText=operationalPending.occupancy ? "Loading occupancy…" : "Occupancy unavailable";
@@ -349,12 +402,13 @@
       end:dates.to,
       currency:(window.APP_CONFIG&&window.APP_CONFIG.CURRENCY)||"NGN"
     };
-    latest={ financial:null, bookings:null, occupancy:null };
+    latest={ financial:null, bookings:null, occupancy:null, expenses:null, arAging:null };
     operationalPending={ bookings:true, occupancy:true };
     setFinanceKpisLoading(true);
     if(financeBasis) financeBasis.textContent="Loading posted immutable ledger financial measures…";
     if(ft) DATA.loading(ft,3);
     if(bt) DATA.loading(bt,2);
+    if(et) DATA.loading(et,6);
     setKpi("operational-summary","Loading operational summary…");
 
     // Each independent response renders as soon as it arrives. Starting and
@@ -373,6 +427,19 @@
         operationalPending.bookings=false;
         updateOperationalSummary();
         if(bt) DATA.error(bt,"Bookings report couldn't be loaded",(err&&err.status===403?"Reports require a manager or admin account.":(err&&err.message)||"Please try again in a moment."),2);
+      }
+    });
+    getReport(window.APP_CONFIG.API_ENDPOINTS.financeExpenses,{ start:dates.from, end:dates.to, page_size:100 }).then(function(response){
+      if(requestId===loadSequence) renderExpenses(response);
+    },function(err){
+      if(requestId===loadSequence && et) DATA.error(et,"Expense records couldn't be loaded",financeErrorMessage(err),6);
+    });
+    getReport(window.APP_CONFIG.API_ENDPOINTS.financeArAging,{}).then(function(response){
+      if(requestId===loadSequence) renderArAging(response);
+    },function(err){
+      if(requestId===loadSequence){
+        var at=document.querySelector("[data-tbody=report-ar-aging]");
+        if(at) DATA.error(at,"Accounts receivable aging couldn't be loaded",financeErrorMessage(err),6);
       }
     });
     getReport(window.APP_CONFIG.API_ENDPOINTS.reportsOccupancy,operationalParams).then(function(response){
@@ -471,6 +538,20 @@
         (latest.bookings.by_status||[]).forEach(function(item){ lines.push([item.status,item.count]); });
         lines.push([]);
       }
+    }
+    if(latest.expenses){
+      lines.push([]);
+      if(latest.arAging){
+        lines.push(["Accounts receivable aging"]);
+        lines.push(["As of",latest.arAging.as_of||"","Total outstanding",latest.arAging.total_outstanding||""]);
+        (latest.arAging.buckets||[]).forEach(function(b){ lines.push([b.label||b.key,b.total||"",b.count==null?"":String(b.count)]); });
+        lines.push(["Booking","Guest","Check-in","Balance due","Age (days)","Bucket"]);
+        (latest.arAging.items||[]).forEach(function(row){ lines.push([row.booking_reference||"",row.guest||"",row.check_in||"",row.balance_due||"",row.age_days==null?"":String(row.age_days),row.bucket||""]); });
+        lines.push([]);
+      }
+      lines.push(["Expense records"]);
+      lines.push(["Reference","Incurred","Payee","Department","Category","Amount","Currency","Status"]);
+      (latest.expenses||[]).forEach(function(row){ lines.push([row.reference||"",row.incurred_on||"",row.payee||"",row.department||"",row.category||"",row.amount==null?"":row.amount,row.currency||"",row.status||""]); });
     }
     if(latest.occupancy){
       lines.push(["Occupancy"]);

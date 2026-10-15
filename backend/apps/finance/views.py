@@ -17,8 +17,10 @@ from .models import ApprovalRequest, CashSession, Expense, ExpenseEvent, Financi
 from .serializers import (
     ApprovalRequestSerializer,
     ApprovalReviewSerializer,
+    CashDropSerializer,
     CashSessionSerializer,
     ExpenseCreateSerializer,
+    JournalCreateSerializer,
     ExpenseDetailSerializer,
     ExpenseListSerializer,
     ExpenseReviewSerializer,
@@ -32,6 +34,8 @@ from .services.approval_service import review_approval
 from .services.cash_session_service import review_cash_variance
 from .services.expense_service import create_expense, post_expense, review_expense, submit_expense
 from .services.folio_service import folio_balance_queryset
+from .services.journal_service import chart_of_accounts, post_manual_journal, record_cash_drop
+from .services.night_audit_service import accounts_receivable_aging, daily_reconciliation
 from .services.reporting_service import financial_summary, summary_pdf_bytes, summary_xlsx_bytes
 
 
@@ -336,6 +340,7 @@ class ExpenseListCreateView(APIView):
             accounting_class=data["accounting_class"],
             currency=data.get("currency", "NGN"),
             payee=data.get("payee", ""),
+            department=data.get("department", ""),
             supplier_reference=data.get("supplier_reference", ""),
             description=data.get("description", ""),
             receipt_url=data.get("receipt_url", ""),
@@ -481,5 +486,101 @@ class FinancialControlPolicyListCreateView(APIView):
         return success_response(
             FinancialControlPolicySerializer(policy).data,
             message="Effective-dated finance control policy created.",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Night audit and daily flash for one business day")
+class NightAuditView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("reports.financial.view", "expense.approve")
+    require_any_capability = True
+
+    def get(self, request):
+        business_date = _parse_query_date(request.query_params.get("date"), "date")
+        return success_response(daily_reconciliation(business_date=business_date))
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Accounts-receivable aging from outstanding booking balances")
+class AccountsReceivableAgingView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("reports.financial.view", "expense.approve")
+    require_any_capability = True
+
+    def get(self, request):
+        as_of = _parse_query_date(request.query_params.get("as_of"), "as_of")
+        return success_response(accounts_receivable_aging(as_of=as_of))
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Chart of accounts available to manual journals")
+class ChartOfAccountsView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "expense.approve"
+
+    def get(self, request):
+        return success_response({"accounts": chart_of_accounts()})
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Post a balanced manual journal entry")
+class ManualJournalView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "expense.approve"
+
+    def post(self, request):
+        serializer = JournalCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        financial_transaction, created = post_manual_journal(
+            actor=request.user,
+            lines=data["lines"],
+            narrative=data["narrative"],
+            business_date=data.get("business_date"),
+            source_reference=data.get("source_reference", ""),
+            idempotency_key=data["idempotency_key"],
+        )
+        if created:
+            log_action(
+                actor=request.user,
+                action="MANUAL_JOURNAL_POSTED",
+                instance=financial_transaction,
+                request=request,
+                metadata={"reference": financial_transaction.reference, "narrative": data["narrative"]},
+            )
+        return success_response(
+            FinancialTransactionSerializer(financial_transaction).data,
+            message="Journal posted." if created else "Existing journal returned.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Record a cash safe drop for an open cash session")
+class CashSessionDropView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("cash_session.open", "cash_session.close")
+    require_any_capability = True
+
+    def post(self, request, reference):
+        serializer = CashDropSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        cash_session = CashSession.objects.filter(reference=reference).first()
+        if cash_session is None:
+            raise NotFound("Cash session not found.")
+        movement = record_cash_drop(
+            cash_session=cash_session,
+            actor=request.user,
+            amount=serializer.validated_data["amount"],
+            notes=serializer.validated_data.get("notes", ""),
+        )
+        log_action(
+            actor=request.user,
+            action="CASH_SAFE_DROP_RECORDED",
+            instance=cash_session,
+            request=request,
+            metadata={"reference": cash_session.reference, "amount": str(movement.amount)},
+        )
+        cash_session.refresh_from_db()
+        return success_response(
+            CashSessionSerializer(cash_session).data,
+            message="Cash drop recorded; expected cash updated.",
             status=status.HTTP_201_CREATED,
         )

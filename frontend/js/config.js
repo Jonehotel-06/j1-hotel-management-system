@@ -310,6 +310,10 @@
     financeSummary:      "/api/admin/finance/reports/summary/",
     financeTransactions: "/api/admin/finance/transactions/",   // immutable posted ledger headers
     financeExpenses:     "/api/admin/finance/expenses/",       // controlled expense drafts/submissions
+    financeNightAudit:   "/api/admin/finance/reports/night-audit/",
+    financeArAging:      "/api/admin/finance/reports/ar-aging/",
+    financeJournals:     "/api/admin/finance/journals/",
+    financeChartOfAccounts: "/api/admin/finance/chart-of-accounts/",
     financeApprovals:    "/api/admin/finance/approvals/",      // sensitive-money approval requests
     /* Per-record drill-down. API.getOne appends the escaped reference. */
     financeExpenseDetail:"/api/admin/finance/expenses/",

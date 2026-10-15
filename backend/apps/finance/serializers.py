@@ -144,7 +144,7 @@ class ExpenseListSerializer(serializers.ModelSerializer):
         model = Expense
         fields = [
             "reference", "status", "category", "accounting_class", "payment_method", "amount", "currency", "incurred_on",
-            "payee", "supplier_reference", "description", "receipt_url", "requested_by_email", "approved_by_email", "approved_at",
+            "payee", "department", "supplier_reference", "description", "receipt_url", "requested_by_email", "approved_by_email", "approved_at",
             "approval_reference", "cash_session_reference", "financial_reference", "posted_by_email", "posted_at", "created_at",
         ]
         read_only_fields = fields
@@ -158,6 +158,26 @@ class ExpenseDetailSerializer(ExpenseListSerializer):
         fields = ExpenseListSerializer.Meta.fields + ["notes", "events"]
 
 
+class JournalLineSerializer(serializers.Serializer):
+    account_code = serializers.CharField(max_length=64)
+    direction = serializers.ChoiceField(choices=[("DEBIT", "Debit"), ("CREDIT", "Credit")])
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
+    description = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+
+class JournalCreateSerializer(serializers.Serializer):
+    narrative = serializers.CharField(max_length=500)
+    business_date = serializers.DateField(required=False)
+    source_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    lines = JournalLineSerializer(many=True)
+    idempotency_key = serializers.CharField(max_length=128)
+
+
+class CashDropSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
 class ExpenseCreateSerializer(serializers.Serializer):
     category = serializers.CharField(max_length=120)
     accounting_class = serializers.ChoiceField(choices=[("OPERATING", "Operating expense"), ("INVENTORY", "Inventory asset")], default="OPERATING")
@@ -166,6 +186,7 @@ class ExpenseCreateSerializer(serializers.Serializer):
     currency = serializers.CharField(required=False, default="NGN", min_length=3, max_length=3)
     incurred_on = serializers.DateField(required=False)
     payee = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    department = serializers.CharField(required=False, allow_blank=True, max_length=80)
     supplier_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
     description = serializers.CharField(required=False, allow_blank=True, max_length=5000)
     receipt_url = serializers.URLField(required=False, allow_blank=True, max_length=200)

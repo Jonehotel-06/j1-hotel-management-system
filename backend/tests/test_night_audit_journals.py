@@ -1,0 +1,191 @@
+"""Night audit, AR aging, manual journals, cash drops and expense departments."""
+from datetime import timedelta
+from decimal import Decimal
+
+from apps.accounts.models import User
+from apps.bookings.models import Booking
+from apps.core.utils import hotel_today
+from apps.finance.models import Expense, FinancialLine, FinancialTransaction
+from apps.finance.services import accounting
+from apps.finance.services.cash_session_service import open_cash_session
+from apps.finance.services.ledger_service import create_posted_transaction
+
+from .base import BaseAPITestCase
+from .factories import make_booking, make_guest, make_room, make_room_type, make_staff
+
+
+class NightAuditTests(BaseAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.manager = make_staff("night-audit-manager@staff.dev", role=User.Role.MANAGER)
+        self.cashier = make_staff("night-audit-cashier@staff.dev", role=User.Role.CASHIER)
+        self.today = hotel_today()
+        self.room_type = make_room_type("Night audit suite", price="20000.00")
+        self.room = make_room(self.room_type, "701")
+
+    def _post_accommodation(self, amount="20000.00", key="night-audit:acc:1"):
+        return create_posted_transaction(
+            transaction_type=FinancialTransaction.Type.ACCOMMODATION_CHARGE,
+            source_key=key,
+            actor=self.manager,
+            business_date=self.today,
+            lines=[
+                {"account_code": accounting.ACCOUNTS_RECEIVABLE, "direction": FinancialLine.Direction.DEBIT, "amount": amount},
+                {"account_code": accounting.ACCOMMODATION_REVENUE, "direction": FinancialLine.Direction.CREDIT, "amount": amount},
+            ],
+        )
+
+    def test_daily_flash_computes_adr_and_revpar_from_ledger(self):
+        self._post_accommodation()
+        make_booking(
+            make_guest("night-audit-guest@example.com"), self.room_type,
+            rooms=[self.room], check_in=self.today, check_out=self.today + timedelta(days=1),
+            total="20000.00",
+        )
+        self.auth(self.manager)
+        response = self.client.get(f"/api/admin/finance/reports/night-audit/?date={self.today.isoformat()}")
+        self.assertEqual(response.status_code, 200, response.content)
+        flash = response.json()["data"]["daily_flash"]
+        self.assertEqual(flash["accommodation_revenue"], "20000.00")
+        self.assertEqual(flash["occupied_rooms"], 1)
+        self.assertEqual(flash["available_rooms"], 1)
+        self.assertEqual(flash["adr"], "20000.00")
+        self.assertEqual(flash["revpar"], "20000.00")
+        self.assertEqual(flash["occupancy_percent"], 100.0)
+
+    def test_night_audit_lists_drawer_variance_and_blocks_cashiers(self):
+        session = open_cash_session(cashier=self.cashier, actor=self.cashier, opening_float="500.00")
+        session.counted_cash = Decimal("450.00")
+        session.variance = Decimal("-50.00")
+        session.save(update_fields=["counted_cash", "variance", "updated_at"])
+        self.auth(self.manager)
+        response = self.client.get("/api/admin/finance/reports/night-audit/")
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()["data"]
+        self.assertEqual(data["cash_drawers"][0]["reference"], session.reference)
+        self.assertTrue(any(d["type"] == "CASH_VARIANCE" for d in data["discrepancies"]))
+        self.auth(self.cashier)
+        self.assertEqual(self.client.get("/api/admin/finance/reports/night-audit/").status_code, 403)
+
+    def test_ar_aging_buckets_outstanding_balances_and_excludes_paid(self):
+        old = make_booking(
+            make_guest("aging-old@example.com"), self.room_type,
+            check_in=self.today - timedelta(days=100), check_out=self.today - timedelta(days=97),
+            total="9000.00", amount_paid="1000.00",
+        )
+        old.payment_status = Booking.PaymentStatus.PARTIALLY_PAID
+        old.save(update_fields=["payment_status", "updated_at"])
+        paid = make_booking(
+            make_guest("aging-paid@example.com"), self.room_type,
+            check_in=self.today - timedelta(days=100), check_out=self.today - timedelta(days=97),
+            total="9000.00", amount_paid="9000.00",
+        )
+        paid.payment_status = Booking.PaymentStatus.PAID
+        paid.save(update_fields=["payment_status", "updated_at"])
+        self.auth(self.manager)
+        response = self.client.get("/api/admin/finance/reports/ar-aging/")
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()["data"]
+        self.assertEqual(data["total_outstanding"], "8000.00")
+        over90 = [b for b in data["buckets"] if b["key"] == "over_90"][0]
+        self.assertEqual(over90["total"], "8000.00")
+        self.assertEqual(over90["count"], 1)
+        self.assertEqual(data["items"][0]["booking_reference"], old.booking_reference)
+
+
+class ManualJournalTests(BaseAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.manager = make_staff("journal-manager@staff.dev", role=User.Role.MANAGER)
+        self.cashier = make_staff("journal-cashier@staff.dev", role=User.Role.CASHIER)
+        self.payload = {
+            "narrative": "Accrue October cleaning contract.",
+            "lines": [
+                {"account_code": "EXPENSE.OPERATING", "direction": "DEBIT", "amount": "1500.00"},
+                {"account_code": "LIABILITY.ACCOUNTS_PAYABLE", "direction": "CREDIT", "amount": "1500.00"},
+            ],
+            "idempotency_key": "journal-test-1",
+        }
+
+    def test_balanced_journal_posts_and_retry_is_idempotent(self):
+        self.auth(self.manager)
+        first = self.client.post("/api/admin/finance/journals/", self.payload, format="json")
+        self.assertEqual(first.status_code, 201, first.content)
+        reference = first.json()["data"]["reference"]
+        self.assertEqual(first.json()["data"]["type"], "ADJUSTMENT")
+        retry = self.client.post("/api/admin/finance/journals/", self.payload, format="json")
+        self.assertEqual(retry.status_code, 200, retry.content)
+        self.assertEqual(retry.json()["data"]["reference"], reference)
+        self.assertEqual(
+            FinancialTransaction.objects.filter(type=FinancialTransaction.Type.ADJUSTMENT).count(), 1
+        )
+
+    def test_unbalanced_or_unknown_account_journal_is_rejected(self):
+        self.auth(self.manager)
+        bad = dict(self.payload, idempotency_key="journal-test-2")
+        bad["lines"] = [
+            {"account_code": "EXPENSE.OPERATING", "direction": "DEBIT", "amount": "1500.00"},
+            {"account_code": "LIABILITY.ACCOUNTS_PAYABLE", "direction": "CREDIT", "amount": "1400.00"},
+        ]
+        self.assertEqual(self.client.post("/api/admin/finance/journals/", bad, format="json").status_code, 400)
+        unknown = dict(self.payload, idempotency_key="journal-test-3")
+        unknown["lines"] = [
+            {"account_code": "REVENUE.MADE_UP", "direction": "DEBIT", "amount": "10.00"},
+            {"account_code": "ASSET.CASH_ON_HAND", "direction": "CREDIT", "amount": "10.00"},
+        ]
+        self.assertEqual(self.client.post("/api/admin/finance/journals/", unknown, format="json").status_code, 400)
+
+    def test_cashier_cannot_post_journals_or_read_chart(self):
+        self.auth(self.cashier)
+        self.assertEqual(self.client.post("/api/admin/finance/journals/", self.payload, format="json").status_code, 403)
+        self.assertEqual(self.client.get("/api/admin/finance/chart-of-accounts/").status_code, 403)
+        self.auth(self.manager)
+        chart = self.client.get("/api/admin/finance/chart-of-accounts/")
+        self.assertEqual(chart.status_code, 200, chart.content)
+        self.assertTrue(any(a["code"] == "REVENUE.ACCOMMODATION" for a in chart.json()["data"]["accounts"]))
+
+
+class CashDropAndExpenseDepartmentTests(BaseAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.manager = make_staff("drop-manager@staff.dev", role=User.Role.MANAGER)
+        self.cashier = make_staff("drop-cashier@staff.dev", role=User.Role.CASHIER)
+        self.other_cashier = make_staff("drop-other@staff.dev", role=User.Role.CASHIER)
+
+    def test_cashier_records_drop_and_expected_cash_falls(self):
+        session = open_cash_session(cashier=self.cashier, actor=self.cashier, opening_float="1000.00")
+        self.auth(self.cashier)
+        response = self.client.post(
+            f"/api/admin/finance/cash-sessions/{session.reference}/drop/",
+            {"amount": "400.00", "notes": "Mid-shift drop."}, format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["data"]["expected_cash"], "600.00")
+        too_much = self.client.post(
+            f"/api/admin/finance/cash-sessions/{session.reference}/drop/",
+            {"amount": "601.00"}, format="json",
+        )
+        self.assertEqual(too_much.status_code, 400)
+
+    def test_other_cashier_cannot_drop_from_someone_elses_drawer(self):
+        session = open_cash_session(cashier=self.cashier, actor=self.cashier, opening_float="1000.00")
+        self.auth(self.other_cashier)
+        response = self.client.post(
+            f"/api/admin/finance/cash-sessions/{session.reference}/drop/",
+            {"amount": "10.00"}, format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_expense_department_is_stored_and_returned(self):
+        self.auth(self.manager)
+        response = self.client.post("/api/admin/finance/expenses/", {
+            "category": "Kitchen supplies",
+            "amount": "2500.00",
+            "payment_method": "BANK_TRANSFER",
+            "department": "Kitchen",
+            "payee": "Market vendor",
+            "idempotency_key": "expense-dept-1",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["data"]["department"], "Kitchen")
+        self.assertEqual(Expense.objects.get(reference=response.json()["data"]["reference"]).department, "Kitchen")

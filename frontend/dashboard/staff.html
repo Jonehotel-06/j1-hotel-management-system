@@ -64,7 +64,7 @@
       <p class="caption muted">Unified employee records, configurable departments, disciplinary register, and administrator permission matrix.</p>
     </div>
     <div class="panel-actions" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-      <button class="btn btn-sm btn-outline" type="button" data-staff-tab="directory">Staff Directory</button>
+      <button class="btn btn-sm btn-outline is-active" type="button" data-staff-tab="directory" aria-selected="true">Staff Directory</button>
       <button class="btn btn-sm btn-outline" type="button" data-staff-tab="departments">Departments</button>
       <button class="btn btn-sm btn-outline" type="button" data-staff-tab="disciplinary">Offenses &amp; Disciplinary</button>
       <button class="btn btn-sm btn-outline" type="button" data-staff-tab="permissions" id="btn-tab-permissions">Permission Matrix</button>
@@ -379,6 +379,11 @@
   document.querySelectorAll("button[data-staff-tab]").forEach(function(btn){
     btn.addEventListener("click", function(){
       var target = btn.getAttribute("data-staff-tab");
+      document.querySelectorAll("button[data-staff-tab]").forEach(function(other){
+        var active = other === btn;
+        other.classList.toggle("is-active", active);
+        other.setAttribute("aria-selected", active ? "true" : "false");
+      });
       Object.keys(tabContainers).forEach(function(k){
         if (tabContainers[k]) tabContainers[k].style.display = k === target ? "" : "none";
       });

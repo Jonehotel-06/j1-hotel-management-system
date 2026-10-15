@@ -122,7 +122,7 @@
           </section>
           <section class="panel" data-pos-cash-panel hidden>
             <div class="panel-head"><h2>Cash drawer</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-pos-refresh-drawer>Refresh</button></div></div>
-            <div class="panel-body"><div data-pos-drawer class="caption" aria-live="polite">Loading drawer status…</div><div class="pos-action-stack" style="margin-top:.8rem;"><button class="btn btn-sm" type="button" data-pos-open-drawer>Open drawer</button><button class="btn btn-sm btn-outline" type="button" data-pos-close-drawer disabled>Close drawer</button></div></div>
+            <div class="panel-body"><div data-pos-drawer class="caption" aria-live="polite">Loading drawer status…</div><div class="pos-action-stack" style="margin-top:.8rem;"><button class="btn btn-sm" type="button" data-pos-open-drawer>Open drawer</button><button class="btn btn-sm btn-outline" type="button" data-pos-drop-cash disabled>Record cash drop</button><button class="btn btn-sm btn-outline" type="button" data-pos-close-drawer disabled>Close drawer</button></div></div>
           </section>
           <details class="panel" data-pos-menu-admin hidden>
             <summary style="padding:1rem 1.25rem;cursor:pointer;font-weight:600;">Menu management</summary>
@@ -531,7 +531,8 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       var rows=listItems(res);state.drawer=rows.find(function(session){return String(session.cashier_email||"").toLowerCase()===email;})||null;
       drawer.innerHTML=state.drawer?'<strong>Open · '+JONE.esc(state.drawer.reference)+'</strong><br><span class="caption">Expected cash: '+JONE.esc(money(state.drawer.expected_cash,"NGN"))+'</span>':'No open drawer for this user.';
       document.querySelector("[data-pos-close-drawer]").disabled=!state.drawer;
-    }catch(err){state.drawer=null;drawer.textContent=(err&&err.message)||"Drawer status could not be loaded.";document.querySelector("[data-pos-close-drawer]").disabled=true;}
+      var dropButton=document.querySelector("[data-pos-drop-cash]");if(dropButton)dropButton.disabled=!state.drawer;
+    }catch(err){state.drawer=null;drawer.textContent=(err&&err.message)||"Drawer status could not be loaded.";document.querySelector("[data-pos-close-drawer]").disabled=true;var dropErr=document.querySelector("[data-pos-drop-cash]");if(dropErr)dropErr.disabled=true;}
   }
 
   async function printThermalReceipt(reference){
@@ -681,6 +682,12 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   document.querySelector("[data-pos-refresh-drawer]").addEventListener("click",loadDrawer);
   document.querySelector("[data-pos-open-drawer]").addEventListener("click",openDrawer);
   document.querySelector("[data-pos-close-drawer]").addEventListener("click",closeDrawer);
+  var dropCashButton=document.querySelector("[data-pos-drop-cash]");if(dropCashButton)dropCashButton.addEventListener("click",dropCash);
+  async function dropCash(){
+    if(!state.drawer)return;var ref=state.drawer.reference;
+    var result=await JONE.dashboard.formModal({title:"Record cash drop to safe",submitText:"Record drop",fields:[{name:"amount",label:"Amount dropped (NGN)",type:"number",step:"0.01",min:"0.01",required:true,help:"Cash physically moved from this drawer to the safe. The drawer's expected cash falls by the same amount."},{name:"notes",label:"Notes",type:"textarea",rows:2}],onSubmit:async function(values){await window.API.resourceAction("financeCashSessions",ref,"drop",values);return{message:"Cash drop recorded."};}});
+    if(result){JONE.ui.toast("Cash drop recorded; expected cash updated.","success");await loadDrawer();}
+  }
   orderBody.addEventListener("click",function(event){var view=event.target.closest("[data-pos-view]");var action=event.target.closest("[data-pos-action]");var tender=event.target.closest("[data-pos-tender]");var thermal=event.target.closest("[data-pos-thermal]");if(view)viewOrder(view.getAttribute("data-pos-view"));else if(action)advanceOrder(action.getAttribute("data-pos-ref"),action.getAttribute("data-pos-action"),action);else if(tender)captureTender(tender.getAttribute("data-pos-tender"));else if(thermal)printThermalReceipt(thermal.getAttribute("data-pos-thermal"));});
   document.querySelector("[data-pos-add-category]").addEventListener("click",addCategory);
   document.querySelector("[data-pos-add-item]").addEventListener("click",addMenuItem);

@@ -142,12 +142,14 @@ test("reports dashboard requests ledger finance and operational projections conc
 
   // All calls are started before the controller awaits a result; this prevents
   // the range filter from serializing three otherwise independent requests.
-  assert.equal(booted.requests.length, 3);
+  assert.equal(booted.requests.length, 5);
   assert.deepEqual(
     booted.requests.map((request) => request.endpoint),
     [
       booted.ctx.window.APP_CONFIG.API_ENDPOINTS.financeSummary,
       booted.ctx.window.APP_CONFIG.API_ENDPOINTS.reportsBookings,
+      booted.ctx.window.APP_CONFIG.API_ENDPOINTS.financeExpenses,
+      booted.ctx.window.APP_CONFIG.API_ENDPOINTS.financeArAging,
       booted.ctx.window.APP_CONFIG.API_ENDPOINTS.reportsOccupancy,
     ]
   );
