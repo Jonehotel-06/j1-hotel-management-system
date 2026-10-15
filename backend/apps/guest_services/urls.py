@@ -9,6 +9,7 @@ staff_urlpatterns = [
     path("laundry/<str:reference>/assign/", views.LaundryOrderAssignView.as_view(), name="laundry-assign"),
     path("laundry/<str:reference>/status/", views.LaundryOrderStatusView.as_view(), name="laundry-status"),
     path("laundry/<str:reference>/bill/", views.LaundryOrderBillView.as_view(), name="laundry-bill"),
+    path("laundry/<str:reference>/settle/", views.LaundryOrderSettleView.as_view(), name="laundry-settle"),
     path("", views.ServiceRequestListCreateView.as_view(), name="requests"),
     path("<str:reference>/", views.ServiceRequestDetailView.as_view(), name="request-detail"),
     path("<str:reference>/assign/", views.ServiceRequestAssignView.as_view(), name="request-assign"),

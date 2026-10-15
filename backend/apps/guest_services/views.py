@@ -691,11 +691,14 @@ class PublicServiceQRRequestView(APIView):
 # ---------------------------------------------------------------------------
 # Laundry
 # ---------------------------------------------------------------------------
+from apps.finance.models import CashSession
+
 from .models import LaundryOrder
 from .serializers import (
     LaundryAssignSerializer,
     LaundryCreateSerializer,
     LaundryOrderSerializer,
+    LaundrySettleSerializer,
     LaundryStatusSerializer,
 )
 from .services.laundry_service import (
@@ -703,6 +706,7 @@ from .services.laundry_service import (
     assign_laundry_order,
     bill_laundry_order,
     create_laundry_order,
+    settle_walk_in_laundry,
 )
 
 
@@ -739,9 +743,13 @@ class LaundryOrderListCreateView(APIView):
         serializer = LaundryCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        stay = Stay.objects.filter(reference=data["stay_reference"]).first()
-        if stay is None:
-            raise NotFound("Stay not found.")
+        # A stay is optional: a walk-in customer has none, and is identified by
+        # the name/phone captured on the order instead.
+        stay = None
+        if data.get("stay_reference"):
+            stay = Stay.objects.filter(reference=data["stay_reference"]).first()
+            if stay is None:
+                raise NotFound("Stay not found.")
         room = None
         if data.get("room_id"):
             room = Room.objects.filter(pk=data["room_id"]).first()
@@ -751,10 +759,17 @@ class LaundryOrderListCreateView(APIView):
             actor=request.user, stay=stay, room=room,
             items=data["items"], notes=data.get("notes", ""),
             idempotency_key=data["idempotency_key"],
+            customer_name=data.get("customer_name", ""),
+            customer_phone=data.get("customer_phone", ""),
         )
         if created:
             log_action(actor=request.user, action="LAUNDRY_RECEIVED", instance=order, request=request,
-                       metadata={"reference": order.reference, "total": str(order.total_amount)})
+                       metadata={
+                           "reference": order.reference,
+                           "total": str(order.total_amount),
+                           "walk_in": order.is_walk_in,
+                           "customer": order.customer_name,
+                       })
         return success_response(
             LaundryOrderSerializer(_laundry_or_404(order.reference)).data,
             message="Laundry received." if created else "Existing laundry order returned.",
@@ -791,6 +806,43 @@ class LaundryOrderStatusView(APIView):
             new_status=data["status"], delivered_to=data.get("delivered_to", ""),
         )
         return success_response(LaundryOrderSerializer(_laundry_or_404(order.reference)).data, message="Laundry status updated.")
+
+
+@extend_schema(tags=["Admin · Guest services"], summary="Take payment for walk-in laundry (once)")
+class LaundryOrderSettleView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "guest_request.manage"
+
+    def post(self, request, reference):
+        serializer = LaundrySettleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        cash_session = None
+        if reference_value := data.get("cash_session_reference"):
+            cash_session = CashSession.objects.filter(reference=reference_value).first()
+            if cash_session is None:
+                raise NotFound("Cash session not found.")
+        order, created = settle_walk_in_laundry(
+            order=_laundry_or_404(reference),
+            actor=request.user,
+            method=data["method"],
+            cash_session=cash_session,
+            external_reference=data.get("external_reference", ""),
+            notes=data.get("notes", ""),
+        )
+        if created:
+            log_action(actor=request.user, action="LAUNDRY_PAID", instance=order, request=request,
+                       metadata={
+                           "reference": order.reference,
+                           "method": data["method"],
+                           "total": str(order.total_amount),
+                           "transaction": order.financial_transaction.reference
+                           if order.financial_transaction_id else "",
+                       })
+        return success_response(
+            LaundryOrderSerializer(_laundry_or_404(order.reference)).data,
+            message="Laundry payment recorded." if created else "This laundry was already paid for.",
+        )
 
 
 @extend_schema(tags=["Admin · Guest services"], summary="Bill laundry to the guest folio (once)")

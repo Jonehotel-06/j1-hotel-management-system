@@ -12,6 +12,7 @@ const FRONTEND = path.resolve(__dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(FRONTEND, rel), "utf8");
 const CHECKOUT = read("dashboard/check-out.html");
 const SERVICES = read("dashboard/service-requests.html");
+const LAUNDRY = read("dashboard/laundry.html");
 const ACCOUNTING = read("dashboard/accounting.html");
 const DASHBOARD = read("js/dashboard.js");
 const ICONS = read("js/icons.js");
@@ -26,16 +27,21 @@ test("Accounting defines moneyCell once at page scope (statements/night-audit ca
 });
 
 test("laundry dialogs are styled (no native confirm/prompt)", () => {
-  assert.doesNotMatch(SERVICES, /window\.(confirm|prompt)\(/);
-  assert.match(SERVICES, /Confirm laundry delivery/);
-  assert.match(SERVICES, /JONE\.ui\.confirm\(\{title:"Bill laundry to folio\?"/);
-  assert.match(SERVICES, /JONE\.ui\.confirm\(\{title:"Cancel this laundry order\?"/);
+  assert.doesNotMatch(LAUNDRY, /window\.(confirm|prompt)\(/);
+  assert.match(LAUNDRY, /Confirm laundry delivery/);
+  assert.match(LAUNDRY, /JONE\.ui\.confirm\(\{title:"Bill laundry to folio\?"/);
+  assert.match(LAUNDRY, /JONE\.ui\.confirm\(\{title:"Cancel this laundry order\?"/);
 });
 
-test("sidebar links Laundry to the anchored panel with its own icon", () => {
-  assert.match(DASHBOARD, /label: "Laundry", href: "service-requests\.html#laundry", icon: "shirt"/);
+test("sidebar links Laundry to its own page with its own icon", () => {
+  // Laundry used to share service-requests.html, so the sidebar showed two
+  // entries opening the same page. It is now a distinct destination.
+  assert.match(DASHBOARD, /label: "Laundry", href: "laundry\.html", icon: "shirt", view: "laundry"/);
   assert.match(ICONS, /shirt: '<path/);
-  assert.match(SERVICES, /<section class="panel" id="laundry"/);
+  assert.match(LAUNDRY, /<h2>Laundry orders<\/h2>/);
+  // The duplicate panel is gone from the guest-request page.
+  assert.doesNotMatch(SERVICES, /data-laundry-rows/);
+  assert.doesNotMatch(SERVICES, /id="laundry"/);
 });
 
 test("check-out cards offer a capability-gated folio / gate-pass view", () => {

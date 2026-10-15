@@ -152,7 +152,7 @@
     <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
       <div class="panel-head"><h2>Pending financial approvals</h2></div>
       <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-        <thead><tr><th>Reference</th><th>Type</th><th>Amount</th><th>Status</th><th>Requester</th></tr></thead>
+        <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-nowrap">Type</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Status</th><th class="cell-clamp">Requester</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
         <tbody data-tbody="acct-approvals"></tbody>
       </table></div></div>
     </section>
@@ -202,9 +202,32 @@
   var range=document.getElementById("rp-range");
   var fromEl=document.getElementById("rp-from");
   var toEl=document.getElementById("rp-to");
-  var latest={ financial:null, bookings:null, occupancy:null };
+  var latest={ financial:null, bookings:null, occupancy:null, expenses:null, approvals:null };
   var operationalPending={ bookings:false, occupancy:false };
   var loadSequence=0;
+
+  /* ---------------------- Decision capabilities ----------------------------
+     The backend is the only real gate: every action below re-checks its own
+     capability server-side. These flags decide which decision buttons are
+     OFFERED, so a viewer without the right capability never sees a control
+     that would only fail. They start false (fail closed) and are switched on
+     by the server-resolved capability list once it arrives, re-rendering the
+     two decision tables so the buttons appear without a page reload. */
+  var CAN = { approveExpense:false, refunds:false };
+  function capabilityReady(){
+    if(!(window.Auth&&window.Auth.loadCapabilities)) return Promise.resolve();
+    return window.Auth.loadCapabilities().then(function(){
+      var next={
+        approveExpense:window.Auth.hasCapability("expense.approve"),
+        refunds:window.Auth.hasCapability("payment.refund.approve")
+      };
+      var changed=(next.approveExpense!==CAN.approveExpense)||(next.refunds!==CAN.refunds);
+      CAN=next;
+      if(changed){ renderExpenses(); renderApprovals(); }
+    }).catch(function(){
+      /* Role-based UX stays the fallback; server-side checks are unaffected. */
+    });
+  }
 
   var FINANCE_MEASURES=[
     { label:"Guest charges", key:"guest_charges" },
@@ -448,7 +471,7 @@
       end:dates.to,
       currency:(window.APP_CONFIG&&window.APP_CONFIG.CURRENCY)||"NGN"
     };
-    latest={ financial:null, bookings:null, occupancy:null };
+    latest={ financial:null, bookings:null, occupancy:null, expenses:null, approvals:null };
     operationalPending={ bookings:true, occupancy:true };
     setFinanceKpisLoading(true);
     if(financeBasis) financeBasis.textContent="Loading posted immutable ledger financial measures…";
@@ -473,11 +496,24 @@
     function rowsOf(payload){return listRows(payload&&!Array.isArray(payload)&&payload.data!==undefined?payload.data:payload);}
   function rowActions(row) {
     var html = "";
+    var reference = JONE.esc(row.reference || "");
     if (row.status === "DRAFT") {
-      html += "<button class=\"btn btn-sm\" type=\"button\" data-expense-submit=\"" + JONE.esc(row.reference || "") + "\">Submit</button>";
+      html += "<button class=\"btn btn-sm\" type=\"button\" data-expense-submit=\"" + reference + "\">Submit</button>";
+    }
+    /* The controlled expense workflow is submit -> approve -> post -> pay.
+       Approve and post were reachable only through the API, so an expense sat
+       at SUBMITTED (or APPROVED) on this screen with no way forward. Each
+       decision keeps its own capability: approving needs expense.approve,
+       posting the ledger entry needs expense.manage. */
+    if (row.status === "SUBMITTED" && CAN.approveExpense) {
+      html += "<button class=\"btn btn-sm\" type=\"button\" data-expense-approve=\"" + reference + "\">Approve</button>";
+      html += "<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-reject=\"" + reference + "\">Reject</button>";
+    }
+    if (row.status === "APPROVED") {
+      html += "<button class=\"btn btn-sm\" type=\"button\" data-expense-post=\"" + reference + "\">Post to ledger</button>";
     }
     if (row.status === "POSTED" && row.payment_method === "PAYABLE" && !row.paid_at) {
-      html += "<button class=\"btn btn-sm btn-accent\" type=\"button\" data-expense-settle=\"" + JONE.esc(row.reference || "") + "\">Record supplier payment</button>";
+      html += "<button class=\"btn btn-sm btn-accent\" type=\"button\" data-expense-settle=\"" + reference + "\">Record supplier payment</button>";
     }
     if (row.paid_at) {
       html += "<span class=\"badge\">Paid " + JONE.esc(String(row.paid_at).slice(0, 10)) + "</span>";
@@ -503,6 +539,46 @@
     if (!settle) return;
     event.preventDefault();
     settleExpense(settle.getAttribute("data-expense-settle"));
+  });
+  document.addEventListener("click", function (event) {
+    var approve = event.target.closest ? event.target.closest("[data-expense-approve]") : null;
+    if (!approve) return;
+    event.preventDefault();
+    reviewExpense(approve.getAttribute("data-expense-approve"), true);
+  });
+  document.addEventListener("click", function (event) {
+    var reject = event.target.closest ? event.target.closest("[data-expense-reject]") : null;
+    if (!reject) return;
+    event.preventDefault();
+    reviewExpense(reject.getAttribute("data-expense-reject"), false);
+  });
+  document.addEventListener("click", function (event) {
+    var post = event.target.closest ? event.target.closest("[data-expense-post]") : null;
+    if (!post) return;
+    event.preventDefault();
+    postExpense(post.getAttribute("data-expense-post"));
+  });
+  /* Registry approvals (refunds, discounts, voids, adjustments) carry their
+     own approval reference and are decided on the approvals endpoint. Cash
+     variances are deliberately excluded: they must go through the controlled
+     cash-session workflow, and the backend refuses them here for that reason. */
+  document.addEventListener("click", function (event) {
+    var approve = event.target.closest ? event.target.closest("[data-approval-approve]") : null;
+    if (!approve) return;
+    event.preventDefault();
+    reviewApproval(approve.getAttribute("data-approval-approve"), true);
+  });
+  document.addEventListener("click", function (event) {
+    var reject = event.target.closest ? event.target.closest("[data-approval-reject]") : null;
+    if (!reject) return;
+    event.preventDefault();
+    reviewApproval(reject.getAttribute("data-approval-reject"), false);
+  });
+  document.addEventListener("click", function (event) {
+    var view = event.target.closest ? event.target.closest("[data-approval-expense]") : null;
+    if (!view) return;
+    event.preventDefault();
+    openExpenseDetails(view.getAttribute("data-approval-expense"), view);
   });
   /* ---------------------- Expense details drill-down ----------------------
      Every expense record opens a details dialog that distinguishes what was
@@ -604,7 +680,8 @@
       if(requestId!==loadSequence||!ex) return;
       var rows=rowsOf(response);
       if(!Array.isArray(rows)) rows=[];
-      ex.innerHTML=rows.length?rows.map(function(row){return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.department||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.amount))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"cell-nowrap\"><div class=\"row-actions\">" + rowActions(row) + "<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-details=\"" + JONE.esc(row.reference || "") + "\" aria-label=\"View details for expense " + JONE.esc(row.reference || "") + "\">Details</button></div></td></tr>";}).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No expenses in this period</h3></div></td></tr>";
+      latest.expenses=rows;
+      renderExpenses();
     },function(err){ if(requestId===loadSequence&&ex) DATA.error(ex,"Expenses couldn't be loaded",financeErrorMessage(err),4); });
     getReport(window.APP_CONFIG.API_ENDPOINTS.financeCashSessions,{}).then(function(response){
       if(requestId!==loadSequence||!cash) return;
@@ -614,9 +691,57 @@
     getReport(window.APP_CONFIG.API_ENDPOINTS.financeApprovals,{status:"PENDING"}).then(function(response){
       if(requestId!==loadSequence||!ap) return;
       var rows=rowsOf(response); if(!Array.isArray(rows)) rows=[];
-      ap.innerHTML=rows.length?rows.map(function(row){return "<tr><td>"+JONE.esc(row.reference||"—")+"</td><td>"+JONE.esc(row.type||"—")+"</td><td class=\"num\">"+JONE.esc(moneyCell(row.amount))+"</td><td>"+JONE.esc(row.status||"—")+"</td><td>"+JONE.esc(row.requester_email||"—")+"</td></tr>";}).join(""):"<tr><td colspan=\"5\"><div class=\"empty-state\"><h3>No pending approvals</h3></div></td></tr>";
+      latest.approvals=rows;
+      renderApprovals();
     },function(err){ if(requestId===loadSequence&&ap) DATA.error(ap,"Approvals couldn't be loaded",financeErrorMessage(err),5); });
 
+  }
+
+  /* Expenses table. Rendering is split out of load() so the decision buttons
+     can be switched on the moment the capability list arrives. */
+  function renderExpenses(){
+    if(!ex) return;
+    var rows=latest.expenses;
+    if(!Array.isArray(rows)) return;
+    ex.innerHTML=rows.length?rows.map(function(row){return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.department||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.amount))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"cell-nowrap\"><div class=\"row-actions\">" + rowActions(row) + "<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-details=\"" + JONE.esc(row.reference || "") + "\" aria-label=\"View details for expense " + JONE.esc(row.reference || "") + "\">Details</button></div></td></tr>";}).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No expenses in this period</h3></div></td></tr>";
+    if(JONE.icons) JONE.icons.inject(ex);
+  }
+
+  /* Pending approvals table. An EXPENSE request is decided through the expense
+     review endpoint using its own expense reference (source_reference); every
+     other registrable type is decided on the approvals endpoint. A cash
+     variance shows no inline buttons because the controlled route is the
+     cash-session variance review, not this table. */
+  function approvalActions(row){
+    var type=String(row.type||"").toUpperCase();
+    if(type==="CASH_VARIANCE"){
+      return '<span class="caption">Review with the cash drawer</span>';
+    }
+    if(type==="EXPENSE"){
+      var expenseRef=JONE.esc(row.source_reference||"");
+      if(!expenseRef) return '<span class="caption">—</span>';
+      var html="<button class=\"btn btn-sm btn-outline\" type=\"button\" data-approval-expense=\""+expenseRef+"\">Open expense</button>";
+      if(CAN.approveExpense){
+        html+="<button class=\"btn btn-sm\" type=\"button\" data-expense-approve=\""+expenseRef+"\">Approve</button>";
+        html+="<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-reject=\""+expenseRef+"\">Reject</button>";
+      }
+      return html;
+    }
+    if(!CAN.refunds) return '<span class="caption">—</span>';
+    var reference=JONE.esc(row.reference||"");
+    return "<button class=\"btn btn-sm\" type=\"button\" data-approval-approve=\""+reference+"\">Approve</button>"+
+      "<button class=\"btn btn-sm btn-outline\" type=\"button\" data-approval-reject=\""+reference+"\">Reject</button>";
+  }
+  function renderApprovals(){
+    if(!ap) return;
+    var rows=latest.approvals;
+    if(!Array.isArray(rows)) return;
+    ap.innerHTML=rows.length?rows.map(function(row){
+      var source=row.source_reference&&row.source_reference!==row.reference
+        ? '<div class="caption">'+JONE.esc(row.source_reference)+'</div>' : "";
+      return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+source+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.type||"—")+"</td><td class=\"num\">"+JONE.esc(moneyCell(row.amount))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.requester_email||"—")+"</td><td class=\"cell-nowrap\"><div class=\"row-actions\">"+approvalActions(row)+"</div></td></tr>";
+    }).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No pending approvals</h3></div></td></tr>";
+    if(JONE.icons) JONE.icons.inject(ap);
   }
 
   /* ------------------------- Create expense -------------------------
@@ -710,6 +835,109 @@
   }
   var createExpenseBtn = document.getElementById("acct-create-expense");
   if (createExpenseBtn) createExpenseBtn.addEventListener("click", createExpense);
+
+  /* ---------------- Independent expense approval (maker-checker) ----------------
+     Approval is a decision on someone else's submitted draft. The backend
+     enforces the separation rule and refuses a requester who reviews their own
+     expense unless the administrator override policy allows it — in which case
+     the override is recorded as append-only evidence, not hidden. Rejection
+     asks for a reason because "why was this refused" is the question the
+     requester asks next, and the answer has to live on the record. */
+  async function reviewExpense(reference, approved) {
+    if (!reference) return;
+    var reviewNote = "";
+    if (approved) {
+      var confirmed = await JONE.ui.confirm({
+        title: "Approve this expense?",
+        message: "Expense " + reference + " will be approved. Posting it to the ledger and paying the supplier stay separate, controlled steps.",
+        confirmText: "Approve"
+      });
+      if (!confirmed) return;
+    } else {
+      var result = await JONE.dashboard.formModal({
+        title: "Reject expense " + reference,
+        submitText: "Reject expense",
+        fields: [
+          { name: "review_note", label: "Why is this expense rejected?", type: "textarea", required: true, maxLength: 5000, help: "Recorded on the expense's audit history and shown to the requester." }
+        ],
+        onSubmit: async function (values) {
+          reviewNote = String(values.review_note || "").trim();
+          if (!reviewNote) throw new Error("A rejection reason is required.");
+          return { message: "Expense rejected." };
+        }
+      });
+      if (!result) return;
+    }
+    try {
+      await window.API.resourceAction("financeExpenses", reference, "review", {
+        approved: !!approved, review_note: reviewNote
+      });
+      JONE.ui.toast(approved ? "Expense approved." : "Expense rejected.", "success");
+      JONE.dashboard.panel.close();
+      load();
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "The decision could not be recorded.", "error");
+    }
+  }
+
+  /* Posting an approved expense writes the immutable ledger entry (and, for a
+     cash expense, the drawer paid-out movement). It is a money movement, so it
+     is confirmed explicitly and never offered for an unapproved record. */
+  async function postExpense(reference) {
+    if (!reference) return;
+    var confirmed = await JONE.ui.confirm({
+      title: "Post this expense to the ledger?",
+      message: "Expense " + reference + " will create its immutable ledger entry. This cannot be undone — a correction needs its own controlled record.",
+      confirmText: "Post to ledger"
+    });
+    if (!confirmed) return;
+    try {
+      await window.API.resourceAction("financeExpenses", reference, "post", {});
+      JONE.ui.toast("Expense posted to the ledger.", "success");
+      JONE.dashboard.panel.close();
+      load();
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "The expense could not be posted.", "error");
+    }
+  }
+
+  /* Registry approvals (refund, discount, void, adjustment). The approval's own
+     reference is the identifier here — not the expense reference. */
+  async function reviewApproval(reference, approved) {
+    if (!reference) return;
+    var reviewNote = "";
+    if (approved) {
+      var confirmed = await JONE.ui.confirm({
+        title: "Approve this request?",
+        message: "Approval " + reference + " will be approved. The underlying money action still follows its own controlled steps.",
+        confirmText: "Approve"
+      });
+      if (!confirmed) return;
+    } else {
+      var result = await JONE.dashboard.formModal({
+        title: "Reject approval " + reference,
+        submitText: "Reject request",
+        fields: [
+          { name: "review_note", label: "Why is this rejected?", type: "textarea", required: true, maxLength: 5000, help: "Recorded as immutable review evidence on the approval." }
+        ],
+        onSubmit: async function (values) {
+          reviewNote = String(values.review_note || "").trim();
+          if (!reviewNote) throw new Error("A rejection reason is required.");
+          return { message: "Approval rejected." };
+        }
+      });
+      if (!result) return;
+    }
+    try {
+      await window.API.resourceAction("financeApprovals", reference, "review", {
+        approved: !!approved, review_note: reviewNote
+      });
+      JONE.ui.toast(approved ? "Request approved." : "Request rejected.", "success");
+      load();
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "The decision could not be recorded.", "error");
+    }
+  }
 
   /* ---------------- Supplier payment settlement ----------------
      A posted on-account expense is only an obligation. This records the
@@ -923,6 +1151,9 @@
   if (journalBtn) journalBtn.addEventListener("click", postJournal);
 
   load();
+  /* Resolve the account's real capabilities once, then re-render the decision
+     tables so the buttons a reviewer is entitled to appear without a reload. */
+  capabilityReady();
 
   var applyBtn=document.getElementById("rp-apply");
   if(applyBtn) applyBtn.addEventListener("click",function(){

@@ -147,8 +147,11 @@ class LaundryItemSerializer(serializers.ModelSerializer):
 
 class LaundryOrderSerializer(serializers.ModelSerializer):
     items = LaundryItemSerializer(many=True, read_only=True)
-    guest_name = serializers.CharField(source="guest.full_name", read_only=True)
-    stay_reference = serializers.CharField(source="stay.reference", read_only=True)
+    guest_name = serializers.SerializerMethodField()
+    customer_name = serializers.CharField(read_only=True)
+    is_walk_in = serializers.BooleanField(read_only=True)
+    settled = serializers.BooleanField(read_only=True)
+    stay_reference = serializers.CharField(source="stay.reference", read_only=True, allow_null=True)
     room_number = serializers.CharField(source="room.room_number", read_only=True, allow_null=True)
     assigned_to_email = serializers.EmailField(source="assigned_to.email", read_only=True, allow_null=True)
     received_by_email = serializers.EmailField(source="received_by.email", read_only=True, allow_null=True)
@@ -158,12 +161,18 @@ class LaundryOrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = LaundryOrder
         fields = [
-            "reference", "status", "stay_reference", "guest_name", "room_number", "items",
-            "total_amount", "currency", "assigned_to_email", "received_by_email",
+            "reference", "status", "stay_reference", "guest_name", "customer_name", "guest_phone",
+            "is_walk_in", "settled", "room_number", "items",
+            "total_amount", "currency", "payment_method", "assigned_to_email", "received_by_email",
             "billed_at", "folio_reference", "financial_reference", "ready_at",
             "delivered_at", "delivered_to", "notes", "created_at",
         ]
         read_only_fields = fields
+
+    def get_guest_name(self, obj):
+        # Kept for existing consumers: the resident's name, or the walk-in
+        # customer who left the laundry. Never blank.
+        return obj.customer_name
 
 
 class LaundryItemInputSerializer(serializers.Serializer):
@@ -174,11 +183,53 @@ class LaundryItemInputSerializer(serializers.Serializer):
 
 
 class LaundryCreateSerializer(serializers.Serializer):
-    stay_reference = serializers.CharField(max_length=64)
+    """Receive laundry for an in-house stay OR for a walk-in customer.
+
+    Exactly one identity is required: either the stay reference of a resident,
+    or the name of the walk-in customer standing at the desk. Requiring a stay
+    was what limited laundry to guests who had booked a room.
+    """
+
+    stay_reference = serializers.CharField(max_length=64, required=False, allow_blank=True, default="")
+    customer_name = serializers.CharField(max_length=200, required=False, allow_blank=True, default="")
+    customer_phone = serializers.CharField(max_length=40, required=False, allow_blank=True, default="")
     room_id = serializers.IntegerField(required=False, allow_null=True)
     items = LaundryItemInputSerializer(many=True)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=2000, default="")
     idempotency_key = serializers.CharField(max_length=160)
+
+    def validate(self, attrs):
+        attrs["stay_reference"] = (attrs.get("stay_reference") or "").strip()
+        attrs["customer_name"] = (attrs.get("customer_name") or "").strip()
+        attrs["customer_phone"] = (attrs.get("customer_phone") or "").strip()
+        if not attrs["stay_reference"] and not attrs["customer_name"]:
+            raise serializers.ValidationError({
+                "stay_reference": "Choose an in-house guest, or enter the walk-in customer's name.",
+            })
+        return attrs
+
+
+class LaundrySettleSerializer(serializers.Serializer):
+    """Take payment for a walk-in laundry order at the desk."""
+
+    method = serializers.ChoiceField(choices=LaundryOrder.PaymentMethod.choices)
+    cash_session_reference = serializers.CharField(required=False, allow_blank=True, max_length=64, default="")
+    external_reference = serializers.CharField(required=False, allow_blank=True, max_length=120, default="")
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
+
+    def validate(self, attrs):
+        method = attrs.get("method")
+        session = (attrs.get("cash_session_reference") or "").strip()
+        attrs["cash_session_reference"] = session
+        if method == LaundryOrder.PaymentMethod.CASH and not session:
+            raise serializers.ValidationError({
+                "cash_session_reference": "Cash payments require an open cash-session reference.",
+            })
+        if method != LaundryOrder.PaymentMethod.CASH and session:
+            raise serializers.ValidationError({
+                "cash_session_reference": "Only a cash payment uses a cash-session reference.",
+            })
+        return attrs
 
 
 class LaundryAssignSerializer(serializers.Serializer):

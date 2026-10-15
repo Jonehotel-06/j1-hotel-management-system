@@ -50,8 +50,14 @@ def _money(value, field) -> Decimal:
 
 
 @transaction.atomic
-def create_laundry_order(*, actor, stay, items, room=None, notes="", idempotency_key=""):
-    """Receive one laundry collection with priced item lines."""
+def create_laundry_order(*, actor, items, stay=None, room=None, notes="", idempotency_key="",
+                         customer_name="", customer_phone=""):
+    """Receive one laundry collection with priced item lines.
+
+    ``stay`` is supplied for an in-house guest. A walk-in customer has no stay
+    or folio, so they are identified by ``customer_name``/``customer_phone``
+    instead — laundry is not restricted to people who booked a room.
+    """
     if not has_capability(actor, "guest_request.manage"):
         raise PermissionDenied("This user cannot receive laundry.")
     key = str(idempotency_key or "").strip()
@@ -59,9 +65,16 @@ def create_laundry_order(*, actor, stay, items, room=None, notes="", idempotency
         existing = LaundryOrder.objects.filter(idempotency_key=key).first()
         if existing:
             return existing, False
-    from apps.stays.models import Stay
+    customer_name = str(customer_name or "").strip()[:200]
+    customer_phone = str(customer_phone or "").strip()[:40]
+    if stay is None and not customer_name:
+        raise ValidationError({
+            "stay_reference": "Choose an in-house guest, or enter the walk-in customer's name.",
+        })
+    if stay is not None:
+        from apps.stays.models import Stay
 
-    stay = Stay.objects.select_related("guest", "booking").get(pk=stay.pk)
+        stay = Stay.objects.select_related("guest", "booking").get(pk=stay.pk)
     lines = []
     total = ZERO
     for index, raw in enumerate(items or []):
@@ -85,7 +98,13 @@ def create_laundry_order(*, actor, stay, items, room=None, notes="", idempotency
     order = LaundryOrder.objects.create(
         reference=_reference(),
         idempotency_key=key or None,
-        stay=stay, guest=stay.guest, room=room,
+        stay=stay,
+        guest=(stay.guest if stay is not None else None),
+        # A walk-in keeps their own identity on the record; an in-house order
+        # reads its customer from the stay's guest, so these stay blank.
+        guest_name=("" if stay is not None else customer_name),
+        guest_phone=("" if stay is not None else customer_phone),
+        room=room,
         received_by=actor, notes=str(notes or "")[:2000],
         total_amount=total.quantize(CENT), currency="NGN",
     )
@@ -139,6 +158,13 @@ def bill_laundry_order(*, order, actor):
     order = LaundryOrder.objects.select_for_update().select_related("stay", "guest").get(pk=order.pk)
     if order.financial_transaction_id:
         return order, False
+    if order.stay_id is None:
+        # A walk-in has no folio to charge. Sending them down this path would
+        # post a receivable that no one owes, so it is refused explicitly and
+        # the desk is pointed at the payment it should take instead.
+        raise ValidationError(
+            "Walk-in laundry has no guest folio. Record the customer's payment instead."
+        )
     if order.status == LaundryOrder.Status.CANCELLED:
         raise ValidationError("Cancelled laundry cannot be billed.")
     if Decimal(order.total_amount) <= ZERO:
@@ -170,6 +196,98 @@ def bill_laundry_order(*, order, actor):
     )
     LaundryOrder.objects.filter(pk=order.pk, financial_transaction__isnull=True).update(
         folio=folio, financial_transaction=transaction_row, billed_at=timezone.now(),
+    )
+    order.refresh_from_db()
+    return order, created
+
+
+@transaction.atomic
+def settle_walk_in_laundry(*, order, actor, method, cash_session=None, external_reference="", notes=""):
+    """Take payment for a walk-in laundry order at the desk, exactly once.
+
+    A walk-in has no folio, so the money is collected rather than charged. The
+    entry recognizes the revenue and the tender in one posting (Dr cash/bank/
+    card clearing / Cr other operating revenue) — the same shape as a direct
+    POS sale. Cash must land in the acting cashier's own open drawer, and the
+    drawer's expected cash moves with it, so the count reconciles at close.
+    """
+    if not has_capability(actor, "guest_request.manage"):
+        raise PermissionDenied("This user cannot take laundry payments.")
+    order = LaundryOrder.objects.select_for_update().get(pk=order.pk)
+    if order.financial_transaction_id:
+        return order, False
+    if order.stay_id is not None:
+        raise ValidationError("In-house laundry settles to the guest folio, not a direct payment.")
+    if order.status == LaundryOrder.Status.CANCELLED:
+        raise ValidationError("Cancelled laundry cannot be paid for.")
+    total = Decimal(order.total_amount)
+    if total <= ZERO:
+        raise ValidationError("This laundry has no priced items to pay for.")
+    method = str(method or "").upper()
+    if method not in LaundryOrder.PaymentMethod.values:
+        raise ValidationError({"method": "Choose how the customer paid."})
+
+    from apps.finance.models import CashMovement, CashSession, FinancialLine, FinancialTransaction
+    from apps.finance.services import accounting
+    from apps.finance.services.ledger_service import create_posted_transaction
+
+    session = None
+    if method == LaundryOrder.PaymentMethod.CASH:
+        if cash_session is None:
+            raise ValidationError({"cash_session_reference": "Cash payments require an open cash-session reference."})
+        session = CashSession.objects.select_for_update().get(pk=cash_session.pk)
+        if session.status != CashSession.Status.OPEN:
+            raise ValidationError({"cash_session_reference": "The cash session is not open."})
+        if actor and session.cashier_id != actor.pk:
+            raise PermissionDenied("Cash must be taken into the acting cashier's own open drawer.")
+    tender_account = {
+        LaundryOrder.PaymentMethod.CASH: accounting.CASH_ON_HAND,
+        LaundryOrder.PaymentMethod.CARD: accounting.CARD_CLEARING,
+        LaundryOrder.PaymentMethod.BANK_TRANSFER: accounting.BANK_CLEARING,
+    }[method]
+
+    source_key = f"laundry-payment:{order.reference}"
+    transaction_row, created = create_posted_transaction(
+        transaction_type=FinancialTransaction.Type.PAYMENT_COLLECTION,
+        source_key=source_key,
+        idempotency_key=source_key,
+        actor=actor,
+        source_reference=order.reference,
+        external_reference=str(external_reference or "")[:120],
+        narrative=f"Walk-in laundry {order.reference} ({order.customer_name})",
+        currency=order.currency,
+        business_date=hotel_today(),
+        metadata={
+            "laundry_reference": order.reference,
+            "walk_in": True,
+            "method": method,
+            "customer_name": order.guest_name,
+        },
+        lines=[
+            {"account_code": tender_account, "direction": FinancialLine.Direction.DEBIT,
+             "amount": order.total_amount, "description": f"Laundry payment {order.reference}"},
+            {"account_code": accounting.OTHER_OPERATING_REVENUE, "direction": FinancialLine.Direction.CREDIT,
+             "amount": order.total_amount, "description": f"Laundry revenue {order.reference}"},
+        ],
+    )
+    # The drawer moves only when this call actually posted the entry: a retry
+    # that found an existing transaction must not bank the same cash twice.
+    if created and session is not None:
+        CashMovement.objects.create(
+            cash_session=session,
+            transaction=transaction_row,
+            type=CashMovement.Type.COLLECTION,
+            amount=order.total_amount,
+            currency=order.currency,
+            actor=actor,
+            source_reference=order.reference,
+            notes=f"Walk-in laundry {order.reference}",
+            metadata={"laundry_reference": order.reference},
+        )
+        session.expected_cash = (Decimal(session.expected_cash) + total).quantize(CENT)
+        session.save(update_fields=["expected_cash", "updated_at"])
+    LaundryOrder.objects.filter(pk=order.pk, financial_transaction__isnull=True).update(
+        financial_transaction=transaction_row, billed_at=timezone.now(), payment_method=method,
     )
     order.refresh_from_db()
     return order, created
