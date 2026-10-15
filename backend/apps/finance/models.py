@@ -542,6 +542,20 @@ class Expense(TimeStampedModel):
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="expenses_posted"
     )
     posted_at = models.DateTimeField(null=True, blank=True)
+    # Supplier-payment settlement evidence. A PAYABLE expense is only an
+    # obligation when posted; these fields record the later real payment to
+    # the supplier (set once, by the settlement service, via a controlled
+    # update because posted expenses are otherwise immutable).
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="expenses_paid_out"
+    )
+    payment_reference = models.CharField(max_length=160, blank=True, default="")
+    payment_receipt_url = models.URLField(blank=True, default="")
+    payment_receipt_file = models.FileField(upload_to="finance_receipts/%Y/%m/", null=True, blank=True)
+    settlement_transaction = models.OneToOneField(
+        FinancialTransaction, null=True, blank=True, on_delete=models.PROTECT, related_name="expense_settlement"
+    )
     notes = models.TextField(blank=True, default="")
     metadata = models.JSONField(default=dict, blank=True)
 
@@ -576,6 +590,7 @@ class ExpenseEvent(models.Model):
         APPROVED = "APPROVED", "Approved"
         REJECTED = "REJECTED", "Rejected"
         POSTED = "POSTED", "Posted"
+        PAID = "PAID", "Supplier paid"
 
     expense = models.ForeignKey(Expense, on_delete=models.PROTECT, related_name="events")
     type = models.CharField(max_length=16, choices=Type.choices, db_index=True)

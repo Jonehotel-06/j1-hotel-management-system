@@ -236,6 +236,7 @@ class PayrollSalaryPaymentCreateSerializer(serializers.Serializer):
     payment_date = serializers.DateField(required=False)
     external_reference = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
     evidence_reference = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
+    receipt_url = serializers.URLField(required=False, allow_blank=True, max_length=200, default="")
     cash_session_reference = serializers.CharField(required=False, allow_blank=True, max_length=64, default="")
     notes = serializers.CharField(required=False, allow_blank=True, max_length=1000, default="")
     idempotency_key = serializers.CharField(min_length=8, max_length=160, allow_blank=False)
@@ -257,13 +258,20 @@ class PayrollSalaryPaymentSerializer(serializers.ModelSerializer):
     cash_session_reference = serializers.CharField(source="cash_session.reference", read_only=True, allow_null=True)
     reversal_of_reference = serializers.CharField(source="reversal_of.reference", read_only=True, allow_null=True)
     reversed_by_reference = serializers.SerializerMethodField()
+    receipt_file_url = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
+
+    def get_receipt_file_url(self, obj):
+        try:
+            return obj.receipt_file.url if obj.receipt_file else ""
+        except ValueError:
+            return ""
 
     class Meta:
         model = PayrollSalaryPayment
         fields = [
             "reference", "line_id", "amount", "currency", "payment_date", "method",
-            "external_reference", "evidence_reference", "notes", "recorded_by_email",
+            "external_reference", "evidence_reference", "receipt_url", "receipt_file_url", "notes", "recorded_by_email",
             "financial_reference", "cash_session_reference", "reversal_of_reference",
             "reversed_by_reference", "correction_reason", "is_legacy_import", "status", "created_at",
         ]

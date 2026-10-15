@@ -9,6 +9,7 @@ from django.http import HttpResponse
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -543,6 +544,7 @@ class PayrollSalaryPaymentListCreateView(APIView):
     """Private per-employee history and entry point for manual salary records."""
 
     permission_classes = [HasCapability]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
     required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve")
     require_any_capability = True
     pagination_class = StandardPagination
@@ -576,10 +578,15 @@ class PayrollSalaryPaymentListCreateView(APIView):
             payment_date=data.get("payment_date"),
             external_reference=data["external_reference"],
             evidence_reference=data["evidence_reference"],
+            receipt_url=data.get("receipt_url", ""),
             notes=data["notes"],
             idempotency_key=data["idempotency_key"],
             cash_session_reference=data["cash_session_reference"],
         )
+        receipt_file = request.FILES.get("receipt")
+        if created and receipt_file is not None:
+            payment.receipt_file = receipt_file
+            payment.save(update_fields=["receipt_file"])
         if created:
             log_action(
                 actor=request.user,

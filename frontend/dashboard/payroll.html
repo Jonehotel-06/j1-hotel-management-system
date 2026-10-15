@@ -157,11 +157,19 @@ async function recordSalaryPayment(reference,line){
     {name:"external_reference",label:"Bank/payment reference",type:"text",maxLength:160,placeholder:"Required for bank transfer"},
     {name:"cash_session_reference",label:"Your open cash-session reference",type:"text",maxLength:64,placeholder:"Required for cash"},
     {name:"evidence_reference",label:"Supporting evidence reference (optional)",type:"text",maxLength:160},
+    {name:"receipt_url",label:"Receipt link (optional)",type:"text",maxLength:200,placeholder:"https://\u2026"},
+    {name:"receipt",label:"Receipt file (optional)",type:"file",help:"Attach the bank receipt or payment confirmation if you have one. Optional."},
     {name:"notes",label:"Notes (optional)",type:"textarea",rows:2,maxLength:1000}
-  ],onRender:function(panel){var note=document.createElement("p");note.className="payroll-note";note.textContent="Only record money already paid. This does not send a bank transfer. Bank transfers require a reference; cash requires your own open drawer with sufficient expected cash.";panel.appendChild(note);},onSubmit:async function(values){
+  ],multipart:true,onRender:function(panel){var note=document.createElement("p");note.className="payroll-note";note.textContent="Only record money already paid. This does not send a bank transfer. Bank transfers require a reference; cash requires your own open drawer with sufficient expected cash. Recording the payment updates the employee's paid amount and the run's Paid / Part-payment status automatically.";panel.appendChild(note);},onSubmit:async function(values,formData){
     if(values.method==="BANK_TRANSFER"&&!String(values.external_reference||"").trim())throw new Error("Enter the bank transfer reference.");
     if(values.method==="CASH"&&!String(values.cash_session_reference||"").trim())throw new Error("Enter your open cash-session reference.");
-    await window.API.recordPayrollSalaryPayment(reference,line.id,{amount:values.amount,method:values.method,payment_date:values.payment_date,external_reference:values.external_reference||"",cash_session_reference:values.cash_session_reference||"",evidence_reference:values.evidence_reference||"",notes:values.notes||"",idempotency_key:idempotencyKey},{cache:"no-store"});
+    var fd=new FormData();
+    fd.append("amount",values.amount);fd.append("method",values.method);fd.append("payment_date",values.payment_date);
+    fd.append("external_reference",values.external_reference||"");fd.append("cash_session_reference",values.cash_session_reference||"");
+    fd.append("evidence_reference",values.evidence_reference||"");fd.append("receipt_url",values.receipt_url||"");
+    fd.append("notes",values.notes||"");fd.append("idempotency_key",idempotencyKey);
+    if(values.receipt)fd.append("receipt",values.receipt);
+    await window.API.recordPayrollSalaryPayment(reference,line.id,fd,{cache:"no-store"});
     return{message:"Manual salary payment recorded."};
   }});
   if(saved){JONE.ui.toast("Salary payment recorded to the ledger.","success");loadPeriods();viewPeriod(reference);}

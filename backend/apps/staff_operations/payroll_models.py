@@ -708,6 +708,9 @@ class PayrollSalaryPayment(models.Model):
     method = models.CharField(max_length=20, choices=Method.choices)
     external_reference = models.CharField(max_length=160, blank=True, default="", db_index=True)
     evidence_reference = models.CharField(max_length=160, blank=True, default="")
+    # Optional payment receipt evidence: a link and/or an uploaded file.
+    receipt_url = models.URLField(blank=True, default="")
+    receipt_file = models.FileField(upload_to="payroll_receipts/%Y/%m/", null=True, blank=True)
     notes = models.TextField(blank=True, default="")
     recorded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,

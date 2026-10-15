@@ -311,6 +311,9 @@
     financeTransactions: "/api/admin/finance/transactions/",   // immutable posted ledger headers
     financeExpenses:     "/api/admin/finance/expenses/",       // controlled expense drafts/submissions
     financeNightAudit:   "/api/admin/finance/reports/night-audit/",
+    financeBalanceSheet: "/api/admin/finance/reports/balance-sheet/",
+    financeCashFlow:     "/api/admin/finance/reports/cash-flow/",
+    guestLaundry:        "/api/admin/service-requests/laundry/",
     financeArAging:      "/api/admin/finance/reports/ar-aging/",
     financeJournals:     "/api/admin/finance/journals/",
     financeChartOfAccounts: "/api/admin/finance/chart-of-accounts/",

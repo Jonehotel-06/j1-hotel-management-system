@@ -5,6 +5,7 @@ from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.views import APIView
 
 from apps.accounts.capabilities import has_capability
@@ -20,6 +21,7 @@ from .serializers import (
     CashDropSerializer,
     CashSessionSerializer,
     ExpenseCreateSerializer,
+    ExpenseSettlementSerializer,
     JournalCreateSerializer,
     ExpenseDetailSerializer,
     ExpenseListSerializer,
@@ -32,10 +34,13 @@ from .serializers import (
 )
 from .services.approval_service import review_approval
 from .services.cash_session_service import review_cash_variance
-from .services.expense_service import create_expense, post_expense, review_expense, submit_expense
+from .services.expense_service import create_expense, post_expense, review_expense, settle_expense_payment, submit_expense
 from .services.folio_service import folio_balance_queryset
+from apps.core.utils import hotel_today
+
 from .services.journal_service import chart_of_accounts, post_manual_journal, record_cash_drop
 from .services.night_audit_service import accounts_receivable_aging, daily_reconciliation
+from .services.statements_service import balance_sheet, cash_flow
 from .services.reporting_service import financial_summary, summary_pdf_bytes, summary_xlsx_bytes
 
 
@@ -462,6 +467,48 @@ class ExpensePostView(APIView):
         )
 
 
+@extend_schema(tags=["Admin · Finance"], summary="Record that a posted on-account expense has been paid to the supplier")
+class ExpenseSettlePaymentView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "expense.manage"
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def post(self, request, reference):
+        serializer = ExpenseSettlementSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        cash_session = None
+        if ref := data.get("cash_session_reference"):
+            cash_session = CashSession.objects.filter(reference=ref).first()
+            if cash_session is None:
+                raise NotFound("Cash session not found.")
+        expense, created = settle_expense_payment(
+            expense=_expense_or_404(request, reference),
+            actor=request.user,
+            method=data["method"],
+            payment_reference=data.get("payment_reference", ""),
+            cash_session=cash_session,
+            receipt_url=data.get("receipt_url", ""),
+            receipt_file=request.FILES.get("receipt"),
+            paid_on=data.get("paid_on"),
+        )
+        if created:
+            log_action(
+                actor=request.user,
+                action="EXPENSE_SUPPLIER_PAID",
+                instance=expense,
+                request=request,
+                metadata={"reference": expense.reference, "method": data["method"],
+                          "payment_reference": data.get("payment_reference", "")},
+            )
+        return success_response(
+            ExpenseDetailSerializer(_expense_or_404(request, expense.reference, detail=True)).data,
+            message="Supplier payment recorded; the expense is now marked paid."
+            if created
+            else "This expense was already marked paid.",
+        )
+
+
 @extend_schema(tags=["Admin · Finance"], summary="List effective-dated finance control policies")
 class FinancialControlPolicyListCreateView(APIView):
     permission_classes = [HasCapability]
@@ -510,6 +557,29 @@ class AccountsReceivableAgingView(APIView):
     def get(self, request):
         as_of = _parse_query_date(request.query_params.get("as_of"), "as_of")
         return success_response(accounts_receivable_aging(as_of=as_of))
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Balance sheet as of a date, from the posted ledger")
+class BalanceSheetView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("reports.financial.view", "expense.approve")
+    require_any_capability = True
+
+    def get(self, request):
+        as_of = _parse_query_date(request.query_params.get("as_of"), "as_of")
+        return success_response(balance_sheet(as_of=as_of))
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Cash-flow statement for a period, reconciled to cash balances")
+class CashFlowView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("reports.financial.view", "expense.approve")
+    require_any_capability = True
+
+    def get(self, request):
+        end = _parse_query_date(request.query_params.get("end"), "end") or hotel_today()
+        start = _parse_query_date(request.query_params.get("start"), "start") or end.replace(day=1)
+        return success_response(cash_flow(start=start, end=end))
 
 
 @extend_schema(tags=["Admin · Finance"], summary="Chart of accounts available to manual journals")

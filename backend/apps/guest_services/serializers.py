@@ -125,3 +125,66 @@ class PortalServiceRequestCommentSerializer(serializers.Serializer):
 
 class PortalServiceRequestCancelSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+
+
+# ---------------------------------------------------------------------------
+# Laundry
+# ---------------------------------------------------------------------------
+from .models import LaundryItem, LaundryOrder
+
+
+class LaundryItemSerializer(serializers.ModelSerializer):
+    line_total = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LaundryItem
+        fields = ["id", "description", "quantity", "service_type", "unit_price", "line_total"]
+        read_only_fields = fields
+
+    def get_line_total(self, obj):
+        return str(obj.line_total)
+
+
+class LaundryOrderSerializer(serializers.ModelSerializer):
+    items = LaundryItemSerializer(many=True, read_only=True)
+    guest_name = serializers.CharField(source="guest.full_name", read_only=True)
+    stay_reference = serializers.CharField(source="stay.reference", read_only=True)
+    room_number = serializers.CharField(source="room.room_number", read_only=True, allow_null=True)
+    assigned_to_email = serializers.EmailField(source="assigned_to.email", read_only=True, allow_null=True)
+    received_by_email = serializers.EmailField(source="received_by.email", read_only=True, allow_null=True)
+    folio_reference = serializers.CharField(source="folio.reference", read_only=True, allow_null=True)
+    financial_reference = serializers.CharField(source="financial_transaction.reference", read_only=True, allow_null=True)
+
+    class Meta:
+        model = LaundryOrder
+        fields = [
+            "reference", "status", "stay_reference", "guest_name", "room_number", "items",
+            "total_amount", "currency", "assigned_to_email", "received_by_email",
+            "billed_at", "folio_reference", "financial_reference", "ready_at",
+            "delivered_at", "delivered_to", "notes", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class LaundryItemInputSerializer(serializers.Serializer):
+    description = serializers.CharField(max_length=160)
+    quantity = serializers.IntegerField(min_value=1, max_value=500, default=1)
+    service_type = serializers.ChoiceField(choices=LaundryItem.ServiceType.choices, default=LaundryItem.ServiceType.WASH)
+    unit_price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, default=0)
+
+
+class LaundryCreateSerializer(serializers.Serializer):
+    stay_reference = serializers.CharField(max_length=64)
+    room_id = serializers.IntegerField(required=False, allow_null=True)
+    items = LaundryItemInputSerializer(many=True)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=2000, default="")
+    idempotency_key = serializers.CharField(max_length=160)
+
+
+class LaundryAssignSerializer(serializers.Serializer):
+    assignee_id = serializers.IntegerField()
+
+
+class LaundryStatusSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=LaundryOrder.Status.choices)
+    delivered_to = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")

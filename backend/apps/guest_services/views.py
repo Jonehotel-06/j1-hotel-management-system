@@ -686,3 +686,124 @@ class PublicServiceQRRequestView(APIView):
             "category": service_request.category,
             "status": service_request.status,
         }, message="Your request has been sent to the hotel team.", status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+# ---------------------------------------------------------------------------
+# Laundry
+# ---------------------------------------------------------------------------
+from .models import LaundryOrder
+from .serializers import (
+    LaundryAssignSerializer,
+    LaundryCreateSerializer,
+    LaundryOrderSerializer,
+    LaundryStatusSerializer,
+)
+from .services.laundry_service import (
+    advance_laundry_order,
+    assign_laundry_order,
+    bill_laundry_order,
+    create_laundry_order,
+)
+
+
+def _laundry_or_404(reference):
+    order = (
+        LaundryOrder.objects.select_related("stay", "guest", "room", "assigned_to", "received_by", "folio", "financial_transaction")
+        .prefetch_related("items")
+        .filter(reference=reference)
+        .first()
+    )
+    if order is None:
+        raise NotFound("Laundry order not found.")
+    return order
+
+
+@extend_schema(tags=["Admin · Guest services"], summary="List laundry orders")
+class LaundryOrderListCreateView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "guest_request.manage"
+
+    def get(self, request):
+        queryset = (
+            LaundryOrder.objects.select_related("stay", "guest", "room", "assigned_to", "received_by", "folio", "financial_transaction")
+            .prefetch_related("items")
+            .order_by("-created_at", "-pk")
+        )
+        if status_value := request.query_params.get("status"):
+            queryset = queryset.filter(status=status_value)
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        return paginator.get_paginated_response(LaundryOrderSerializer(page, many=True).data)
+
+    def post(self, request):
+        serializer = LaundryCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        stay = Stay.objects.filter(reference=data["stay_reference"]).first()
+        if stay is None:
+            raise NotFound("Stay not found.")
+        room = None
+        if data.get("room_id"):
+            room = Room.objects.filter(pk=data["room_id"]).first()
+            if room is None:
+                raise NotFound("Room not found.")
+        order, created = create_laundry_order(
+            actor=request.user, stay=stay, room=room,
+            items=data["items"], notes=data.get("notes", ""),
+            idempotency_key=data["idempotency_key"],
+        )
+        if created:
+            log_action(actor=request.user, action="LAUNDRY_RECEIVED", instance=order, request=request,
+                       metadata={"reference": order.reference, "total": str(order.total_amount)})
+        return success_response(
+            LaundryOrderSerializer(_laundry_or_404(order.reference)).data,
+            message="Laundry received." if created else "Existing laundry order returned.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+@extend_schema(tags=["Admin · Guest services"], summary="Assign laundry to a staff member")
+class LaundryOrderAssignView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "guest_request.assign"
+
+    def post(self, request, reference):
+        serializer = LaundryAssignSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        assignee = User.objects.filter(pk=serializer.validated_data["assignee_id"], is_active=True).first()
+        if assignee is None:
+            raise NotFound("Staff member not found.")
+        order = assign_laundry_order(order=_laundry_or_404(reference), actor=request.user, assignee=assignee)
+        return success_response(LaundryOrderSerializer(_laundry_or_404(order.reference)).data, message="Laundry assigned.")
+
+
+@extend_schema(tags=["Admin · Guest services"], summary="Advance laundry processing status")
+class LaundryOrderStatusView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "guest_request.manage"
+
+    def post(self, request, reference):
+        serializer = LaundryStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        order = advance_laundry_order(
+            order=_laundry_or_404(reference), actor=request.user,
+            new_status=data["status"], delivered_to=data.get("delivered_to", ""),
+        )
+        return success_response(LaundryOrderSerializer(_laundry_or_404(order.reference)).data, message="Laundry status updated.")
+
+
+@extend_schema(tags=["Admin · Guest services"], summary="Bill laundry to the guest folio (once)")
+class LaundryOrderBillView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "guest_request.manage"
+
+    def post(self, request, reference):
+        order, created = bill_laundry_order(order=_laundry_or_404(reference), actor=request.user)
+        if created:
+            log_action(actor=request.user, action="LAUNDRY_BILLED", instance=order, request=request,
+                       metadata={"reference": order.reference, "total": str(order.total_amount)})
+        return success_response(
+            LaundryOrderSerializer(_laundry_or_404(order.reference)).data,
+            message="Laundry charged to the guest folio." if created else "Laundry was already billed.",
+        )

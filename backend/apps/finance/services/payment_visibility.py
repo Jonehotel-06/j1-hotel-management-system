@@ -95,10 +95,22 @@ def settlement_measure_filters():
             transaction_id__in=debits,
         )
 
+    # A later settlement of an on-account expense debits accounts payable
+    # (not the expense/inventory account), so it is recognised by the
+    # settlement marker the settlement service stamps on its transaction.
+    def settled_on_account(accounting_class):
+        return Q(
+            transaction__type=FinancialTransaction.Type.EXPENSE,
+            direction=FinancialLine.Direction.CREDIT,
+            account_code__in=TENDER_ASSET_ACCOUNTS,
+            transaction__metadata__expense_settlement=True,
+            transaction__metadata__accounting_class=accounting_class,
+        )
+
     return {
         # Money that actually left a tender account, split by what it was for.
-        "supplier_payments_made": paid_out_of_tender_with_debit(account_code=accounting.INVENTORY_ASSET),
-        "operating_expenses_paid": paid_out_of_tender_with_debit(account_code=accounting.OPERATING_EXPENSE),
+        "supplier_payments_made": paid_out_of_tender_with_debit(account_code=accounting.INVENTORY_ASSET) | settled_on_account("INVENTORY"),
+        "operating_expenses_paid": paid_out_of_tender_with_debit(account_code=accounting.OPERATING_EXPENSE) | settled_on_account("OPERATING"),
         "net_payroll_paid": Q(
             transaction__type=FinancialTransaction.Type.PAYROLL_PAYMENT,
             direction=FinancialLine.Direction.CREDIT,
@@ -209,13 +221,12 @@ def supplier_payment_visibility(
         "outstanding_supplier_payables": money(outstanding),
         "supplier_payment_approvals_decided": approvals["decided"] or 0,
         "supplier_payment_approvals_pending": approvals["pending"] or 0,
-        "payable_settlement_posting_available": False,
+        "payable_settlement_posting_available": True,
         "payable_settlement_posting_note": (
-            "An expense recorded as PAYABLE credits LIABILITY.ACCOUNTS_PAYABLE. The current posting rules "
-            "have no journal entry that DEBITS that account, so an amount put on account cannot yet be "
-            "cleared by a settlement entry. Recording a second INVENTORY expense as the 'settlement' would "
-            "debit the inventory asset a second time and inflate both stock value and acquisitions, so it is "
-            "deliberately not treated as a settlement here."
+            "An expense recorded as PAYABLE credits LIABILITY.ACCOUNTS_PAYABLE when posted. Recording the "
+            "supplier payment (Accounting → Record supplier payment) posts Dr ACCOUNTS_PAYABLE / Cr the tender "
+            "actually used and stamps the expense paid — the payable settles exactly once and the obligation is "
+            "never expensed a second time."
         ),
         # COGS is not derivable from posted ledger evidence: reported as
         # unavailable rather than invented.

@@ -40,6 +40,9 @@ CHART_OF_ACCOUNTS = [
     (accounting.CASH_FLOAT, "Cash float"),
     (accounting.STATUTORY_TAX_ABSORBED, "Statutory tax absorbed (hotel-borne)"),
     (accounting.STATUTORY_TAX_PAYABLE, "Statutory tax payable"),
+    (accounting.OWNER_CAPITAL, "Owner capital"),
+    (accounting.OWNER_DRAWINGS, "Owner drawings"),
+    (accounting.OPENING_BALANCE_EQUITY, "Opening balance offset (equity)"),
 ]
 
 ACCOUNT_CODES = {code for code, _label in CHART_OF_ACCOUNTS}

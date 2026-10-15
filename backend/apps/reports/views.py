@@ -15,7 +15,16 @@ from apps.core.responses import success_response
 from apps.core.serializers import EmptySerializer
 
 from .services import dashboard as dashboard_service
+from .services import exports
 from .services import reports as reports_service
+
+
+def _file_response(payload: bytes, content_type: str, filename: str):
+    from django.http import HttpResponse
+
+    response = HttpResponse(payload, content_type=content_type)
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
 
 logger = logging.getLogger("apps")
 
@@ -66,6 +75,18 @@ class OccupancyReportView(APIView):
         data = reports_service.occupancy_report(
             _date_param(request, "start_date"), _date_param(request, "end_date")
         )
+        export_format = (request.query_params.get("export") or request.query_params.get("format") or "").lower()
+        if export_format == "xlsx":
+            return _file_response(
+                exports.occupancy_xlsx_bytes(data),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                f"jone-occupancy-{data['start_date']}-to-{data['end_date']}.xlsx",
+            )
+        if export_format == "pdf":
+            return _file_response(
+                exports.occupancy_pdf_bytes(data), "application/pdf",
+                f"jone-occupancy-{data['start_date']}-to-{data['end_date']}.pdf",
+            )
         return success_response(data)
 
 

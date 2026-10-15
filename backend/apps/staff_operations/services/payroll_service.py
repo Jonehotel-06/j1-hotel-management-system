@@ -1053,7 +1053,7 @@ def _record_period_salary_payment_lines(*, period, payment, actor, method, exter
 @transaction.atomic
 def record_payroll_salary_payment(
     *, period, line, actor, amount, method, payment_date, external_reference="",
-    evidence_reference="", notes="", idempotency_key="", cash_session_reference="",
+    evidence_reference="", notes="", idempotency_key="", cash_session_reference="", receipt_url="",
 ):
     """Record an already completed employee payment; never initiates a payout."""
     if not has_capability(actor, "payroll.manage"):
@@ -1163,6 +1163,7 @@ def record_payroll_salary_payment(
                 method=method,
                 external_reference=external_reference,
                 evidence_reference=evidence_reference,
+                receipt_url=str(receipt_url or "")[:200],
                 notes=notes,
                 recorded_by=actor,
                 financial_transaction=financial_payment,

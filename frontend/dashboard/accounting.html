@@ -116,6 +116,16 @@
       </div>
     </section>
     <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
+      <div class="panel-head"><h2>Financial statements</h2><div class="panel-actions"><input class="input" type="date" id="bs-asof" data-allow-past aria-label="Balance sheet as of"><button class="btn btn-sm" type="button" id="bs-load">Load statements</button></div></div>
+      <div class="panel-body">
+        <p class="caption" style="margin-top:0;">Balance sheet and cash flow are computed from the same posted ledger as every figure above — no separate statement books. Opening balances are posted as balanced journals against <strong>Equity · Opening balance offset</strong> (Post journal entry) dated before go-live. <span data-bs="recon"></span></p>
+        <div class="panel-grid">
+          <div><h3 style="margin:0 0 .5rem;">Balance sheet <span class="caption" data-bs="asof"></span></h3><div class="table-wrap"><table class="table"><thead><tr><th>Account</th><th class="num">Amount</th></tr></thead><tbody data-tbody="bs-sheet"></tbody></table></div></div>
+          <div><h3 style="margin:0 0 .5rem;">Cash flow <span class="caption" data-cf="period"></span></h3><div class="table-wrap"><table class="table"><thead><tr><th>Measure</th><th class="num">Amount</th></tr></thead><tbody data-tbody="cf-flow"></tbody></table></div><p class="caption" data-cf="note"></p></div>
+        </div>
+      </div>
+    </section>
+    <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
       <div class="panel-head"><h2>Posted ledger transactions</h2><div class="panel-actions"><button class="btn btn-sm" type="button" id="acct-journal"><span data-icon="plus" data-size="15"></span> Post journal entry</button></div></div>
       <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
         <thead><tr><th>Date</th><th>Reference</th><th>Type</th><th>Description</th><th>Status</th></tr></thead>
@@ -461,6 +471,19 @@
     // Accepts either the shared API envelope ({data,pagination}) or the bare array.
     function rowsOf(payload){return listRows(payload&&!Array.isArray(payload)&&payload.data!==undefined?payload.data:payload);}
     function moneyCell(v){return formatMoney(v, reportCurrency(latest.financial));}
+  function rowActions(row) {
+    var html = "";
+    if (row.status === "DRAFT") {
+      html += "<button class=\"btn btn-sm\" type=\"button\" data-expense-submit=\"" + JONE.esc(row.reference || "") + "\">Submit</button>";
+    }
+    if (row.status === "POSTED" && row.payment_method === "PAYABLE" && !row.paid_at) {
+      html += "<button class=\"btn btn-sm btn-accent\" type=\"button\" data-expense-settle=\"" + JONE.esc(row.reference || "") + "\">Record supplier payment</button>";
+    }
+    if (row.paid_at) {
+      html += "<span class=\"badge\">Paid " + JONE.esc(String(row.paid_at).slice(0, 10)) + "</span>";
+    }
+    return html;
+  }
   /* One delegated listener for every row's details button: rows are re-rendered
      on each load, so a per-row listener would leak and go stale. */
   document.addEventListener("click", function (event) {
@@ -474,6 +497,12 @@
     if (!submit) return;
     event.preventDefault();
     submitExpense(submit.getAttribute("data-expense-submit"));
+  });
+  document.addEventListener("click", function (event) {
+    var settle = event.target.closest ? event.target.closest("[data-expense-settle]") : null;
+    if (!settle) return;
+    event.preventDefault();
+    settleExpense(settle.getAttribute("data-expense-settle"));
   });
   /* ---------------------- Expense details drill-down ----------------------
      Every expense record opens a details dialog that distinguishes what was
@@ -528,6 +557,9 @@
       expenseDetailRow("Posted by", expenseDetailText(detail.posted_by_email)) +
       expenseDetailRow("Posted at", detail.posted_at ? JONE.esc(JONE.formatDateTime(detail.posted_at)) : "\u2014") +
       expenseDetailRow("Financial transaction", expenseDetailText(detail.financial_reference)) +
+      expenseDetailRow("Supplier payment", detail.paid_at ? ("Paid " + JONE.esc(JONE.formatDateTime(detail.paid_at)) + (detail.paid_by_email ? " by " + JONE.esc(detail.paid_by_email) : "")) : (detail.payment_method === "PAYABLE" && detail.status === "POSTED" ? "Not yet paid — on account" : "\u2014")) +
+      expenseDetailRow("Payment reference", expenseDetailText(detail.payment_reference)) +
+      expenseDetailRow("Settlement transaction", expenseDetailText(detail.settlement_reference)) +
       expenseDetailRow("Created", detail.created_at ? JONE.esc(JONE.formatDateTime(detail.created_at)) : "\u2014") +
       '</div>' + commitment +
       (detail.description ? '<h4 class="detail-section-title">Description</h4><p>' + JONE.esc(detail.description) + '</p>' : "") +
@@ -559,7 +591,7 @@
       if(requestId!==loadSequence||!ex) return;
       var rows=rowsOf(response);
       if(!Array.isArray(rows)) rows=[];
-      ex.innerHTML=rows.length?rows.map(function(row){return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.department||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.amount))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"cell-nowrap\"><div class=\"row-actions\">"+(row.status==="DRAFT"?"<button class=\"btn btn-sm\" type=\"button\" data-expense-submit=\""+JONE.esc(row.reference||"")+"\">Submit</button>":"")+"<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-details=\""+JONE.esc(row.reference||"")+"\" aria-label=\"View details for expense "+JONE.esc(row.reference||"")+"\">Details</button></div></td></tr>";}).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No expenses in this period</h3></div></td></tr>";
+      ex.innerHTML=rows.length?rows.map(function(row){return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.department||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.amount))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"cell-nowrap\"><div class=\"row-actions\">" + rowActions(row) + "<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-details=\"" + JONE.esc(row.reference || "") + "\" aria-label=\"View details for expense " + JONE.esc(row.reference || "") + "\">Details</button></div></td></tr>";}).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No expenses in this period</h3></div></td></tr>";
     },function(err){ if(requestId===loadSequence&&ex) DATA.error(ex,"Expenses couldn't be loaded",financeErrorMessage(err),4); });
     getReport(window.APP_CONFIG.API_ENDPOINTS.financeCashSessions,{}).then(function(response){
       if(requestId!==loadSequence||!cash) return;
@@ -665,6 +697,97 @@
   }
   var createExpenseBtn = document.getElementById("acct-create-expense");
   if (createExpenseBtn) createExpenseBtn.addEventListener("click", createExpense);
+
+  /* ---------------- Supplier payment settlement ----------------
+     A posted on-account expense is only an obligation. This records the
+     later real payment: the ledger settles Dr payables / Cr tender, the
+     expense is stamped paid, and payables visibility agrees everywhere. */
+  async function settleExpense(reference) {
+    var result = await JONE.dashboard.formModal({
+      title: "Record supplier payment · " + reference, submitText: "Mark as paid", wide: true, multipart: true,
+      fields: [
+        { name: "method", label: "How was the supplier paid?", type: "select", required: true, options: [
+          { value: "BANK_TRANSFER", label: "Bank transfer" }, { value: "CARD", label: "Card / terminal" },
+          { value: "CASH", label: "Cash from an open drawer" }
+        ], help: "Bank and card payments require the payment reference below. Cash is paid out of your own open drawer." },
+        { name: "payment_reference", label: "Bank/card payment reference", type: "text", maxLength: 160 },
+        { name: "cash_session_reference", label: "Cash session reference (cash only)", type: "text", maxLength: 64 },
+        { name: "paid_on", label: "Date paid", type: "date", dataAllowPast: true },
+        { name: "receipt_url", label: "Receipt link (optional)", type: "text", placeholder: "https://…" },
+        { name: "receipt", label: "Receipt file (optional)", type: "file", help: "Attach the supplier receipt or payment confirmation if you have it. Optional." }
+      ],
+      onSubmit: async function (values, formData) {
+        var method = values.method;
+        if ((method === "BANK_TRANSFER" || method === "CARD") && !String(values.payment_reference || "").trim()) throw new Error("Enter the bank/card payment reference.");
+        if (method === "CASH" && !String(values.cash_session_reference || "").trim()) throw new Error("Cash payments require your open cash-session reference.");
+        var fd = new FormData();
+        fd.append("method", method);
+        fd.append("payment_reference", values.payment_reference || "");
+        fd.append("cash_session_reference", values.cash_session_reference || "");
+        fd.append("receipt_url", values.receipt_url || "");
+        if (values.paid_on) fd.append("paid_on", values.paid_on);
+        if (values.receipt) fd.append("receipt", values.receipt);
+        await window.API.post(window.APP_CONFIG.API_ENDPOINTS.financeExpenses + encodeURIComponent(reference) + "/settle-payment/", fd);
+        return { message: "Supplier payment recorded." };
+      }
+    });
+    if (result) { JONE.ui.toast("Supplier paid. The expense, payables and cash positions now show it as paid.", "success"); load(); }
+  }
+
+  /* ---------------- Financial statements ---------------- */
+  function bsRow(label, amount, strong) {
+    return "<tr" + (strong ? ' style="font-weight:700;"' : "") + "><td>" + JONE.esc(label) + "</td><td class=\"num\">" + JONE.esc(moneyCell(amount)) + "</td></tr>";
+  }
+  async function loadStatements() {
+    var asOfEl = document.getElementById("bs-asof");
+    var asOf = asOfEl && asOfEl.value ? asOfEl.value : null;
+    var dates = activeDates();
+    try {
+      var bsParams = asOf ? { as_of: asOf } : {};
+      var bs = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.financeBalanceSheet, { params: bsParams });
+      var cf = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.financeCashFlow, { params: { start: dates.from, end: dates.to } });
+      var sheet = bs.data || {}, flow = cf.data || {};
+      var body = document.querySelector("[data-tbody=bs-sheet]");
+      if (body) {
+        var html = "<tr><td colspan=\"2\" style=\"font-weight:700;\">Assets</td></tr>";
+        (sheet.assets || []).forEach(function (r) { html += bsRow(r.label || r.account_code, r.amount); });
+        html += bsRow("Total assets", sheet.total_assets, true);
+        html += "<tr><td colspan=\"2\" style=\"font-weight:700;\">Liabilities</td></tr>";
+        (sheet.liabilities || []).forEach(function (r) { html += bsRow(r.label || r.account_code, r.amount); });
+        html += bsRow("Total liabilities", sheet.total_liabilities, true);
+        html += "<tr><td colspan=\"2\" style=\"font-weight:700;\">Equity</td></tr>";
+        (sheet.equity || []).forEach(function (r) { html += bsRow(r.label || r.account_code, r.amount); });
+        html += bsRow("Current earnings (revenue − expenses, not yet closed)", sheet.current_earnings);
+        html += bsRow("Total equity", sheet.total_equity, true);
+        html += bsRow("Total liabilities & equity", sheet.total_liabilities_and_equity, true);
+        body.innerHTML = html;
+      }
+      var asofEl = document.querySelector("[data-bs=asof]"); if (asofEl) asofEl.textContent = sheet.as_of ? ("as of " + sheet.as_of) : "";
+      var recon = document.querySelector("[data-bs=recon]");
+      if (recon) recon.textContent = sheet.balanced ? "The balance sheet balances against the ledger." : ("WARNING: imbalance of " + moneyCell(sheet.difference) + " — investigate before relying on this statement.");
+      var cfBody = document.querySelector("[data-tbody=cf-flow]");
+      if (cfBody) {
+        cfBody.innerHTML = [
+          bsRow("Operating activities", flow.operating_activities),
+          bsRow("Investing activities", flow.investing_activities),
+          bsRow("Financing activities", flow.financing_activities),
+          bsRow("Internal drawer float & other", flow.internal_float_and_other),
+          bsRow("Net cash change (classified)", flow.net_cash_change_classified, true),
+          bsRow("Opening cash", flow.opening_cash),
+          bsRow("Closing cash", flow.closing_cash),
+          bsRow("Net change per cash balances", flow.net_cash_change_per_balances, true)
+        ].join("");
+      }
+      var period = document.querySelector("[data-cf=period]"); if (period) period.textContent = (flow.start_date || "") + " → " + (flow.end_date || "");
+      var note = document.querySelector("[data-cf=note]");
+      if (note) note.textContent = (flow.reconciles ? "Cash flow reconciles to the change in cash balances." : "Does not reconcile — difference " + moneyCell(flow.difference) + ".") + " " + (flow.investing_note || "");
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "The financial statements could not be loaded.", "error");
+    }
+  }
+  var bsLoad = document.getElementById("bs-load");
+  if (bsLoad) bsLoad.addEventListener("click", loadStatements);
+  loadStatements();
 
   /* ---------------- Night audit & daily flash ----------------
      Read-only reconciliation pack for one business day: ledger revenue with

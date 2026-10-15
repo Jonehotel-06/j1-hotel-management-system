@@ -184,18 +184,17 @@ class SupplierPaymentVisibilityTests(BaseAPITestCase):
         self.assertEqual(amounts["total_cash_disbursements"], Decimal("60000.00"))
         self.assertEqual(amounts["outstanding_supplier_payables"], Decimal("350000.00"))
 
-    def test_the_absent_payable_settlement_posting_is_disclosed_not_hidden(self):
-        # The posting rules credit ACCOUNTS_PAYABLE but never debit it, so a
-        # settlement cannot yet clear an amount put on account. The report says so
-        # instead of inventing a settlement entry.
+    def test_the_payable_settlement_posting_is_available_and_disclosed(self):
+        # The settlement service now debits ACCOUNTS_PAYABLE exactly once when
+        # the supplier is paid; the report discloses that mechanism.
         self.post_expense(
             amount="250000.00", payment_method=Expense.PaymentMethod.PAYABLE,
             accounting_class=Expense.AccountingClass.INVENTORY, key="payvis-invoice-c",
         )
         supplier = self.summary()["supplier_payments"]
-        self.assertFalse(supplier["payable_settlement_posting_available"])
-        self.assertIn("no journal entry that DEBITS that account", supplier["payable_settlement_posting_note"])
-        self.assertIn("inflate both stock value and acquisitions", supplier["payable_settlement_posting_note"])
+        self.assertTrue(supplier["payable_settlement_posting_available"])
+        self.assertIn("Dr ACCOUNTS_PAYABLE", supplier["payable_settlement_posting_note"])
+        self.assertIn("never expensed a second time", supplier["payable_settlement_posting_note"])
         # And the balance it reports is exactly what the ledger holds.
         from apps.finance.models import FinancialLine
 

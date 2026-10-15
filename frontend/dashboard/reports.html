@@ -82,7 +82,7 @@
         </table></div></div>
       </section>
       <section class="panel" style="border:1px solid var(--color-border);">
-        <div class="panel-head"><h2>Bookings &amp; occupancy</h2><div class="panel-actions"><span class="caption" data-rp="operational-summary">Loading operational summary…</span></div></div>
+                <div class="panel-head"><h2>Bookings &amp; occupancy</h2><div class="panel-actions"><span class="caption" data-rp="operational-summary">Loading operational summary\u2026</span><button class="btn btn-sm btn-outline" id="export-occ-xlsx" type="button">Occupancy Excel</button><button class="btn btn-sm btn-outline" id="export-occ-pdf" type="button">Occupancy PDF</button></div></div>
         <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
           <thead><tr><th>Status</th><th>Count</th></tr></thead>
           <tbody data-tbody="report-bookings"></tbody>
@@ -500,6 +500,18 @@
       JONE.ui.toast((err&&err.message)||"Export failed.","error");
     }).then(function(){ if(button) button.disabled=false; });
   }
+  function exportOccupancy(kind){
+    var dates=activeDates();
+    window.API.downloadReport(window.APP_CONFIG.API_ENDPOINTS.reportsOccupancy,kind,{
+      params:{ start_date:dates.from, end_date:dates.to },filename:"jone-occupancy-"+dates.from+"-to-"+dates.to,label:"Occupancy report"
+    }).then(function(result){
+      JONE.ui.toast("Occupancy " + (kind === "xlsx" ? "Excel" : "PDF") + " downloaded: " + result.filename, "success");
+    },function(err){ JONE.ui.toast((err && err.message) || "The occupancy export could not be downloaded.", "error"); });
+  }
+  var occXlsxBtn=document.getElementById("export-occ-xlsx");
+  if(occXlsxBtn) occXlsxBtn.addEventListener("click",function(){ exportOccupancy("xlsx"); });
+  var occPdfBtn=document.getElementById("export-occ-pdf");
+  if(occPdfBtn) occPdfBtn.addEventListener("click",function(){ exportOccupancy("pdf"); });
   var xlsxBtn=document.getElementById("export-xlsx");
   if(xlsxBtn) xlsxBtn.addEventListener("click",function(){ downloadLedgerExport("xlsx"); });
   var pdfBtn=document.getElementById("export-pdf");

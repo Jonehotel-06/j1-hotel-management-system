@@ -1,4 +1,6 @@
 """Guest-service requests and immutable operational activity evidence."""
+from decimal import Decimal
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -216,3 +218,97 @@ class ServiceRequestEvent(models.Model):
 
     def __str__(self):
         return f"{self.request.reference} · {self.type}"
+
+
+class LaundryOrder(TimeStampedModel):
+    """One guest laundry collection: items, processing, pricing and billing.
+
+    Laundry is tracked here (not as a generic service request) because it has
+    priced item lines and a folio charge. Billing posts exactly once through
+    the existing Finance folio ledger (Dr guest receivable / Cr other
+    operating revenue); this record never moves money by itself.
+    """
+
+    class Status(models.TextChoices):
+        RECEIVED = "RECEIVED", "Received"
+        IN_PROGRESS = "IN_PROGRESS", "In progress"
+        READY = "READY", "Ready for delivery"
+        DELIVERED = "DELIVERED", "Delivered"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    reference = models.CharField(max_length=64, unique=True, db_index=True)
+    idempotency_key = models.CharField(max_length=160, null=True, blank=True, unique=True)
+    stay = models.ForeignKey(
+        "stays.Stay", on_delete=models.PROTECT, related_name="laundry_orders",
+    )
+    guest = models.ForeignKey(
+        "bookings.Guest", on_delete=models.PROTECT, related_name="laundry_orders",
+    )
+    room = models.ForeignKey(
+        "rooms.Room", null=True, blank=True, on_delete=models.PROTECT, related_name="laundry_orders",
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.RECEIVED, db_index=True)
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="assigned_laundry_orders",
+    )
+    received_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="received_laundry_orders",
+    )
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    currency = models.CharField(max_length=3, default="NGN")
+    billed_at = models.DateTimeField(null=True, blank=True)
+    folio = models.ForeignKey(
+        "finance.Folio", null=True, blank=True, on_delete=models.PROTECT, related_name="laundry_orders",
+    )
+    financial_transaction = models.ForeignKey(
+        "finance.FinancialTransaction", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="laundry_orders",
+    )
+    ready_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    delivered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="delivered_laundry_orders",
+    )
+    delivered_to = models.CharField(max_length=160, blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["stay", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.reference} · {self.get_status_display()}"
+
+
+class LaundryItem(models.Model):
+    """One priced laundry line (e.g. 3 × shirt, wash & iron)."""
+
+    class ServiceType(models.TextChoices):
+        WASH = "WASH", "Wash"
+        WASH_IRON = "WASH_IRON", "Wash & iron"
+        DRY_CLEAN = "DRY_CLEAN", "Dry clean"
+        PRESS = "PRESS", "Press / iron only"
+
+    order = models.ForeignKey(LaundryOrder, on_delete=models.PROTECT, related_name="items")
+    description = models.CharField(max_length=160)
+    quantity = models.PositiveSmallIntegerField(default=1)
+    service_type = models.CharField(max_length=16, choices=ServiceType.choices, default=ServiceType.WASH)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["pk"]
+
+    @property
+    def line_total(self) -> Decimal:
+        return (Decimal(self.quantity) * Decimal(self.unit_price)).quantize(Decimal("0.01"))
+
+    def __str__(self):
+        return f"{self.quantity} × {self.description}"

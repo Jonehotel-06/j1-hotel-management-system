@@ -39,7 +39,8 @@
     <header class="dash-topbar"><div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title"><h1>Barcode Label Printing</h1><p>Standardized barcode labels for POS menu items and stock inventory.</p></div></div><div class="dash-topbar-right"></div></header>
     <main class="dash-content">
       <section class="panel">
-        <div class="panel-head"><h2>Product & Stock Barcode Labels</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" id="load-pos-items">Load POS items</button><button class="btn btn-sm btn-outline" id="load-inv-items">Load inventory items</button><button class="btn btn-sm btn-primary" type="button" id="print-labels"><span data-icon="printer"></span> Print labels</button></div></div>
+        <div class="panel-head"><h2>Product & Stock Barcode Labels</h2><div class="panel-actions"><label class="caption" for="label-copies">Copies per product</label><input class="input" id="label-copies" type="number" min="1" max="100" step="1" value="1" style="width:5.5rem;"><button class="btn btn-sm" id="apply-copies" type="button">Apply</button><button class="btn btn-sm btn-outline" id="load-pos-items">Load POS items</button><button class="btn btn-sm btn-outline" id="load-inv-items">Load inventory items</button><button class="btn btn-sm btn-primary" type="button" id="print-labels"><span data-icon="printer"></span> Print labels</button></div></div>
+        <div class="panel-body" style="padding-bottom:0;"><p class="caption" style="margin:0;">Each label encodes the product's stored barcode (products without a manufacturer barcode automatically use their SKU). Print on a label or office printer, then stick one label on each product or its shelf edge. If a code cannot be encoded, correct the product's barcode first — the label is never faked.</p></div>
         <div class="panel-body">
           <div class="label-grid" id="label-container">
             <div class="empty-state"><h3>Loading barcode labels…</h3></div>
@@ -68,13 +69,23 @@
 
   var container = document.getElementById("label-container");
 
+  var lastItems = [];
+  var copiesInput = document.getElementById("label-copies");
+  function labelCopies() {
+    var n = parseInt(copiesInput && copiesInput.value, 10);
+    return isFinite(n) ? Math.min(100, Math.max(1, n)) : 1;
+  }
+
   function renderLabels(items) {
+    lastItems = items || [];
     if (!items.length) {
       container.innerHTML = '<div class="empty-state"><h3>No items found</h3><p>Select a catalog to generate printable barcodes.</p></div>';
       return;
     }
-    container.innerHTML = items.map(function(item) {
-      var sku = item.barcode || item.sku || item.item_sku || ("SKU-" + item.id);
+    var expanded = [];
+    items.forEach(function(item) { for (var i = 0; i < labelCopies(); i++) expanded.push(item); });
+    container.innerHTML = expanded.map(function(item) {
+      var sku = item.barcode || item.sku || item.item_sku || "";
       var svg;
       try {
         svg = JONE.barcode.generateBarcodeSvg(sku, { height: 42, barWidth: 2 });
@@ -114,6 +125,7 @@
 
   document.getElementById("load-pos-items").addEventListener("click", loadPos);
   document.getElementById("load-inv-items").addEventListener("click", loadInventory);
+  document.getElementById("apply-copies").addEventListener("click", function(){ renderLabels(lastItems); });
   loadPos();
 </script>
 <script src="../js/pwa.js?v=1.1.12"></script>

@@ -39,3 +39,9 @@ STATUTORY_TAX_ABSORBED = "EXPENSE.STATUTORY_TAX_ABSORBED"
 STATUTORY_TAX_PAYABLE = "LIABILITY.STATUTORY_TAX_PAYABLE"
 SERVICE_FEE_REVENUE = "REVENUE.SERVICE_FEES"
 CASH_FLOAT = "LIABILITY.CASH_FLOAT"
+# Owner equity. The hotel is owner-managed, so capital, drawings and the
+# opening-balance offset live here; opening balances are posted as ordinary
+# balanced journals against EQUITY.OPENING_BALANCE (see statements_service).
+OWNER_CAPITAL = "EQUITY.OWNER_CAPITAL"
+OWNER_DRAWINGS = "EQUITY.OWNER_DRAWINGS"
+OPENING_BALANCE_EQUITY = "EQUITY.OPENING_BALANCE"

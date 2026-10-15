@@ -211,8 +211,8 @@ test("the accounting page distinguishes every payment stage and flags the settle
 });
 
 test("the expense table gets a Details action that is keyboard reachable", () => {
-  assert.match(PAGE, /data-expense-details=\\?"\\?"\+JONE\.esc\(row\.reference\|\|""\)/);
-  assert.match(PAGE, /<button class=\\?"btn btn-sm btn-outline\\?" type=\\?"button\\?" data-expense-details/);
+  assert.match(PAGE, /function rowActions\(row\)/);
+  assert.match(PAGE, /<button class=\\"btn btn-sm btn-outline\\" type=\\"button\\" data-expense-details=\\"/);
   assert.match(PAGE, /aria-label=\\?"View details for expense /);
   assert.match(PAGE, /event\.target\.closest\(\"\[data-expense-details\]\"\)/);
   // The empty state spans the new column count.

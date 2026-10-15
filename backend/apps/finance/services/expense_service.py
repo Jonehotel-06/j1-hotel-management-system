@@ -220,3 +220,104 @@ def post_expense(*, expense: Expense, actor) -> tuple[Expense, bool]:
     _event(expense=expense, event_type=ExpenseEvent.Type.POSTED, actor=actor,
            details={"financial_transaction": transaction.reference, "cash_paid_out": bool(cash_session)})
     return expense, created
+
+
+@transaction.atomic
+def settle_expense_payment(
+    *, expense: Expense, actor, method, payment_reference="",
+    cash_session=None, receipt_url="", receipt_file=None, paid_on=None,
+) -> tuple[Expense, bool]:
+    """Record that a posted on-account (PAYABLE) expense has now been PAID.
+
+    Posting a PAYABLE expense raises the liability (Dr expense / Cr accounts
+    payable) without moving money. This settlement posts the second half —
+    Dr accounts payable / Cr the tender actually used — exactly once, and
+    stamps the expense paid so every screen (expense status, payables
+    visibility, outstanding balances) agrees. A receipt (URL or uploaded
+    file) is optional evidence; a bank/card payment reference is required
+    for BANK_TRANSFER and CARD settlements.
+    """
+    if not has_capability(actor, "expense.manage"):
+        raise PermissionDenied("This user cannot record supplier payments.")
+    expense = Expense.objects.select_for_update().get(pk=expense.pk)
+    if expense.settlement_transaction_id or expense.paid_at:
+        return expense, False
+    if expense.status != Expense.Status.POSTED:
+        raise ValidationError("Only a posted expense can be marked as paid.")
+    if expense.payment_method != Expense.PaymentMethod.PAYABLE:
+        raise ValidationError(
+            "This expense was settled at posting time; only on-account (accounts payable) expenses need a later payment record."
+        )
+    method = str(method or "").upper()
+    if method not in {
+        Expense.PaymentMethod.BANK_TRANSFER, Expense.PaymentMethod.CARD, Expense.PaymentMethod.CASH,
+    }:
+        raise ValidationError({"method": "Choose how the supplier was actually paid: BANK_TRANSFER, CARD, or CASH."})
+    payment_reference = str(payment_reference or "").strip()[:160]
+    if method in {Expense.PaymentMethod.BANK_TRANSFER, Expense.PaymentMethod.CARD} and not payment_reference:
+        raise ValidationError({"payment_reference": "Enter the bank/card payment reference."})
+    paid_on = paid_on or hotel_today()
+    if paid_on > hotel_today():
+        raise ValidationError({"paid_on": "A supplier payment cannot be dated in the future."})
+    session = None
+    if method == Expense.PaymentMethod.CASH:
+        if expense.currency != "NGN":
+            raise ValidationError("Cash supplier payments currently require NGN currency.")
+        if cash_session is None:
+            raise ValidationError({"cash_session_reference": "Cash supplier payments require your open cash session."})
+        session = CashSession.objects.select_for_update().get(pk=cash_session.pk)
+        if session.status != CashSession.Status.OPEN:
+            raise ValidationError({"cash_session_reference": "Cash supplier payments require an open cash session."})
+        if session.cashier_id != actor.pk:
+            raise PermissionDenied("Cash supplier payments must be recorded by the assigned cashier.")
+        if Decimal(session.expected_cash) < Decimal(expense.amount):
+            raise ValidationError("Cash payment exceeds the drawer's expected cash.")
+    elif cash_session is not None:
+        raise ValidationError({"cash_session_reference": "A cash session is only valid for CASH payments."})
+
+    settlement_account = {
+        Expense.PaymentMethod.CASH: accounting.CASH_ON_HAND,
+        Expense.PaymentMethod.BANK_TRANSFER: accounting.BANK_CLEARING,
+        Expense.PaymentMethod.CARD: accounting.CARD_CLEARING,
+    }[method]
+    transaction, created = create_posted_transaction(
+        transaction_type=FinancialTransaction.Type.EXPENSE,
+        source_key=f"expense-settlement:{expense.reference}", idempotency_key=f"expense-settlement:{expense.reference}",
+        actor=actor, source_reference=expense.reference, external_reference=payment_reference or expense.supplier_reference,
+        narrative=f"Supplier payment for expense {expense.reference}: {expense.payee or expense.category}",
+        currency=expense.currency, business_date=paid_on,
+        metadata={
+            "expense_settlement": True, "expense_id": expense.pk, "expense_reference": expense.reference,
+            "accounting_class": expense.accounting_class, "settlement_method": method,
+        },
+        lines=[
+            {"account_code": accounting.ACCOUNTS_PAYABLE, "direction": FinancialLine.Direction.DEBIT,
+             "amount": expense.amount, "description": f"Settle payable {expense.reference}"},
+            {"account_code": settlement_account, "direction": FinancialLine.Direction.CREDIT,
+             "amount": expense.amount, "description": f"Paid supplier for {expense.reference}"},
+        ],
+    )
+    if session is not None and created:
+        CashMovement.objects.create(
+            cash_session=session, transaction=transaction, type=CashMovement.Type.PAID_OUT,
+            amount=expense.amount, currency=expense.currency, actor=actor, source_reference=expense.reference,
+            notes=f"Supplier payment {expense.reference}"[:500],
+            metadata={"expense_id": expense.pk, "expense_reference": expense.reference, "settlement": True},
+        )
+        session.expected_cash = (Decimal(session.expected_cash) - Decimal(expense.amount)).quantize(CENT)
+        session.save(update_fields=["expected_cash", "updated_at"])
+    # Posted expenses are immutable through save(); settlement evidence is
+    # written with one controlled update, guarded by the settlement check
+    # above, so concurrent retries converge instead of double-paying.
+    updates = {
+        "paid_at": timezone.now(), "paid_by": actor, "payment_reference": payment_reference,
+        "payment_receipt_url": str(receipt_url or "")[:200], "settlement_transaction": transaction,
+    }
+    if receipt_file is not None:
+        updates["payment_receipt_file"] = receipt_file
+    Expense.objects.filter(pk=expense.pk, settlement_transaction__isnull=True).update(**updates)
+    expense.refresh_from_db()
+    _event(expense=expense, event_type=ExpenseEvent.Type.PAID, actor=actor,
+           details={"settlement_transaction": transaction.reference, "method": method,
+                    "payment_reference": payment_reference, "amount": str(expense.amount)})
+    return expense, created

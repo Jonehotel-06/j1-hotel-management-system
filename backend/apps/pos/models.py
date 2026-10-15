@@ -72,6 +72,22 @@ class MenuItem(TimeStampedModel):
         # Leading zeros are preserved (meaningful for EAN/UPC).
         if self.barcode is not None:
             self.barcode = str(self.barcode).strip() or None
+        # New items without a dedicated barcode automatically adopt their
+        # unique SKU as a Code 128 barcode, so every product is scannable
+        # from creation and has a printable in-house label. Creation only:
+        # an explicit barcode clear on edit must stay cleared, and an SKU
+        # that cannot be a barcode (spaces, bad GTIN check digit) or is
+        # already another item's barcode simply leaves the item unlabelled
+        # (the lookup still resolves it by SKU).
+        if self._state.adding and self.barcode is None and self.sku:
+            from .barcode import validate_barcode
+
+            try:
+                candidate = validate_barcode(self.sku)
+            except ValueError:
+                candidate = None
+            if candidate and not MenuItem.objects.filter(barcode=candidate).exists():
+                self.barcode = candidate
         return super().save(*args, **kwargs)
 
     def __str__(self):

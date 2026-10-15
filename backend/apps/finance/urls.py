@@ -11,6 +11,8 @@ urlpatterns = [
     path("reports/summary/", views.FinancialSummaryReportView.as_view(), name="financial-summary-report"),
     path("reports/night-audit/", views.NightAuditView.as_view(), name="night-audit-report"),
     path("reports/ar-aging/", views.AccountsReceivableAgingView.as_view(), name="ar-aging-report"),
+    path("reports/balance-sheet/", views.BalanceSheetView.as_view(), name="balance-sheet-report"),
+    path("reports/cash-flow/", views.CashFlowView.as_view(), name="cash-flow-report"),
     path("chart-of-accounts/", views.ChartOfAccountsView.as_view(), name="chart-of-accounts"),
     path("journals/", views.ManualJournalView.as_view(), name="manual-journals"),
     path("transactions/", views.FinancialTransactionListView.as_view(), name="transactions"),
@@ -25,5 +27,6 @@ urlpatterns = [
     path("expenses/<str:reference>/submit/", views.ExpenseSubmitView.as_view(), name="expense-submit"),
     path("expenses/<str:reference>/review/", views.ExpenseReviewView.as_view(), name="expense-review"),
     path("expenses/<str:reference>/post/", views.ExpensePostView.as_view(), name="expense-post"),
+    path("expenses/<str:reference>/settle-payment/", views.ExpenseSettlePaymentView.as_view(), name="expense-settle-payment"),
     path("control-policies/", views.FinancialControlPolicyListCreateView.as_view(), name="control-policies"),
 ]

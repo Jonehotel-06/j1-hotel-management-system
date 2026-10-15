@@ -136,6 +136,15 @@ class ExpenseListSerializer(serializers.ModelSerializer):
     requested_by_email = serializers.EmailField(source="requested_by.email", read_only=True)
     approved_by_email = serializers.EmailField(source="approved_by.email", read_only=True, allow_null=True)
     posted_by_email = serializers.EmailField(source="posted_by.email", read_only=True, allow_null=True)
+    paid_by_email = serializers.EmailField(source="paid_by.email", read_only=True, allow_null=True)
+    settlement_reference = serializers.CharField(source="settlement_transaction.reference", read_only=True, allow_null=True)
+    payment_receipt_file_url = serializers.SerializerMethodField()
+
+    def get_payment_receipt_file_url(self, obj):
+        try:
+            return obj.payment_receipt_file.url if obj.payment_receipt_file else ""
+        except ValueError:
+            return ""
     approval_reference = serializers.CharField(source="approval_request.reference", read_only=True, allow_null=True)
     financial_reference = serializers.CharField(source="financial_transaction.reference", read_only=True, allow_null=True)
     cash_session_reference = serializers.CharField(source="cash_session.reference", read_only=True, allow_null=True)
@@ -146,6 +155,7 @@ class ExpenseListSerializer(serializers.ModelSerializer):
             "reference", "status", "category", "accounting_class", "payment_method", "amount", "currency", "incurred_on",
             "payee", "department", "supplier_reference", "description", "receipt_url", "requested_by_email", "approved_by_email", "approved_at",
             "approval_reference", "cash_session_reference", "financial_reference", "posted_by_email", "posted_at", "created_at",
+            "paid_at", "paid_by_email", "payment_reference", "payment_receipt_url", "payment_receipt_file_url", "settlement_reference",
         ]
         read_only_fields = fields
 
@@ -171,6 +181,14 @@ class JournalCreateSerializer(serializers.Serializer):
     source_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
     lines = JournalLineSerializer(many=True)
     idempotency_key = serializers.CharField(max_length=128)
+
+
+class ExpenseSettlementSerializer(serializers.Serializer):
+    method = serializers.ChoiceField(choices=[("BANK_TRANSFER", "Bank transfer"), ("CARD", "Card / terminal"), ("CASH", "Cash paid out")])
+    payment_reference = serializers.CharField(required=False, allow_blank=True, max_length=160)
+    cash_session_reference = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    receipt_url = serializers.URLField(required=False, allow_blank=True, max_length=200)
+    paid_on = serializers.DateField(required=False)
 
 
 class CashDropSerializer(serializers.Serializer):
