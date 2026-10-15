@@ -324,6 +324,110 @@ class AdminBookingCheckOutView(_BookingActionView):
         )
 
 
+@extend_schema(tags=["Admin · Bookings"], summary="Folio and gate-clearance summary for a booking")
+class AdminBookingFolioClearanceView(APIView):
+    """Checkout-desk clearance read: what the guest consumed, what was paid,
+    whether anything is still owed, and what has not been billed yet — the
+    evidence a gate pass is printed from.
+
+    Itemisation comes from the immutable folio postings. Accommodation
+    postings are excluded because they are the nightly split of the booking's
+    own total (counting them again would double the room). Totals reuse the
+    audit-D4 helpers so this read can never disagree with the bookings list
+    or the checkout response. Capability-gated: viewing a guest's folio is
+    the existing ``folio.view`` privilege, not a general booking grant.
+    """
+
+    permission_classes = [HasCapability]
+    required_capability = "folio.view"
+
+    def get(self, request, lookup):
+        from decimal import Decimal
+
+        from apps.finance.models import FinancialTransaction, FolioPosting
+        from apps.finance.services.folio_service import (
+            booking_folio_charge_balance,
+            booking_outstanding_balance,
+        )
+        from apps.guest_services.models import LaundryOrder, ServiceRequest
+
+        booking = _get_admin_booking(lookup)
+        postings = (
+            FolioPosting.objects.filter(folio__booking=booking)
+            .exclude(transaction__type=FinancialTransaction.Type.ACCOMMODATION_CHARGE)
+            .filter(transaction__status=FinancialTransaction.Status.POSTED)
+            .select_related("transaction")
+            .order_by("business_date", "created_at", "pk")
+        )
+        charges: list[dict] = []
+        credits: list[dict] = []
+        for posting in postings:
+            row = {
+                "date": posting.business_date.isoformat() if posting.business_date else "",
+                "description": posting.description or posting.get_kind_display(),
+                "kind": posting.kind,
+                "amount": money(posting.amount),
+                "source_reference": posting.source_reference or "",
+                "transaction_reference": posting.transaction.reference if posting.transaction_id else "",
+            }
+            (charges if posting.effect == FolioPosting.Effect.DEBIT else credits).append(row)
+
+        folio_balance = booking_folio_charge_balance(booking=booking)
+        outstanding = booking_outstanding_balance(booking=booking, folio_charge_balance=folio_balance)
+        try:
+            stay = booking.stay
+        except Exception:
+            stay = None
+        unbilled_laundry: list[dict] = []
+        open_requests: list[dict] = []
+        if stay is not None:
+            unbilled_laundry = [
+                {"reference": order.reference, "status": order.status, "total_amount": money(order.total_amount)}
+                for order in LaundryOrder.objects.filter(stay=stay, financial_transaction__isnull=True)
+                .exclude(status=LaundryOrder.Status.CANCELLED)
+                .order_by("created_at")
+            ]
+            open_requests = [
+                {"reference": req.reference, "category": req.category, "status": req.status, "summary": req.summary}
+                for req in ServiceRequest.objects.filter(stay=stay)
+                .exclude(status__in=[
+                    ServiceRequest.Status.RESOLVED,
+                    ServiceRequest.Status.CLOSED,
+                    ServiceRequest.Status.CANCELLED,
+                ])
+                .order_by("created_at")
+            ]
+        return success_response(
+            {
+                "booking_reference": booking.booking_reference,
+                "guest_name": booking.guest.full_name if booking.guest_id else "",
+                "room_numbers": [
+                    assignment.room.room_number
+                    for assignment in booking.room_assignments.all()
+                    if assignment.room_id
+                ],
+                "status": booking.status,
+                "check_in": booking.check_in.isoformat() if booking.check_in else "",
+                "check_out": booking.check_out.isoformat() if booking.check_out else "",
+                "currency": booking.currency,
+                "accommodation": {
+                    "total_amount": money(booking.total_amount),
+                    "amount_paid": money(booking.amount_paid),
+                    "amount_due": money(booking.amount_due),
+                },
+                "charges": charges,
+                "credits": credits,
+                "charges_total": money(sum((Decimal(row["amount"]) for row in charges), Decimal("0.00"))),
+                "credits_total": money(sum((Decimal(row["amount"]) for row in credits), Decimal("0.00"))),
+                "folio_balance": money(folio_balance),
+                "outstanding_balance": money(outstanding),
+                "cleared": outstanding == Decimal("0.00"),
+                "unbilled_laundry": unbilled_laundry,
+                "open_requests": open_requests,
+            }
+        )
+
+
 @extend_schema(tags=["Admin · Bookings"], summary="Mark a booking as no-show")
 class AdminBookingNoShowView(_BookingActionView):
     def perform(self, booking, request, data):

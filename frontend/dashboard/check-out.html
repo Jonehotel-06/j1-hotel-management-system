@@ -97,7 +97,7 @@
 <script src="../js/auth.js?v=1.1.12"></script>
 <script src="../js/hotel-data.js?v=1.1.12"></script>
 <script src="../js/navigation.js?v=1.1.12"></script>
-<script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script>
+<script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script><script src="../js/thermal-receipt.js?v=1.1.12"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("receptionist");
@@ -181,6 +181,9 @@
       "</div>" +
       '<footer class="co-card-actions">' +
         actions +
+        (canViewFolio()
+          ? '<button class="btn btn-block btn-outline" data-folio-btn="' + JONE.esc(ref) + '">' +
+            '<span data-icon="receipt" data-size="16"></span> View folio / gate pass</button>' : "") +
         /* Shared rule: no outstanding balance -> no Record payment button. */
         (JONE.dashboard.canRecordPayment(b)
           ? '<button class="btn btn-block btn-outline" data-pay-btn="' + JONE.esc(b.id) + '">' +
@@ -189,6 +192,101 @@
           '<span data-icon="fileText" data-size="16"></span> Full booking</a>' +
       "</footer>" +
     "</article>";
+  }
+
+  function canViewFolio(){
+    return !!(window.Auth && window.Auth.hasAnyCapability && window.Auth.hasAnyCapability(["folio.view"]));
+  }
+
+  /* Folio & gate clearance: everything the guest consumed (food, drinks,
+     snacks, laundry and other folio charges), what they paid, and whether a
+     gate pass may be printed. All figures come from the backend folio read —
+     the page never computes a balance itself. */
+  async function openClearance(ref){
+    var body = JONE.el("div", { class: "loading-skeleton", textContent: "Loading folio…" });
+    JONE.ui.modal.open({ title: "Folio & gate clearance · " + ref, body: body, size: "modal-lg" });
+    try {
+      var res = await window.API.bookingFolioClearance(ref);
+      var d = res.data || {};
+      var charges = (d.charges || []).map(function(c){
+        return '<tr><td>' + JONE.esc(c.date || "—") + '</td><td>' + JONE.esc(c.description || c.kind || "Charge") +
+          (c.source_reference ? '<br><small>' + JONE.esc(c.source_reference) + "</small>" : "") +
+          '</td><td class="num">' + JONE.esc(JONE.formatNaira(c.amount || 0)) + "</td></tr>";
+      }).join("");
+      var credits = (d.credits || []).map(function(c){
+        return '<tr><td>' + JONE.esc(c.date || "—") + '</td><td>' + JONE.esc(c.description || c.kind || "Payment") +
+          '</td><td class="num">' + JONE.esc(JONE.formatNaira(c.amount || 0)) + "</td></tr>";
+      }).join("");
+      var unbilled = d.unbilled_laundry || [];
+      var openReq = d.open_requests || [];
+      var html = '<dl class="profile-grid">' +
+        '<div><dt>Guest</dt><dd>' + JONE.esc(d.guest_name || "Guest") + "</dd></div>" +
+        '<div><dt>Room</dt><dd>' + JONE.esc((d.room_numbers || []).join(", ") || "—") + "</dd></div>" +
+        '<div><dt>Stay</dt><dd>' + JONE.esc([d.check_in, d.check_out].filter(Boolean).join(" → ") || "—") + "</dd></div>" +
+        '<div><dt>Status</dt><dd>' + JONE.dashboard.statusPill(d.status || "") + "</dd></div></dl>" +
+        '<h4 style="margin:1rem 0 .5rem;">Accommodation</h4>' +
+        '<dl class="profile-grid"><div><dt>Total</dt><dd>' + JONE.esc(JONE.formatNaira((d.accommodation || {}).total_amount || 0)) + "</dd></div>" +
+        '<div><dt>Paid</dt><dd>' + JONE.esc(JONE.formatNaira((d.accommodation || {}).amount_paid || 0)) + "</dd></div>" +
+        '<div><dt>Due</dt><dd>' + JONE.esc(JONE.formatNaira((d.accommodation || {}).amount_due || 0)) + "</dd></div></dl>" +
+        '<h4 style="margin:1rem 0 .5rem;">Purchases &amp; charges (food, drinks, laundry, extras)</h4>' +
+        (charges ? '<div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>' + charges + "</tbody></table></div>"
+                 : '<p class="caption">No extra purchases were charged to this guest.</p>') +
+        (credits ? '<h4 style="margin:1rem 0 .5rem;">Payments &amp; credits on the folio</h4><div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>' + credits + "</tbody></table></div>" : "") +
+        (unbilled.length ? '<p class="text-danger" style="margin-top:1rem;"><strong>Not yet billed:</strong> ' +
+          unbilled.map(function(o){ return JONE.esc(o.reference) + " (" + JONE.esc(JONE.formatNaira(o.total_amount || 0)) + ")"; }).join(", ") +
+          " — bill this laundry before issuing a gate pass (sidebar → Laundry).</p>" : "") +
+        (openReq.length ? '<p style="margin-top:.75rem;"><strong>Open guest requests:</strong> ' +
+          openReq.map(function(r){ return JONE.esc(r.summary || r.reference); }).join("; ") +
+          " — confirm these are fulfilled/settled before the guest leaves.</p>" : "");
+      if (d.cleared && !unbilled.length) {
+        html += '<p class="text-success" style="margin-top:1rem;"><strong>All bills cleared.</strong> Nothing is outstanding — you may print the gate pass, then complete check-out.</p>' +
+          '<button class="btn btn-accent" type="button" data-print-gate-pass="' + JONE.esc(d.booking_reference || ref) + '">' +
+          '<span data-icon="printer" data-size="16"></span> Print gate clearance receipt</button>';
+      } else if (d.cleared && unbilled.length) {
+        html += '<p class="text-danger" style="margin-top:1rem;"><strong>Do not issue a gate pass yet</strong> — the unbilled laundry above must be billed and settled first.</p>';
+      } else {
+        html += '<p class="text-danger" style="margin-top:1rem;"><strong>Outstanding balance: ' + JONE.esc(JONE.formatNaira(d.outstanding_balance || 0)) +
+          ".</strong> Ask the guest to settle it — use <em>Record payment</em> on the guest card — then re-open this folio before printing a gate pass.</p>";
+      }
+      body.innerHTML = html;
+      JONE.icons.inject(body);
+      var printBtn = body.querySelector("[data-print-gate-pass]");
+      if (printBtn) printBtn.addEventListener("click", function(){ printGatePass(d); });
+    } catch (err) {
+      body.innerHTML = '<div class="empty-state"><h3>Folio unavailable</h3><p>' + JONE.esc((err && err.message) || "Please try again.") + "</p></div>";
+    }
+  }
+
+  /* The gate pass is a POS thermal receipt (same module, paper widths and
+     style as the restaurant/bar receipts): every purchase, proof of full
+     settlement, and the all-bills-cleared note for the gate. */
+  async function printGatePass(d){
+    if (!window.JONE || !JONE.ThermalReceipt) { JONE.ui.toast("Thermal receipt module unavailable.", "error"); return; }
+    var widthResult = await JONE.dashboard.formModal({ title: "Gate clearance receipt · " + JONE.esc(d.booking_reference || ""), submitText: "Print", fields: [{ name: "width", label: "Paper width", type: "select", required: true, value: JONE.ThermalReceipt.getWidth(), options: [{ value: "80", label: "80 mm thermal roll" }, { value: "58", label: "58 mm thermal roll" }] }], onSubmit: async function(values){ JONE.ThermalReceipt.setWidth(values.width); return { message: "Preparing receipt…" }; } });
+    if (!widthResult) return;
+    var acc = d.accommodation || {};
+    var items = [{ name: "Accommodation — Room " + ((d.room_numbers || []).join(", ") || "—") + " (" + (d.booking_reference || "") + ")", quantity: 1, unit_price: acc.total_amount, line_total: acc.total_amount }];
+    (d.charges || []).forEach(function(c){ items.push({ name: (c.description || c.kind || "Charge") + (c.date ? " · " + c.date : ""), quantity: 1, unit_price: c.amount, line_total: c.amount }); });
+    var discount = (d.credits || []).filter(function(c){ return c.kind === "DISCOUNT"; }).reduce(function(sum, c){ return sum + Number(c.amount || 0); }, 0);
+    var subtotal = items.reduce(function(sum, item){ return sum + Number(item.line_total || 0); }, 0);
+    var total = Math.max(0, subtotal - discount);
+    var email = (window.Auth && window.Auth.state && window.Auth.state.user && window.Auth.state.user.email) || "";
+    var receipt = {
+      hotel: { name: "J-ONE HOTEL & LODGE", address: "Plot 566 Mgbowo Street, off Ezike Street, Enugu State", phone: "+234 803 211 2874" },
+      reference: d.booking_reference || "",
+      issued_at: new Date().toISOString(),
+      cashier: email,
+      mode: "GATE CLEARANCE PASS",
+      items: items,
+      subtotal: subtotal,
+      discount: discount,
+      total: total,
+      paid: total,
+      balance_due: 0,
+      payment_method: "Settled in full",
+      note: "ALL BILLS CLEARED — this guest is not owing the hotel. Please allow exit at the gate."
+    };
+    JONE.ThermalReceipt.print(receipt, { width: JONE.ThermalReceipt.getWidth() });
   }
 
   function renderList(list, term){
@@ -274,6 +372,13 @@
       JONE.dashboard.paymentModal(booking, {
         onRecorded: function(){ load(input ? input.value.trim() : ""); }
       });
+      return;
+    }
+
+    var folioBtn = e.target.closest && e.target.closest("[data-folio-btn]");
+    if (folioBtn) {
+      if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+      openClearance(folioBtn.getAttribute("data-folio-btn"));
       return;
     }
 

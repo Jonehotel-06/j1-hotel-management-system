@@ -277,6 +277,7 @@
 
   // Values are formatted only for display. Exports below retain the exact
   // decimal strings returned by the immutable ledger API.
+  function moneyCell(v){return formatMoney(v, reportCurrency(latest.financial));}
   function formatMoney(value,currency){
     if(value==null || value==="") return "--";
     if(currency==="NGN" && JONE.formatNaira) return JONE.formatNaira(value);
@@ -470,7 +471,6 @@
     });
     // Accepts either the shared API envelope ({data,pagination}) or the bare array.
     function rowsOf(payload){return listRows(payload&&!Array.isArray(payload)&&payload.data!==undefined?payload.data:payload);}
-    function moneyCell(v){return formatMoney(v, reportCurrency(latest.financial));}
   function rowActions(row) {
     var html = "";
     if (row.status === "DRAFT") {

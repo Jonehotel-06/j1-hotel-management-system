@@ -738,6 +738,13 @@ const API = (() => {
   const staffCancelBooking = (lookup, reason, opts = {}) => bookingAction("cancel", lookup, reason ? { reason } : {}, opts);
   const checkInBooking   = (lookup, opts = {}) => bookingAction("check-in", lookup, {}, opts);
   const checkOutBooking  = (lookup, payload, opts = {}) => bookingAction("check-out", lookup, payload || {}, opts);
+  /* Checkout-desk folio & gate-clearance read (folio.view capability):
+     GET /api/admin/bookings/{lookup}/folio-clearance/ */
+  const bookingFolioClearance = (lookup, opts = {}) => {
+    const base = BOOKINGS_EP();
+    if (!base) throw notConfigured("bookings");
+    return get(`${base}/${encodeURIComponent(lookup)}/folio-clearance/`, opts);
+  };
   const noShowBooking    = (lookup, opts = {}) => bookingAction("no-show", lookup, {}, opts);
   /* Re-point one existing reservation row at a different physical room.
      Contract (apps/bookings/serializers_admin.py → AssignRoomSerializer):
@@ -953,7 +960,7 @@ const API = (() => {
     list, getOne, getStaffBookingReceipt, create, update, remove, resourceAction,
     rescheduleBooking, getOccupancyCalendar, listMissedBookings, listLateArrivals,
     listGuestDiscounts, createGuestDiscount, updateGuestDiscount, deactivateGuestDiscount,
-    confirmBooking, staffCancelBooking, checkInBooking, checkOutBooking,
+    confirmBooking, staffCancelBooking, checkInBooking, checkOutBooking, bookingFolioClearance,
     noShowBooking, assignRoom, recordPayment, listPayrollSalaryPayments,
     recordPayrollSalaryPayment, reversePayrollSalaryPayment, searchBookings, searchCheckout,
     submitPosOrder, updatePosOrderStatus, capturePosTender, updatePosKitchenTicketStatus, openPosCashSession, closePosCashSession,

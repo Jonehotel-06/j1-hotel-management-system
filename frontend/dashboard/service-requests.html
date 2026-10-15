@@ -43,7 +43,7 @@
         </div>
         <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Guest service requests, scroll sideways to see every column"><table class="table"><thead><tr><th>Request</th><th>Guest / room</th><th>Type</th><th class="hide-sm">Owner</th><th class="hide-sm">Due</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-sr-rows></tbody></table></div><div class="pagination" data-sr-pagination></div></div>
       </section>
-      <section class="panel" style="margin-top:1.5rem;">
+      <section class="panel" id="laundry" style="margin-top:1.5rem;scroll-margin-top:90px;">
         <div class="panel-head"><h2>Laundry</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-laundry-refresh>Refresh</button><button class="btn btn-sm" type="button" data-laundry-new><span data-icon="plus" data-size="15"></span> Receive laundry</button></div></div>
         <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Laundry orders"><table class="table"><thead><tr><th>Order</th><th>Guest / room</th><th>Items</th><th class="num">Total</th><th>Status</th><th>Billing</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-laundry-rows></tbody></table></div></div>
         <div class="panel-body" style="padding-top:.75rem;"><p class="caption" style="margin:0;">Laundry is priced per item at reception, processed through Received → In progress → Ready → Delivered, and billed once to the guest's folio (Bill button). Delivery asks who received the items.</p></div>
@@ -172,16 +172,25 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       if(statusBtn){
         var ref=statusBtn.getAttribute("data-laundry-status"), target=statusBtn.getAttribute("data-laundry-target"), payload={status:target};
         if(target==="DELIVERED"){
-          var who=window.prompt("Who received the laundry? (guest name — delivery confirmation)");
-          if(who===null) return;
-          payload.delivered_to=who;
+          var delivered=await JONE.dashboard.formModal({title:"Confirm laundry delivery",submitText:"Confirm delivery",fields:[
+            {name:"delivered_to",label:"Who received the laundry?",type:"text",required:true,help:"Guest name — this is the delivery confirmation record."}
+          ],onSubmit:async function(values){
+            await window.API.resourceAction("guestLaundry",ref,"status",{status:"DELIVERED",delivered_to:values.delivered_to});
+            return {message:"Delivery confirmed."};
+          }});
+          if(delivered){ JONE.ui.toast("Laundry delivered.","success"); load(); }
+          return;
         }
-        if(target==="CANCELLED" && !window.confirm("Cancel this laundry order?")) return;
+        if(target==="CANCELLED"){
+          var cancelOk=await JONE.ui.confirm({title:"Cancel this laundry order?",message:"The order will be marked cancelled. This cannot be undone.",confirmText:"Cancel order",danger:true});
+          if(!cancelOk) return;
+        }
         await window.API.resourceAction("guestLaundry",ref,"status",payload);
         JONE.ui.toast("Laundry updated.","success"); load();
       } else if(billBtn){
         var bref=billBtn.getAttribute("data-laundry-bill");
-        if(!window.confirm("Charge this laundry to the guest's folio? This posts the charge once.")) return;
+        var billOk=await JONE.ui.confirm({title:"Bill laundry to folio?",message:"Charge this laundry to the guest's folio? This posts the charge once.",confirmText:"Bill to folio"});
+        if(!billOk) return;
         var res=await window.API.resourceAction("guestLaundry",bref,"bill",{});
         JONE.ui.toast((res&&res.message)||"Laundry billed.","success"); load();
       }

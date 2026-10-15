@@ -301,6 +301,14 @@
 
     lines.push(rule(chars));
 
+    /* Optional receipt-specific note (e.g. a gate-clearance statement). */
+    if (receipt.note) {
+      wrapText(receipt.note, chars).forEach(function (line) {
+        lines.push(centerLine(line, chars));
+      });
+      lines.push(rule(chars));
+    }
+
     wrapText("Thank you for staying with us", chars).forEach(
       function (line) {
         lines.push(centerLine(line, chars));
