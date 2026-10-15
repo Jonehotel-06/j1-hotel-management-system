@@ -37,7 +37,7 @@
     <div class="panel-head">
       <div>
         <h2>Reception Biometric Attendance &amp; Numeric Workstation Code Console</h2>
-        <p class="caption muted">Scan staff fingerprint to clock in, start/end break, clock out (which immediately expires workstation access codes), or issue a 6-digit numeric workstation code. Attendance is recorded only at an enrolled Receptionist Desktop: this page works here when this browser carries a desktop key, or for a management account, and always re-checks on the server.</p>
+        <p class="caption muted">Scan staff fingerprint to clock in, start/end break, clock out (which immediately expires workstation access codes), or issue a 6-digit numeric workstation code. Attendance for operational staff is recorded only at an enrolled Receptionist Desktop &mdash; a browser carrying the desk key, or one at the workstation&rsquo;s registered address. Management accounts (administrator, manager, general manager) that may authorise a supervised fallback can also record from elsewhere, and every such action is audited with the account and the reason. The server re-checks all of this; nothing here decides it.</p>
         <p class="caption" data-wf-rt-desktop-state role="status" aria-live="polite" style="margin-top:0.35rem;"></p>
       </div>
     </div>
@@ -63,7 +63,7 @@
       </div>
       <div class="card card-pad" data-wf-rt-fallback hidden style="margin-top:1.25rem;">
         <h3 style="font-size:var(--fs-md);margin:0 0 0.35rem;">Supervised fallback (manager / administrator)</h3>
-        <p class="caption muted">Use only when the scanner or the employee's finger genuinely cannot be read. A manager fallback needs the recorded failure from the failed scan above; an administrator may authorise one without a prior attempt. Every fallback is audited with your account and this reason, and the issued code is single-use and expires when the employee clocks out. Ordinary staff can never issue one.</p>
+        <p class="caption muted">Use only when the scanner or the employee's finger genuinely cannot be read. A manager fallback needs the recorded failure from the failed scan above; an administrator may authorise one without a prior attempt. This card works away from the front desk for management accounts &mdash; which is how a supervisor covers a reader outage on a non-reception device &mdash; and every fallback is audited with your account, this reason and the authority used. The issued code is single-use and expires when the employee clocks out. Ordinary staff can never issue one.</p>
         <div class="form-grid fg-2" style="margin-top:0.75rem;align-items:end;">
           <div class="field">
             <label class="field-label" for="wf-rt-fallback-identifier">Employee code or email</label>
@@ -166,11 +166,36 @@ document.getElementById("wf-attendance-date").value=hotelToday();loadAttendance(
   var stateLine=document.querySelector("[data-wf-rt-desktop-state]");
   var enrol=!!(window.Auth&&window.Auth.receptionistDesktopKey&&window.Auth.receptionistDesktopKey());
   var management=!!(window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager","general_manager"]));
-  if(stateLine)stateLine.textContent=enrol
-    ?"This browser is enrolled as a Receptionist Desktop."
+  function say(text){if(stateLine)stateLine.dataset.base=text;renderState();}
+  function renderState(){
+    if(!stateLine)return;
+    var base=stateLine.dataset.base||"";
+    stateLine.textContent=base+(stateLine.dataset.seen?" "+stateLine.dataset.seen:"");
+  }
+  if(!enrol&&management){
+    // The address matters here: this is the screen where a refused terminal
+    // tells the operator about it, and on a phone that address changes as the
+    // network does. Showing it removes the guesswork.
+    if(window.API&&typeof window.API.getClientAddress==="function"){
+      stateLine.dataset.seen="This browser's address as the server sees it: loading\u2026";
+      renderState();
+      window.API.getClientAddress().then(function(response){
+        var data=(response&&response.data)||{};
+        var ip=String(data.client_ip||"");
+        var source=String(data.source||"");
+        var seen=ip
+          ?"This browser's address as the server sees it: "+ip+(source&&source!=="peer"?" (reported by "+source+")":"")+". Register this address on the front desk workstation to record attendance from here without a desktop key."
+          :"The server could not determine this browser's address.";
+        stateLine.dataset.seen=seen;
+        renderState();
+      }).catch(function(){stateLine.dataset.seen="";renderState();});
+    }
+  }
+  say(enrol
+    ?"This browser carries a Receptionist Desktop key, so attendance recorded here is recorded at the desk."
     :management
-      ?"No desktop key in this browser: as a management account you can still operate the terminal, and every action is audited."
-      :"This browser is not an enrolled Receptionist Desktop, so the server will refuse to record attendance here.";
+      ?"No desktop key in this browser. As a management account you may still record attendance from here: each use is audited with your account, the workstation and the reason, and a fallback still needs its recorded failure (administrators excepted)."
+      :"This browser is not an enrolled Receptionist Desktop, so the server will refuse to record attendance here. Ask an administrator to enrol this desk.");
   var fallback=document.querySelector("[data-wf-rt-fallback]");
   if(fallback)fallback.hidden=!management;
   var fallbackState=document.querySelector("[data-wf-rt-fallback-state]");

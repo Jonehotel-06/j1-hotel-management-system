@@ -114,10 +114,12 @@ class TemporaryWorkstationCredentialIssueView(APIView):
     permission_classes = []  # Authenticated by presented terminal key + staff email + fingerprint
 
     def post(self, request):
-        terminal_key = presented_desktop_key(request)
-        workstation = receptionist_desktop_for_key(terminal_key)
-        if not workstation:
-            raise PermissionDenied("Temporary credentials may only be minted from an approved Receptionist Desktop.")
+        # The station question answered exactly once, for the whole module: the
+        # desk by key OR by its registered address (so a desk enrolled by
+        # address can mint codes too). This endpoint is unauthenticated, so the
+        # management off-desk route cannot apply here — an anonymous request has
+        # no account to hold that authority, and the resolver refuses it.
+        ws_reference, workstation = _resolve_reception_terminal(request)
 
         from apps.accounts.models import User
         email = (request.data.get("email") or "").strip().lower()
@@ -161,47 +163,92 @@ class TemporaryWorkstationCredentialIssueView(APIView):
         }, message="Temporary workstation sign-in credential and numeric access code generated.")
 
 
+#: Why a request that NAMED the desk was still refused: the desk is enrolled,
+#: but this device is not on the network the desk is pinned to.
+DETAIL_DESK_HOST_MISMATCH = (
+    "Attendance can only be recorded from the configured Front Desk desktop IP address. "
+    "Ask an administrator to update Settings if the Front Desk desktop has changed."
+)
+DETAIL_DESK_REQUIRED = (
+    "Attendance can only be recorded at an enrolled Receptionist Desktop. "
+    "Ask an administrator to enrol this browser (desktop key or registered address)."
+)
+DETAIL_KEY_REQUIRED = (
+    "Reception Attendance Workstation requires an approved Receptionist Desktop key."
+)
+
+
 def _resolve_reception_terminal(request):
     """Resolve the Reception Attendance Workstation for this request.
 
-    The normal — and only unprivileged — path is a presented Receptionist
-    Desktop key (``X-JONE-Desktop-Key``) that belongs to an active FRONT_DESK
-    workstation.
+    Three ways in, tried in this order:
 
-    A management session may operate the terminal without the key because
-    management is already exempt from Receptionist Desktop sign-in
-    (``apps.accounts.desktop_policy.STAFF_SIGN_IN_EXEMPT_ROLES``), but the
-    session must still resolve to a REGISTERED active workstation: the endpoint
+    1. **The desk itself, by either enrolment route** — the browser presents the
+       Receptionist Desktop key, or the request arrives from the address an
+       administrator registered for an active FRONT_DESK workstation. Both are
+       the routes sign-in accepts, so a desk enrolled by address is a fully
+       working attendance station too, and neither asks the desk to type
+       anything. A desk outside the network address in hotel Settings is not the
+       desk for this purpose and falls through to the rules below.
+    2. **Management that may record attendance for others** (the accounts that
+       already hold supervised-fallback authority, see
+       ``apps.accounts.desktop_policy.may_record_attendance_off_desk``), from
+       wherever it is. This is the supervisor's route when the front desk is
+       unreachable, and the reason an administrator is never locked out of
+       attendance by a desk that has yet to be enrolled or has moved: their
+       authority is already server-side, and every action below is audited with
+       the account, the reason and the authority. Each use is recorded as
+       ``ATTENDANCE_OFF_DESK_TERMINAL``.
+    3. **Nobody else.** An operational account reaches this endpoint only from a
+       desk it signed in at, because their sign-in is bound to the desk; a
+       personal phone has neither a session the policy accepts nor
+       ``attendance.manage``. The restriction is enforced server side, never
+       from a user agent, screen size, or an address the client asserts.
+
+    Every route still resolves to a REGISTERED active workstation: the endpoint
     never invents a terminal reference, so attendance can never be attributed to
     a workstation that does not exist.
-
-    Ordinary staff can never resolve a terminal here. A personal phone holding a
-    normal staff session has neither the desktop key nor ``attendance.manage``,
-    so it cannot clock anybody in through this API — the restriction is enforced
-    server side, not by user agent, IP address or screen size.
     """
-    from apps.accounts.desktop_policy import STAFF_SIGN_IN_EXEMPT_ROLES
+    from apps.accounts.desktop_policy import (
+        attendance_off_desk_authority,
+        may_record_attendance_off_desk,
+        resolve_receptionist_desktop,
+    )
     from apps.accounts.models import Workstation
+    from apps.audit.services import log_action
 
-    if not front_desk_desktop_ip_allowed(request):
-        raise PermissionDenied(
-            "Attendance can only be recorded from the configured Front Desk desktop IP address. "
-            "Ask an administrator to update Settings if the Front Desk desktop has changed."
-        )
-    workstation = receptionist_desktop_for_key(presented_desktop_key(request))
-    if workstation is not None:
-        return workstation.reference, workstation
+    desk, _method = resolve_receptionist_desktop(request)
+    if desk is not None and front_desk_desktop_ip_allowed(request):
+        return desk.reference, desk
 
     user = getattr(request, "user", None)
-    if not (user and getattr(user, "is_authenticated", False)):
-        raise PermissionDenied(
-            "Reception Attendance Workstation requires an approved Receptionist Desktop key."
-        )
-    if user.role not in STAFF_SIGN_IN_EXEMPT_ROLES:
-        raise PermissionDenied(
-            "Attendance can only be recorded at an enrolled Receptionist Desktop. "
-            "Ask an administrator to enrol this browser."
-        )
+    authenticated = bool(user and getattr(user, "is_authenticated", False))
+    exempt = authenticated and may_record_attendance_off_desk(user)
+
+    if desk is not None and not exempt:
+        # The desk was named but is pinned elsewhere: say exactly that, rather
+        # than "enrol this browser", which would send the desk to the wrong fix.
+        raise PermissionDenied(DETAIL_DESK_HOST_MISMATCH)
+    if not authenticated:
+        raise PermissionDenied(DETAIL_KEY_REQUIRED)
+    if not exempt:
+        raise PermissionDenied(DETAIL_DESK_REQUIRED)
+    authority = attendance_off_desk_authority(user)
+
+    log_action(
+        actor=user,
+        action="ATTENDANCE_OFF_DESK_TERMINAL",
+        request=request,
+        metadata={
+            "role": user.role,
+            "authority": authority,
+            "requested_action": str(request.data.get("action") or "").strip().upper()
+            if hasattr(request.data, "get")
+            else "",
+            "receptionist_desktop_used": False,
+        },
+        summary="Attendance terminal operated away from the Receptionist Desktop by management",
+    )
 
     ws_ref = (
         (request.data.get("workstation_reference") if hasattr(request.data, "get") else "")
@@ -211,16 +258,20 @@ def _resolve_reception_terminal(request):
     ).strip()
     ws = Workstation.objects.filter(reference=ws_ref, is_active=True).first() if ws_ref else None
     if ws is None:
+        # Fall back to a front desk desk that is enrolled EITHER way: an issued
+        # key or a registered address both mean "this is the reception desk".
+        enrolled = Workstation.objects.filter(is_active=True).exclude(
+            sign_in_key_hash="", ip_address=""
+        ).filter(department=Workstation.Department.FRONT_DESK)
         ws = (
-            Workstation.objects.exclude(sign_in_key_hash="")
-            .filter(is_active=True, department=Workstation.Department.FRONT_DESK)
-            .first()
-            or Workstation.objects.exclude(sign_in_key_hash="").filter(is_active=True).first()
+            enrolled.first()
+            or Workstation.objects.exclude(sign_in_key_hash="", ip_address="").filter(is_active=True).first()
         )
     if ws is None:
         raise PermissionDenied(
             "No active Receptionist Desktop workstation is registered. Register the front desk "
-            "workstation and issue its desktop key before recording attendance."
+            "workstation and enrol it (issue its desktop key, or register its address) before "
+            "recording attendance."
         )
     return ws.reference, ws
 

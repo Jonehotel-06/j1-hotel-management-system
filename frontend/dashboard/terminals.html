@@ -177,7 +177,7 @@ async function loadReceptionTerminal(){
       '</tr>';
     }).join("");
   }catch(err){
-    JONE.dashboard.DATA.error(rtRows,"Reception terminal status unavailable",(err&&err.message)||"Configure Receptionist Desktop key or sign in with attendance permissions.",6);
+    JONE.dashboard.DATA.error(rtRows,"Reception terminal status unavailable",(err&&err.message)||"Sign in with an account that may record attendance (management may operate this terminal from anywhere), or enrol this browser as the Receptionist Desktop.",6);
   }
 }
 

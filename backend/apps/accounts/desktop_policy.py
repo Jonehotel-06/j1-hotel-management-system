@@ -27,7 +27,9 @@ Changing either the registered address or the settings value is an Admin
 configuration change, never a code change.
 
 Management roles keep their existing access from any device (see
-``STAFF_SIGN_IN_EXEMPT_ROLES``). Guest accounts, token refresh, logout and the
+``STAFF_SIGN_IN_EXEMPT_ROLES``), and the accounts that may record attendance for
+somebody else may also run the attendance terminal away from the desk — see
+``may_record_attendance_off_desk`` for why that is the same set of accounts. Guest accounts, token refresh, logout and the
 password-reset flows are not affected, so active sessions continue to work.
 
 The key is a bearer secret for the desk browser, not a cryptographic device
@@ -98,6 +100,40 @@ def receptionist_desktop_required(user: User) -> bool:
     the sign-in policy and the attendance policy.
     """
     return sign_in_policy_applies(user)
+
+
+def attendance_off_desk_authority(user) -> str:
+    """How this account may record attendance away from the Receptionist Desktop.
+
+    Returns the authority ``manual_fallback_authority`` would return for the
+    same account (``ADMINISTRATOR`` / ``MANAGER`` / ``NONE``) by DELEGATING to
+    it, so two rules that look alike cannot drift apart:
+
+    * who may authorise attendance for somebody else when a fingerprint cannot
+      be read, and
+    * who may run the attendance terminal when the front desk is not reachable.
+
+    Both are management authority over OTHER people's attendance, both are
+    audited with the actor, and both require ``attendance.manage``. Delegating
+    rather than restating means a future change to the fallback matrix moves
+    this with it instead of quietly opening or closing the station rule.
+
+    Ordinary operational roles always get ``NONE``: their sign-in is already
+    bound to the desk, so they never reach this question with a usable session.
+    """
+    from apps.staff_operations.services.attendance_fallback_service import manual_fallback_authority
+
+    return manual_fallback_authority(user)
+
+
+def may_record_attendance_off_desk(user) -> bool:
+    """True only for an account that actually carries off-desk authority.
+
+    ``NONE`` is a real return value (the service's sentinel), not an empty
+    string, so it must be compared by name: a bare truthiness test would let
+    every signed-in account through.
+    """
+    return attendance_off_desk_authority(user) not in ("", "NONE")
 
 
 def receptionist_desktop_for_key(raw_key: str) -> Workstation | None:

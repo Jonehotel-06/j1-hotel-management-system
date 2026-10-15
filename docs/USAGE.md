@@ -139,7 +139,16 @@ API from, in which case front desk staff type **only** their email and password.
 The panel shows the address the server sees this browser as; the row action
 registers it. A phone, a guest laptop, or any browser off that address is still
 refused, and the refusal tells the administrator which address to register if the
-desk has moved. Management roles sign in anywhere, as before. Step-by-step
+desk has moved.
+
+Attendance follows the same two routes — fingerprint clock-in, break, clock-out
+and the 6-digit codes are recorded at a desk identified by its key or its
+registered address — and adds one deliberate exception: management accounts
+(administrator, manager, general manager) that may authorise attendance for
+somebody else can also record it away from the desk, which is how a supervisor
+covers a broken reader or an unenrolled front desk. Each such action is audited
+with the account, the reason and the authority used; ordinary staff are bound to
+the desk exactly as before. See `docs/ATTENDANCE_WORKSTATION_SETUP.md` §4a. Management roles sign in anywhere, as before. Step-by-step
 instructions, including what to check after deploying behind a load balancer, are
 in `docs/ATTENDANCE_WORKSTATION_SETUP.md`.
 

@@ -20,7 +20,7 @@ the address the server observed, never one the browser supplied.
 | Desk key transport | `X-JONE-Desktop-Key` request header | `receptionist_desktop_for_key()` |
 | Registered address | `Workstation.ip_address` (+ `desktop_ip_registered_at`), set by an administrator | `receptionist_desktop_for_ip()` |
 | Sign-in policy | Non-management roles must sign in — and refresh a session — from a desk identified either way: key **or** registered address | `sign_in_policy_applies()`, `resolve_receptionist_desktop()` |
-| Attendance policy | Non-management roles must present the key to clock in/out | `receptionist_desktop_required()` + `_assert_reception_workstation()` |
+| Attendance policy | Non-management roles must clock in/out at a desk identified the same two ways. Management may also record attendance from elsewhere — see §4a | `receptionist_desktop_required()`, `may_record_attendance_off_desk()` |
 
 Management roles (`ADMIN`, `MANAGER`, `GENERAL_MANAGER` — `STAFF_SIGN_IN_EXEMPT_ROLES`)
 keep their existing device freedom. That exemption is the same constant for
@@ -95,6 +95,19 @@ stating plainly, because both have bitten real deployments:
 
 A phone on mobile data, a guest laptop, or any browser off that address is still
 refused, exactly as before.
+
+A desk enrolled this way is a **fully working attendance station** as well:
+fingerprint verification, clock actions and 6-digit code issuance all accept the
+registered address, so a reception PC never has to hold a key at all.
+
+### What the "IP address seen by the server for this browser" value means
+
+Settings shows this address live, for the browser you are reading it in, and it
+is normal for it to differ between visits: a phone on mobile data is given a new
+address as the network changes, and some carriers share one address between many
+devices. Read it **on the front desk PC** and register that — or register the
+desk's address on the workstation (Staff → Workstations), which is the more
+precise tool because it affects one desk instead of the whole hotel.
 
 ### 2c. Client address (deployment setting — read this before deploying)
 
@@ -232,6 +245,53 @@ control into the console (and a supervised clock-out that does not require a
 probe) is the small follow-up this document is flagging, not something the
 repair work pretended to fix.
 
+## 4a. Recording attendance away from the desk (management)
+
+The desk rule exists to stop a **personal phone recording other people's
+attendance**. It was also refusing the people who supervise attendance, which
+turned a control into a lockout: a manager whose shift began at the desk could
+not record anything from anywhere else, and an administrator could not open the
+attendance terminal at all while the front desk PC was unenrolled, re-imaged or
+moved.
+
+The rule now has exactly one exemption, and it is not a new hole:
+
+| Who | Where they may record | Evidence required |
+|---|---|---|
+| Operational staff (reception, housekeeping, F&B, security …) | At a desk they signed in at — key or registered address | Their sign-in already required the desk |
+| Manager / general manager **with** `attendance.manage` | Anywhere | A recorded capture failure for that staff member (30-minute window) |
+| Administrator | Anywhere | Reason only (`ADMINISTRATOR_EXCEPTION`) |
+| Manager / general manager **without** `attendance.manage`, and any operational role (including FRONT_DESK_SUPERVISOR) | Desk only | — |
+
+The exemption is granted to exactly the accounts that may already authorise a
+supervised fallback, by **delegating to the same function**
+(`may_record_attendance_off_desk` → `attendance_fallback_authority`), so the two
+rules cannot drift apart: a future change to the fallback matrix moves this with
+it instead of quietly opening or closing the station rule.
+
+What this means in practice:
+
+* An administrator can always issue a fallback code from their own phone, which
+  is the supported answer while the front desk has no enrolled desk — you are
+  never locked out of attendance by a PC that has not been set up yet, or that
+  has moved to a new address.
+* A manager away from reception can `RECORD_FAILURE` and then authorise the
+  fallback; the evidence requirement is untouched by the exemption.
+* Ordinary staff are unaffected: their sign-in is bound to the desk, so a phone
+  never holds a session that can reach the terminal.
+* Every off-desk use of the terminal writes `ATTENDANCE_OFF_DESK_TERMINAL` (actor,
+  role, authority, requested action) **before** the action runs, in addition to
+  the existing `ATTENDANCE_MANUAL_OVERRIDE` entry. If you want to review how
+  attendance was recorded during an outage, filter the audit trail for those two
+  actions.
+
+Honest limitation, unchanged by this work: `AttendanceRecord` does not carry a
+"recorded from" column, so a row created off-desk is not visually distinct in
+the attendance list itself. The provenance is in the audit trail (above) and in
+the response the terminal returns. Adding a station column to the attendance
+record is a schema change and was left out of this fix deliberately; ask for it
+if you want the attendance list itself to show it.
+
 ## 5. Attendance codes
 
 * Issued by the server (`mint_temporary_workstation_credential`), bound to one
@@ -252,7 +312,9 @@ repair work pretended to fix.
       desk be identified by address).
 - [ ] Every front desk PC signed in at least once from **the desk itself**, its
       address registered (§2b) — *or* an issued desktop key installed in that
-      browser (§2a). A desk with neither cannot sign anyone in.
+      browser (§2a). A desk with neither cannot sign anyone in. (Management is
+      exempt, so an administrator can still record attendance in the meantime —
+      §4a.)
 - [ ] `GET /api/auth/client-address/` on the deployed host reports the real
       client address and the rule that named it, not the proxy's (§2c).
 - [ ] A fingerprint reader bridge on each reception PC, or a documented decision
@@ -293,6 +355,16 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<host>/api/admin/staff-
      -d '{"action":"CLOCK_IN","idempotency_key":"phone-test-1"}'
 ```
 
+```bash
+# Management may record attendance away from the desk (expect 200 + a code).
+# Run this from a phone or laptop that is NOT the front desk PC.
+curl -s -X POST https://<host>/api/admin/staff-operations/biometrics/reception-terminal/ \
+     -H "Authorization: Bearer <administrator-token>" -H 'Content-Type: application/json' \
+     -d '{"action":"MANUAL_FALLBACK","email":"worker@example.com","manual_override_reason":"Reader unavailable at reception."}'
+# Then confirm the audit trail names the authority used:
+#   action=ATTENDANCE_OFF_DESK_TERMINAL  +  action=ATTENDANCE_MANUAL_OVERRIDE
+```
+
 The same checks plus the code lifecycle (issue → sign in → single-use replay
 refused → clock-out → code dead) are automated in
 `backend/tests/test_attendance_workstation_policy.py` and
@@ -302,4 +374,5 @@ and the administrator's register/clear actions — is covered by
 `backend/tests/test_receptionist_desktop_ip.py`; the browser side (row state,
 the register/clear flows, and the refusal shown on the sign-in page) by
 `frontend/tests-js/test-desktop-address-ui.js` and
-`frontend/tests-js/test-desk-key.js`.
+`frontend/tests-js/test-desk-key.js`; the off-desk management rule (and what it
+still refuses) by `backend/tests/test_attendance_off_desk_management.py`.

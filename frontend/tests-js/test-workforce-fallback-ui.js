@@ -42,8 +42,18 @@ test("the issued code is described as single-use and clock-out bound", () => {
 
 test("the console states whether this browser is an enrolled Receptionist Desktop", () => {
   assert.match(WORKFORCE, /data-wf-rt-desktop-state/);
-  assert.match(WORKFORCE, /This browser is enrolled as a Receptionist Desktop\./);
+  assert.match(WORKFORCE, /carries a Receptionist Desktop key/);
   assert.match(WORKFORCE, /the server will refuse to record attendance here/);
+});
+
+test("the console tells management they may record off-desk, and shows the address to register", () => {
+  // Management is exempt from the desk station rule, and the address is what an
+  // administrator needs in order to register a desk instead: both belong on the
+  // screen where the refusal appears.
+  assert.match(WORKFORCE, /As a management account you may still record attendance from here/);
+  assert.match(WORKFORCE, /audited with your account/);
+  assert.match(WORKFORCE, /API\.getClientAddress\(\)/);
+  assert.match(WORKFORCE, /Register this address on the front desk workstation/);
 });
 
 test("MANUAL_FALLBACK never sends a synthesised fingerprint probe", async () => {
