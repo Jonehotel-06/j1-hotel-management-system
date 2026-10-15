@@ -61,11 +61,12 @@ available. Do not use a workstation reference as an account credential.
 | Method & path | Auth | Body → Returns | Notes |
 |---|---|---|---|
 | `POST /register/` | 🔓 | email, first_name, last_name, phone?, password, password_confirm → `{user, tokens}` | Role is always `GUEST`. Throttled. |
-| `POST /login/` | 🔓 | email, password → `{user, tokens}` | `UNAUTHORIZED` on bad credentials. 5/min/IP. |
+| `POST /login/` | 🔓 | email, password → `{user, tokens}` | `UNAUTHORIZED` on bad credentials. 5/min/IP. Operational staff are limited to the Receptionist Desktop, identified by the browser's issued desk key (`X-JONE-Desktop-Key`) **or** by the request arriving from an address registered on an active FRONT_DESK workstation — the latter needs nothing typed at sign-in. A refusal is `403 STAFF_SIGN_IN_RESTRICTED` and carries `errors.client_ip` (the caller's own address, sent only after its credentials verified) plus `errors.reason: "front_desk_ip_mismatch"` when the hotel-wide `front_desk_desktop_ip` binding is what failed. |
 | `POST /token/refresh/` | 🔓 | refresh → `{tokens.access(, refresh)}` | Rotation: old refresh is blacklisted. |
 | `POST /logout/` | 🔑 | refresh | Blacklists the refresh token. |
 | `GET /profile/` | 🔑 | → user | |
 | `GET /capabilities/` | 🔑 staff | Server-resolved role capability codes for current-user UI hints; the API still enforces every request. |
+| `GET /client-address/` | 🔑 | → `{client_ip, source, trusted_proxy_hops}` | The caller's OWN address as the server observed it, plus which rule named it (`peer`, an edge header name such as `true-client-ip`, or `forwarded`). Used to register a front desk desktop (`PATCH /users/terminals/<id>/`). |
 | `PATCH /profile/` | 🔑 | first_name?, last_name?, phone?, profile_image? → user | Role/active flags NOT editable. |
 | `POST /password/change/` | 🔑 | current_password, new_password, new_password_confirm | |
 | `POST /password/reset/` | 🔓 | email | Generic response (no account-existence leak). |
@@ -232,7 +233,8 @@ shown in the middle column, including additive operational roles.
 | `GET/POST /inventory/purchase-orders/` · `GET /inventory/purchase-orders/<ref>/` | 🔐 `procurement.manage` | Purchase-order drafts and immutable line snapshots |
 | `POST /inventory/purchase-orders/<ref>/submit/` · `ordered/` · `receipts/` | 🔐 `procurement.manage` | PO lifecycle and source-keyed partial/full goods receipts; receipts append `RECEIPT` movements and reject over-receipt |
 | `POST /inventory/purchase-orders/<ref>/approve/` | 🔐 `procurement.approve` | Separate maker-checker approval; requester self-approval is rejected |
-| `GET/POST /users/terminals/` · `PATCH /users/terminals/<id>/` | 🔐 `terminal.manage` | Register, label, list (`active`, `department`, `search`), or deactivate optional workstation metadata; current-user presence is informational, not a session lock. |
+| `GET/POST /users/terminals/` · `PATCH /users/terminals/<id>/` | 🔐 `terminal.manage` | Register, label, list (`active`, `department`, `search`), or deactivate optional workstation metadata; current-user presence is informational, not a session lock. `ip_address` registers the address a front desk desk reaches the API from (one address, or a CIDR network; stored canonically, blank clears) and `desktop_ip_registered_at` records when; `receptionist_desktop_ready` reports whether an active FRONT_DESK row can identify the desk at all (key or address). A non-front-desk row never acts as the Receptionist Desktop. |
+| `POST /users/terminals/<id>/desktop-key/` | 🔐 `terminal.manage` | Rotate a FRONT_DESK workstation's desk key (returned once; the previous key stops working) — the per-browser route, kept alongside the registered address. |
 | `GET /users/directory/` | 🔐 dispatch/profile/shift/`payroll.manage` capability | Minimal active-staff picker projection without account-management data; supports employee-code search for authorized payroll preparers. |
 | `GET/POST /staff-operations/profiles/` · `PATCH /staff-operations/profiles/<id>/` | 🔐 `staff.profile.manage` | Non-sensitive operational staff profiles; user accounts and roles remain separately controlled |
 | `GET /staff-operations/my-profile/` | 🔑 authenticated staff (own record only) | Owner-scoped self-service profile. `salary.current_month_work` and `salary.monthly_history` report distinct worked days, started scheduled days, missed scheduled days (no attendance and no approved leave), approved leave days, worked minutes, and each month's approved-payroll net/paid/balance with `PAID`, `UNPAID`, `PARTIALLY_PAID`, or `NOT_CALCULATED` status. |

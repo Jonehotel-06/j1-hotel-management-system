@@ -384,7 +384,10 @@
         location.href = next;
       } catch (err) {
         JONE.releaseGuard(btn);
-        if (err.code === "STAFF_SIGN_IN_RESTRICTED" && typeof opts.onRestricted === "function") opts.onRestricted();
+        // The refusal carries the address the request came from (err.data.errors),
+        // which is the only thing an administrator needs in order to register the
+        // desk. Pass the error through so the page can show it.
+        if (err.code === "STAFF_SIGN_IN_RESTRICTED" && typeof opts.onRestricted === "function") opts.onRestricted(err);
         const msg = err.status === 401 ? "Incorrect email or password." : (err.message || "Sign-in failed. Please try again.");
         JONE.ui.toast(msg, "error");
         const errBox = form.querySelector("[data-form-error]");

@@ -54,6 +54,7 @@
           <div class="field-error">Please enter your password.</div>
         </div>
         <div class="field-error" data-form-error style="display:none;color:var(--color-danger);margin-bottom:1rem;"></div>
+        <div class="field-error" data-desktop-notice role="status" aria-live="polite" style="display:none;color:var(--color-warning,#b7791f);margin-bottom:1rem;"></div>
         <button class="btn btn-block" type="submit">Sign in</button>
       </form>
 
@@ -179,7 +180,30 @@
     // STAFF_SIGN_IN_RESTRICTED message is surfaced by the shared toast; this
     // page intentionally offers no desktop-key entry — keys are issued and
     // installed inside the administrative workstation workflow.
-    window.Auth.bindLoginForm("#login-form");
+    //
+    // A refusal is the moment the person can actually fix it: the server sends
+    // back the address this browser reached it from, and an administrator only
+    // needs that one value to register the desk. So it is shown here, next to
+    // the two routes that do work (get an administrator to register this
+    // address, or sign in with the code issued after clock-in).
+    function desktopRefusalNotice(err) {
+      var box = document.querySelector("[data-desktop-notice]");
+      if (!box) return;
+      var meta = (err && err.data && err.data.errors) || {};
+      var ip = String(meta.client_ip || "").trim();
+      var lines = [];
+      lines.push("Staff sign-in is limited to the Receptionist Desktop. This browser reached the server from "
+        + (ip ? ip + "." : "an address the server could not determine."));
+      if (meta.reason === "front_desk_ip_mismatch") {
+        lines.push("The front desk is pinned to a fixed network address in hotel settings and this browser is outside it.");
+      } else if (ip) {
+        lines.push("An administrator can register that address for the front desk workstation so front desk staff sign in here with just their email and password.");
+      }
+      lines.push("You can also sign in with the 6-digit code issued at the Reception Attendance Workstation after clock-in.");
+      box.textContent = lines.join(" ");
+      box.style.display = "block";
+    }
+    window.Auth.bindLoginForm("#login-form", { onRestricted: desktopRefusalNotice });
   }
 document.getElementById("pw-toggle").addEventListener("click", function () {
   var inp = document.getElementById("password");

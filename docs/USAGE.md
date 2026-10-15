@@ -130,6 +130,19 @@ audit metadata with the authenticated user's API request; it is not a sign-in,
 permission, presence lock, or verified proof of who is at the device. Clear it
 when the browser is being repurposed.
 
+The registry is also where the **Receptionist Desktop** is enrolled, and it is
+the one place where a workstation does affect sign-in: operational staff (every
+role except management) may sign in only from a front desk PC that the server can
+identify — either because that browser holds the desk key an administrator issued
+for it, or because an administrator registered the address the desk reaches the
+API from, in which case front desk staff type **only** their email and password.
+The panel shows the address the server sees this browser as; the row action
+registers it. A phone, a guest laptop, or any browser off that address is still
+refused, and the refusal tells the administrator which address to register if the
+desk has moved. Management roles sign in anywhere, as before. Step-by-step
+instructions, including what to check after deploying behind a load balancer, are
+in `docs/ATTENDANCE_WORKSTATION_SETUP.md`.
+
 ### Operations, finance, and workforce
 
 The staff sidebar groups the operational modules. Every list is bounded and

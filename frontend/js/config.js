@@ -202,6 +202,7 @@
     users:         "/api/admin/users/",           // ADMIN
     workstations:  "/api/admin/users/terminals/", // capability-gated; attribution only
     staffCapabilities: "/api/auth/capabilities/", // current account's server-resolved UI capability hints
+    clientAddress: "/api/auth/client-address/",   // address the server sees THIS browser from
     authProfile:   "/api/auth/profile/",          // read/update the signed-in account
     passwordChange:"/api/auth/password/change/",  // change the signed-in account's password
     settings:      "/api/admin/settings/",        // GET manager+, PATCH admin-only

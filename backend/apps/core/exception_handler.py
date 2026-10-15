@@ -127,4 +127,8 @@ def jone_exception_handler(exc, context):
         code = "VALIDATION_ERROR"
     detail = exc.detail
     message = detail if isinstance(detail, str) else "; ".join(map(str, getattr(detail, "__iter__", lambda: [])() or [detail]))
-    return _envelope(str(code).upper(), str(message), None, response.status_code, response.headers)
+    # A domain error may carry structured context the client needs in order to
+    # act — e.g. a refused staff sign-in reports the address it came from, so an
+    # administrator can register that address for the desk. Empty by default.
+    errors = getattr(exc, "errors_payload", None)
+    return _envelope(str(code).upper(), str(message), errors, response.status_code, response.headers)

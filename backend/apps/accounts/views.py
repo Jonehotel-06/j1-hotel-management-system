@@ -18,6 +18,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.audit.services import log_action
+from apps.core.client_ip import client_ip_source, normalize_ip, resolve_client_ip
 from apps.core.emails import queue_email
 from apps.core.exceptions import StaffSignInRestrictedError
 from apps.core.responses import success_response
@@ -25,7 +26,7 @@ from apps.core.serializers import EmptySerializer
 
 from .capabilities import capability_codes_for_user
 from .desktop_policy import (
-    front_desk_desktop_ip_allowed, presented_desktop_key, receptionist_desktop_for_key,
+    front_desk_desktop_ip_allowed, request_client_ip, resolve_receptionist_desktop,
     sign_in_policy_applies,
 )
 from .models import User
@@ -218,23 +219,36 @@ def _refuse_staff_refresh_outside_desk(request):
         return cred
     if not sign_in_policy_applies(user):
         return None
-    if receptionist_desktop_for_key(presented_desktop_key(request)) is not None:
+    # The same two enrolment routes as sign-in: the browser that proved it was
+    # the desktop at sign-in (key, or registered address) keeps its session
+    # alive from that same desktop. A shift that began at the desk must not be
+    # killed mid-shift just because this header is missing on a refresh.
+    desktop, _method = resolve_receptionist_desktop(request)
+    if desktop is not None:
         if front_desk_desktop_ip_allowed(request):
             return None
         logger.warning("Staff session refresh refused: user_id=%s role=%s reason=front_desk_ip_mismatch", user.pk, user.role)
         log_action(
             actor=user, action="STAFF_SIGN_IN_RESTRICTED", request=request,
-            metadata={"reason": "refresh_front_desk_ip_mismatch", "role": user.role},
+            metadata={
+                "reason": "refresh_front_desk_ip_mismatch", "role": user.role,
+                "client_ip": request_client_ip(request),
+            },
             summary="Staff session refresh refused from a non-Front-Desk IP address",
         )
-        raise StaffSignInRestrictedError()
+        raise StaffSignInRestrictedError(
+            client_ip=request_client_ip(request), network_mismatch=True,
+        )
     logger.warning("Staff session refresh refused: user_id=%s role=%s reason=no_receptionist_desktop", user.pk, user.role)
     log_action(
         actor=user, action="STAFF_SIGN_IN_RESTRICTED", request=request,
-        metadata={"reason": "refresh_outside_receptionist_desktop", "role": user.role},
+        metadata={
+            "reason": "refresh_outside_receptionist_desktop", "role": user.role,
+            "client_ip": request_client_ip(request),
+        },
         summary="Staff session refresh refused outside the Receptionist Desktop",
     )
-    raise StaffSignInRestrictedError()
+    raise StaffSignInRestrictedError(client_ip=request_client_ip(request))
 
 
 @extend_schema(tags=["Auth"], request=None, summary="Log out (blacklist refresh token)")
@@ -300,6 +314,38 @@ class MyCapabilitiesView(APIView):
         return success_response({
             "role": request.user.role,
             "capabilities": sorted(capability_codes_for_user(request.user)),
+        })
+
+
+@extend_schema(tags=["Auth"], summary="The client address this request reached the API from")
+class ClientAddressView(APIView):
+    """What the server sees as this browser's address.
+
+    Needed to register a front desk desktop: the administrator configuring the
+    workstation has to know the address the desk actually arrives on, and
+    guessing it from a phone or from ``whatismyip`` produces a different answer
+    whenever the hotel is behind carrier NAT or the deployment sits behind a
+    proxy. It reports the caller's OWN address only.
+
+    ``source`` names the rule that produced the answer — ``peer`` (the direct
+    connection), the edge header the deployment trusts (``true-client-ip``,
+    ``cf-connecting-ip``, ...), or ``forwarded`` (walked out of the forwarding
+    chain) — so an administrator can tell a directly observed address from one
+    the deployment had to take its proxy's word for.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = EmptySerializer
+
+    def get(self, request):
+        client_ip = resolve_client_ip(request)
+        peer = normalize_ip(getattr(request, "META", {}).get("REMOTE_ADDR", ""))
+        return success_response({
+            "client_ip": client_ip,
+            "source": client_ip_source(request),
+            # True when the answer did not come from the connection itself,
+            # i.e. the deployment's proxy had to speak for this client.
+            "trusted_proxy_hops": bool(client_ip and client_ip != peer),
         })
 
 

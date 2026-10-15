@@ -41,6 +41,18 @@ envVarGroups:
         sync: false          # exact origins, e.g. public/manage/guest hosts
       - key: CSRF_TRUSTED_ORIGINS
         sync: false
+      # --- Client address (Receptionist Desktop sign-in by registered address)
+      # Render's edge appends to X-Forwarded-For rather than rewriting it, so on
+      # this host the leftmost entry is client-controlled and the entries behind
+      # the real client are Cloudflare/Render addresses that change per request.
+      # True-Client-IP is written by that edge and cannot be forged; the code
+      # reads it ONLY when the connection came from a TRUSTED_PROXY_CIDRS
+      # address (Render connects from its private 10.x network, covered by the
+      # default). Both settings are documented in docs/ATTENDANCE_WORKSTATION_SETUP.md ("Client address").
+      - key: TRUSTED_CLIENT_IP_HEADERS
+        value: true-client-ip,cf-connecting-ip
+      - key: TRUSTED_PROXY_CIDRS
+        sync: false          # optional; defaults to loopback + private ranges
       - key: PAYSTACK_SECRET_KEY
         sync: false
       - key: PAYSTACK_PUBLIC_KEY

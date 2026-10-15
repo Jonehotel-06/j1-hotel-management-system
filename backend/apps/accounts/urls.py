@@ -12,6 +12,7 @@ urlpatterns = [
     path("token/refresh/", views.JOneTokenRefreshView.as_view(), name="token-refresh"),
     path("profile/", views.ProfileView.as_view(), name="profile"),
     path("capabilities/", views.MyCapabilitiesView.as_view(), name="capabilities"),
+    path("client-address/", views.ClientAddressView.as_view(), name="client-address"),
     path("password/change/", views.PasswordChangeView.as_view(), name="password-change"),
     path("password/reset/", views.PasswordResetRequestView.as_view(), name="password-reset"),
     path("password/reset/confirm/", views.PasswordResetConfirmView.as_view(), name="password-reset-confirm"),

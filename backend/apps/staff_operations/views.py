@@ -458,22 +458,24 @@ class AttendanceRecordDetailView(APIView):
 def _assert_reception_workstation(request):
     """Attendance for operational staff is recorded AT the Receptionist Desktop.
 
-    The Receptionist Desktop key is validated on the server (never by user
-    agent, IP address or screen size), so a personal phone holding a normal
-    staff session cannot clock itself — or anyone else — in or out. Management
-    roles keep their existing device freedom, exactly as they do for sign-in
-    (apps.accounts.desktop_policy).
+    The desktop is identified on the server by one of its two enrolment routes
+    — the key its browser was enrolled with, or its administrator-registered
+    address (apps.accounts.desktop_policy) — and never by a client's own claim
+    about user agent or screen size. A personal phone holding a normal staff
+    session therefore still cannot clock itself, or anyone else, in or out.
+    Management roles keep their existing device freedom, exactly as they do for
+    sign-in.
     """
     from apps.accounts.desktop_policy import (
         front_desk_desktop_ip_allowed,
-        presented_desktop_key,
-        receptionist_desktop_for_key,
         receptionist_desktop_required,
+        resolve_receptionist_desktop,
     )
 
     if not receptionist_desktop_required(request.user):
         return None
-    if receptionist_desktop_for_key(presented_desktop_key(request)) is not None:
+    desktop, _method = resolve_receptionist_desktop(request)
+    if desktop is not None:
         if not front_desk_desktop_ip_allowed(request):
             raise PermissionDenied(
                 "Attendance is recorded only from the configured Front Desk desktop IP address. "
