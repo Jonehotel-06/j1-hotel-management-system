@@ -7,6 +7,13 @@ key. The desktop presents that key with the sign-in request in the
 has been verified, so a crafted client, a direct API call, or a copied browser
 form cannot bypass it without the key.
 
+An Admin may additionally set ``HotelSettings.front_desk_desktop_ip``. When
+set, the same staff must also reach sign-in, token refresh, and attendance
+clock-in from that exact server-seen IP address. This binds the enrolled
+desktop browser to the Front Desk desktop's network address; changing the
+desktop is an Admin settings change, not a code change. Client-supplied
+forwarding headers are not trusted for this decision.
+
 Management roles keep their existing access from any device (see
 ``STAFF_SIGN_IN_EXEMPT_ROLES``). Guest accounts, token refresh, logout and the
 password-reset flows are not affected, so active sessions continue to work.
@@ -18,6 +25,7 @@ rotated or revoked by a holder of ``terminal.manage``.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import secrets
 
 from django.utils import timezone
@@ -88,6 +96,41 @@ def receptionist_desktop_for_key(raw_key: str) -> Workstation | None:
         .exclude(sign_in_key_hash="")
         .first()
     )
+
+
+def normalize_ip_address(value) -> str:
+    """Canonical exact IPv4/IPv6 address, or "" when unset/invalid."""
+    try:
+        return str(ipaddress.ip_address(str(value or "").strip()))
+    except (TypeError, ValueError):
+        return ""
+
+
+def request_client_ip(request) -> str:
+    """The client IP as seen by Django (``REMOTE_ADDR`` only).
+
+    ``X-Forwarded-For`` is deliberately not trusted here: it is client
+    controlled unless a separately configured trusted proxy overwrites it.
+    Behind a reverse proxy, the Admin should configure the address the
+    server actually sees for the Front Desk desktop (shown in Settings).
+    """
+    if request is None:
+        return ""
+    return normalize_ip_address(getattr(request, "META", {}).get("REMOTE_ADDR", ""))
+
+
+def configured_front_desk_desktop_ip() -> str:
+    from apps.hotel.models import HotelSettings
+
+    return normalize_ip_address(HotelSettings.get_settings().front_desk_desktop_ip)
+
+
+def front_desk_desktop_ip_allowed(request) -> bool:
+    """True when no desktop IP is configured, or this request uses it."""
+    configured = configured_front_desk_desktop_ip()
+    if not configured:
+        return True
+    return request_client_ip(request) == configured
 
 
 def presented_desktop_key(request) -> str:

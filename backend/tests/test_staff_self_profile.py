@@ -7,8 +7,9 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.core.utils import hotel_today
 from apps.staff_operations.models import (
-    AttendanceRecord, LeaveRequest, ShiftAssignment, StaffCompensation,
-    StaffDisciplinaryRecord, StaffDocument, StaffPerformanceReview, StaffProfile,
+    AttendanceRecord, LeaveRequest, PayrollLine, PayrollPeriod, PayrollSalaryPayment,
+    ShiftAssignment, StaffCompensation, StaffDisciplinaryRecord, StaffDocument,
+    StaffPerformanceReview, StaffProfile,
 )
 
 from .base import BaseAPITestCase
@@ -111,6 +112,66 @@ class MyStaffProfileTests(BaseAPITestCase):
         # actual secret material instead of the substring "password".
         for secret in ("pbkdf2", "fingerprint_template", "biometric_template", "access_token", "refresh_token", "minutiae"):
             self.assertNotIn(secret, body.lower())
+
+    def test_salary_monthly_history_shows_work_leave_missed_and_part_payment(self):
+        today = hotel_today()
+        now = timezone.now()
+        # Current month: Alice attended today, missed yesterday's started
+        # shift, and was on approved leave two days ago (also scheduled).
+        for label, day, hour in (
+            ("WORKED", today, 8), ("MISSED", today - timedelta(days=1), 8),
+            ("LEAVE", today - timedelta(days=2), 8),
+        ):
+            start = timezone.make_aware(timezone.datetime.combine(day, timezone.datetime.min.time()))
+            ShiftAssignment.objects.create(
+                reference=f"SHIFT-ALICE-{label}", staff=self.alice,
+                status=ShiftAssignment.Status.SCHEDULED,
+                planned_start_at=start, planned_end_at=start + timedelta(hours=8), department="Bar",
+            )
+        LeaveRequest.objects.create(
+            reference="LEAVE-ALICE-PAST", staff=self.alice, type=LeaveRequest.Type.ANNUAL,
+            status=LeaveRequest.Status.APPROVED,
+            start_date=today - timedelta(days=2), end_date=today - timedelta(days=2),
+        )
+        # A future shift later today/tomorrow must not count as missed yet.
+        self.assertEqual(ShiftAssignment.objects.filter(staff=self.alice).count(), 4)
+
+        previous_month = today.replace(day=1) - timedelta(days=1)
+        period = PayrollPeriod.objects.create(
+            reference="PAY-SELF-PREVIOUS", starts_on=previous_month.replace(day=1),
+            ends_on=previous_month, department="Bar", currency="NGN",
+            status=PayrollPeriod.Status.DRAFT, created_by=self.hr,
+            total_gross=Decimal("100.00"), total_net=Decimal("100.00"),
+        )
+        compensation = StaffCompensation.objects.get(staff=self.alice)
+        line = PayrollLine.objects.create(
+            period=period, staff=self.alice, compensation=compensation,
+            employee_code="EMP-ALICE", employee_name="Alice Ade", department="Bar", currency="NGN",
+            basic_pay=Decimal("100.00"), gross_pay=Decimal("100.00"), net_pay=Decimal("100.00"),
+        )
+        PayrollPeriod.objects.filter(pk=period.pk).update(status=PayrollPeriod.Status.APPROVED)
+        PayrollSalaryPayment.objects.create(
+            reference="SAL-SELF-PART", idempotency_key="sal-self-part", line=line,
+            amount=Decimal("40.00"), currency="NGN", payment_date=previous_month,
+            method=PayrollSalaryPayment.Method.BANK_TRANSFER,
+            external_reference="BANK-SELF-PART", recorded_by=self.hr,
+        )
+
+        self.auth(self.alice)
+        data = self.client.get(URL).json()["data"]
+        current = data["salary"]["current_month_work"]
+        self.assertEqual(current["worked_days"], 1)
+        self.assertEqual(current["scheduled_days"], 3)
+        self.assertEqual(current["missed_days"], 1)
+        self.assertEqual(current["leave_days"], 1)
+        self.assertEqual(data["overview"]["attendance_this_month"]["missed_days"], 1)
+        history = {row["month"]: row for row in data["salary"]["monthly_history"]}
+        previous = history[previous_month.strftime("%Y-%m")]
+        self.assertEqual(previous["payment_status"], "PARTIALLY_PAID")
+        self.assertEqual(previous["net_pay"], "100.00")
+        self.assertEqual(previous["salary_amount_paid"], "40.00")
+        self.assertEqual(previous["salary_balance"], "60.00")
+        self.assertEqual(history[today.strftime("%Y-%m")]["payment_status"], "NOT_CALCULATED")
 
     def test_changing_id_parameters_cannot_widen_scope(self):
         self.auth(self.alice)

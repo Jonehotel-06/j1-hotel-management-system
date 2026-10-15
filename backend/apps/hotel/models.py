@@ -6,6 +6,7 @@ hard-coded in the frontend or spread across code.
 """
 from decimal import Decimal
 from datetime import time
+import ipaddress
 
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
@@ -125,6 +126,19 @@ class HotelSettings(models.Model):
         ),
     )
 
+    # Front Desk desktop / attendance security
+    front_desk_desktop_ip = models.CharField(
+        max_length=45, blank=True, default="",
+        help_text=(
+            "Exact IP address of the Front Desk desktop as seen by this server. "
+            "When set, staff who must use the Receptionist Desktop must also "
+            "sign in, refresh their session, and clock attendance from this IP "
+            "(in addition to the desktop key). Leave blank to use the desktop "
+            "key without the IP layer. Change it here when the desktop or its "
+            "network address changes; no code change is needed."
+        ),
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -142,6 +156,16 @@ class HotelSettings(models.Model):
             raise ValidationError({"max_stay_nights": "Maximum stay must be >= minimum stay."})
         if self.social_links and not isinstance(self.social_links, list):
             raise ValidationError({"social_links": "Must be a list of {platform, url} objects."})
+        ip_value = str(self.front_desk_desktop_ip or "").strip()
+        if ip_value:
+            try:
+                self.front_desk_desktop_ip = str(ipaddress.ip_address(ip_value))
+            except ValueError as exc:
+                raise ValidationError({
+                    "front_desk_desktop_ip": "Enter one exact IPv4 or IPv6 address, not a range.",
+                }) from exc
+        else:
+            self.front_desk_desktop_ip = ""
 
     def save(self, *args, **kwargs):
         self.pk = 1  # enforce singleton

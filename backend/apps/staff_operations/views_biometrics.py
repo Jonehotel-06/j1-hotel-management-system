@@ -6,7 +6,9 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 
 from apps.accounts.capabilities import has_capability
-from apps.accounts.desktop_policy import receptionist_desktop_for_key, presented_desktop_key
+from apps.accounts.desktop_policy import (
+    front_desk_desktop_ip_allowed, presented_desktop_key, receptionist_desktop_for_key,
+)
 from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
 from apps.core.pagination import StandardPagination
@@ -181,6 +183,11 @@ def _resolve_reception_terminal(request):
     from apps.accounts.desktop_policy import STAFF_SIGN_IN_EXEMPT_ROLES
     from apps.accounts.models import Workstation
 
+    if not front_desk_desktop_ip_allowed(request):
+        raise PermissionDenied(
+            "Attendance can only be recorded from the configured Front Desk desktop IP address. "
+            "Ask an administrator to update Settings if the Front Desk desktop has changed."
+        )
     workstation = receptionist_desktop_for_key(presented_desktop_key(request))
     if workstation is not None:
         return workstation.reference, workstation

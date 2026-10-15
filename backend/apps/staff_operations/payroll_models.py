@@ -5,7 +5,7 @@ import secrets
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
@@ -33,6 +33,10 @@ def _new_tax_identity_reference():
 
 def _new_shortage_reference():
     return _payroll_reference("STOCK-MISS")
+
+
+def _new_lateness_reference():
+    return _payroll_reference("LAT")
 
 
 def _default_nigeria_2026_bands():
@@ -538,6 +542,149 @@ class PayrollStockShortageAllocation(models.Model):
 
     def __str__(self):
         return f"{self.case.reference} · {self.employee_code} · {self.amount}"
+
+
+class LatenessDeductionPolicy(TimeStampedModel):
+    """Admin-configured automatic lateness deduction rule (singleton).
+
+    Disabled by default: an Admin must explicitly enable it and set the grace
+    period and percentage before any automatic deduction can be generated.
+    Each generated deduction snapshots these values, so later policy edits do
+    not rewrite deductions that already exist.
+    """
+
+    is_enabled = models.BooleanField(default=False, db_index=True)
+    grace_minutes = models.PositiveIntegerField(
+        default=0, validators=[MinValueValidator(0)],
+        help_text="Clock-in minutes after the scheduled shift start that are free.",
+    )
+    deduction_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal("0.00"),
+        validators=[MinValueValidator(Decimal("0.00")), MaxValueValidator(Decimal("100.00"))],
+        help_text="Percentage of one day's pay deducted for a late day beyond grace.",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="lateness_policy_updates",
+    )
+
+    class Meta:
+        verbose_name = "Lateness deduction policy"
+        verbose_name_plural = "Lateness deduction policy"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1  # singleton, like HotelSettings
+        return super().save(*args, **kwargs)
+
+    @classmethod
+    def get_policy(cls):
+        policy, _ = cls.objects.get_or_create(pk=1)
+        return policy
+
+    def __str__(self):
+        state = "enabled" if self.is_enabled else "disabled"
+        return f"Lateness policy ({state}: {self.deduction_percent}% after {self.grace_minutes} min grace)"
+
+
+class StaffLatenessDeduction(TimeStampedModel):
+    """One staff member's automatic lateness deduction for one attendance day.
+
+    Created from a real attendance record linked to a scheduled shift when the
+    clock-in is later than the scheduled start plus the policy grace period.
+    The amount is a snapshot: percentage of one day's pay, where one day's pay
+    is (basic + housing + transport) divided by the days in that month.
+
+    Revocation is two-step: a payroll manager records the staff member's
+    tangible reason, then an ADMIN-role account decides. Approval cancels the
+    deduction if no payroll run has included it yet; if a payroll run already
+    included it, the amount is added back as an allowance on a later run.
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active — awaiting payroll"
+        REVOCATION_REQUESTED = "REVOCATION_REQUESTED", "Revocation requested — awaiting Admin"
+        REVOKED = "REVOKED", "Revoked — cancelled before payroll"
+        APPLIED = "APPLIED", "Applied to a payroll run"
+        REIMBURSEMENT_PENDING = "REIMBURSEMENT_PENDING", "Revoked after payroll — add back next run"
+        REIMBURSED = "REIMBURSED", "Added back on a later payroll run"
+
+    reference = models.CharField(max_length=64, unique=True, default=_new_lateness_reference, db_index=True)
+    staff = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="lateness_deductions")
+    attendance_record = models.OneToOneField(
+        "staff_operations.AttendanceRecord", on_delete=models.PROTECT, related_name="lateness_deduction",
+    )
+    shift = models.ForeignKey(
+        "staff_operations.ShiftAssignment", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="lateness_deductions",
+    )
+    business_date = models.DateField(db_index=True)
+    scheduled_start_at = models.DateTimeField()
+    clock_in_at = models.DateTimeField()
+    late_minutes = models.PositiveIntegerField(help_text="Whole minutes clocked in after the scheduled start.")
+    grace_minutes = models.PositiveIntegerField(help_text="Policy grace snapshot.")
+    deduction_percent = models.DecimalField(max_digits=5, decimal_places=2, help_text="Policy percentage snapshot.")
+    monthly_pay_basis = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+    days_in_month = models.PositiveSmallIntegerField(default=0)
+    daily_pay = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+    amount = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+    currency = models.CharField(max_length=3, default="NGN")
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.ACTIVE, db_index=True)
+    applied_payroll_line = models.ForeignKey(
+        "PayrollLine", null=True, blank=True, on_delete=models.SET_NULL, related_name="lateness_deductions",
+    )
+    applied_at = models.DateTimeField(null=True, blank=True)
+    revocation_reason = models.TextField(blank=True, default="")
+    revocation_evidence_reference = models.CharField(max_length=160, blank=True, default="")
+    revocation_requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="lateness_revocations_requested",
+    )
+    revocation_requested_at = models.DateTimeField(null=True, blank=True)
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="lateness_revocations_decided",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.CharField(max_length=1000, blank=True, default="")
+    reimbursement_payroll_line = models.ForeignKey(
+        "PayrollLine", null=True, blank=True, on_delete=models.SET_NULL, related_name="lateness_reimbursements",
+    )
+    reimbursed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-business_date", "-created_at", "-pk"]
+        indexes = [
+            models.Index(fields=["staff", "status", "business_date"]),
+            models.Index(fields=["status", "business_date"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            prior = type(self).objects.filter(pk=self.pk).first()
+            if prior:
+                changes = {
+                    field.attname for field in self._meta.concrete_fields
+                    if getattr(prior, field.attname) != getattr(self, field.attname)
+                }
+                identity = {
+                    "staff_id", "attendance_record_id", "shift_id", "business_date",
+                    "scheduled_start_at", "clock_in_at", "late_minutes",
+                }
+                if changes & identity:
+                    raise ValidationError("A lateness deduction's attendance evidence cannot be rewritten.")
+                if prior.applied_payroll_line_id and self.applied_payroll_line_id != prior.applied_payroll_line_id:
+                    raise ValidationError("A lateness deduction can be applied to payroll only once.")
+                if prior.reimbursement_payroll_line_id and self.reimbursement_payroll_line_id != prior.reimbursement_payroll_line_id:
+                    raise ValidationError("A lateness deduction can be added back only once.")
+                if prior.status in {self.Status.REVOKED, self.Status.REIMBURSED} and not changes.issubset({"updated_at"}):
+                    raise ValidationError("A finalized lateness deduction cannot be changed.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Lateness deduction history cannot be deleted.")
+
+    def __str__(self):
+        return f"{self.reference} · staff {self.staff_id} · {self.business_date} · {self.amount} {self.currency} · {self.status}"
 
 
 class PayrollSalaryPayment(models.Model):

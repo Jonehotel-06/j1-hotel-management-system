@@ -35,7 +35,17 @@ class HotelSettingsAdminView(generics.RetrieveUpdateAPIView):
         return [IsAdminRole()]
 
     def retrieve(self, request, *args, **kwargs):
-        return success_response(self.get_serializer(self.get_object()).data)
+        return success_response(self._settings_payload(request, self.get_object()))
+
+    def _settings_payload(self, request, instance):
+        from apps.accounts.desktop_policy import request_client_ip
+
+        data = self.get_serializer(instance).data
+        # The address the server actually sees for this browser. An Admin can
+        # open Settings on the Front Desk desktop and copy this value into
+        # ``front_desk_desktop_ip`` without guessing the network address.
+        data["request_ip"] = request_client_ip(request)
+        return data
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -54,7 +64,7 @@ class HotelSettingsAdminView(generics.RetrieveUpdateAPIView):
             log_action(actor=request.user, action="SETTINGS_CHANGED", instance=instance,
                        changes=changes, request=request)
             logger.info("Hotel settings changed by user %s: %s", request.user.id, list(changes))
-        return success_response(self.get_serializer(instance).data, message="Settings updated.")
+        return success_response(self._settings_payload(request, instance), message="Settings updated.")
 
 
 class _CacheInvalidatingViewSet(viewsets.ModelViewSet):

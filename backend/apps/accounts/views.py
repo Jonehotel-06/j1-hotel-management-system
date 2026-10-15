@@ -24,7 +24,10 @@ from apps.core.responses import success_response
 from apps.core.serializers import EmptySerializer
 
 from .capabilities import capability_codes_for_user
-from .desktop_policy import presented_desktop_key, receptionist_desktop_for_key, sign_in_policy_applies
+from .desktop_policy import (
+    front_desk_desktop_ip_allowed, presented_desktop_key, receptionist_desktop_for_key,
+    sign_in_policy_applies,
+)
 from .models import User
 from .serializers import (
     JOneTokenObtainPairSerializer,
@@ -216,7 +219,15 @@ def _refuse_staff_refresh_outside_desk(request):
     if not sign_in_policy_applies(user):
         return None
     if receptionist_desktop_for_key(presented_desktop_key(request)) is not None:
-        return None
+        if front_desk_desktop_ip_allowed(request):
+            return None
+        logger.warning("Staff session refresh refused: user_id=%s role=%s reason=front_desk_ip_mismatch", user.pk, user.role)
+        log_action(
+            actor=user, action="STAFF_SIGN_IN_RESTRICTED", request=request,
+            metadata={"reason": "refresh_front_desk_ip_mismatch", "role": user.role},
+            summary="Staff session refresh refused from a non-Front-Desk IP address",
+        )
+        raise StaffSignInRestrictedError()
     logger.warning("Staff session refresh refused: user_id=%s role=%s reason=no_receptionist_desktop", user.pk, user.role)
     log_action(
         actor=user, action="STAFF_SIGN_IN_RESTRICTED", request=request,

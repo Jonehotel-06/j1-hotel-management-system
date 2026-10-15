@@ -305,14 +305,46 @@
     ]);
     var sal = ssData.salary || {};
     var comp = sal.current_compensation;
+    function salaryStatusBadge(status){
+      var map = { PAID:["badge-success","Paid"], UNPAID:["badge-danger","Unpaid"], PARTIALLY_PAID:["badge-warning","Part payment"], NOT_CALCULATED:["badge-info","No approved payslip yet"] };
+      var item = map[status] || ["badge-info", status || "Not provided"];
+      return '<span class="badge ' + item[0] + '">' + esc(item[1]) + "</span>";
+    }
+    function workChips(row){
+      if(!row) return "";
+      return '<span class="badge badge-success">' + esc(row.worked_days) + ' worked</span> ' +
+        '<span class="badge badge-info">' + esc(row.scheduled_days) + ' scheduled</span> ' +
+        '<span class="badge badge-danger">' + esc(row.missed_days) + ' missed</span> ' +
+        '<span class="badge badge-warning">' + esc(row.leave_days) + ' leave</span>' +
+        '<div style="margin-top:0.35rem;">Worked ' + esc(row.worked_days) + ' / ' + esc(row.scheduled_days) + ' scheduled &middot; Missed ' + esc(row.missed_days) + ' / ' + esc(row.scheduled_days) + ' scheduled &middot; Leave ' + esc(row.leave_days) + ' day(s)</div>';
+    }
+    var currentWork = sal.current_month_work || {};
+    var currentMonthHtml = currentWork.month_label ? (
+      "<h3>Current month work — " + esc(currentWork.month_label) + "</h3>" +
+      kv([["Days worked so far", String(currentWork.worked_days || 0)], ["Scheduled days started", String(currentWork.scheduled_days || 0)], ["Missed scheduled days", String(currentWork.missed_days || 0)], ["Approved leave days", String(currentWork.leave_days || 0)], ["Worked minutes", String(currentWork.worked_minutes || 0)], ["Through", fmtDate(currentWork.through_date)]]) +
+      '<p style="margin-top:0.6rem;">' + workChips(currentWork) + '</p><p class="caption">Missed days count only scheduled shifts that have started, have no attendance record, and are not covered by approved leave.</p>'
+    ) : "";
+    var monthlyRows = (sal.monthly_history || []).map(function(row){
+      var periods = (row.payroll_period_references || []).join(", ");
+      return "<tr><td><strong>" + esc(row.month_label) + "</strong>" + (periods ? "<br><small>" + esc(periods) + "</small>" : "") + "</td><td>" + workChips(row) + "</td><td>" + esc(money(row.net_pay, row.currency)) + "</td><td>" + esc(money(row.salary_amount_paid, row.currency)) + "</td><td>" + esc(money(row.salary_balance, row.currency)) + "</td><td>" + salaryStatusBadge(row.payment_status) + "</td></tr>";
+    });
+    var monthlyHtml = "<h3>Months worked &amp; salary payment status</h3>" +
+      (monthlyRows.length ? table(["Month", "Worked / scheduled / missed / leave", "Net salary", "Paid", "Balance", "Status"], monthlyRows) : emptyState("No monthly history yet", "Your worked months and salary payment status will appear here."));
     var payslipRows = (sal.payslips || []).map(function(r){
       return "<tr><td><strong>" + esc(r.period_reference) + "</strong><br><small>" + esc(fmtDate(r.period_starts_on)) + " – " + esc(fmtDate(r.period_ends_on)) + '</small></td><td>' + esc(money(r.gross_pay)) + "</td><td>" + esc(money(r.deductions_total)) + "</td><td>" + esc(money(r.net_pay)) + "</td><td>" + esc(money(r.salary_amount_paid)) + "</td><td>" + esc(money(r.salary_balance)) + "</td><td>" + esc(r.payment_status) + '</td><td><button class="btn btn-sm btn-outline" type="button" data-ss-payslip="' + esc(r.period_reference) + '">Payslip PDF</button></td></tr>';
     });
+    var latenessRows = (sal.lateness_deductions || []).map(function(r){
+      return "<tr><td><strong>" + esc(r.reference) + "</strong><br><small>" + esc(fmtDate(r.business_date)) + "</small></td><td>" + esc(fmtDateTime(r.scheduled_start_at)) + "</td><td>" + esc(fmtDateTime(r.clock_in_at)) + "</td><td>" + esc(r.late_minutes + " min (" + r.grace_minutes + " min grace)") + "</td><td>" + esc(money(r.amount, r.currency)) + "</td><td>" + esc(r.status) + "</td><td>" + esc(r.applied_period_reference || r.reimbursement_period_reference) + "</td></tr>";
+    });
     $("ss-salary").innerHTML =
       (sal.configured && comp ? kv([["Basic salary", money(comp.basic_salary)], ["Housing allowance", money(comp.housing_allowance)], ["Transport allowance", money(comp.transport_allowance)], ["Overtime rate / hour", money(comp.overtime_rate)], ["Effective from", fmtDate(comp.effective_from)], ["Currency", comp.currency]]) : emptyState("No salary configured yet", sal.message || "No payroll compensation has been configured for your account yet. Contact HR or Accounts.")) +
+      currentMonthHtml +
+      monthlyHtml +
       "<h3>Approved payslips &amp; payment status</h3>" +
       (payslipRows.length ? table(["Period", "Gross", "Deductions", "Net payable", "Paid", "Balance", "Payment status", ""], payslipRows) : emptyState("No approved payslips yet", "Your payslip appears here after payroll is approved. Approval is not the same as payment already made.")) +
-      ((sal.payments || []).length ? "<h3>Recorded salary payments</h3>" + table(["Reference", "Period", "Amount", "Method", "Date", "Status"], sal.payments.map(function(r){ return "<tr><td>" + esc(r.reference) + "</td><td>" + esc(r.period_reference) + "</td><td>" + esc(money(r.amount)) + "</td><td>" + esc(r.method) + "</td><td>" + esc(fmtDate(r.payment_date)) + "</td><td>" + esc(r.status) + "</td></tr>"; })) : "");
+      ((sal.payments || []).length ? "<h3>Recorded salary payments</h3>" + table(["Reference", "Period", "Amount", "Method", "Date", "Status"], sal.payments.map(function(r){ return "<tr><td>" + esc(r.reference) + "</td><td>" + esc(r.period_reference) + "</td><td>" + esc(money(r.amount)) + "</td><td>" + esc(r.method) + "</td><td>" + esc(fmtDate(r.payment_date)) + "</td><td>" + esc(r.status) + "</td></tr>"; })) : "") +
+      "<h3>Automatic lateness deductions</h3>" +
+      (latenessRows.length ? table(["Deduction & date", "Scheduled start", "Clock-in", "Lateness", "Amount", "Status", "Payroll period"], latenessRows) : emptyState("No lateness deductions", "No automatic lateness deduction has been recorded for you."));
     var attRows = (ssData.attendance || []).map(function(r){
       return "<tr><td>" + esc(fmtDate(r.business_date)) + "</td><td>" + esc(r.shift_reference) + "</td><td>" + esc(fmtDateTime(r.clock_in_at)) + "</td><td>" + esc(fmtDateTime(r.clock_out_at)) + "</td><td>" + esc(r.status) + "</td><td>" + esc(r.worked_minutes == null ? null : String(r.worked_minutes)) + "</td></tr>";
     });

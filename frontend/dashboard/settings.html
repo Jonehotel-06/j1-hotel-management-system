@@ -124,6 +124,15 @@
           night can always still be checked in on a later day of their stay.</div>
       </div>
 
+      <h3 style="font-size:var(--fs-md);margin:1.4rem 0 0.9rem;">Front Desk desktop &amp; attendance security</h3>
+      <div class="form-grid fg-2">
+        <div class="field"><label class="field-label" for="st-frontdesk-ip">Front Desk desktop IP address</label><input class="input" id="st-frontdesk-ip" name="front_desk_desktop_ip" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="e.g. 192.168.1.25">
+          <div class="hint">When set, staff who must use the Receptionist Desktop must also sign in, refresh, and clock attendance from this exact server-seen IP address — in addition to the existing desktop key. Leave blank to use only the desktop key. If the Front Desk desktop is replaced, an Admin changes this value here; no code change is needed.</div></div>
+        <div class="field"><label class="field-label" for="st-request-ip">IP address seen by the server for this browser</label><input class="input" id="st-request-ip" type="text" readonly tabindex="-1" placeholder="Not available">
+          <div class="hint">Open Settings on the Front Desk desktop and use this value if it is the address the server sees for that desktop. Behind a proxy this may be the proxy-facing address.</div>
+          <div style="margin-top:0.5rem;"><button class="btn btn-sm btn-outline" type="button" id="st-use-request-ip">Use this IP for Front Desk desktop</button></div></div>
+      </div>
+
       <h3 style="font-size:var(--fs-md);margin:1.4rem 0 0.9rem;">Hotel policy</h3>
       <div class="field">
         <label class="field-label" for="st-policy">Custom policy text</label>
@@ -191,7 +200,7 @@
     "min_stay_nights","max_stay_nights","currency","statutory_tax_enabled",
     "statutory_tax_rate_percent","statutory_tax_basis","service_fee",
     "deposit_percent","pending_booking_minutes","cancellation_deadline_hours",
-    "cancellation_fee_percent","restrict_check_in_to_booked_date","policy_text"];
+    "cancellation_fee_percent","restrict_check_in_to_booked_date","front_desk_desktop_ip","policy_text"];
 
   function role(){
     // Single source of truth for the signed-in profile: auth.js state.
@@ -230,6 +239,13 @@
     return out;
   }
   document.getElementById("st-social-add") && document.getElementById("st-social-add").addEventListener("click", function(){ addSocialRow("", ""); });
+  var useIpBtn = $("st-use-request-ip");
+  if(useIpBtn) useIpBtn.addEventListener("click", function(){
+    var ip = ($("st-request-ip").value || "").trim();
+    if(!ip){ JONE.ui.toast("The server did not report an IP address for this browser.", "warning"); return; }
+    $("st-frontdesk-ip").value = ip;
+    JONE.ui.toast("Front Desk desktop IP filled. Save settings to apply it.", "info");
+  });
 
   function fill(){
     renderSocial(current.social_links || []);
@@ -241,6 +257,8 @@
       if(el.type === "checkbox") el.checked = !!v;
       else if(v != null) el.value = v;
     });
+    var requestIpEl = $("st-request-ip");
+    if(requestIpEl) requestIpEl.value = current.request_ip || "";
     var updatedEl = document.querySelector("[data-updated-at]");
     if(current.updated_at && updatedEl){
       var d = new Date(current.updated_at);

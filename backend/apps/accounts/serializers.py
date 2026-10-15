@@ -14,7 +14,10 @@ from apps.core.exceptions import StaffSignInRestrictedError
 from apps.core.storage import absolute_media_url
 
 from .capabilities import capability_codes_for_user, has_capability
-from .desktop_policy import presented_desktop_key, receptionist_desktop_for_key, sign_in_policy_applies
+from .desktop_policy import (
+    front_desk_desktop_ip_allowed, presented_desktop_key, receptionist_desktop_for_key,
+    sign_in_policy_applies,
+)
 from .models import User, Workstation
 
 logger = logging.getLogger("apps")
@@ -110,6 +113,9 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
             if desktop is None:
                 log_staff_sign_in_rejected(self.user, request)
                 raise StaffSignInRestrictedError()
+            if not front_desk_desktop_ip_allowed(request):
+                log_staff_sign_in_rejected(self.user, request, reason="front_desk_ip_mismatch")
+                raise StaffSignInRestrictedError()
         if request is not None and getattr(self.user, "is_staff_member", False):
             target_dept = (
                 (request.data.get("department") if hasattr(request.data, "get") else "")
@@ -134,12 +140,12 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
         return data
 
 
-def log_staff_sign_in_rejected(user, request):
+def log_staff_sign_in_rejected(user, request, reason="no_receptionist_desktop"):
     """Audit + log a refused staff sign-in. Never records the password or key."""
-    logger.warning("Staff sign-in refused: user_id=%s role=%s reason=no_receptionist_desktop", user.pk, user.role)
+    logger.warning("Staff sign-in refused: user_id=%s role=%s reason=%s", user.pk, user.role, reason)
     log_action(
         actor=user, action="STAFF_SIGN_IN_RESTRICTED", request=request,
-        metadata={"reason": "no_receptionist_desktop", "role": user.role},
+        metadata={"reason": reason, "role": user.role},
         summary="Staff sign-in refused outside the Receptionist Desktop",
     )
 
@@ -158,6 +164,7 @@ def log_staff_sign_in(user, request, desktop):
             "role": user.role,
             "desktop_reference": desktop.reference if desktop else "",
             "policy": "receptionist_desktop" if desktop else "management_exempt",
+            "front_desk_ip_checked": bool(desktop),
         },
         summary="Staff signed in",
     )

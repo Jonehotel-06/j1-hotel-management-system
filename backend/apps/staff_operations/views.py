@@ -465,6 +465,7 @@ def _assert_reception_workstation(request):
     (apps.accounts.desktop_policy).
     """
     from apps.accounts.desktop_policy import (
+        front_desk_desktop_ip_allowed,
         presented_desktop_key,
         receptionist_desktop_for_key,
         receptionist_desktop_required,
@@ -473,6 +474,11 @@ def _assert_reception_workstation(request):
     if not receptionist_desktop_required(request.user):
         return None
     if receptionist_desktop_for_key(presented_desktop_key(request)) is not None:
+        if not front_desk_desktop_ip_allowed(request):
+            raise PermissionDenied(
+                "Attendance is recorded only from the configured Front Desk desktop IP address. "
+                "Ask an administrator to update Settings if the Front Desk desktop has changed."
+            )
         return None
     raise PermissionDenied(
         "Attendance is recorded at the Receptionist Desktop. Ask the front desk to clock you "

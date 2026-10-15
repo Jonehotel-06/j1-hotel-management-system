@@ -149,7 +149,7 @@
 <script src="../js/ui.js?v=1.1.12"></script>
 <script src="../js/auth.js?v=1.1.12"></script>
 <script src="../js/navigation.js?v=1.1.12"></script>
-<script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script>
+<script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script><script src="../js/operations.js?v=1.1.12"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("admin");
@@ -157,6 +157,7 @@
 
 (function(){
   "use strict";
+  var OPS = JONE.operations;
   var rows = document.querySelector("[data-rows]");
   var q = document.getElementById("q");
   var role = document.getElementById("role");
@@ -470,7 +471,17 @@
         title: "Record Employee Offense / Incident",
         submitText: "Record Allegation",
         fields: [
-          { name: "staff", label: "Staff User ID", type: "number", required: true },
+          OPS.searchPicker({
+            name: "staff",
+            label: "Staff member",
+            required: true,
+            resource: "staffDirectory",
+            placeholder: "Search staff by name, email, or employee code",
+            display: function(row){
+              return (row.full_name || row.email || "Staff member") + " · " +
+                String(row.employee_code || row.role || row.email || "").replace(/_/g, " ");
+            }
+          }),
           { name: "category", label: "Category", type: "select", required: true, options: [
             { value: "ATTENDANCE", label: "Attendance / lateness" },
             { value: "ABSENCE", label: "Unauthorised absence" },

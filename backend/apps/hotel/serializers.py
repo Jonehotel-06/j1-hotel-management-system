@@ -1,4 +1,6 @@
 # apps/hotel/serializers.py
+import ipaddress
+
 from django.conf import settings as django_settings
 from rest_framework import serializers
 
@@ -64,6 +66,7 @@ class HotelSettingsAdminSerializer(serializers.ModelSerializer):
             "service_fee", "deposit_percent",
             "pending_booking_minutes", "cancellation_deadline_hours",
             "cancellation_fee_percent", "restrict_check_in_to_booked_date",
+            "front_desk_desktop_ip",
             "updated_at",
         ]
         read_only_fields = ["updated_at", "tax_rate_percent"]
@@ -75,6 +78,17 @@ class HotelSettingsAdminSerializer(serializers.ModelSerializer):
             if not isinstance(item, dict) or "platform" not in item or "url" not in item:
                 raise serializers.ValidationError('Each entry needs "platform" and "url".')
         return value
+
+    def validate_front_desk_desktop_ip(self, value):
+        value = str(value or "").strip()
+        if not value:
+            return ""
+        try:
+            return str(ipaddress.ip_address(value))
+        except ValueError as exc:
+            raise serializers.ValidationError(
+                "Enter one exact IPv4 or IPv6 address for the Front Desk desktop (not a range or hostname)."
+            ) from exc
 
     def validate_pending_booking_minutes(self, value):
         # 0 would expire every new unpaid hold instantly; the model field is a

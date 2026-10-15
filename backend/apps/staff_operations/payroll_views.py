@@ -22,7 +22,7 @@ from apps.finance.models import CashSession
 
 from .models import (
     PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment,
-    PayrollStockShortageCase, StaffCompensation, StaffProfile,
+    PayrollStockShortageCase, StaffCompensation, StaffLatenessDeduction, StaffProfile,
 )
 from .payroll_serializers import (
     PayrollPeriodCreateSerializer,
@@ -37,6 +37,11 @@ from .payroll_serializers import (
     PayrollStockShortageDecisionSerializer,
     PayrollStockShortageDetailSerializer,
     PayrollStockShortageSerializer,
+    LatenessPolicySerializer,
+    LatenessPolicyUpdateSerializer,
+    LatenessRevocationDecisionSerializer,
+    LatenessRevocationRequestSerializer,
+    StaffLatenessDeductionSerializer,
     StaffCompensationCreateSerializer,
     StaffCompensationSerializer,
     MyPayslipSerializer,
@@ -45,12 +50,16 @@ from .services.payroll_service import (
     create_compensation,
     create_payroll_period,
     create_stock_shortage_case,
+    decide_lateness_revocation,
     decide_stock_shortage_case,
+    get_lateness_policy,
     pay_payroll_period,
+    request_lateness_revocation,
     record_payroll_salary_payment,
     reverse_payroll_salary_payment,
     review_payroll_period,
     submit_payroll_period,
+    update_lateness_policy,
 )
 
 
@@ -285,6 +294,135 @@ class PayrollStockShortageDecisionView(APIView):
             ),
         ))
 
+
+def _lateness_queryset():
+    return StaffLatenessDeduction.objects.select_related(
+        "staff", "staff__staff_profile", "attendance_record", "shift",
+        "applied_payroll_line__period", "reimbursement_payroll_line__period",
+        "revocation_requested_by", "decided_by",
+    )
+
+
+def _lateness(reference):
+    value = _lateness_queryset().filter(reference=reference).first()
+    if value is None:
+        raise NotFound("Lateness deduction not found.")
+    return value
+
+
+@extend_schema(tags=["Admin · Payroll"], summary="View or update the automatic lateness deduction policy")
+class LatenessPolicyView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve")
+    require_any_capability = True
+
+    def get(self, request):
+        return _private_response(success_response(LatenessPolicySerializer(get_lateness_policy()).data))
+
+    def patch(self, request):
+        serializer = LatenessPolicyUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        policy = update_lateness_policy(
+            actor=request.user,
+            is_enabled=data["is_enabled"],
+            grace_minutes=data["grace_minutes"],
+            deduction_percent=data["deduction_percent"],
+        )
+        log_action(
+            actor=request.user, action="PAYROLL_LATENESS_POLICY_UPDATED", instance=policy, request=request,
+            metadata={
+                "is_enabled": policy.is_enabled, "grace_minutes": policy.grace_minutes,
+                "deduction_percent": str(policy.deduction_percent),
+            },
+        )
+        return _private_response(success_response(
+            LatenessPolicySerializer(policy).data,
+            message="Lateness deduction policy updated.",
+        ))
+
+
+@extend_schema(tags=["Admin · Payroll"], summary="List automatic lateness deductions")
+class StaffLatenessDeductionListView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve")
+    require_any_capability = True
+    pagination_class = StandardPagination
+
+    def get(self, request):
+        queryset = _lateness_queryset().order_by("-business_date", "-created_at", "-pk")
+        if status_filter := request.query_params.get("status"):
+            queryset = queryset.filter(status=status_filter.upper())
+        if staff_id := request.query_params.get("staff_id"):
+            queryset = queryset.filter(staff_id=staff_id)
+        if search := request.query_params.get("search"):
+            queryset = queryset.filter(
+                Q(reference__icontains=search) | Q(staff__email__icontains=search)
+                | Q(staff__first_name__icontains=search) | Q(staff__last_name__icontains=search)
+                | Q(staff__staff_profile__employee_code__icontains=search)
+                | Q(attendance_record__reference__icontains=search)
+            )
+        return _page(self, request, queryset, StaffLatenessDeductionSerializer)
+
+
+@extend_schema(tags=["Admin · Payroll"], summary="Record a reason and request revocation of a lateness deduction")
+class StaffLatenessDeductionRevocationRequestView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "payroll.manage"
+
+    def post(self, request, reference):
+        serializer = LatenessRevocationRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        deduction = request_lateness_revocation(
+            deduction=_lateness(reference), actor=request.user,
+            reason=data["reason"], evidence_reference=data["evidence_reference"],
+        )
+        log_action(
+            actor=request.user, action="PAYROLL_LATENESS_REVOCATION_REQUESTED", instance=deduction, request=request,
+            metadata={
+                "reference": deduction.reference, "staff_id": deduction.staff_id,
+                "amount": str(deduction.amount), "reason": deduction.revocation_reason,
+                "evidence_reference": deduction.revocation_evidence_reference,
+            },
+        )
+        return _private_response(success_response(
+            StaffLatenessDeductionSerializer(_lateness(deduction.reference)).data,
+            message="Revocation request recorded. It now needs a final decision from an Admin.",
+        ))
+
+
+@extend_schema(tags=["Admin · Payroll"], summary="Admin-only final decision on a lateness-deduction revocation")
+class StaffLatenessDeductionRevocationDecisionView(APIView):
+    """A manager records the reason; only an ADMIN-role account decides."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, reference):
+        serializer = LatenessRevocationDecisionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        deduction = decide_lateness_revocation(
+            deduction=_lateness(reference), actor=request.user,
+            approved=data["approved"], decision_note=data["decision_note"],
+        )
+        log_action(
+            actor=request.user,
+            action="PAYROLL_LATENESS_REVOCATION_APPROVED" if data["approved"] else "PAYROLL_LATENESS_REVOCATION_REJECTED",
+            instance=deduction, request=request,
+            metadata={
+                "reference": deduction.reference, "staff_id": deduction.staff_id,
+                "amount": str(deduction.amount), "status": deduction.status,
+                "decision_note": deduction.decision_note,
+            },
+        )
+        return _private_response(success_response(
+            StaffLatenessDeductionSerializer(_lateness(deduction.reference)).data,
+            message=(
+                "Revocation approved. The deduction is cancelled or will be added back on a later payroll run."
+                if data["approved"] else "Revocation rejected. The lateness deduction stands."
+            ),
+        ))
 
 @extend_schema(tags=["Admin · Payroll"], summary="List or prepare a payroll run")
 class PayrollPeriodListCreateView(APIView):

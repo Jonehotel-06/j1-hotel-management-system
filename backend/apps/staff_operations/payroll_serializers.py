@@ -4,8 +4,9 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from .payroll_models import (
-    PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment,
+    LatenessDeductionPolicy, PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment,
     PayrollStockShortageAllocation, PayrollStockShortageCase, StaffCompensation,
+    StaffLatenessDeduction,
 )
 
 
@@ -57,6 +58,82 @@ class PayrollPeriodCreateSerializer(serializers.Serializer):
     adjustments = PayrollAdjustmentInputSerializer(many=True, required=False, default=list, max_length=500)
     idempotency_key = serializers.CharField(max_length=128, allow_blank=False)
     replaces_reference = serializers.CharField(required=False, allow_blank=True, max_length=64, default="")
+
+
+class LatenessPolicySerializer(serializers.ModelSerializer):
+    updated_by_email = serializers.EmailField(source="updated_by.email", read_only=True, allow_null=True)
+
+    class Meta:
+        model = LatenessDeductionPolicy
+        fields = [
+            "id", "is_enabled", "grace_minutes", "deduction_percent", "updated_by_email",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class LatenessPolicyUpdateSerializer(serializers.Serializer):
+    is_enabled = serializers.BooleanField()
+    grace_minutes = serializers.IntegerField(min_value=0, max_value=1440)
+    deduction_percent = serializers.DecimalField(
+        max_digits=5, decimal_places=2, min_value=Decimal("0.00"), max_value=Decimal("100.00"),
+    )
+
+    def validate(self, attrs):
+        if attrs.get("is_enabled") and Decimal(attrs.get("deduction_percent", Decimal("0"))) <= 0:
+            raise serializers.ValidationError({
+                "deduction_percent": "Set a percentage above zero before enabling the policy.",
+            })
+        return attrs
+
+
+class StaffLatenessDeductionSerializer(serializers.ModelSerializer):
+    staff_id = serializers.IntegerField(source="staff.pk", read_only=True)
+    staff_email = serializers.EmailField(source="staff.email", read_only=True)
+    staff_name = serializers.CharField(source="staff.full_name", read_only=True)
+    employee_code = serializers.CharField(source="staff.staff_profile.employee_code", read_only=True, allow_null=True)
+    department = serializers.CharField(source="staff.staff_profile.department", read_only=True, allow_null=True)
+    attendance_reference = serializers.CharField(source="attendance_record.reference", read_only=True)
+    shift_reference = serializers.CharField(source="shift.reference", read_only=True, allow_null=True)
+    applied_period_reference = serializers.SerializerMethodField()
+    applied_period_status = serializers.SerializerMethodField()
+    reimbursement_period_reference = serializers.SerializerMethodField()
+    revocation_requested_by_email = serializers.EmailField(
+        source="revocation_requested_by.email", read_only=True, allow_null=True,
+    )
+    decided_by_email = serializers.EmailField(source="decided_by.email", read_only=True, allow_null=True)
+
+    def get_applied_period_reference(self, obj):
+        return obj.applied_payroll_line.period.reference if obj.applied_payroll_line_id else None
+
+    def get_applied_period_status(self, obj):
+        return obj.applied_payroll_line.period.status if obj.applied_payroll_line_id else None
+
+    def get_reimbursement_period_reference(self, obj):
+        return obj.reimbursement_payroll_line.period.reference if obj.reimbursement_payroll_line_id else None
+
+    class Meta:
+        model = StaffLatenessDeduction
+        fields = [
+            "id", "reference", "staff_id", "staff_email", "staff_name", "employee_code", "department",
+            "attendance_reference", "shift_reference", "business_date", "scheduled_start_at", "clock_in_at",
+            "late_minutes", "grace_minutes", "deduction_percent", "monthly_pay_basis", "days_in_month",
+            "daily_pay", "amount", "currency", "status", "applied_period_reference", "applied_period_status",
+            "revocation_reason", "revocation_evidence_reference", "revocation_requested_by_email",
+            "revocation_requested_at", "decided_by_email", "decided_at", "decision_note",
+            "reimbursement_period_reference", "reimbursed_at", "created_at", "updated_at",
+        ]
+        read_only_fields = fields
+
+
+class LatenessRevocationRequestSerializer(serializers.Serializer):
+    reason = serializers.CharField(min_length=5, max_length=2000)
+    evidence_reference = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
+
+
+class LatenessRevocationDecisionSerializer(serializers.Serializer):
+    approved = serializers.BooleanField()
+    decision_note = serializers.CharField(min_length=5, max_length=1000)
 
 
 class PayrollStockShortageCreateSerializer(serializers.Serializer):

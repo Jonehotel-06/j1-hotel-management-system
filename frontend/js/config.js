@@ -272,6 +272,8 @@
     leaveRequests:         "/api/admin/staff-operations/leave-requests/",
     payrollCompensation:   "/api/admin/staff-operations/payroll/compensation/",
     payrollStockShortages: "/api/admin/staff-operations/payroll/stock-shortages/",
+    payrollLatenessPolicy: "/api/admin/staff-operations/payroll/lateness-policy/",
+    payrollLatenessDeductions: "/api/admin/staff-operations/payroll/lateness-deductions/",
     payrollPeriods:       "/api/admin/staff-operations/payroll/periods/",
     /* Payroll (client) — the signed-in user's OWN approved payslips. */
     payrollPayslips:      "/api/admin/staff-operations/payroll/payslips/",

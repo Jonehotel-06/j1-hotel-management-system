@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from datetime import date, timedelta
 
@@ -18,6 +19,8 @@ from ..models import (
     AttendanceEvent, AttendanceRecord, LeaveRequest, LeaveRequestEvent,
     ShiftAssignment, ShiftAssignmentEvent, StaffProfile,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _reference(prefix: str) -> str:
@@ -224,6 +227,17 @@ def clock_attendance(*, staff: User, action: str, actor: User, idempotency_key, 
         if shift and shift.actual_start_at is None:
             shift.actual_start_at = now
             shift.save(update_fields=["actual_start_at", "updated_at"])
+        if shift is not None:
+            # Automatic lateness deduction (Admin-configured policy). A
+            # failure here must never block the attendance record itself;
+            # payroll preparation re-syncs the same attendance later.
+            try:
+                with transaction.atomic():
+                    from .payroll_service import create_lateness_deduction_for_attendance
+
+                    create_lateness_deduction_for_attendance(attendance_record=record)
+            except Exception:  # noqa: BLE001 - attendance must not fail on deduction setup
+                logger.exception("Could not evaluate lateness deduction for attendance %s", record.reference)
         return record, True
 
     if current is None:

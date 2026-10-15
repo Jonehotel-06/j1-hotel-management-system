@@ -529,9 +529,9 @@ class StaffPerformanceReview(TimeStampedModel):
 # Kept in a focused module because compensation and payroll evidence have
 # different privacy and lifecycle rules from ordinary workforce records.
 from .payroll_models import (  # noqa: E402,F401
-    PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment, PayrollStatutoryRuleEvent,
-    PayrollStatutoryRuleSet, PayrollStockShortageAllocation, PayrollStockShortageCase,
-    PayrollTaxIdentity, StaffCompensation,
+    LatenessDeductionPolicy, PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment,
+    PayrollStatutoryRuleEvent, PayrollStockShortageAllocation, PayrollStockShortageCase,
+    PayrollStatutoryRuleSet, StaffCompensation, StaffLatenessDeduction, PayrollTaxIdentity,
 )
 
 # Facial-verification records live in their own module (descriptor-only, retention-bound).

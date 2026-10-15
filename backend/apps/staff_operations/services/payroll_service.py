@@ -1,6 +1,7 @@
 """Locked payroll preparation, maker-checker approval, and ledger settlement."""
 from __future__ import annotations
 
+import calendar
 import hashlib
 import json
 from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_HALF_UP
@@ -20,8 +21,9 @@ from apps.finance.services.ledger_service import create_posted_transaction
 from apps.inventory.models import StockCount
 
 from ..models import (
-    Department, PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment,
-    PayrollStockShortageAllocation, PayrollStockShortageCase, StaffCompensation, StaffProfile,
+    AttendanceRecord, Department, LatenessDeductionPolicy, PayrollEvent, PayrollLine, PayrollPeriod,
+    PayrollSalaryPayment, PayrollStockShortageAllocation, PayrollStockShortageCase, StaffCompensation,
+    StaffLatenessDeduction, StaffProfile,
 )
 
 CENT = Decimal("0.01")
@@ -316,6 +318,222 @@ def decide_stock_shortage_case(*, case, actor, approved: bool, decision_note="")
     return case
 
 
+# ---------------------------------------------------------------------------
+# Automatic lateness deductions
+# ---------------------------------------------------------------------------
+
+def get_lateness_policy() -> LatenessDeductionPolicy:
+    return LatenessDeductionPolicy.get_policy()
+
+
+@transaction.atomic
+def update_lateness_policy(*, actor, is_enabled, grace_minutes, deduction_percent):
+    """Only an ADMIN-role account may configure the automatic lateness rule."""
+    if not getattr(actor, "is_active", False) or getattr(actor, "role", None) != User.Role.ADMIN:
+        raise PermissionDenied("Only an Admin can configure the automatic lateness deduction policy.")
+    try:
+        grace = int(grace_minutes)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({"grace_minutes": "Grace minutes must be a whole number."}) from exc
+    if grace < 0 or grace > 1440:
+        raise ValidationError({"grace_minutes": "Grace minutes must be between 0 and 1440."})
+    percent = _decimal(deduction_percent, "deduction_percent")
+    if percent > Decimal("100.00"):
+        raise ValidationError({"deduction_percent": "The deduction percentage cannot exceed 100."})
+    if is_enabled and percent <= ZERO:
+        raise ValidationError({"deduction_percent": "Set a percentage above zero before enabling the policy."})
+    policy = LatenessDeductionPolicy.objects.select_for_update().get_or_create(pk=1)[0]
+    policy.is_enabled = bool(is_enabled)
+    policy.grace_minutes = grace
+    policy.deduction_percent = percent
+    policy.updated_by = actor
+    policy.save(update_fields=["is_enabled", "grace_minutes", "deduction_percent", "updated_by", "updated_at"])
+    return policy
+
+
+def _lateness_amounts(*, compensation, business_date, deduction_percent):
+    """Percentage of one day's pay for the month containing ``business_date``."""
+    basis = (
+        Decimal(compensation.basic_salary) + Decimal(compensation.housing_allowance)
+        + Decimal(compensation.transport_allowance)
+    ).quantize(CENT)
+    days = calendar.monthrange(business_date.year, business_date.month)[1]
+    daily = (basis / Decimal(days)).quantize(CENT, rounding=ROUND_HALF_UP) if days else ZERO
+    amount = (daily * Decimal(deduction_percent) / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+    return basis, days, daily, amount
+
+
+def _compensation_for_date(*, staff_id, business_date):
+    return (
+        StaffCompensation.objects.filter(staff_id=staff_id, effective_from__lte=business_date)
+        .order_by("-effective_from", "-pk").first()
+    )
+
+
+@transaction.atomic
+def create_lateness_deduction_for_attendance(*, attendance_record, compensation=None, policy=None):
+    """Create the snapshot deduction for one late clock-in, if any is due.
+
+    Returns ``None`` when there is nothing to deduct: no linked scheduled
+    shift, the policy is disabled, or the clock-in is inside the grace period.
+    One attendance record can only ever produce one deduction.
+    """
+    record = (
+        AttendanceRecord.objects.select_for_update()
+        .select_related("staff", "shift")
+        .filter(pk=attendance_record.pk).first()
+    )
+    if record is None or record.shift_id is None or record.shift.planned_start_at is None:
+        return None
+    existing = StaffLatenessDeduction.objects.filter(attendance_record=record).first()
+    if existing:
+        return existing
+    policy = policy or get_lateness_policy()
+    if not policy.is_enabled or Decimal(policy.deduction_percent) <= ZERO:
+        return None
+    late_minutes = int((record.clock_in_at - record.shift.planned_start_at).total_seconds() // 60)
+    if late_minutes <= int(policy.grace_minutes):
+        return None
+    compensation = compensation or _compensation_for_date(
+        staff_id=record.staff_id, business_date=record.business_date,
+    )
+    basis, days, daily, amount = ZERO, 0, ZERO, ZERO
+    currency = "NGN"
+    if compensation is not None:
+        basis, days, daily, amount = _lateness_amounts(
+            compensation=compensation, business_date=record.business_date,
+            deduction_percent=policy.deduction_percent,
+        )
+        currency = str(compensation.currency or "NGN").upper()
+    return StaffLatenessDeduction.objects.create(
+        staff=record.staff,
+        attendance_record=record,
+        shift=record.shift,
+        business_date=record.business_date,
+        scheduled_start_at=record.shift.planned_start_at,
+        clock_in_at=record.clock_in_at,
+        late_minutes=late_minutes,
+        grace_minutes=int(policy.grace_minutes),
+        deduction_percent=Decimal(policy.deduction_percent),
+        monthly_pay_basis=basis,
+        days_in_month=days,
+        daily_pay=daily,
+        amount=amount,
+        currency=currency,
+    )
+
+
+def sync_lateness_deductions(*, staff_id, compensation, starts_on, ends_on):
+    """Generate/fill deductions for a staff member's attendance in a period.
+
+    Called while preparing a payroll run so late days recorded before the run
+    (including records created before this feature existed, or clock-ins made
+    while no salary terms were available yet) are priced from the salary terms
+    the run itself is using. Existing snapshots with a calculated amount are
+    never repriced.
+    """
+    policy = get_lateness_policy()
+    records = list(
+        AttendanceRecord.objects.select_related("shift")
+        .filter(staff_id=staff_id, business_date__gte=starts_on, business_date__lte=ends_on, shift__isnull=False)
+        .order_by("business_date", "pk")
+    )
+    for record in records:
+        deduction = create_lateness_deduction_for_attendance(
+            attendance_record=record, compensation=compensation, policy=policy,
+        )
+        if deduction is None:
+            continue
+        if (
+            deduction.status == StaffLatenessDeduction.Status.ACTIVE
+            and deduction.applied_payroll_line_id is None
+            and Decimal(deduction.amount) <= ZERO
+            and compensation is not None
+        ):
+            basis, days, daily, amount = _lateness_amounts(
+                compensation=compensation, business_date=deduction.business_date,
+                deduction_percent=deduction.deduction_percent,
+            )
+            deduction.monthly_pay_basis = basis
+            deduction.days_in_month = days
+            deduction.daily_pay = daily
+            deduction.amount = amount
+            deduction.currency = str(compensation.currency or "NGN").upper()
+            deduction.save(update_fields=[
+                "monthly_pay_basis", "days_in_month", "daily_pay", "amount", "currency", "updated_at",
+            ])
+
+
+@transaction.atomic
+def request_lateness_revocation(*, deduction, actor, reason, evidence_reference=""):
+    """A payroll manager records the staff member's tangible reason.
+
+    The deduction is held out of payroll runs while the request awaits the
+    Admin decision.
+    """
+    if not has_capability(actor, "payroll.manage"):
+        raise PermissionDenied("This user cannot record a lateness-deduction revocation request.")
+    deduction = StaffLatenessDeduction.objects.select_for_update().get(pk=deduction.pk)
+    if deduction.status == StaffLatenessDeduction.Status.REVOCATION_REQUESTED:
+        return deduction
+    if deduction.status not in {
+        StaffLatenessDeduction.Status.ACTIVE, StaffLatenessDeduction.Status.APPLIED,
+    }:
+        raise ValidationError(f"A revocation cannot be requested from {deduction.status}.")
+    reason = str(reason or "").strip()
+    if len(reason) < 5:
+        raise ValidationError({"reason": "Record the staff member's reason (at least 5 characters)."})
+    deduction.status = StaffLatenessDeduction.Status.REVOCATION_REQUESTED
+    deduction.revocation_reason = reason[:2000]
+    deduction.revocation_evidence_reference = str(evidence_reference or "").strip()[:160]
+    deduction.revocation_requested_by = actor
+    deduction.revocation_requested_at = timezone.now()
+    deduction.decided_by = None
+    deduction.decided_at = None
+    deduction.decision_note = ""
+    deduction.save(update_fields=[
+        "status", "revocation_reason", "revocation_evidence_reference", "revocation_requested_by",
+        "revocation_requested_at", "decided_by", "decided_at", "decision_note", "updated_at",
+    ])
+    return deduction
+
+
+@transaction.atomic
+def decide_lateness_revocation(*, deduction, actor, approved: bool, decision_note=""):
+    """Final Admin decision on a revocation request.
+
+    Approved before any payroll run included the deduction -> cancelled.
+    Approved after a payroll run included it -> the amount is added back on a
+    later payroll run. Rejected -> the deduction stands.
+    """
+    if not getattr(actor, "is_active", False) or getattr(actor, "role", None) != User.Role.ADMIN:
+        raise PermissionDenied("Only an Admin can approve or reject a lateness-deduction revocation.")
+    deduction = StaffLatenessDeduction.objects.select_for_update().get(pk=deduction.pk)
+    if deduction.status != StaffLatenessDeduction.Status.REVOCATION_REQUESTED:
+        raise ValidationError("This lateness deduction has no revocation request awaiting an Admin decision.")
+    if deduction.revocation_requested_by_id and deduction.revocation_requested_by_id == actor.pk:
+        raise PermissionDenied("The Admin who recorded the revocation request cannot also decide it.")
+    note = str(decision_note or "").strip()
+    if len(note) < 5:
+        raise ValidationError({"decision_note": "Record why the Admin approved or rejected the revocation."})
+    was_applied = deduction.applied_payroll_line_id is not None
+    if approved:
+        deduction.status = (
+            StaffLatenessDeduction.Status.REIMBURSEMENT_PENDING if was_applied
+            else StaffLatenessDeduction.Status.REVOKED
+        )
+    else:
+        deduction.status = (
+            StaffLatenessDeduction.Status.APPLIED if was_applied
+            else StaffLatenessDeduction.Status.ACTIVE
+        )
+    deduction.decided_by = actor
+    deduction.decided_at = timezone.now()
+    deduction.decision_note = note[:1000]
+    deduction.save(update_fields=["status", "decided_by", "decided_at", "decision_note", "updated_at"])
+    return deduction
+
+
 @transaction.atomic
 def create_payroll_period(
     *, actor, starts_on, ends_on, department="", adjustments=None, idempotency_key="", replaces=None,
@@ -446,6 +664,50 @@ def create_payroll_period(
         allowances = _component_rows(inputs.get("allowances", []), "allowances")
         manual_deductions = _component_rows(inputs.get("deductions", []), "deductions")
         _validate_manual_deduction_labels(manual_deductions)
+
+        # Automatic lateness: price this period's late clock-ins from the same
+        # salary terms this run uses, then add back any Admin-approved
+        # revocations whose original deduction already went through a payroll
+        # run. A revocation still awaiting its original run's outcome stays
+        # pending and is never added back early.
+        sync_lateness_deductions(
+            staff_id=staff_id, compensation=compensation, starts_on=starts_on, ends_on=ends_on,
+        )
+        lateness_reimbursements = []
+        for reimbursement in (
+            StaffLatenessDeduction.objects.select_for_update()
+            .select_related("applied_payroll_line__period")
+            .filter(
+                staff_id=staff_id,
+                status=StaffLatenessDeduction.Status.REIMBURSEMENT_PENDING,
+                amount__gt=ZERO,
+                currency=currency,
+                reimbursement_payroll_line__isnull=True,
+            )
+            .order_by("business_date", "pk")
+        ):
+            original_status = (
+                reimbursement.applied_payroll_line.period.status
+                if reimbursement.applied_payroll_line_id else None
+            )
+            if original_status == PayrollPeriod.Status.REJECTED:
+                # The original deduction never took effect, so there is
+                # nothing to add back; the revocation simply cancels it.
+                reimbursement.status = StaffLatenessDeduction.Status.REVOKED
+                reimbursement.save(update_fields=["status", "updated_at"])
+                continue
+            if original_status not in {
+                PayrollPeriod.Status.APPROVED, PayrollPeriod.Status.PARTIALLY_PAID, PayrollPeriod.Status.PAID,
+            }:
+                continue
+            lateness_reimbursements.append(reimbursement)
+            label = f"Lateness deduction reversal ({reimbursement.reference})"
+            if not any(reimbursement.reference in str(row.get("label", "")) for row in allowances):
+                allowances.append({
+                    "label": label[:100],
+                    "amount": str(Decimal(reimbursement.amount).quantize(CENT)),
+                })
+
         bonus = _decimal(inputs.get("bonus", 0), "bonus")
         basic = Decimal(compensation.basic_salary).quantize(CENT)
         housing = Decimal(compensation.housing_allowance).quantize(CENT)
@@ -490,6 +752,25 @@ def create_payroll_period(
             if not any(allocation.case.reference in str(row.get("label", "")) for row in deductions):
                 deductions.append({"label": shortage_label[:100], "amount": str(Decimal(allocation.amount).quantize(CENT))})
 
+        lateness_deductions = list(
+            StaffLatenessDeduction.objects.select_for_update()
+            .filter(
+                staff_id=staff_id,
+                status=StaffLatenessDeduction.Status.ACTIVE,
+                amount__gt=ZERO,
+                currency=currency,
+                applied_payroll_line__isnull=True,
+            )
+            .order_by("business_date", "pk")
+        )
+        for lateness in lateness_deductions:
+            lateness_label = f"Lateness deduction ({lateness.reference})"
+            if not any(lateness.reference in str(row.get("label", "")) for row in deductions):
+                deductions.append({
+                    "label": lateness_label[:100],
+                    "amount": str(Decimal(lateness.amount).quantize(CENT)),
+                })
+
         deductions_total = _components_total(deductions)
         net = (gross - deductions_total).quantize(CENT)
         if net < ZERO:
@@ -523,6 +804,22 @@ def create_payroll_period(
             PayrollStockShortageAllocation.objects.filter(
                 pk__in=[a.pk for a in approved_shortages]
             ).update(applied_payroll_line=line)
+        if lateness_deductions:
+            StaffLatenessDeduction.objects.filter(
+                pk__in=[d.pk for d in lateness_deductions]
+            ).update(
+                applied_payroll_line=line,
+                applied_at=timezone.now(),
+                status=StaffLatenessDeduction.Status.APPLIED,
+            )
+        if lateness_reimbursements:
+            StaffLatenessDeduction.objects.filter(
+                pk__in=[d.pk for d in lateness_reimbursements]
+            ).update(
+                reimbursement_payroll_line=line,
+                reimbursed_at=timezone.now(),
+                status=StaffLatenessDeduction.Status.REIMBURSED,
+            )
         totals["gross"] += gross
         totals["deductions"] += deductions_total
         totals["net"] += net
