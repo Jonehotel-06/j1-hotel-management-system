@@ -9,10 +9,15 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.utils import timezone
 
 from apps.payments.models import Payment
+from apps.payments.services.payment_service import (
+    PaymentAlreadyCompletedError,
+    _unique_payment_reference,
+)
 
 from ..models import (
     FinancialEvent, FinancialLine, FinancialTransaction, Folio, PaymentAllocation, RefundApplication,
@@ -374,3 +379,223 @@ def ensure_processed_refund(*, refund, actor=None) -> tuple[FinancialTransaction
                 source_key=f"refund-application:{refund.pk}:{suffix}",
             )
     return financial_transaction, created
+
+
+# ---------------------------------------------------------------------------
+# Desk settlement of the WHOLE guest bill (stay balance + folio charges)
+# ---------------------------------------------------------------------------
+def _validate_cash_session(reference, actor):
+    """A cash collection's drawer must be the acting cashier's own open one."""
+    from apps.finance.models import CashSession
+
+    session = CashSession.objects.select_for_update().filter(reference=reference).first()
+    if session is None:
+        raise ValidationError({"cash_session_reference": "No cash session has that reference."})
+    if session.status != CashSession.Status.OPEN:
+        raise ValidationError({"cash_session_reference": "The cash session is not open."})
+    if actor is not None and session.cashier_id != actor.pk:
+        raise PermissionDenied("Cash must be taken into the acting cashier's own open drawer.")
+    return session
+
+
+@transaction.atomic
+def settle_outstanding_balance(
+    *,
+    booking,
+    actor,
+    amount,
+    provider,
+    notes="",
+    request=None,
+    include_unbilled=True,
+    cash_session_reference="",
+):
+    """Collect money at the desk for the guest's FULL bill and show it on the folio.
+
+    ``payments.record_offline_payment`` settles the STAY projection only. Once a
+    booking is paid it refuses further money (``PaymentAlreadyCompletedError``)
+    and it caps the amount at ``booking.amount_due`` — so a guest who had paid
+    for the room but still owed restaurant, bar, room-service or laundry money
+    posted to their folio could not pay it at all, and the folio never moved.
+    That is the gap this closes, in one transaction:
+
+      * any unbilled in-house request on the stay (laundry, and any room-service
+        order that was somehow delivered without its folio charge) is billed to
+        the folio first, so no liability is left unstated and nothing is charged
+        twice (both billing paths are idempotent),
+      * the folio-charge part of the money is APPLIED TO THE FOLIO, so the
+        folio's balance drops the moment the desk records it,
+      * only the remainder is credited to the stay projection.
+
+    The ``Payment`` row is written against the acting staff member, so the money
+    is attributed to the person who received and recorded it — never to a
+    derived or client-supplied identity. The caller re-reads the folio from the
+    same response, so what the desk sees is what the ledger holds.
+    """
+    from apps.accounts.capabilities import has_capability
+    from apps.bookings.models import Booking
+    from apps.bookings.services import booking_service
+    from apps.guest_services.models import LaundryOrder
+    from apps.guest_services.services.laundry_service import bill_laundry_order
+    from apps.pos.models import PosOrder
+    from apps.pos.services.order_service import bill_unbilled_order_charge
+    from apps.finance.services.folio_service import (
+        booking_folio_charge_balance,
+        get_or_create_main_folio_for_stay,
+    )
+
+    booking = (
+        Booking.objects.select_for_update().select_related("guest", "room_type").get(pk=booking.pk)
+    )
+    booking_service.refresh_expired_pending(booking)
+    if booking.status not in (
+        Booking.Status.PENDING,
+        Booking.Status.CONFIRMED,
+        Booking.Status.CHECKED_IN,
+    ):
+        raise ValidationError(
+            f"A booking with status {booking.get_status_display()} cannot take a desk payment."
+        )
+
+    provider = str(provider or "").upper()
+    if provider not in Payment.Provider.values:
+        raise ValidationError({"provider": "Choose how the guest paid."})
+    # Cash needs the acting cashier's own open drawer (same rule as every other
+    # cash collection in the system), so the count reconciles at close.
+    session = _validate_cash_session(cash_session_reference, actor) if cash_session_reference else None
+
+    try:
+        stay = booking.stay
+    except Exception:  # noqa: BLE001 - a booking without an operational stay has no folio
+        stay = None
+
+    billed_requests: list[str] = []
+    if include_unbilled and stay is not None:
+        # Billing is idempotent (``bill once``) and refuses cancelled orders.
+        unbilled_orders = list(
+            LaundryOrder.objects.select_for_update()
+            .filter(stay=stay, financial_transaction__isnull=True)
+            .exclude(status=LaundryOrder.Status.CANCELLED)
+            .order_by("created_at")
+        )
+        for order in unbilled_orders:
+            if not has_capability(actor, "guest_request.manage"):
+                raise PermissionDenied(
+                    "Billing this guest's unbilled requests to the folio requires the "
+                    "guest-request permission. Bill them from the Laundry page first."
+                )
+            bill_laundry_order(order=order, actor=actor)
+            billed_requests.append(order.reference)
+        unbilled_pos_orders = list(
+            PosOrder.objects.select_for_update()
+            .filter(stay=stay, charge_transaction__isnull=True)
+            .exclude(
+                status__in=[
+                    PosOrder.Status.CANCELLED,
+                    PosOrder.Status.VOIDED,
+                    PosOrder.Status.DRAFT,
+                ]
+            )
+            .order_by("created_at")
+        )
+        for order in unbilled_pos_orders:
+            bill_unbilled_order_charge(order=order, actor=actor)
+            billed_requests.append(order.reference)
+
+    folio = None
+    if stay is not None:
+        folio, _ = get_or_create_main_folio_for_stay(stay=stay, actor=actor)
+
+    stay_due = max(Decimal(booking.amount_due or Decimal("0.00")), Decimal("0.00"))
+    folio_due = max(Decimal(booking_folio_charge_balance(booking=booking)), Decimal("0.00"))
+    bill_total = (stay_due + folio_due).quantize(Decimal("0.01"))
+    received = Decimal(str(amount)).quantize(Decimal("0.01"))
+    if received <= Decimal("0.00"):
+        raise ValidationError({"amount": "Enter the amount the guest actually handed over."})
+    if bill_total <= Decimal("0.00"):
+        raise PaymentAlreadyCompletedError()
+    if received > bill_total:
+        raise ValidationError(
+            {
+                "amount": (
+                    f"Amount exceeds the bill of {booking.currency} {bill_total:.2f}. "
+                    "Record what was received, not more."
+                )
+            }
+        )
+
+    payment = Payment.objects.create(
+        booking=booking,
+        user=actor,
+        reference=_unique_payment_reference(),
+        provider=provider,
+        amount=received,
+        currency=booking.currency,
+        status=Payment.Status.SUCCESS,
+        channel=provider.lower(),
+        gateway_response=f"Collected at the front desk by {getattr(actor, 'email', '')}",
+        paid_at=timezone.now(),
+        notes=notes or "",
+        metadata={
+            "booking_reference": booking.booking_reference,
+            "recorded_by": getattr(actor, "email", ""),
+            "settled_via": "checkout_folio",
+            # The bill as it stood the moment before this money arrived
+            # (unbilled requests already included by the billing above).
+            "bill_before_payment": money_plain(bill_total),
+            "folio_balance_before_payment": money_plain(folio_due),
+            "stay_balance_before_payment": money_plain(stay_due),
+            "billed_requests": billed_requests,
+            "cash_session_reference": getattr(session, "reference", ""),
+        },
+    )
+    # Gross tender collection first (Dr cash/bank/card clearing, Cr guest deposits).
+    ensure_payment_collection(payment=payment, actor=actor)
+
+    # The folio part lands on the folio immediately — this is the money the
+    # guest disputed at the gate, so it must stop being "outstanding" the second
+    # the staff member records it.
+    folio_part = min(received, folio_due).quantize(Decimal("0.01"))
+    if folio_part > Decimal("0.00"):
+        if folio is None:
+            raise ValidationError("This guest has no folio to apply the payment to.")
+        apply_payment_to_folio(payment=payment, folio=folio, actor=actor, amount=folio_part)
+
+    stay_part = (received - folio_part).quantize(Decimal("0.01"))
+    if stay_part > Decimal("0.00"):
+        booking_service.register_successful_payment(booking, stay_part, request=request)
+
+    from apps.audit.services import log_action
+
+    log_action(
+        actor=actor,
+        action="PAYMENT_RECORDED",
+        instance=payment,
+        metadata={
+            "reference": payment.reference,
+            "booking": booking.booking_reference,
+            "amount": money_plain(received),
+            "provider": provider,
+            "folio_portion": money_plain(folio_part),
+            "stay_portion": money_plain(stay_part),
+            "billed_requests": billed_requests,
+        },
+        request=request,
+        summary=(
+            f"Check-out settlement {payment.reference} recorded "
+            f"({received:.2f} {booking.currency}; folio {folio_part:.2f})"
+        ),
+    )
+    return payment, {
+        "stay_balance_before": money_plain(stay_due),
+        "folio_balance_before": money_plain(folio_due),
+        "bill_total_before": money_plain(bill_total),
+        "folio_portion": money_plain(folio_part),
+        "stay_portion": money_plain(stay_part),
+        "billed_requests": billed_requests,
+    }
+
+
+def money_plain(value) -> str:
+    """Two-decimal string for a Decimal (service-layer twin of core.utils.money)."""
+    return f"{Decimal(value).quantize(Decimal('0.01'))}"

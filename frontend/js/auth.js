@@ -45,6 +45,14 @@
     return role ? String(role).toLowerCase() : null;
   }
 
+  /* Every operational role code. The department roles do NOT form a privilege
+     hierarchy (a chef is not "below" a receptionist — they do different jobs),
+     so a personal surface that belongs to all staff members is expressed as an
+     exact-role list rather than a minimum role. Guests are never included. */
+  const OPERATIONAL_ROLES = Object.freeze(
+    Object.values(ROLES).filter((value) => value !== ROLES.GUEST)
+  );
+
   function isStaffRole(role) {
     const r = normRole(role || state.role);
     return Object.values(ROLES).filter((value) => value !== "guest").includes(r);
@@ -384,7 +392,10 @@
         location.href = next;
       } catch (err) {
         JONE.releaseGuard(btn);
-        if (err.code === "STAFF_SIGN_IN_RESTRICTED" && typeof opts.onRestricted === "function") opts.onRestricted();
+        // The refusal carries the address the request came from (err.data.errors),
+        // which is the only thing an administrator needs in order to register the
+        // desk. Pass the error through so the page can show it.
+        if (err.code === "STAFF_SIGN_IN_RESTRICTED" && typeof opts.onRestricted === "function") opts.onRestricted(err);
         const msg = err.status === 401 ? "Incorrect email or password." : (err.message || "Sign-in failed. Please try again.");
         JONE.ui.toast(msg, "error");
         const errBox = form.querySelector("[data-form-error]");
@@ -394,7 +405,7 @@
   }
 
   window.Auth = {
-    ROLES, state, login, loginWithAccessCode, logout, guard, hasRole, hasAnyRole, can,
+    ROLES, OPERATIONAL_ROLES, state, login, loginWithAccessCode, logout, guard, hasRole, hasAnyRole, can,
     isAuthenticated, restore, refreshProfile, onUnauthorized,
     bindLoginForm, clearSession, refreshAccess, loadCapabilities,
     receptionistDesktopKey, setReceptionistDesktopKey,

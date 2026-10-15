@@ -21,7 +21,11 @@ test("Add menu item explains the automatic SKU barcode and reports it back", () 
 });
 
 test("Menu management links to the label printing page", () => {
-  assert.match(POS, /<a class="btn btn-sm btn-outline" href="barcode-labels\.html">Print barcode labels<\/a>/);
+  /* The link lives inside the POS menu-management block AND is resolved
+     through the access registry: printing labels is a stores/menu task, so a
+     department the label page refuses is never offered the shortcut. */
+  assert.match(POS, /<a class="btn btn-sm btn-outline" href="barcode-labels\.html" data-pos-barcode-link hidden>Print barcode labels<\/a>/);
+  assert.match(POS, /canOpenPage\("barcode-labels\.html"\)/);
   assert.match(POS, /automatically use their SKU as their barcode/);
 });
 

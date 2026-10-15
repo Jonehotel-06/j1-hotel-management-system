@@ -12,7 +12,7 @@
   const NAV = [
     { group: "Overview", items: [
       { label: "Dashboard", href: "index.html", icon: "layout", view: "dashboard" },
-      { label: "Approvals", href: "approvals.html", icon: "checkCircle", view: "approvals", capabilities: ["expense.approve", "payment.refund.approve", "payroll.approve", "leave.approve", "inventory.adjust.approve", "procurement.approve"], roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant", "hr_manager", "inventory_clerk", "storekeeper", "procurement_officer"] },
+      { label: "Approvals", href: "approvals.html", icon: "checkCircle", view: "approvals", capabilities: ["expense.approve", "payment.refund.approve", "payroll.approve", "leave.approve", "inventory.adjust.approve", "procurement.approve"] },
     ]},
     { group: "Operations", items: [
       { label: "Bookings", href: "bookings.html", icon: "calendar", view: "bookings" },
@@ -23,23 +23,27 @@
       { label: "Missed bookings", href: "missed-bookings.html", icon: "userX", view: "missed-bookings" },
       { label: "Guests", href: "guests.html", icon: "users", view: "guests" },
       { label: "Rooms", href: "rooms.html", icon: "bed", view: "rooms" },
-      { label: "POS & Room Service", href: "pos.html", icon: "utensils", view: "pos", capabilities: ["pos.order.manage", "restaurant.order.manage", "bar.order.manage", "kitchen.queue.view", "kitchen.ticket.manage"], roles: ["admin", "manager", "general_manager", "cashier", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "kitchen_assistant"] },
-      { label: "Workforce", href: "workforce.html", icon: "clock", view: "workforce", capabilities: ["staff.profile.manage", "shift.manage", "attendance.clock", "attendance.manage", "leave.request", "leave.approve", "payroll.view", "payroll.manage"], roles: ["admin", "manager", "general_manager", "front_desk_supervisor", "receptionist", "cashier", "housekeeping", "maintenance", "inventory_clerk", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "kitchen_assistant", "housekeeping_manager", "housekeeper", "maintenance_technician", "accounts_manager", "accountant", "hr_manager", "security", "procurement_officer", "storekeeper", "porter"] },
-      { label: "Guest Requests", href: "service-requests.html", icon: "messageCircle", view: "service-requests", capabilities: ["guest_request.manage", "guest_request.assign"], roles: ["admin", "manager", "general_manager", "receptionist", "front_desk_supervisor", "housekeeping", "housekeeper", "maintenance", "maintenance_technician", "waiter", "bartender", "security", "porter"] },
-      { label: "Laundry", href: "service-requests.html#laundry", icon: "shirt", view: "service-requests", capabilities: ["guest_request.manage", "guest_request.assign"], roles: ["admin", "manager", "general_manager", "receptionist", "front_desk_supervisor", "housekeeping", "housekeeper", "maintenance", "maintenance_technician", "waiter", "bartender", "security", "porter"] },
-      { label: "Barcode Labels", href: "barcode-labels.html", icon: "printer", view: "barcode-labels", capabilities: ["inventory.manage", "pos.order.manage"], roles: ["admin", "manager", "inventory_clerk", "storekeeper", "cashier"] },
-      { label: "Service Links", href: "service-qr.html", icon: "grid", view: "service-qr", capabilities: ["service_qr.manage"], roles: ["admin", "manager", "general_manager"] },
-      { label: "Housekeeping", href: "housekeeping.html", icon: "bed", view: "housekeeping", capabilities: ["housekeeping.task.manage", "housekeeping.task.assign"], roles: ["admin", "manager", "receptionist", "housekeeping", "housekeeping_manager", "housekeeper"] },
-      { label: "Maintenance", href: "maintenance.html", icon: "settings", view: "maintenance", capabilities: ["maintenance.work_order.manage", "maintenance.work_order.assign"], roles: ["admin", "manager", "receptionist", "maintenance", "maintenance_technician"] },
-      { label: "Inventory", href: "inventory.html", icon: "inbox", view: "inventory", capabilities: ["inventory.manage", "inventory.adjust.approve"], roles: ["admin", "manager", "inventory_clerk", "storekeeper"] },
-      { label: "Procurement", href: "procurement.html", icon: "receipt", view: "procurement", capabilities: ["procurement.manage", "procurement.approve"], roles: ["admin", "manager", "inventory_clerk", "storekeeper", "procurement_officer"] },
+      { label: "POS & Room Service", href: "pos.html", icon: "utensils", view: "pos", capabilities: ["pos.order.manage", "restaurant.order.manage", "bar.order.manage", "kitchen.queue.view", "kitchen.ticket.manage"] },
+      { label: "Workforce", href: "workforce.html", icon: "clock", view: "workforce", capabilities: ["staff.profile.manage", "shift.manage", "attendance.clock", "attendance.manage", "leave.request", "leave.approve", "payroll.view", "payroll.manage"] },
+      { label: "Guest Requests", href: "service-requests.html", icon: "messageCircle", view: "service-requests", capabilities: ["guest_request.manage", "guest_request.assign"] },
+      /* Laundry is its own page. It previously pointed at
+         service-requests.html#laundry, so the sidebar showed two entries that
+         opened the same page, and laundry looked like a guest request rather
+         than the priced, settled service it is. */
+      { label: "Laundry", href: "laundry.html", icon: "shirt", view: "laundry", capabilities: ["guest_request.manage", "guest_request.assign"] },
+      { label: "Barcode Labels", href: "barcode-labels.html", icon: "printer", view: "barcode-labels", capabilities: ["inventory.manage", "pos.order.manage"] },
+      { label: "Service Links", href: "service-qr.html", icon: "grid", view: "service-qr", capabilities: ["service_qr.manage"] },
+      { label: "Housekeeping", href: "housekeeping.html", icon: "bed", view: "housekeeping", capabilities: ["housekeeping.task.manage", "housekeeping.task.assign"] },
+      { label: "Maintenance", href: "maintenance.html", icon: "settings", view: "maintenance", capabilities: ["maintenance.work_order.manage", "maintenance.work_order.assign"] },
+      { label: "Inventory", href: "inventory.html", icon: "inbox", view: "inventory", capabilities: ["inventory.manage", "inventory.adjust.approve"] },
+      { label: "Procurement", href: "procurement.html", icon: "receipt", view: "procurement", capabilities: ["procurement.manage", "procurement.approve"] },
     ]},
     { group: "Finance", items: [
-      { label: "Payments", href: "payments.html", icon: "creditCard", view: "payments", capabilities: ["payment.read"], roles: ["admin", "manager", "receptionist", "front_desk_supervisor", "general_manager", "accounts_manager", "accountant"] },
-      { label: "Receipts", href: "receipts.html", icon: "receipt", view: "receipts", capabilities: ["payment.read"], roles: ["admin", "manager", "receptionist", "front_desk_supervisor", "general_manager", "accounts_manager", "accountant"] },
-      { label: "Accounting", href: "accounting.html", icon: "wallet", view: "accounting", capabilities: ["reports.financial.view"], roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant"] },
+      { label: "Payments", href: "payments.html", icon: "creditCard", view: "payments", capabilities: ["payment.read"] },
+      { label: "Receipts", href: "receipts.html", icon: "receipt", view: "receipts", capabilities: ["payment.read"] },
+      { label: "Accounting", href: "accounting.html", icon: "wallet", view: "accounting", capabilities: ["reports.financial.view"] },
       { label: "Reports", href: "reports.html", icon: "barChart", view: "reports", minRole: "manager" },
-      { label: "Payroll", href: "payroll.html", icon: "creditCard", view: "payroll", capabilities: ["payroll.view", "payroll.manage", "payroll.approve"], roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant", "hr_manager"] },
+      { label: "Payroll", href: "payroll.html", icon: "creditCard", view: "payroll", capabilities: ["payroll.view", "payroll.manage", "payroll.approve"] },
     ]},
     { group: "Content", items: [
       { label: "Facilities", href: "facilities.html", icon: "building", view: "facilities", minRole: "manager" },
@@ -54,16 +58,161 @@
       { label: "Notifications", href: "notifications.html", icon: "bell", view: "notifications" },
     ]},
     { group: "Administration", items: [
-      { label: "Staff", href: "staff.html", icon: "users", view: "staff", capabilities: ["staff.profile.manage", "staff.view"], roles: ["admin", "general_manager", "manager", "hr_manager"] },
-      { label: "Workstations", href: "terminals.html", icon: "grid", view: "terminals", capabilities: ["terminal.manage"], roles: ["admin", "manager", "general_manager"] },
+      { label: "Staff", href: "staff.html", icon: "users", view: "staff", capabilities: ["staff.profile.manage", "staff.view"] },
+      /* Employment profiles are an HR/management surface. They used to have
+         no menu entry at all, so the departments the page admits had no way in
+         while everybody else was shown the admin-only staff directory. */
+      { label: "Staff Profiles", href: "staff-profile.html", icon: "users", view: "staff-profile" },
+      { label: "Workstations", href: "terminals.html", icon: "grid", view: "terminals", capabilities: ["terminal.manage"] },
       { label: "Audit Logs", href: "audit-logs.html", icon: "fileText", view: "audit-logs", role: "admin" },
       { label: "Settings", href: "settings.html", icon: "settings", view: "settings", role: "admin" },
     ]},
   ];
 
+  /* ========================================================================
+     PAGE ACCESS REGISTRY — who is allowed to open which staff page.
+
+     A link is a promise: "this screen is yours to work on". Before this table
+     existed, most sidebar entries carried no gate at all, so a housekeeper,
+     chef, security officer or storekeeper was shown Bookings, Check-out,
+     Guests, Payments, Accounting and the dashboard quick actions — every one of
+     which bounces them to /403.html because its own JONE.dashboard.boot(...)
+     gate refuses them. Departments must only ever see their own department's
+     screens, so every navigation surface (sidebar, bottom bar, quick actions,
+     in-page links) now resolves that promise through canOpenPage(href), which
+     reads THIS table.
+
+     `roles` are exact operational roles (see Auth.hasAnyRole — there is no
+     implicit hierarchy between departments). Each list is the page's own gate:
+     tests-js/test-department-page-access.js parses every dashboard page's
+     JONE.dashboard.boot(...) call and fails if this table and the pages ever
+     drift apart in either direction, so neither half can quietly widen.
+
+     `everyone: true` marks a personal surface that belongs to every staff
+     member whatever their department (their own notifications, their own
+     profile) and is server-authorized by authentication alone.
+
+     `public: true` marks a link out of the shell into the public site (sign in,
+     published policies): it belongs to nobody and is open to anybody.
+
+     The NAV / BOTTOM_NAV menu items below deliberately carry NO role lists of
+     their own: this table is the single department rule, so a menu entry can
+     never disagree with the page it points at. Capability and rank clauses that
+     do remain on an item only ever NARROW what this table allows.
+     ======================================================================== */
+  const FRONT_DESK = ["receptionist", "front_desk_supervisor", "staff", "manager", "general_manager", "admin"];
+  const MANAGEMENT = ["manager", "general_manager", "admin"];
+  const ADMIN_ONLY = ["admin"];
+  const FRONT_OF_HOUSE = ["admin", "manager", "general_manager", "front_desk_supervisor", "receptionist"];
+  const FINANCE = ["admin", "manager", "receptionist", "front_desk_supervisor", "general_manager",
+    "accounts_manager", "accountant"];
+  const SERVICE_DEPARTMENTS = ["admin", "manager", "general_manager", "front_desk_supervisor",
+    "receptionist", "housekeeping", "housekeeping_manager", "housekeeper", "porter",
+    "maintenance", "maintenance_technician", "waiter", "bartender", "security"];
+
+  const PAGE_ACCESS = {
+    /* Personal surfaces — every signed-in staff member. */
+    "notifications.html": { everyone: true },
+    "notification-details.html": { everyone: true },
+    "profile.html": { everyone: true },
+
+    /* Front desk / management shell. */
+    "403.html": { roles: FRONT_DESK },
+    "index.html": { roles: FRONT_DESK },
+    "bookings.html": { roles: FRONT_DESK },
+    "booking-details.html": { roles: FRONT_DESK },
+    "availability.html": { roles: FRONT_DESK },
+    "occupancy.html": { roles: FRONT_DESK },
+    "check-in.html": { roles: FRONT_DESK },
+    "check-out.html": { roles: FRONT_DESK },
+    "missed-bookings.html": { roles: FRONT_DESK },
+    "guests.html": { roles: FRONT_DESK },
+    "rooms.html": { roles: FRONT_DESK },
+    "room-details.html": { roles: FRONT_DESK },
+    "enquiries.html": { roles: FRONT_DESK },
+
+    /* Money — a department sees its own front door, never somebody else's. */
+    "payments.html": { roles: FINANCE },
+    "receipts.html": { roles: FINANCE },
+    "receipt-details.html": { roles: FINANCE },
+    "accounting.html": { roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant"] },
+    "payroll.html": { roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant", "hr_manager"] },
+    "reports.html": { roles: MANAGEMENT },
+    "approvals.html": { roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant",
+      "hr_manager", "inventory_clerk", "storekeeper", "procurement_officer", "front_desk_supervisor"] },
+
+    /* Guest services. */
+    "service-requests.html": { roles: SERVICE_DEPARTMENTS },
+    "laundry.html": { roles: SERVICE_DEPARTMENTS },
+    "housekeeping.html": { roles: ["admin", "manager", "general_manager", "front_desk_supervisor",
+      "receptionist", "housekeeping", "housekeeping_manager", "housekeeper"] },
+    "maintenance.html": { roles: ["admin", "manager", "general_manager", "front_desk_supervisor",
+      "receptionist", "maintenance", "maintenance_technician"] },
+    "pos.html": { roles: ["admin", "manager", "general_manager", "cashier", "restaurant_manager",
+      "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "kitchen_assistant"] },
+    "barcode-labels.html": { roles: ["admin", "manager", "general_manager", "inventory_clerk",
+      "storekeeper", "cashier"] },
+    "service-qr.html": { roles: MANAGEMENT },
+
+    /* Stores and procurement. */
+    "inventory.html": { roles: ["admin", "manager", "general_manager", "inventory_clerk", "storekeeper"] },
+    "procurement.html": { roles: ["admin", "manager", "general_manager", "inventory_clerk",
+      "storekeeper", "procurement_officer"] },
+
+    /* People. */
+    "workforce.html": { roles: ["admin", "manager", "general_manager", "front_desk_supervisor",
+      "receptionist", "cashier", "housekeeping", "maintenance", "inventory_clerk",
+      "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef",
+      "kitchen_assistant", "housekeeping_manager", "housekeeper", "porter",
+      "maintenance_technician", "accounts_manager", "accountant", "hr_manager", "security",
+      "procurement_officer", "storekeeper", "staff"] },
+    "staff.html": { roles: ADMIN_ONLY },
+    "staff-profile.html": { roles: ["admin", "general_manager", "manager", "hr_manager"] },
+
+    /* Content, communication and administration. */
+    "facilities.html": { roles: MANAGEMENT },
+    "gallery.html": { roles: MANAGEMENT },
+    "offers.html": { roles: MANAGEMENT },
+    "reviews.html": { roles: ADMIN_ONLY },
+    "terminals.html": { roles: MANAGEMENT },
+    "audit-logs.html": { roles: ADMIN_ONLY },
+    "audit-log-details.html": { roles: ADMIN_ONLY },
+    "settings.html": { roles: ADMIN_ONLY },
+
+    /* Exit links out of the dashboard shell into the public site (the 403
+       page's "Sign out" and the settings page's public policies link). These
+       belong to no department: they carry no staff data and are readable by
+       anyone, including a signed-out visitor. */
+    "login.html": { public: true },
+    "policies.html": { public: true },
+  };
+
+  /* Resolve a page (bare file name, href or path) to its access rule. */
+  function pageAccessFor(href) {
+    const name = String(href || "").split("#")[0].split("?")[0].split("/").pop();
+    return Object.prototype.hasOwnProperty.call(PAGE_ACCESS, name) ? PAGE_ACCESS[name] : null;
+  }
+
+  /* May the signed-in user open this page? Unknown pages fail CLOSED: a screen
+     that has not been classified here cannot be linked to from anywhere. */
+  function canOpenPage(href) {
+    const auth = window.Auth;
+    if (!auth || typeof auth.hasAnyRole !== "function") return false;
+    const rule = pageAccessFor(href);
+    if (!rule) return false;
+    /* A public site page is open by definition — hiding "Sign out" from a
+       staff member whose department is refused elsewhere would be absurd. */
+    if (rule.public) return true;
+    const roles = rule.everyone ? (auth.OPERATIONAL_ROLES || []) : (rule.roles || []);
+    return roles.length > 0 && auth.hasAnyRole(roles);
+  }
+
   function navItemAllowed(it) {
     const auth = window.Auth;
     if (!auth) return false;
+    /* The entry's own gate AND the target page's gate. A menu entry must never
+       point a department at a page that will refuse it. */
+    if (!canOpenPage(it.href)) return false;
     if (it.capabilities && auth.state && auth.state.capabilitiesLoaded) {
       return !!(auth.hasAnyCapability && auth.hasAnyCapability(it.capabilities));
     }
@@ -391,13 +540,16 @@
      Fixed bottom navigation for phones (spec §8). Settings is appended ONLY
      for admins — role comes from the authenticated profile and the backend
      enforces authorization regardless. */
+  /* The bottom bar is the same promise as the sidebar: each entry is filtered
+     through navItemAllowed, which requires the access registry to admit this
+     department to the target page. No entry carries its own role list. */
   const BOTTOM_NAV = [
-    { label: "Dashboard", href: "index.html", icon: "layout", roles: ["admin", "manager", "receptionist"] },
-    { label: "Bookings", href: "bookings.html", icon: "calendar", roles: ["admin", "manager", "receptionist"] },
-    { label: "Availability", href: "availability.html", icon: "grid", roles: ["admin", "manager", "receptionist"] },
+    { label: "Dashboard", href: "index.html", icon: "layout" },
+    { label: "Bookings", href: "bookings.html", icon: "calendar" },
+    { label: "Availability", href: "availability.html", icon: "grid" },
     { label: "Notifications", href: "notifications.html", icon: "bell", badge: true },
     { label: "Settings", href: "settings.html", icon: "settings", role: "admin" },
-  ];
+  ];;
 
   /* Topbar bell with unread badge — same centralized badge fan-out. */
   function renderTopbarBell() {
@@ -747,7 +899,8 @@
     banner.innerHTML =
       '<div class="panel-head">' +
         '<div><h2>' + JONE.esc(title) + '</h2><p class="caption muted" data-dept-banner-sub>Department portal summary &amp; live attendance status</p></div>' +
-        '<div class="panel-actions"><a class="btn btn-sm btn-outline" href="workforce.html">Attendance &amp; Shifts</a></div>' +
+        '<div class="panel-actions">' + (canOpenPage("workforce.html")
+          ? '<a class="btn btn-sm btn-outline" href="workforce.html">Attendance &amp; Shifts</a>' : "") + '</div>' +
       '</div>' +
       '<div class="panel-body" data-dept-banner-metrics></div>';
     main.insertBefore(banner, main.firstChild);
@@ -1793,10 +1946,15 @@
     return g;
   }
 
+  /* A booking reference inside the payment panel is a link to the booking
+     screen, so it follows the same two rules as every other booking link: this
+     department may open that page (the access registry above) AND the server
+     grants booking data. The hand-written role list that used to sit here
+     refused a general manager and a front desk supervisor the very link a
+     receptionist was shown. */
   function canOpenPaymentBooking() {
     const auth = window.Auth;
-    return !!(auth && auth.hasCapability && auth.hasAnyRole &&
-      auth.hasAnyRole(["admin", "manager", "receptionist"]) &&
+    return !!(auth && auth.hasCapability && canOpenPage("booking-details.html") &&
       (auth.hasCapability("booking.read") || auth.hasCapability("booking.manage")));
   }
 
@@ -1933,6 +2091,7 @@
   window.JONE.dashboard = {
     renderSidebar, renderUser, setupSidebar, setupStickyTopbar, renderTopbarBell, renderBottomNav,
     navItemAllowed, notifBadge, statusPill, boot, renderDepartmentSummaryBanner, startLiveRefresh, topbar, NAV, badge, DATA, formModal,
+    canOpenPage, pageAccessFor, PAGE_ACCESS,
     /* Shared read-only dialog host. Pages that need a details/drill-down dialog
        (expense details, receipt details, audit details) use this instead of
        building their own modal: one markup, one ESC/backdrop contract, one focus

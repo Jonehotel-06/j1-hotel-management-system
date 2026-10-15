@@ -163,6 +163,14 @@ class Workstation(TimeStampedModel):
     # than management) can sign in. See apps/accounts/desktop_policy.py.
     sign_in_key_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
     sign_in_key_issued_at = models.DateTimeField(null=True, blank=True)
+    # Receptionist Desktop enrolment, second route. An administrator registers
+    # the network address the desk actually reaches the API from; a staff
+    # sign-in (or session refresh) arriving from that address IS the desk, so
+    # the browser needs no key. One exact address or a CIDR network — a whole
+    # subnet also admits every phone and guest device sharing it, so the
+    # registration UI spells that out before anything is saved.
+    ip_address = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    desktop_ip_registered_at = models.DateTimeField(null=True, blank=True)
     current_staff = models.ForeignKey(
         "accounts.User",
         null=True,

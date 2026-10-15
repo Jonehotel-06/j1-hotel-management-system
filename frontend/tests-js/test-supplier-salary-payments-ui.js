@@ -14,6 +14,7 @@ const ACCOUNTING = read("dashboard/accounting.html");
 const PAYROLL = read("dashboard/payroll.html");
 const REPORTS = read("dashboard/reports.html");
 const SERVICES = read("dashboard/service-requests.html");
+const LAUNDRY = read("dashboard/laundry.html");
 const CONFIG = read("js/config.js");
 
 test("new endpoints are registered", () => {
@@ -54,11 +55,13 @@ test("Reports exports the occupancy report as Excel and PDF", () => {
   assert.match(REPORTS, /API_ENDPOINTS\.reportsOccupancy/);
 });
 
-test("Guest Requests tracks laundry with priced items, billing and delivery", () => {
-  assert.match(SERVICES, /data-laundry-rows/);
-  assert.match(SERVICES, /data-laundry-new/);
-  assert.match(SERVICES, /Bill to folio/);
-  assert.match(SERVICES, /Who received the laundry/);
-  assert.match(SERVICES, /resourceAction\("guestLaundry",ref,"status",payload\)/);
-  assert.match(SERVICES, /resourceAction\("guestLaundry",bref,"bill",\{\}\)/);
+test("the Laundry page tracks priced items, billing and delivery", () => {
+  // Laundry became its own page: it no longer shares the guest-request page.
+  assert.match(LAUNDRY, /data-laundry-rows/);
+  assert.match(LAUNDRY, /data-laundry-new/);
+  assert.match(LAUNDRY, /Bill to folio/);
+  assert.match(LAUNDRY, /Who received the laundry/);
+  assert.match(LAUNDRY, /resourceAction\("guestLaundry",ref,"status",payload\)/);
+  assert.match(LAUNDRY, /resourceAction\("guestLaundry",bref,"bill",\{\}\)/);
+  assert.doesNotMatch(SERVICES, /data-laundry-rows/);
 });

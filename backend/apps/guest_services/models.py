@@ -227,6 +227,17 @@ class LaundryOrder(TimeStampedModel):
     priced item lines and a folio charge. Billing posts exactly once through
     the existing Finance folio ledger (Dr guest receivable / Cr other
     operating revenue); this record never moves money by itself.
+
+    Two kinds of customer are served from this one workflow:
+
+    * **In-house** — the order carries a ``stay`` (and its ``guest``) and the
+      price is charged to that stay's folio with :func:`bill_laundry_order`.
+    * **Walk-in** — a non-resident leaves laundry at reception. There is no
+      stay and no folio, so the order carries the customer's own
+      ``guest_name``/``guest_phone`` and the money is taken at the desk with
+      :func:`settle_walk_in_laundry`, which posts the collection exactly once
+      (Dr tender / Cr other operating revenue). Both kinds stay fully
+      traceable; neither can move money twice.
     """
 
     class Status(models.TextChoices):
@@ -236,14 +247,27 @@ class LaundryOrder(TimeStampedModel):
         DELIVERED = "DELIVERED", "Delivered"
         CANCELLED = "CANCELLED", "Cancelled"
 
+    class PaymentMethod(models.TextChoices):
+        CASH = "CASH", "Cash"
+        BANK_TRANSFER = "BANK_TRANSFER", "Bank transfer"
+        CARD = "CARD", "Card / terminal"
+
     reference = models.CharField(max_length=64, unique=True, db_index=True)
     idempotency_key = models.CharField(max_length=160, null=True, blank=True, unique=True)
+    # Nullable so a walk-in customer (no booking, no room) can use the service.
     stay = models.ForeignKey(
-        "stays.Stay", on_delete=models.PROTECT, related_name="laundry_orders",
+        "stays.Stay", null=True, blank=True, on_delete=models.PROTECT, related_name="laundry_orders",
     )
     guest = models.ForeignKey(
-        "bookings.Guest", on_delete=models.PROTECT, related_name="laundry_orders",
+        "bookings.Guest", null=True, blank=True, on_delete=models.PROTECT, related_name="laundry_orders",
     )
+    # Walk-in customer identity. Blank for an in-house order, whose name comes
+    # from the linked guest. Scanning a report never shows an unnamed pile of
+    # laundry: one of the two identities is always present.
+    guest_name = models.CharField(max_length=200, blank=True, default="")
+    guest_phone = models.CharField(max_length=40, blank=True, default="")
+    # How a walk-in order was actually paid for (blank until it is settled).
+    payment_method = models.CharField(max_length=20, blank=True, default="")
     room = models.ForeignKey(
         "rooms.Room", null=True, blank=True, on_delete=models.PROTECT, related_name="laundry_orders",
     )
@@ -281,7 +305,25 @@ class LaundryOrder(TimeStampedModel):
         indexes = [
             models.Index(fields=["status", "created_at"]),
             models.Index(fields=["stay", "status"]),
+            models.Index(fields=["guest_name", "status"]),
         ]
+
+    @property
+    def is_walk_in(self) -> bool:
+        """True when this order belongs to a non-resident walk-in customer."""
+        return self.stay_id is None
+
+    @property
+    def customer_name(self) -> str:
+        """The name to show on a screen or report, for either kind of customer."""
+        if self.stay_id is not None and self.guest_id is not None:
+            return self.guest.full_name
+        return self.guest_name or self.guest_phone or "Walk-in customer"
+
+    @property
+    def settled(self) -> bool:
+        """True once money has been recorded for this order (folio or payment)."""
+        return self.financial_transaction_id is not None
 
     def __str__(self):
         return f"{self.reference} · {self.get_status_display()}"

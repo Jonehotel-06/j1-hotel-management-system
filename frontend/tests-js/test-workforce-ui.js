@@ -62,11 +62,14 @@ test("workforce page uses bounded lists, skeleton errors, idempotency, and no po
   assert.doesNotMatch(page, /setInterval\s*\(/);
 });
 
-test("workforce navigation serves every staff role while planning controls remain manager-only", () => {
+test("workforce navigation serves every staff role while planning controls remain management-only", () => {
   const nav = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "workforce.html"), "utf8");
   assert.match(nav, /Workforce[\s\S]*"cashier"[\s\S]*"housekeeping"[\s\S]*"maintenance"[\s\S]*"inventory_clerk"/);
-  assert.match(page, /hasAnyRole&&window\.Auth\.hasAnyRole\(\["admin","manager"\]\)/);
+  /* Planning (shifts, employment profiles) is the management tier: a general
+     manager holds shift.manage and staff.profile.manage exactly as a manager
+     does, so the tier is admin + manager + general_manager. */
+  assert.match(page, /hasAnyRole&&window\.Auth\.hasAnyRole\(\["admin","manager","general_manager"\]\)/);
   assert.match(page, /data-wf-manager/);
 });
 

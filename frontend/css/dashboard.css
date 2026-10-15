@@ -2031,3 +2031,49 @@ body.receipt-view-page .receipt-utility-actions .btn-outline:hover {
 .detail-timeline .caption { overflow-wrap: anywhere; }
 .detail-event-details { display: grid; gap: 0.15rem; margin-top: 0.25rem; min-width: 0; }
 .detail-event-details .caption { overflow-wrap: anywhere; }
+
+/* ==========================================================================
+   CHECK-OUT FOLIO / GATE CLEARANCE — the bill the desk must collect.
+   The stated bill sits above the itemisation so nobody prints a gate pass
+   while a guest request is still unpaid, and the "record the payment received"
+   panel is part of the dialog (a nested modal would close the folio).
+   ========================================================================== */
+.folio-bill {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-alt);
+  padding: var(--sp-3) var(--sp-4);
+}
+.folio-bill-line {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--sp-4); padding: 0.35rem 0;
+}
+.folio-bill-line + .folio-bill-line { border-top: 1px solid var(--color-border); }
+.folio-bill-line span { color: var(--color-text-muted); font-size: var(--fs-sm); min-width: 0; }
+.folio-bill-line strong { font-size: var(--fs-sm); color: var(--color-heading); white-space: nowrap; }
+.folio-bill-total {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--sp-4); margin-top: 0.4rem; padding-top: 0.5rem;
+  border-top: 2px solid var(--color-border);
+}
+.folio-bill-total span { font-weight: 600; color: var(--color-heading); }
+.folio-bill-total strong { font-size: var(--fs-xl); font-weight: 700; color: var(--color-heading); }
+.folio-blocked {
+  margin-top: var(--sp-4);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius);
+  background: var(--color-danger-soft, transparent);
+  padding: var(--sp-3) var(--sp-4);
+}
+.folio-settle {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--sp-4);
+  display: grid;
+  gap: var(--sp-3);
+}
+.folio-settle .field { margin: 0; }
+.folio-settle .btn { justify-self: start; }
+/* The check-out card states what part of the outstanding figure came from the
+   guest's own requests (folio charges), not just the room. */
+.co-card-note { margin: 0.5rem 0 0; }

@@ -4,8 +4,10 @@ Operational reference for the attendance chain repaired on 2026-10-14:
 **front desk fingerprint clock-in → server-issued 6-digit code → department
 workstation sign-in → clock-out (code cancelled)**.
 
-Everything below is enforced on the server. No step depends on user-agent, IP
-address, screen size or any other client claim.
+Everything below is enforced on the server. No step depends on the user-agent,
+the screen size, or anything else the browser *asserts*. The one address-based
+input — a desk registered by the address it reaches the API from (§2b) — uses
+the address the server observed, never one the browser supplied.
 
 ---
 
@@ -16,8 +18,9 @@ address, screen size or any other client claim.
 | Workstation record | `Workstation` rows (Staff → Workstations, `dashboard/terminals.html`) | admin UI, `terminal.manage` |
 | Desk key (secret) | Only the desk browser's `localStorage` (`jone.receptionistDesktopKey`); the server stores a SHA-256 hash | `apps/accounts/desktop_policy.py` |
 | Desk key transport | `X-JONE-Desktop-Key` request header | `receptionist_desktop_for_key()` |
-| Sign-in policy | Non-management roles must present the key to sign in and to refresh a session | `sign_in_policy_applies()` |
-| Attendance policy | Non-management roles must present the key to clock in/out | `receptionist_desktop_required()` + `_assert_reception_workstation()` |
+| Registered address | `Workstation.ip_address` (+ `desktop_ip_registered_at`), set by an administrator | `receptionist_desktop_for_ip()` |
+| Sign-in policy | Non-management roles must sign in — and refresh a session — from a desk identified either way: key **or** registered address | `sign_in_policy_applies()`, `resolve_receptionist_desktop()` |
+| Attendance policy | Non-management roles must clock in/out at a desk identified the same two ways. Management may also record attendance from elsewhere — see §4a | `receptionist_desktop_required()`, `may_record_attendance_off_desk()` |
 
 Management roles (`ADMIN`, `MANAGER`, `GENERAL_MANAGER` — `STAFF_SIGN_IN_EXEMPT_ROLES`)
 keep their existing device freedom. That exemption is the same constant for
@@ -25,13 +28,19 @@ sign-in and for attendance, so the two policies cannot drift apart. It is also
 what makes the supervised fallback usable by a manager who is not sitting at the
 reception PC.
 
-## 2. Enrolling a desk (one-off, per front-desk browser)
+## 2. Enrolling a desk
+
+A front desk workstation is enrolled in **either** way — both are verified on the
+server, and a desk may have both. What matters is that front desk staff can sign
+in from that PC; **only the registered address needs nothing typed at sign-in**.
+
+### 2a. By desktop key (per browser)
 
 1. Sign in as an administrator or manager.
 2. **Staff → Workstations** (`dashboard/terminals.html`).
 3. Create/verify the workstation: department **Front Desk**, status active.
 4. Press **Issue desktop key**. The key is shown **once**; copy it immediately.
-   (Server action: `POST /api/admin/staff-accounts/workstations/<id>/desktop-key/`.)
+   (Server action: `POST /api/admin/users/terminals/<id>/desktop-key/`.)
 5. On the front-desk PC, in the **Receptionist Desktop enrolment** panel on the
    same page, paste the key and save. It is stored only in that browser's
    `localStorage` and is never rendered again.
@@ -42,6 +51,107 @@ reception PC.
 Rotate = press **Issue desktop key** again and re-paste on the desk PC. The old
 key stops working immediately (hash replaced). **Clear key** on the workstation
 revokes the desk (sign-in for operational staff then fails until re-enrolled).
+A key belongs to one browser: a re-imaged PC, a new staff profile or a different
+browser loses it, and it must be pasted again — which is exactly the friction
+2b removes.
+
+### 2b. By registered address (the PC itself, nothing typed at sign-in)
+
+1. **From the front desk PC**, sign in as an administrator or manager (management
+   roles are exempt from the desk policy, so they can sign in from anywhere).
+2. **Staff → Workstations**. The enrolment panel shows *"This browser's address
+   as the server sees it: `<address>`"* — the server reports it
+   (`GET /api/auth/client-address/`), because the address that matters is the one
+   the server observes, which behind the deployment's proxy or the hotel's
+   carrier NAT is **not** what the PC says its own address is.
+3. On the front desk workstation's row press **Register this address** and
+   confirm. (Server action: `PATCH /api/admin/users/terminals/<id>/` with
+   `{"ip_address": "<address>"}`; the address is stored canonically, and a
+   network — `192.168.1.0/24` — may be registered instead of one address when the
+   desk's address is handed out by DHCP.)
+4. The row now reads *"Receptionist Desktop: … · sign-in from `<address>`"* and
+   the *Not enrolled* flag disappears. Front desk staff sign in on that PC with
+   **their email and password only** — nothing else.
+
+The row action then offers **Change registered address** and **Clear address**.
+Clearing takes the desk back to key-only, so clear it only when the key is (or
+will be) installed.
+
+Register the **front desk PC**, never a phone or laptop: every device arriving
+from a registered address is treated as that desk. Two consequences worth
+stating plainly, because both have bitten real deployments:
+
+* **Shared addresses count as the desk.** If the whole hotel leaves through one
+  public address (typical on a single router, and on some mobile carriers), every
+  device behind it is inside the desk's address — so read the warning in the
+  confirm dialog before registering a wide range (or a `/0`-sized "address").
+  Register the exact address, or the LAN range the desk sits in, rather than the
+  hotel's whole internet-facing range.
+* **A moved desk stops matching**, by design. The refusal names the address the
+  request came from (`errors.client_ip`) and the sign-in page shows it, so an
+  administrator re-registers the new address in one step. The audit entry
+  (`STAFF_SIGN_IN` → `desktop_method: registered_ip`) records which route
+  admitted each sign-in, so "it worked yesterday" is answerable.
+
+A phone on mobile data, a guest laptop, or any browser off that address is still
+refused, exactly as before.
+
+A desk enrolled this way is a **fully working attendance station** as well:
+fingerprint verification, clock actions and 6-digit code issuance all accept the
+registered address, so a reception PC never has to hold a key at all.
+
+### What the "IP address seen by the server for this browser" value means
+
+Settings shows this address live, for the browser you are reading it in, and it
+is normal for it to differ between visits: a phone on mobile data is given a new
+address as the network changes, and some carriers share one address between many
+devices. Read it **on the front desk PC** and register that — or register the
+desk's address on the workstation (Staff → Workstations), which is the more
+precise tool because it affects one desk instead of the whole hotel.
+
+### 2c. Client address (deployment setting — read this before deploying)
+
+Which address the server believes decides whether a registered desk can sign in,
+so this matters on any host with a load balancer in front of Django:
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `TRUSTED_PROXY_CIDRS` | Addresses whose *connection* may speak for a client | loopback + private ranges |
+| `TRUSTED_CLIENT_IP_HEADERS` | Single-value headers that host's edge writes with the client it saw | `true-client-ip,cf-connecting-ip` |
+
+A header is read **only** when the connection itself came from a trusted proxy,
+which is what stops a guest from nominating the desk's address. Leave both unset
+unless your host needs something different — an unset *or blank* value keeps the
+defaults (blank never means "trust nothing"), and `none` turns a rule off
+deliberately.
+
+Why not just read `X-Forwarded-For`? Because a chain cannot be trusted from the
+left, and on Render (Cloudflare in front) it arrives as
+
+```
+X-Forwarded-For: <whatever the client sent>, <real client>, <Cloudflare edge>, <Render 10.x>
+```
+
+so the leftmost entry is client-controlled and the entries behind the real
+client are the provider's own edge — a **different one per request**, which no
+registered desk address could ever match. Render's edge writes `True-Client-IP`
+with the address it actually saw and overrides anything the client sent, so that
+value wins when the connection came from a trusted proxy (Render connects from
+its private `10.x` network, covered by the default). If `True-Client-IP` is ever
+absent, the chain is walked from the right as before and the reported source
+changes, which the Workstations panel and `errors.client_ip` show honestly.
+
+Verify on the live host before registering a desk:
+
+```bash
+# Expect the address of the machine you ran this from, plus which rule named it.
+curl -s https://<host>/api/auth/client-address/ -H "Authorization: Bearer <admin-token>"
+# {"success":true,"data":{"client_ip":"81.107.0.110","source":"true-client-ip","trusted_proxy_hops":true}}
+```
+
+If `source` is `peer` on a host that has a proxy, the proxy's address is not in
+`TRUSTED_PROXY_CIDRS` — list it there, or every client looks like the proxy and
+no desk address can match.
 
 ## 3. Fingerprint hardware
 
@@ -135,6 +245,53 @@ control into the console (and a supervised clock-out that does not require a
 probe) is the small follow-up this document is flagging, not something the
 repair work pretended to fix.
 
+## 4a. Recording attendance away from the desk (management)
+
+The desk rule exists to stop a **personal phone recording other people's
+attendance**. It was also refusing the people who supervise attendance, which
+turned a control into a lockout: a manager whose shift began at the desk could
+not record anything from anywhere else, and an administrator could not open the
+attendance terminal at all while the front desk PC was unenrolled, re-imaged or
+moved.
+
+The rule now has exactly one exemption, and it is not a new hole:
+
+| Who | Where they may record | Evidence required |
+|---|---|---|
+| Operational staff (reception, housekeeping, F&B, security …) | At a desk they signed in at — key or registered address | Their sign-in already required the desk |
+| Manager / general manager **with** `attendance.manage` | Anywhere | A recorded capture failure for that staff member (30-minute window) |
+| Administrator | Anywhere | Reason only (`ADMINISTRATOR_EXCEPTION`) |
+| Manager / general manager **without** `attendance.manage`, and any operational role (including FRONT_DESK_SUPERVISOR) | Desk only | — |
+
+The exemption is granted to exactly the accounts that may already authorise a
+supervised fallback, by **delegating to the same function**
+(`may_record_attendance_off_desk` → `attendance_fallback_authority`), so the two
+rules cannot drift apart: a future change to the fallback matrix moves this with
+it instead of quietly opening or closing the station rule.
+
+What this means in practice:
+
+* An administrator can always issue a fallback code from their own phone, which
+  is the supported answer while the front desk has no enrolled desk — you are
+  never locked out of attendance by a PC that has not been set up yet, or that
+  has moved to a new address.
+* A manager away from reception can `RECORD_FAILURE` and then authorise the
+  fallback; the evidence requirement is untouched by the exemption.
+* Ordinary staff are unaffected: their sign-in is bound to the desk, so a phone
+  never holds a session that can reach the terminal.
+* Every off-desk use of the terminal writes `ATTENDANCE_OFF_DESK_TERMINAL` (actor,
+  role, authority, requested action) **before** the action runs, in addition to
+  the existing `ATTENDANCE_MANUAL_OVERRIDE` entry. If you want to review how
+  attendance was recorded during an outage, filter the audit trail for those two
+  actions.
+
+Honest limitation, unchanged by this work: `AttendanceRecord` does not carry a
+"recorded from" column, so a row created off-desk is not visually distinct in
+the attendance list itself. The provenance is in the audit trail (above) and in
+the response the terminal returns. Adding a station column to the attendance
+record is a schema change and was left out of this fix deliberately; ask for it
+if you want the attendance list itself to show it.
+
 ## 5. Attendance codes
 
 * Issued by the server (`mint_temporary_workstation_credential`), bound to one
@@ -150,9 +307,16 @@ repair work pretended to fix.
 ## 6. Deployment configuration checklist
 
 - [ ] `python manage.py migrate` (adds `0021_staff_records_capabilities` — the
-      `staff.view` / `staff.manage` capability rows the fingerprint screens need).
-- [ ] At least one active FRONT_DESK `Workstation` with an issued desktop key,
-      and every front-desk browser enrolled with that key.
+      `staff.view` / `staff.manage` capability rows the fingerprint screens need —
+      and `0023_workstation_registered_desktop_ip`, the two columns that let a
+      desk be identified by address).
+- [ ] Every front desk PC signed in at least once from **the desk itself**, its
+      address registered (§2b) — *or* an issued desktop key installed in that
+      browser (§2a). A desk with neither cannot sign anyone in. (Management is
+      exempt, so an administrator can still record attendance in the meantime —
+      §4a.)
+- [ ] `GET /api/auth/client-address/` on the deployed host reports the real
+      client address and the rule that named it, not the proxy's (§2c).
 - [ ] A fingerprint reader bridge on each reception PC, or a documented decision
       to use the supervised fallback for reader outages.
 - [ ] `js/runtime-config.js` left at the default (`BIOMETRIC_READER_MODE`
@@ -166,6 +330,19 @@ repair work pretended to fix.
 ## 7. Verification commands
 
 ```bash
+# Which address does the server see THIS browser from, and by which rule? (admin/mgr)
+curl -s https://<host>/api/auth/client-address/ -H "Authorization: Bearer <admin-token>"
+
+# A registered desk signs in with credentials alone (expect 200; no key header)
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<host>/api/auth/login/ \
+     -H 'Content-Type: application/json' \
+     -d '{"email":"frontdesk@example.com","password":"<password>"}'
+
+# The same request from another address is refused, and says from where (expect
+# 403 + errors.client_ip = the address to register for that desk)
+curl -s -X POST https://<host>/api/auth/login/ -H 'Content-Type: application/json' \
+     -d '{"email":"frontdesk@example.com","password":"<password>"}'
+
 # Desk is enrolled and the key is right (expect 200 + a code for an enrolled, clocked-in employee)
 curl -s -X POST https://<host>/api/admin/staff-operations/biometrics/reception-terminal/ \
      -H "Authorization: Bearer <staff-ops-token>" -H "X-JONE-Desktop-Key: <key>" \
@@ -178,7 +355,24 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<host>/api/admin/staff-
      -d '{"action":"CLOCK_IN","idempotency_key":"phone-test-1"}'
 ```
 
+```bash
+# Management may record attendance away from the desk (expect 200 + a code).
+# Run this from a phone or laptop that is NOT the front desk PC.
+curl -s -X POST https://<host>/api/admin/staff-operations/biometrics/reception-terminal/ \
+     -H "Authorization: Bearer <administrator-token>" -H 'Content-Type: application/json' \
+     -d '{"action":"MANUAL_FALLBACK","email":"worker@example.com","manual_override_reason":"Reader unavailable at reception."}'
+# Then confirm the audit trail names the authority used:
+#   action=ATTENDANCE_OFF_DESK_TERMINAL  +  action=ATTENDANCE_MANUAL_OVERRIDE
+```
+
 The same checks plus the code lifecycle (issue → sign in → single-use replay
 refused → clock-out → code dead) are automated in
 `backend/tests/test_attendance_workstation_policy.py` and
-`tools/verification/api_verify_items.py`.
+`tools/verification/api_verify_items.py`. The desk-by-address route — including
+the deployed host's forwarding shape, a forged edge header, refresh, attendance
+and the administrator's register/clear actions — is covered by
+`backend/tests/test_receptionist_desktop_ip.py`; the browser side (row state,
+the register/clear flows, and the refusal shown on the sign-in page) by
+`frontend/tests-js/test-desktop-address-ui.js` and
+`frontend/tests-js/test-desk-key.js`; the off-desk management rule (and what it
+still refuses) by `backend/tests/test_attendance_off_desk_management.py`.

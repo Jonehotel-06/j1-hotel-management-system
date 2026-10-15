@@ -397,6 +397,41 @@ CORS_ALLOW_HEADERS = (
 )
 
 # ---------------------------------------------------------------------------
+# Client address behind the platform proxy
+# ---------------------------------------------------------------------------
+# A managed host (Render, Fly, Heroku, Railway, nginx/gunicorn) terminates the
+# connection itself, so Django's REMOTE_ADDR is the PROXY's address. The real
+# client address then only exists in X-Forwarded-For, which any client can
+# forge — so it is read only when the connection arrived from one of these
+# trusted proxy networks. See apps/core/client_ip.py.
+#
+# The default (private + loopback ranges) is correct for the hosts above and
+# cannot be abused from outside: a public client cannot make its connection
+# appear to come from 10.0.0.0/8. A deployment whose proxy uses PUBLIC
+# addresses must list them here, or every client will look like the proxy.
+TRUSTED_PROXY_CIDRS = config(
+    "TRUSTED_PROXY_CIDRS",
+    default="127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1/128,fc00::/7,fe80::/10",
+    cast=Csv(),
+)
+
+# Single-value headers the deployment's edge rewrites with the client it saw.
+# Read ONLY when the connection arrived from a TRUSTED_PROXY_CIDRS address, and
+# preferred over X-Forwarded-For because a chain cannot be trusted from the
+# left: Render/Cloudflare append to whatever the client sent, so on that host
+# the leftmost entry is client-controlled and the entries behind the real
+# client are Cloudflare edge addresses (a different one per request). The
+# defaults are the two Cloudflare-written headers, which a client cannot
+# override. A deployment with its own front end names its header here instead
+# (e.g. "x-real-ip" behind nginx with proxy_set_header X-Real-IP $remote_addr).
+# An empty value disables the preference and falls back to the forwarding chain.
+TRUSTED_CLIENT_IP_HEADERS = config(
+    "TRUSTED_CLIENT_IP_HEADERS",
+    default="true-client-ip,cf-connecting-ip",
+    cast=Csv(),
+)
+
+# ---------------------------------------------------------------------------
 # Application configuration
 # ---------------------------------------------------------------------------
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:8080").rstrip("/")

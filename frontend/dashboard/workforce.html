@@ -13,7 +13,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-  <link rel="stylesheet" href="../css/main.css?v=1.1.12">
+  <link rel="stylesheet" href="../css/main.css?v=1.1.15">
   <style>
     .op-tabs{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}.op-tabs .is-active{background:var(--color-primary);color:var(--color-primary-ink);border-color:var(--color-primary)}
     .wf-summary{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;margin-bottom:1rem;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface-alt)}
@@ -26,7 +26,7 @@
 <main class="dash-content">
   <div class="op-tabs" role="tablist" aria-label="Workforce views">
     <button class="btn btn-sm is-active" type="button" role="tab" aria-selected="true" data-wf-tab="attendance">Attendance</button>
-    <button class="btn btn-sm btn-outline" type="button" role="tab" aria-selected="false" data-wf-tab="reception-terminal">Reception Biometric Terminal</button>
+    <button class="btn btn-sm btn-outline" type="button" role="tab" aria-selected="false" data-wf-tab="reception-terminal" data-wf-desk-terminal hidden>Reception Biometric Terminal</button>
     <button class="btn btn-sm btn-outline" type="button" role="tab" aria-selected="false" data-wf-tab="leave">Leave</button>
     <button class="btn btn-sm btn-outline" type="button" role="tab" aria-selected="false" data-wf-tab="payslips">My salary</button>
     <button class="btn btn-sm btn-outline" type="button" role="tab" aria-selected="false" data-wf-tab="shifts" data-wf-manager hidden>Schedules</button>
@@ -37,7 +37,7 @@
     <div class="panel-head">
       <div>
         <h2>Reception Biometric Attendance &amp; Numeric Workstation Code Console</h2>
-        <p class="caption muted">Scan staff fingerprint to clock in, start/end break, clock out (which immediately expires workstation access codes), or issue a 6-digit numeric workstation code. Attendance is recorded only at an enrolled Receptionist Desktop: this page works here when this browser carries a desktop key, or for a management account, and always re-checks on the server.</p>
+        <p class="caption muted">Scan staff fingerprint to clock in, start/end break, clock out (which immediately expires workstation access codes), or issue a 6-digit numeric workstation code. Attendance for operational staff is recorded only at an enrolled Receptionist Desktop &mdash; a browser carrying the desk key, or one at the workstation&rsquo;s registered address. Management accounts (administrator, manager, general manager) that may authorise a supervised fallback can also record from elsewhere, and every such action is audited with the account and the reason. The server re-checks all of this; nothing here decides it.</p>
         <p class="caption" data-wf-rt-desktop-state role="status" aria-live="polite" style="margin-top:0.35rem;"></p>
       </div>
     </div>
@@ -63,7 +63,7 @@
       </div>
       <div class="card card-pad" data-wf-rt-fallback hidden style="margin-top:1.25rem;">
         <h3 style="font-size:var(--fs-md);margin:0 0 0.35rem;">Supervised fallback (manager / administrator)</h3>
-        <p class="caption muted">Use only when the scanner or the employee's finger genuinely cannot be read. A manager fallback needs the recorded failure from the failed scan above; an administrator may authorise one without a prior attempt. Every fallback is audited with your account and this reason, and the issued code is single-use and expires when the employee clocks out. Ordinary staff can never issue one.</p>
+        <p class="caption muted">Use only when the scanner or the employee's finger genuinely cannot be read. A manager fallback needs the recorded failure from the failed scan above; an administrator may authorise one without a prior attempt. This card works away from the front desk for management accounts &mdash; which is how a supervisor covers a reader outage on a non-reception device &mdash; and every fallback is audited with your account, this reason and the authority used. The issued code is single-use and expires when the employee clocks out. Ordinary staff can never issue one.</p>
         <div class="form-grid fg-2" style="margin-top:0.75rem;align-items:end;">
           <div class="field">
             <label class="field-label" for="wf-rt-fallback-identifier">Employee code or email</label>
@@ -113,16 +113,27 @@
     <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Operational staff profiles"><table class="table"><thead><tr><th>Staff</th><th>Employee code</th><th>Department</th><th>Title</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-wf-profile-rows></tbody></table></div><div class="pagination" data-wf-profile-pagination></div></div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.12"></script><script src="../js/config.js?v=1.1.12"></script><script src="../js/utils.js?v=1.1.12"></script><script src="../js/icons.js?v=1.1.12"></script><script src="../js/api.js?v=1.1.12"></script><script src="../js/theme.js?v=1.1.12"></script><script src="../js/ui.js?v=1.1.12"></script><script src="../js/auth.js?v=1.1.12"></script><script src="../js/navigation.js?v=1.1.12"></script><script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script><script src="../js/operations.js?v=1.1.12"></script><script src="../js/biometrics.js?v=1.1.12"></script>
+<script src="../js/runtime-config.js?v=1.1.15"></script><script src="../js/config.js?v=1.1.15"></script><script src="../js/utils.js?v=1.1.15"></script><script src="../js/icons.js?v=1.1.15"></script><script src="../js/api.js?v=1.1.15"></script><script src="../js/theme.js?v=1.1.15"></script><script src="../js/ui.js?v=1.1.15"></script><script src="../js/auth.js?v=1.1.15"></script><script src="../js/navigation.js?v=1.1.15"></script><script src="../js/dashboard.js?v=1.1.15"></script><script src="../js/table-fit.js?v=1.1.15"></script><script src="../js/operations.js?v=1.1.15"></script><script src="../js/biometrics.js?v=1.1.15"></script>
 <script>
 JONE.ui.initChrome();
-var __workforceAllowed=JONE.dashboard.boot(["admin","manager","general_manager","front_desk_supervisor","receptionist","cashier","housekeeping","maintenance","inventory_clerk","restaurant_manager","waiter","bar_manager","bartender","kitchen_manager","chef","kitchen_assistant","housekeeping_manager","housekeeper","porter","maintenance_technician","accounts_manager","accountant","hr_manager","security","procurement_officer","storekeeper"]);
+var __workforceAllowed=JONE.dashboard.boot(["admin","manager","general_manager","front_desk_supervisor","receptionist","cashier","housekeeping","maintenance","inventory_clerk","restaurant_manager","waiter","bar_manager","bartender","kitchen_manager","chef","kitchen_assistant","housekeeping_manager","housekeeper","porter","maintenance_technician","accounts_manager","accountant","hr_manager","security","procurement_officer","storekeeper","staff"]);
 document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
 (function(){
 "use strict";
 if(!__workforceAllowed)return;
 var DATA=JONE.dashboard.DATA,OPS=JONE.operations;
-var isManager=window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager"]);
+/* Planning tabs, team scope and the editing controls are the management tier:
+   a general manager holds shift.manage and staff.profile.manage exactly as a
+   manager does, so the tier is admin + manager + general_manager. */
+var isManager=window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager","general_manager"]);
+/* The Reception Biometric Terminal is the FRONT DESK console — it drives the
+   enrolled Receptionist Desktop, or a management-authorised supervised
+   fallback. Only management (administrator, manager, general manager) and the
+   front desk (receptionist, front desk supervisor) may see it; every other
+   department clocks in on its own screen and is offered no tab, no panel and
+   no action for it. The server re-checks the terminal on every request. */
+var deskTerminal=!!(window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager","general_manager","receptionist","front_desk_supervisor"]));
+document.querySelectorAll("[data-wf-desk-terminal]").forEach(function(el){el.hidden=!deskTerminal;});
 var me=(window.Auth&&window.Auth.state&&window.Auth.state.user)||{};
 var state={tab:"attendance",pages:{attendance:1,leave:1,payslips:1,shifts:1,templates:1,profiles:1},attendanceItems:[],templateCache:{},profileCache:{}};
 var attendanceRows=document.querySelector("[data-wf-attendance-rows]"),leaveRows=document.querySelector("[data-wf-leave-rows]"),shiftRows=document.querySelector("[data-wf-shift-rows]"),templateRows=document.querySelector("[data-wf-template-rows]"),profileRows=document.querySelector("[data-wf-profile-rows]");
@@ -154,7 +165,7 @@ async function loadProfiles(page){if(page!=null)setPage("profiles",page);DATA.lo
 function profileFields(){return[{name:"department",label:"Department",type:"text"},{name:"job_title",label:"Job title",type:"text"},{name:"employment_start",label:"Employment start",type:"date"},{name:"employment_status",label:"Employment status",type:"select",required:true,options:[{value:"ACTIVE",label:"Active"},{value:"ON_LEAVE",label:"On leave"},{value:"SUSPENDED",label:"Suspended"},{value:"INACTIVE",label:"Inactive"}]},{name:"notes",label:"Employment notes",type:"textarea",rows:3}];}
 async function newProfile(){var fields=[userPicker("user_id","Staff member",true)].concat(profileFields().filter(function(field){return field.name!=="employment_status";}));var result=await JONE.dashboard.formModal({title:"Add operational staff profile",submitText:"Create profile",wide:true,fields:fields,onSubmit:async function(values){await window.API.create("staffProfiles",OPS.omitEmpty(values));return{message:"Staff profile created."};}});if(result){JONE.ui.toast("Staff profile created.","success");loadProfiles(1);}}
 async function editProfile(id){var profile=state.profileCache[String(id)];if(!profile){JONE.ui.toast("Profile details are no longer available; refresh the list.","error");return;}var result=await JONE.dashboard.formModal({title:"Edit operational profile",submitText:"Save profile",wide:true,values:profile,fields:profileFields(),onSubmit:async function(values){await window.API.update("staffProfiles",id,values);return{message:"Staff profile updated."};}});if(result){JONE.ui.toast("Staff profile updated.","success");loadProfiles();}}
-function activate(tab){if((tab==="shifts"||tab==="profiles")&&!isManager)return;state.tab=tab;document.querySelectorAll("[data-wf-panel]").forEach(function(panel){panel.hidden=panel.getAttribute("data-wf-panel")!==tab;});document.querySelectorAll("[data-wf-tab]").forEach(function(button){var active=button.getAttribute("data-wf-tab")===tab;button.classList.toggle("is-active",active);button.classList.toggle("btn-outline",!active);button.setAttribute("aria-selected",active?"true":"false");});if(tab==="attendance")loadAttendance();if(tab==="leave")loadLeave();if(tab==="payslips")loadPayslips();if(tab==="shifts"){loadShifts();loadTemplates();}if(tab==="profiles")loadProfiles();}
+function activate(tab){if(tab==="reception-terminal"&&!deskTerminal)return;if((tab==="shifts"||tab==="profiles")&&!isManager)return;state.tab=tab;document.querySelectorAll("[data-wf-panel]").forEach(function(panel){panel.hidden=panel.getAttribute("data-wf-panel")!==tab;});document.querySelectorAll("[data-wf-tab]").forEach(function(button){var active=button.getAttribute("data-wf-tab")===tab;button.classList.toggle("is-active",active);button.classList.toggle("btn-outline",!active);button.setAttribute("aria-selected",active?"true":"false");});if(tab==="attendance")loadAttendance();if(tab==="leave")loadLeave();if(tab==="payslips")loadPayslips();if(tab==="shifts"){loadShifts();loadTemplates();}if(tab==="profiles")loadProfiles();}
 async function loadPayslips(page){if(page!=null)setPage("payslips",page);var rows=document.querySelector("[data-wf-payslip-rows]");if(!rows)return;DATA.loading(rows);try{var response=await window.API.list("myPayslips",{page:currentPage("payslips"),page_size:JONE.dashboard.pageSize()},{cache:"no-store"}),items=OPS.listItems(response);if(!items.length){DATA.empty(rows,"creditCard","No approved payslips yet","Your payslip appears here after payroll is approved. Approval is not the same as payment.",7);}else{rows.innerHTML=items.map(function(row){return '<tr><td><strong>'+JONE.esc(row.period_reference||"")+'</strong><br><small>'+JONE.esc(date(row.period_starts_on))+' – '+JONE.esc(date(row.period_ends_on))+'</small></td><td>'+JONE.esc(row.gross_pay||"—")+'</td><td>'+JONE.esc(row.deductions_total||"—")+'</td><td>'+JONE.esc(row.net_pay||"—")+'</td><td>'+JONE.esc(row.salary_amount_paid||"—")+'</td><td>'+JONE.esc(row.salary_balance||"—")+'</td><td><button class="btn btn-sm btn-outline" type="button" data-wf-payslip-download="'+JONE.esc(row.period_reference)+'">Download</button></td></tr>';}).join("");}renderPager("[data-wf-payslip-pagination]",items,response,loadPayslips,"payslips");}catch(err){DATA.error(rows,"Payslips couldn't be loaded",(err&&err.message)||"Please try again in a moment.",7);}}
 async function downloadPayslip(reference){try{var blob=await window.API.getBlob(window.APP_CONFIG.API_ENDPOINTS.payrollPayslips+encodeURIComponent(reference)+"/",{cache:"no-store"});var url=URL.createObjectURL(blob);var a=document.createElement("a");a.href=url;a.download="payslip-"+reference+".pdf";document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);}catch(err){JONE.ui.toast((err&&err.message)||"Payslip download failed.","error");}}
 document.querySelectorAll("[data-wf-tab]").forEach(function(button){button.addEventListener("click",function(){activate(button.getAttribute("data-wf-tab"));});});
@@ -166,11 +177,36 @@ document.getElementById("wf-attendance-date").value=hotelToday();loadAttendance(
   var stateLine=document.querySelector("[data-wf-rt-desktop-state]");
   var enrol=!!(window.Auth&&window.Auth.receptionistDesktopKey&&window.Auth.receptionistDesktopKey());
   var management=!!(window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager","general_manager"]));
-  if(stateLine)stateLine.textContent=enrol
-    ?"This browser is enrolled as a Receptionist Desktop."
+  function say(text){if(stateLine)stateLine.dataset.base=text;renderState();}
+  function renderState(){
+    if(!stateLine)return;
+    var base=stateLine.dataset.base||"";
+    stateLine.textContent=base+(stateLine.dataset.seen?" "+stateLine.dataset.seen:"");
+  }
+  if(!enrol&&management){
+    // The address matters here: this is the screen where a refused terminal
+    // tells the operator about it, and on a phone that address changes as the
+    // network does. Showing it removes the guesswork.
+    if(window.API&&typeof window.API.getClientAddress==="function"){
+      stateLine.dataset.seen="This browser's address as the server sees it: loading\u2026";
+      renderState();
+      window.API.getClientAddress().then(function(response){
+        var data=(response&&response.data)||{};
+        var ip=String(data.client_ip||"");
+        var source=String(data.source||"");
+        var seen=ip
+          ?"This browser's address as the server sees it: "+ip+(source&&source!=="peer"?" (reported by "+source+")":"")+". Register this address on the front desk workstation to record attendance from here without a desktop key."
+          :"The server could not determine this browser's address.";
+        stateLine.dataset.seen=seen;
+        renderState();
+      }).catch(function(){stateLine.dataset.seen="";renderState();});
+    }
+  }
+  say(enrol
+    ?"This browser carries a Receptionist Desktop key, so attendance recorded here is recorded at the desk."
     :management
-      ?"No desktop key in this browser: as a management account you can still operate the terminal, and every action is audited."
-      :"This browser is not an enrolled Receptionist Desktop, so the server will refuse to record attendance here.";
+      ?"No desktop key in this browser. As a management account you may still record attendance from here: each use is audited with your account, the workstation and the reason, and a fallback still needs its recorded failure (administrators excepted)."
+      :"This browser is not an enrolled Receptionist Desktop, so the server will refuse to record attendance here. Ask an administrator to enrol this desk.");
   var fallback=document.querySelector("[data-wf-rt-fallback]");
   if(fallback)fallback.hidden=!management;
   var fallbackState=document.querySelector("[data-wf-rt-fallback-state]");
@@ -229,5 +265,5 @@ document.querySelectorAll("button[data-wf-rt-action]").forEach(function(btn){
   });
 });
 })();
-</script><script src="../js/pwa.js?v=1.1.12"></script><script src="../js/version.js?v=1.1.12"></script><script src="../js/update-checker.js?v=1.1.12"></script>
+</script><script src="../js/pwa.js?v=1.1.15"></script><script src="../js/version.js?v=1.1.15"></script><script src="../js/update-checker.js?v=1.1.15"></script>
 </body></html>

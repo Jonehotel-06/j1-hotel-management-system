@@ -427,6 +427,18 @@ def _post_order_charge(*, order, actor):
 
 
 @transaction.atomic
+def bill_unbilled_order_charge(*, order, actor):
+    """Post this order's folio charge now, exactly once.
+
+    Delivery posts the charge, so a delivered order normally already owns one.
+    This entry point exists for the anomaly a check-out desk can actually meet:
+    an order that carries no charge transaction (posted by an older build, or
+    interrupted mid-transition). It reuses the same idempotent posting, so a
+    settled order is never charged twice.
+    """
+    return _post_order_charge(order=order, actor=actor)
+
+
 def transition_order(*, order, target_status: str, actor) -> PosOrder:
     """Advance kitchen/fulfilment workflow; delivery posts the immutable charge."""
     order = PosOrder.objects.select_for_update().get(pk=order.pk)

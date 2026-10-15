@@ -191,6 +191,75 @@ class ReceiptEmailTests(BaseAPITestCase):
             result = deliver_email_log(log.pk)
         self.assertEqual(result, EmailLog.Status.FAILED)
 
+    # -- One guest, one receipt --------------------------------------------
+    #
+    # A duplicate receipt reaches a real guest, so the duplicate guard is a
+    # product rule, not a nicety. Two client shapes must be covered: the shipped
+    # frontend (always sends an idempotency key, and may legitimately resend)
+    # and an older cached build or hand-made call (sends no key at all, and is
+    # exactly what produced the reported duplicate — a stray click minutes
+    # after the first send).
+    def _age_sent_receipt(self, minutes):
+        """Move this booking's SENT receipt logs `minutes` into the past."""
+        return EmailLog.objects.filter(
+            booking_reference=self.booking.booking_reference,
+            kind=EmailLog.Kind.RECEIPT,
+            status=EmailLog.Status.SENT,
+        ).update(created_at=timezone.now() - timedelta(minutes=minutes))
+
+    def test_keyless_repeat_minutes_later_is_a_duplicate_not_a_second_email(self):
+        self.auth(self.staff)
+        first = self.client.post(self._url(), {}, format="json")
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(first.data["data"]["status"], EmailLog.Status.SENT)
+        self.assertEqual(len(mail.outbox), 1)
+
+        self._age_sent_receipt(5)  # the stray second click, five minutes later
+
+        again = self.client.post(self._url(), {}, format="json")
+        self.assertEqual(again.status_code, 200, again.data)
+        self.assertEqual(again.data["data"]["status"], EmailLog.Status.SENT)
+        self.assertTrue(again.data["data"]["deduplicated"])
+        self.assertEqual(
+            len(mail.outbox), 1,
+            "a keyless repeat must never put a second receipt in the guest's inbox",
+        )
+        self.assertEqual(EmailLog.objects.filter(status=EmailLog.Status.SENT).count(), 1)
+
+    def test_same_key_repeat_within_ten_minutes_is_deduplicated(self):
+        """A retried send keeps its key (the modal reuses it), so a retry after a
+        lost answer is recognised instead of mailing the guest again."""
+        self.auth(self.staff)
+        key = "rem-J1-TEST-KEY-1"
+        self.client.post(self._url(), {"idempotency_key": key}, format="json")
+        self.assertEqual(len(mail.outbox), 1)
+        self._age_sent_receipt(5)
+        res = self.client.post(self._url(), {"idempotency_key": key}, format="json")
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertTrue(res.data["data"]["deduplicated"])
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_keyed_deliberate_resend_minutes_later_still_sends(self):
+        """Staff CAN send a fresh copy on purpose from the shipped UI: a new
+        idempotency key after the 30-second window is a new send."""
+        self.auth(self.staff)
+        self.client.post(self._url(), {"idempotency_key": "rem-J1-TEST-KEY-2"}, format="json")
+        self.assertEqual(len(mail.outbox), 1)
+        self._age_sent_receipt(5)
+        res = self.client.post(self._url(), {"idempotency_key": "rem-J1-TEST-KEY-3"}, format="json")
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.data["data"]["status"], EmailLog.Status.SENT)
+        self.assertFalse(res.data["data"].get("deduplicated", False))
+        self.assertEqual(len(mail.outbox), 2)
+
+    def test_force_resend_overrides_the_duplicate_guard(self):
+        self.auth(self.staff)
+        self.client.post(self._url(), {}, format="json")
+        self._age_sent_receipt(5)
+        res = self.client.post(self._url(), {"force_resend": True}, format="json")
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(len(mail.outbox), 2)
+
     # -- Guard rails --------------------------------------------------------
     def test_missing_guest_email_rejected(self):
         self.guest.email = ""

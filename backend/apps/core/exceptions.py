@@ -139,7 +139,13 @@ class ServiceQRExpiredError(JOneAPIError):
 
 
 class StaffSignInRestrictedError(JOneAPIError):
-    """Operational staff password was valid, but no Receptionist Desktop key was presented."""
+    """Operational staff password was valid, but the request was not made at the Receptionist Desktop.
+
+    The observed client address travels with the refusal (``errors.client_ip``)
+    because the person who can fix it is an administrator, and the only thing
+    they need is the address to register for that desk. It is the caller's own
+    address, revealed only after their credentials have been verified.
+    """
 
     status_code = status.HTTP_403_FORBIDDEN
     default_detail = (
@@ -147,6 +153,26 @@ class StaffSignInRestrictedError(JOneAPIError):
         "Ask the front desk to sign you in, or contact an administrator."
     )
     default_code = "STAFF_SIGN_IN_RESTRICTED"
+    network_mismatch_detail = (
+        "This device is outside the network the Front Desk desktop is pinned to. "
+        "Sign in from the front desk, or ask an administrator to update it."
+    )
+
+    def __init__(self, detail=None, *, client_ip="", network_mismatch=False):
+        if detail is None and network_mismatch:
+            detail = self.network_mismatch_detail
+        super().__init__(detail)
+        self.client_ip = str(client_ip or "")
+        self.network_mismatch = bool(network_mismatch)
+
+    @property
+    def errors_payload(self):
+        payload = {}
+        if self.client_ip:
+            payload["client_ip"] = self.client_ip
+        if self.network_mismatch:
+            payload["reason"] = "front_desk_ip_mismatch"
+        return payload or None
 
 
 

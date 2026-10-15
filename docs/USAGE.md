@@ -130,6 +130,28 @@ audit metadata with the authenticated user's API request; it is not a sign-in,
 permission, presence lock, or verified proof of who is at the device. Clear it
 when the browser is being repurposed.
 
+The registry is also where the **Receptionist Desktop** is enrolled, and it is
+the one place where a workstation does affect sign-in: operational staff (every
+role except management) may sign in only from a front desk PC that the server can
+identify — either because that browser holds the desk key an administrator issued
+for it, or because an administrator registered the address the desk reaches the
+API from, in which case front desk staff type **only** their email and password.
+The panel shows the address the server sees this browser as; the row action
+registers it. A phone, a guest laptop, or any browser off that address is still
+refused, and the refusal tells the administrator which address to register if the
+desk has moved.
+
+Attendance follows the same two routes — fingerprint clock-in, break, clock-out
+and the 6-digit codes are recorded at a desk identified by its key or its
+registered address — and adds one deliberate exception: management accounts
+(administrator, manager, general manager) that may authorise attendance for
+somebody else can also record it away from the desk, which is how a supervisor
+covers a broken reader or an unenrolled front desk. Each such action is audited
+with the account, the reason and the authority used; ordinary staff are bound to
+the desk exactly as before. See `docs/ATTENDANCE_WORKSTATION_SETUP.md` §4a. Management roles sign in anywhere, as before. Step-by-step
+instructions, including what to check after deploying behind a load balancer, are
+in `docs/ATTENDANCE_WORKSTATION_SETUP.md`.
+
 ### Operations, finance, and workforce
 
 The staff sidebar groups the operational modules. Every list is bounded and
@@ -141,6 +163,7 @@ states rather than invented records.
 | Stays, folios, and cashier | Charges, collections, refunds/reversals, expenses, and cash movements are separate immutable evidence. Never delete or overwrite a posted financial record; correct it with the approved linked reversal/adjustment workflow. |
 | POS / room service | Create orders from the live catalog and progress them through the controlled kitchen/service state. Restaurant managers register tables; waiters open a table session before dine-in orders and can attach split checks to it. Eligible table QR requests can launch a linked POS draft; staff still select menu items and submit through the existing workflow. Close is rejected while an order is unfinished or a delivered check is unpaid. Room-service charges still require the authoritative in-house stay/folio validation. |
 | Guest requests, housekeeping, maintenance | Work only in the authorized team queue. Record status/event evidence and use guest-visible comments deliberately; do not expose internal notes through the portal. |
+| Laundry | Its own page in the sidebar (it previously shared the Guest Requests page, which made two sidebar entries open the same screen). Receive priced item lines for either an **in-house guest** — charged once to that stay's folio via **Bill to folio** — or a **walk-in customer** who is not staying with us, identified by their own name and phone and paid at the desk via **Record payment**. A walk-in is never charged to a folio, because there is no guest account to charge; a cash payment must be taken into the acting cashier's own open drawer so the count reconciles at close. Both routes post exactly once and both appear in collections. |
 | Inventory and procurement | Issue/receive stock through append-only movements. Use suppliers and purchase-order approvals; never silently edit a historical goods receipt or stock balance. |
 | Workforce and payroll | Schedule shifts, clock attendance through source-keyed events, and review leave independently. Compensation terms are effective-dated basic salary, housing/transport allowances, overtime rate, currency, and notes. Payroll does not calculate government PAYE, pension, NHF/NHIS, Tax ID, benefit-in-kind, tax-claim, or opening-YTD amounts; use only genuine internal deduction reasons such as approved absence, lateness, spoilage, or an individually approved disciplinary deduction. A missing-stock case never deducts pay when recorded. Only an Admin may approve sharing it equally across a snapshot of all active/on-leave staff in that department; the next eligible payroll run then applies each share once and shows the case reference. Rejection creates no deduction. Approval posts gross wages, net salary payable, and internal deductions payable to the ledger. Bank payout/reconciliation/provider integration is deferred. Corrections are replacement runs, never edits to historical snapshots. |
 | Reports | Read charges/revenue, collections, refunds/reversals, expenses, and cash variance as distinct measures. Legacy payment totals are compatibility information, not a substitute for the financial ledger. |

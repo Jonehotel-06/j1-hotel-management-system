@@ -4,18 +4,20 @@ import logging
 
 from django.contrib.auth import password_validation
 from django.contrib.auth.tokens import default_token_generator
+from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from apps.audit.services import log_action
+from apps.core.client_ip import normalize_ip_or_network
 from apps.core.exceptions import StaffSignInRestrictedError
 from apps.core.storage import absolute_media_url
 
 from .capabilities import capability_codes_for_user, has_capability
 from .desktop_policy import (
-    front_desk_desktop_ip_allowed, presented_desktop_key, receptionist_desktop_for_key,
+    front_desk_desktop_ip_allowed, request_client_ip, resolve_receptionist_desktop,
     sign_in_policy_applies,
 )
 from .models import User, Workstation
@@ -106,16 +108,27 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
         data = super().validate(attrs)
         request = self.context.get("request")
         desktop = None
+        desktop_method = ""
         if sign_in_policy_applies(self.user):
             # Enforced after the password check so the response reveals nothing
-            # about an account until its credentials are proven.
-            desktop = receptionist_desktop_for_key(presented_desktop_key(request))
+            # about an account until its credentials are proven. The desktop is
+            # identified either by the key its browser was enrolled with, or by
+            # the request arriving from the address an administrator registered
+            # for a front desk workstation (nothing typed at sign-in).
+            desktop, desktop_method = resolve_receptionist_desktop(request)
             if desktop is None:
-                log_staff_sign_in_rejected(self.user, request)
-                raise StaffSignInRestrictedError()
+                log_staff_sign_in_rejected(
+                    self.user, request, client_ip=request_client_ip(request),
+                )
+                raise StaffSignInRestrictedError(client_ip=request_client_ip(request))
             if not front_desk_desktop_ip_allowed(request):
-                log_staff_sign_in_rejected(self.user, request, reason="front_desk_ip_mismatch")
-                raise StaffSignInRestrictedError()
+                log_staff_sign_in_rejected(
+                    self.user, request, reason="front_desk_ip_mismatch",
+                    client_ip=request_client_ip(request),
+                )
+                raise StaffSignInRestrictedError(
+                    client_ip=request_client_ip(request), network_mismatch=True,
+                )
         if request is not None and getattr(self.user, "is_staff_member", False):
             target_dept = (
                 (request.data.get("department") if hasattr(request.data, "get") else "")
@@ -135,34 +148,58 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
                         summary="Staff sign-in refused for unauthorized department subdomain",
                     )
                     raise DjangoPermissionDenied("Your account is not authorized to sign in to this department dashboard.")
-        log_staff_sign_in(self.user, request, desktop)
+        log_staff_sign_in(self.user, request, desktop, method=desktop_method)
         data["user"] = UserSerializer(self.user, context=self.context).data
         return data
 
 
-def log_staff_sign_in_rejected(user, request, reason="no_receptionist_desktop"):
-    """Audit + log a refused staff sign-in. Never records the password or key."""
-    logger.warning("Staff sign-in refused: user_id=%s role=%s reason=%s", user.pk, user.role, reason)
+def log_staff_sign_in_rejected(user, request, reason="no_receptionist_desktop", client_ip=""):
+    """Audit + log a refused staff sign-in. Never records the password or key.
+
+    The observed client address IS recorded: when a desk has moved, the
+    administrator needs to know which address to register, and the audit trail
+    is where that answer has to be recoverable from.
+    """
+    logger.warning(
+        "Staff sign-in refused: user_id=%s role=%s reason=%s client_ip=%s",
+        user.pk, user.role, reason, client_ip or "-",
+    )
     log_action(
         actor=user, action="STAFF_SIGN_IN_RESTRICTED", request=request,
-        metadata={"reason": reason, "role": user.role},
+        metadata={"reason": reason, "role": user.role, "client_ip": client_ip},
         summary="Staff sign-in refused outside the Receptionist Desktop",
     )
 
 
-def log_staff_sign_in(user, request, desktop):
-    """Record successful operational-staff sign-ins (exempt roles included)."""
+def log_staff_sign_in(user, request, desktop, method=""):
+    """Record successful operational-staff sign-ins (exempt roles included).
+
+    ``method`` is how the browser was accepted as the Receptionist Desktop
+    (``key`` | ``registered_ip`` | ``""``). It is recorded because the two
+    enrolment routes fail differently: a key that stopped working is a browser
+    problem, while a desk whose ``registered_ip`` stopped matching usually means
+    the desk moved and an administrator needs to re-register its address.
+
+    The resolved client address is recorded here too (rather than relying on the
+    audit row's own ``ip_address``, which is the connection peer and behind a
+    managed host is the platform proxy) so the sign-in record itself answers
+    "which address did this desk sign in from".
+    """
     if not getattr(user, "is_staff_member", False):
         return
+    client_ip = request_client_ip(request)
     logger.info(
-        "Staff sign-in: user_id=%s role=%s desktop=%s",
+        "Staff sign-in: user_id=%s role=%s desktop=%s method=%s client_ip=%s",
         user.pk, user.role, desktop.reference if desktop else "management-exempt",
+        method or "-", client_ip or "-",
     )
     log_action(
         actor=user, action="STAFF_SIGN_IN", request=request,
         metadata={
             "role": user.role,
             "desktop_reference": desktop.reference if desktop else "",
+            "desktop_method": method,
+            "client_ip": client_ip,
             "policy": "receptionist_desktop" if desktop else "management_exempt",
             "front_desk_ip_checked": bool(desktop),
         },
@@ -467,21 +504,58 @@ class WorkstationSerializer(serializers.ModelSerializer):
     # Whether a Receptionist Desktop key is currently issued. The key itself is
     # never serialized; it is returned once from the create/rotate endpoints.
     receptionist_key_configured = serializers.SerializerMethodField()
+    # Whether this record can already identify the desk at sign-in, by either
+    # enrolment route. The Terminals page shows it so an administrator can see
+    # at a glance whether a front desk PC is actually enrolled.
+    receptionist_desktop_ready = serializers.SerializerMethodField()
 
     class Meta:
         model = Workstation
         fields = [
             "id", "reference", "name", "department", "location", "is_active", "last_seen_at",
             "current_staff_email", "current_staff_name", "receptionist_key_configured",
+            "receptionist_desktop_ready", "ip_address", "desktop_ip_registered_at",
             "created_at", "updated_at",
         ]
         read_only_fields = [
             "id", "reference", "last_seen_at", "current_staff_email", "current_staff_name",
-            "receptionist_key_configured", "created_at", "updated_at",
+            "receptionist_key_configured", "receptionist_desktop_ready",
+            "desktop_ip_registered_at", "created_at", "updated_at",
         ]
 
     def get_receptionist_key_configured(self, obj):
         return bool(obj.sign_in_key_hash)
+
+    def get_receptionist_desktop_ready(self, obj):
+        if obj.department != Workstation.Department.FRONT_DESK or not obj.is_active:
+            return False
+        return bool(obj.sign_in_key_hash or obj.ip_address)
+
+    def validate_ip_address(self, value):
+        """Accept one exact address (preferred) or a CIDR network, and store it canonically.
+
+        Stored normalized so equality against a resolved client address is a
+        string compare, and so ``192.168.001.5`` cannot masquerade as a
+        different entry from the same desk's ``192.168.1.5``.
+        """
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        cleaned = normalize_ip_or_network(raw)
+        if not cleaned:
+            raise serializers.ValidationError(
+                "Enter one IP address (e.g. 102.89.34.7) or a network (e.g. 192.168.1.0/24)."
+            )
+        return cleaned
+
+    def update(self, instance, validated_data):
+        if "ip_address" in validated_data and validated_data["ip_address"] != instance.ip_address:
+            # Only a changed address re-stamps the registration date; clearing
+            # it is a removal, and an unchanged save is not a new enrolment.
+            instance.desktop_ip_registered_at = (
+                timezone.now() if validated_data["ip_address"] else None
+            )
+        return super().update(instance, validated_data)
 
 
 class AdminUserUpdateSerializer(serializers.ModelSerializer):

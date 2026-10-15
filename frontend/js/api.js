@@ -21,6 +21,10 @@ const API = (() => {
   const SESSION_KEY = (window.APP_CONFIG && window.APP_CONFIG.STORAGE.SESSION) || "jone.session";
   const TERMINAL_KEY = (window.APP_CONFIG && window.APP_CONFIG.STORAGE.TERMINAL) || "jone.terminal.reference";
 
+  /* Envelope messages that carry no information ("Validation failed."): when one
+     of those arrives, the per-field errors underneath it are the useful part. */
+  const GENERIC_ENVELOPE_MESSAGE = /^(validation failed[.]?|validation error[.]?)$/i;
+
   const TOKEN_RE = /token|jwt|authorization|bearer/i;
 
   function newRequestId() {
@@ -95,8 +99,15 @@ const API = (() => {
     const dmsg = data && (data.message || data.detail || data.error);
     // Field-level errors are more useful than the generic envelope message
     // ("Validation failed.") — surface the first one when present.
+    //
+    // But they must never displace a message the API authored for the user: a
+    // refusal such as STAFF_SIGN_IN_RESTRICTED also carries machine-readable
+    // context in `errors` (the address the request came from), and a bare
+    // "102.89.34.7" is not a sentence a staff member can act on. So the field
+    // error only wins while the envelope message is the generic one.
     const errs = data && data.errors;
-    if (errs && typeof errs === "object") {
+    const genericEnvelopeMessage = !dmsg || GENERIC_ENVELOPE_MESSAGE.test(String(dmsg).trim());
+    if (errs && typeof errs === "object" && genericEnvelopeMessage) {
       const first = Object.values(errs).flat()[0];
       if (first && typeof first === "string" && !TOKEN_RE.test(first)) return first;
     }
@@ -745,6 +756,17 @@ const API = (() => {
     if (!base) throw notConfigured("bookings");
     return get(`${base}/${encodeURIComponent(lookup)}/folio-clearance/`, opts);
   };
+  /* Desk settlement of the guest's WHOLE bill (stay balance + folio charges),
+     the money the staff member just received:
+         POST /api/admin/bookings/{lookup}/settle-balance/
+             { amount, provider, notes?, include_unbilled?, cash_session_reference? }
+     It answers with the payment AND the refreshed folio read, so the check-out
+     dialog and the gate-pass decision update from the same transaction. */
+  const settleBookingBalance = (lookup, payload, opts = {}) => {
+    const base = BOOKINGS_EP();
+    if (!base) throw notConfigured("bookings");
+    return post(`${base}/${encodeURIComponent(lookup)}/settle-balance/`, payload || {}, opts);
+  };
   const noShowBooking    = (lookup, opts = {}) => bookingAction("no-show", lookup, {}, opts);
   /* Re-point one existing reservation row at a different physical room.
      Contract (apps/bookings/serializers_admin.py → AssignRoomSerializer):
@@ -892,6 +914,19 @@ const API = (() => {
     }, opts);
   }
 
+  /* The address the SERVER sees this browser arriving from.
+     Verified: GET /api/auth/client-address/ (any signed-in account; returns
+     only the caller's own address). Used when registering a front desk
+     desktop, because the address that matters is the one the server observes:
+     behind the deployment's proxy or the hotel's carrier NAT that is NOT what
+     the desk sees on "what is my IP", and the two differ by exactly the reason
+     sign-in kept being refused. */
+  function getClientAddress(opts = {}) {
+    const path = EPS.clientAddress;
+    if (!path) throw endpointConfigError("clientAddress");
+    return get(path, opts);
+  }
+
   /* Staff profile card. Verified: GET /api/admin/users/staff/{id}/ — admins
      and managers may open any card, receptionists only their own. */
   function getStaffProfile(id, opts = {}) {
@@ -953,7 +988,7 @@ const API = (() => {
     // Payments
     initPayment, verifyPayment,
     // Auth
-    login, logout, me, refreshTokenCall,
+    login, logout, me, refreshTokenCall, getClientAddress,
     // Notifications
     getNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead, getNotification,
     // Staff resources + actions
@@ -961,6 +996,7 @@ const API = (() => {
     rescheduleBooking, getOccupancyCalendar, listMissedBookings, listLateArrivals,
     listGuestDiscounts, createGuestDiscount, updateGuestDiscount, deactivateGuestDiscount,
     confirmBooking, staffCancelBooking, checkInBooking, checkOutBooking, bookingFolioClearance,
+    settleBookingBalance,
     noShowBooking, assignRoom, recordPayment, listPayrollSalaryPayments,
     recordPayrollSalaryPayment, reversePayrollSalaryPayment, searchBookings, searchCheckout,
     submitPosOrder, updatePosOrderStatus, capturePosTender, updatePosKitchenTicketStatus, openPosCashSession, closePosCashSession,
