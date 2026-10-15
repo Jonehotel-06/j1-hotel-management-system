@@ -64,6 +64,10 @@
   <div class="kpi"><div class="kpi-label">Pending bookings</div><div class="kpi-value" data-kpi="pending_bookings">--</div><div class="kpi-sub">awaiting confirmation</div></div>
   <div class="kpi"><div class="kpi-label">Today's recognized revenue</div><div class="kpi-value" data-kpi="today_revenue">--</div><div class="kpi-sub">earned, not necessarily collected</div></div>
   <div class="kpi"><div class="kpi-label">Today's collections</div><div class="kpi-value" data-kpi="today_collections">--</div><div class="kpi-sub">money actually received</div></div>
+  <div class="kpi"><div class="kpi-label">Operating expenses (month)</div><div class="kpi-value" data-kpi="month_operating_expenses">--</div><div class="kpi-sub">posted operating costs this month</div></div>
+  <div class="kpi"><div class="kpi-label">Supplier goods received (month)</div><div class="kpi-value" data-kpi="month_goods_received">--</div><div class="kpi-sub">stock receipts; invoice/posting shown separately</div></div>
+  <div class="kpi"><div class="kpi-label">Supplier payments (month)</div><div class="kpi-value" data-kpi="month_supplier_payments">--</div><div class="kpi-sub">money actually paid to suppliers</div></div>
+  <div class="kpi"><div class="kpi-label">Outstanding payables</div><div class="kpi-value" data-kpi="outstanding_payables">--</div><div class="kpi-sub">posted supplier invoices on account</div></div>
 </section>
 
 <section class="panel">
@@ -211,18 +215,35 @@
     setKpi("available_rooms", rooms.available);
     setKpi("total_rooms", rooms.total);
     setKpi("pending_bookings", bk.pending);
+    function ledgerAmount(section, key){
+      var value = section && section[key];
+      if(value && typeof value === "object") return value.amount;
+      return value;
+    }
+    function setMoneyKpi(name, value){
+      setKpi(name, value != null ? JONE.formatNaira(value) : "--");
+    }
     if(d.ledger && d.ledger.recognized_revenue){
       var rec = d.ledger.recognized_revenue.amount != null ? d.ledger.recognized_revenue.amount : d.ledger.recognized_revenue;
       setKpi("today_revenue", JONE.formatNaira(rec));
       var collected = d.ledger.collections && d.ledger.collections.amount;
       setKpi("today_collections", collected != null ? JONE.formatNaira(collected) : "--");
+      var month = d.ledger_month || {};
+      var monthSupplier = month.supplier_payments || {};
+      var todaySupplier = d.ledger.supplier_payments || {};
+      setMoneyKpi("month_operating_expenses", ledgerAmount(month, "operating_expenses"));
+      setMoneyKpi("month_goods_received", monthSupplier.goods_receipts_value);
+      setMoneyKpi("month_supplier_payments", monthSupplier.supplier_payments_made);
+      setMoneyKpi("outstanding_payables", todaySupplier.outstanding_supplier_payables != null ? todaySupplier.outstanding_supplier_payables : monthSupplier.outstanding_supplier_payables);
     } else if(d.revenue){
       if(d.revenue.today != null) setKpi("today_revenue", JONE.formatNaira(d.revenue.today));
       if(d.revenue.outstanding_total != null) setKpi("outstanding", JONE.formatNaira(d.revenue.outstanding_total));
+      ["month_operating_expenses","month_goods_received","month_supplier_payments","outstanding_payables"].forEach(function(name){ setKpi(name, "--"); });
     } else {
-      // Revenue is MANAGER+ only — receptionists see an honest "n/a".
+      // Revenue/expenses are MANAGER+ only — other staff see an honest "n/a".
       setKpi("today_revenue", "n/a");
       setKpi("today_collections", "n/a");
+      ["month_operating_expenses","month_goods_received","month_supplier_payments","outstanding_payables"].forEach(function(name){ setKpi(name, "n/a"); });
     }
   }
 

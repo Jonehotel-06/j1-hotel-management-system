@@ -514,6 +514,8 @@ manager/admin-only blocks are simply absent (see §19).
       "currency", "created_at" } ],
   "notifications": { "unread_count": 3 },
   // —— only when role is MANAGER or ADMIN ——
+  "ledger": { /* financial summary for today; see §22 */ },
+  "ledger_month": { /* same financial summary, month-to-date; used for expense KPIs */ },
   "revenue": { "today": "150000.00", "this_month": "2125000.00",
                "outstanding_total": "90000.00", "outstanding_bookings": 2 },
   "recent_payments": [ { "reference", "booking_reference", "amount", "currency",
@@ -780,10 +782,18 @@ booking/payment projections below:
   "operating_expenses": { "amount": "15.00", "transactions": 1 },
   "inventory_acquisitions": { "amount": "30.00", "transactions": 1 },
   "cash_paid_out": { "amount": "45.00", "transactions": 2 },
+  "supplier_payments": { "goods_receipts_value": "30.00", "goods_receipts_count": 1,
+    "supplier_invoices_recognized": "30.00", "supplier_payments_made": "0.00",
+    "outstanding_supplier_payables": "30.00" },
   "net_collections": "90.00", "gross_operating_result": "85.00",
   "by_day": [ { "date", "guest_charges", "recognized_revenue", "collections",
                  "refunds", "operating_expenses", "net_collections", "gross_operating_result" } ] }
 ```
+
+`supplier_payments.goods_receipts_value` is an operational visibility measure:
+goods-receipt quantity × unit cost for supplier stock received in the period. It
+is not posted money and is never added to invoices recognized, payables, or
+payments made; those stages still require a posted Finance inventory expense.
 
 `net_collections` is collections less refunds. `gross_operating_result` is
 recognized revenue less operating expenses; discounts, inventory acquisitions,

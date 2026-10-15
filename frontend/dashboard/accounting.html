@@ -70,6 +70,7 @@
       <div class="kpi"><div class="kpi-label">Collections</div><div class="kpi-value" data-rp="collections">--</div><div class="kpi-sub" data-rp="collections-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Supplier payments made</div><div class="kpi-value" data-rp="supplier-payments">--</div><div class="kpi-sub" data-rp="supplier-payments-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Outstanding payables</div><div class="kpi-value" data-rp="outstanding-payables">--</div><div class="kpi-sub" data-rp="outstanding-payables-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Supplier goods received</div><div class="kpi-value" data-rp="goods-received">--</div><div class="kpi-sub" data-rp="goods-received-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Operating expenses</div><div class="kpi-value" data-rp="operating-expenses">--</div><div class="kpi-sub" data-rp="operating-expenses-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Refunds</div><div class="kpi-value" data-rp="refunds">--</div><div class="kpi-sub" data-rp="refunds-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Payments made</div><div class="kpi-value" data-rp="payments-made">--</div><div class="kpi-sub">Cash paid-out + net salaries</div></div>
@@ -195,6 +196,7 @@
        table distinguishes goods received, invoice recognized, payment approved and
        money actually disbursed. No amount is repeated across stages, and a stage
        that does not apply shows a dash. */
+    { label:"Supplier goods received (stock only — not posted)", key:"supplier_payments.goods_receipts_value" },
     { label:"Supplier invoices recognized", key:"supplier_payments.supplier_invoices_recognized" },
     { label:"Supplier payments made", key:"supplier_payments.supplier_payments_made" },
     { label:"Operating expenses paid (cash out)", key:"supplier_payments.operating_expenses_paid" },
@@ -318,7 +320,7 @@
   }
 
   function resetFinanceKpis(){
-    ["recognized-revenue","collections","operating-expenses","refunds","payments-made","operating-result","supplier-payments","outstanding-payables"].forEach(function(name){
+    ["recognized-revenue","collections","operating-expenses","refunds","payments-made","operating-result","supplier-payments","outstanding-payables","goods-received"].forEach(function(name){
       setKpi(name,"--");
       setKpi(name+"-sub","");
     });
@@ -348,6 +350,8 @@
     setKpi("supplier-payments-sub","Invoices recognized "+formatMoney(supplier.supplier_invoices_recognized||0,currency));
     setKpi("outstanding-payables",supplier.outstanding_supplier_payables==null?"--":formatMoney(supplier.outstanding_supplier_payables,currency));
     setKpi("outstanding-payables-sub",supplier.payable_settlement_posting_available===false?"Credited balance; no settlement posting exists yet":"No outstanding balance");
+    setKpi("goods-received",supplier.goods_receipts_value==null?"--":formatMoney(supplier.goods_receipts_value,currency));
+    setKpi("goods-received-sub",String(supplier.goods_receipts_count||0)+" goods receipt(s) · stock only, not a posted invoice");
     if(financeBasis){
       financeBasis.textContent="Posted immutable ledger · Business date · "+currency+" · "+String(latest.financial.ledger_transactions||0)+" ledger transaction"+((latest.financial.ledger_transactions||0)===1?"":"s");
     }

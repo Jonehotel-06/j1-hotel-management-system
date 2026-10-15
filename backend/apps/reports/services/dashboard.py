@@ -169,6 +169,17 @@ def build_dashboard(user):
             logging.getLogger("apps").exception("Owner dashboard ledger summary failed")
             data["ledger"] = None
             data["ledger_error"] = "Ledger financial summary could not be loaded."
+        try:
+            # Expense visibility must not be today-only: a supplier receipt or
+            # posted expense from earlier in the month is still a current-month
+            # cost even when no money moves today. This is the SAME financial
+            # summary Accounting uses, just bounded to month-to-date.
+            data["ledger_month"] = ledger_financial_summary(start_date=month_start, end_date=today, currency="NGN")
+        except Exception:
+            import logging
+            logging.getLogger("apps").exception("Owner dashboard month ledger summary failed")
+            data["ledger_month"] = None
+            data["ledger_month_error"] = "Month-to-date financial summary could not be loaded."
 
         today_revenue = (
             Payment.objects.filter(

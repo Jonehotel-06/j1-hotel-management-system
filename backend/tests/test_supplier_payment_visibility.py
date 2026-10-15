@@ -93,6 +93,64 @@ class SupplierPaymentVisibilityTests(BaseAPITestCase):
             self.assertEqual(amounts[key], Decimal("0.00"), f"{key} must ignore a pure stock movement")
         self.assertIn("goods_receipts", report["supplier_payments"]["definitions"])
 
+    def test_goods_receipt_value_is_visible_without_becoming_posted_money(self):
+        # A real purchase-order receipt is the supplier cost the inventory team
+        # recorded. It must be visible as stock received, while every posted
+        # money stage remains zero until Finance posts an inventory expense.
+        from apps.inventory.services.inventory_service import (
+            approve_purchase_order, create_purchase_order, receive_goods, submit_purchase_order,
+        )
+
+        po, _ = create_purchase_order(
+            supplier=self.supplier, delivery_location=self.location, requested_by=self.clerk,
+            lines=[{"item_id": self.beverage.pk, "quantity_ordered": "3", "unit_cost": "510"}],
+            idempotency_key="payvis-goods-receipt-po",
+        )
+        po = submit_purchase_order(purchase_order=po, actor=self.clerk)
+        po = approve_purchase_order(purchase_order=po, actor=self.manager)
+        receipt, created = receive_goods(
+            purchase_order=po, actor=self.clerk, source_key="payvis-goods-receipt-1",
+            receipt_lines=[{"purchase_order_line_id": po.lines.get().pk, "quantity_received": "3", "unit_cost": "510"}],
+        )
+        self.assertTrue(created)
+        self.assertEqual(receipt.purchase_order.reference, po.reference)
+
+        report = self.summary()
+        supplier = report["supplier_payments"]
+        self.assertEqual(Decimal(supplier["goods_receipts_value"]), Decimal("1530.00"))
+        self.assertEqual(supplier["goods_receipts_count"], 1)
+        self.assertEqual(Decimal(report["inventory_acquisitions"]["amount"]), Decimal("0.00"))
+        amounts = self.amounts(report)
+        for key in (
+            "supplier_invoices_recognized", "supplier_payments_made", "operating_expenses_paid",
+            "total_cash_disbursements", "outstanding_supplier_payables",
+        ):
+            self.assertEqual(amounts[key], Decimal("0.00"), f"{key} must ignore an unposted goods receipt")
+
+    def test_dashboard_month_summary_includes_supplier_goods_received(self):
+        from apps.inventory.services.inventory_service import (
+            approve_purchase_order, create_purchase_order, receive_goods, submit_purchase_order,
+        )
+        from apps.reports.services.dashboard import build_dashboard
+
+        po, _ = create_purchase_order(
+            supplier=self.supplier, delivery_location=self.location, requested_by=self.clerk,
+            lines=[{"item_id": self.beverage.pk, "quantity_ordered": "2", "unit_cost": "700"}],
+            idempotency_key="payvis-dashboard-po",
+        )
+        po = submit_purchase_order(purchase_order=po, actor=self.clerk)
+        po = approve_purchase_order(purchase_order=po, actor=self.manager)
+        receive_goods(
+            purchase_order=po, actor=self.clerk, source_key="payvis-dashboard-receipt",
+            receipt_lines=[{"purchase_order_line_id": po.lines.get().pk, "quantity_received": "2", "unit_cost": "700"}],
+        )
+
+        data = build_dashboard(self.manager)
+        self.assertIn("ledger_month", data)
+        self.assertEqual(data["ledger_month"]["supplier_payments"]["goods_receipts_value"], "1400.00")
+        self.assertEqual(data["ledger_month"]["supplier_payments"]["goods_receipts_count"], 1)
+        self.assertEqual(data["ledger_month"]["operating_expenses"]["amount"], "0.00")
+
     def test_an_invoice_on_account_raises_a_payable_and_pays_nothing(self):
         self.post_expense(
             amount="250000.00", payment_method=Expense.PaymentMethod.PAYABLE,
@@ -241,14 +299,14 @@ class SupplierPaymentVisibilityTests(BaseAPITestCase):
         with CaptureQueriesContext(connection) as captured:
             financial_summary(start_date=today, end_date=today, currency="NGN")
         count = len(captured.captured_queries)
-        self.assertLessEqual(count, 6, f"financial_summary issued {count} statements, budget is 6")
+        self.assertLessEqual(count, 7, f"financial_summary issued {count} statements, budget is 7")
 
     def test_every_reported_measure_documents_its_own_definition(self):
         definitions = self.summary()["supplier_payments"]["definitions"]
         for key in (
             "supplier_invoices_recognized", "supplier_payments_made", "operating_expenses_paid",
             "net_payroll_paid", "other_cash_disbursements", "outstanding_supplier_payables",
-            "supplier_payment_approvals_decided", "goods_receipts",
+            "supplier_payment_approvals_decided", "goods_receipts", "goods_receipts_value",
         ):
             self.assertIn(key, definitions, f"{key} has no definition for the reader")
             self.assertGreater(len(definitions[key]), 40)

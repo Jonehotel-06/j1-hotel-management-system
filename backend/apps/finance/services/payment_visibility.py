@@ -15,8 +15,9 @@ record**. It reads the same immutable posted ledger the financial summary alread
 reads and reports the stages that were previously only implicit:
 
 * **goods receipt** — a physical stock movement (``StockMovement.RECEIPT``). It
-  moves quantity and carries unit cost but posts NO money, so it is documented
-  here and deliberately excluded from every money total.
+  moves quantity and carries unit cost but posts NO money. Its receipt value is
+  reported separately as ``goods_receipts_value`` so supplier stock received is
+  visible, and it is deliberately excluded from every posted-money total.
 * **supplier invoice** — a posted ``EXPENSE`` transaction whose debit is
   ``ASSET.INVENTORY``. An obligation, settled now or carried on account.
 * **payment approval** — the ``ApprovalRequest`` behind that expense. Approval
@@ -164,12 +165,17 @@ def expense_approval_counts(*, start_date: date, end_date: date) -> dict:
     )
 
 
-def supplier_payment_visibility(*, totals: dict, start_date: date, end_date: date, currency: str) -> dict:
+def supplier_payment_visibility(
+    *, totals: dict, start_date: date, end_date: date, currency: str,
+    goods_receipts_value: Decimal = ZERO, goods_receipts_count: int = 0,
+) -> dict:
     """Assemble the supplier-payment block from one aggregate plus two counts.
 
     ``totals`` must be the result of aggregating :func:`settlement_measure_filters`
     over the period's posted ledger lines (``reporting_service`` does this in its
-    own bounded query plan).
+    own bounded query plan). ``goods_receipts_value`` is an operational stock
+    receipt total supplied by the caller; it is visibility only and is never
+    added to a posted-money measure.
     """
     supplier_payments_made = _amount(totals.get("supplier_payments_made"))
     operating_expenses_paid = _amount(totals.get("operating_expenses_paid"))
@@ -189,6 +195,8 @@ def supplier_payment_visibility(*, totals: dict, start_date: date, end_date: dat
     approvals = expense_approval_counts(start_date=start_date, end_date=end_date)
 
     return {
+        "goods_receipts_value": money(_amount(goods_receipts_value)),
+        "goods_receipts_count": int(goods_receipts_count or 0),
         "supplier_invoices_recognized": money(invoices_recognized),
         "supplier_payments_made": money(supplier_payments_made),
         "operating_expenses_paid": money(operating_expenses_paid),
@@ -246,8 +254,13 @@ def supplier_payment_visibility(*, totals: dict, start_date: date, end_date: dat
                 "moves money, so it is reported as a count and never as an amount."
             ),
             "goods_receipts": (
-                "Physical stock receipts move quantity and unit cost only and post no money, so they are "
-                "excluded from every amount above to avoid double-counting against the invoice."
+                "Physical stock receipts move quantity and unit cost only and post no money. Their value is "
+                "reported separately as goods_receipts_value and excluded from posted-money totals to avoid "
+                "double-counting against the supplier invoice/expense when Finance posts it."
+            ),
+            "goods_receipts_value": (
+                "GoodsReceiptLine quantity received multiplied by unit cost for goods receipts in the period. "
+                "This is stock received from suppliers, not a posted expense, invoice, payable, or payment."
             ),
         },
     }

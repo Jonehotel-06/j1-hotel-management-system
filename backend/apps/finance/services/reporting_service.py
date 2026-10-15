@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, F, Q, Sum
 
 from apps.core.utils import money
 
@@ -154,6 +154,27 @@ def _amount(value) -> Decimal:
     return Decimal(value or ZERO).quantize(Decimal("0.01"))
 
 
+def _goods_receipt_totals(*, start_date: date, end_date: date, currency: str) -> tuple[Decimal, int]:
+    """Operational supplier stock received in the period (not posted money).
+
+    Goods receipts are the inventory record a storekeeper creates when supplier
+    goods arrive. Reporting their quantity × unit cost here makes that supplier
+    cost visible in Accounting/Dashboard without pretending that a Finance
+    invoice/expense has been approved or posted.
+    """
+    from apps.inventory.models import GoodsReceiptLine
+
+    totals = GoodsReceiptLine.objects.filter(
+        goods_receipt__received_on__gte=start_date,
+        goods_receipt__received_on__lte=end_date,
+        item__currency=currency,
+    ).aggregate(
+        value=Sum(F("quantity_received") * F("unit_cost"), default=ZERO),
+        receipts=Count("goods_receipt", distinct=True),
+    )
+    return _amount(totals.get("value")), int(totals.get("receipts") or 0)
+
+
 def _serialize_metrics(values: dict, metrics: dict[str, Q], *, include_transaction_counts: bool) -> dict:
     payload = {}
     for metric in metrics:
@@ -258,8 +279,12 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
         )
     # Assembled from the aggregate above plus two bounded counts — never from a
     # second ledger pass.
+    goods_receipts_value, goods_receipts_count = _goods_receipt_totals(
+        start_date=start_date, end_date=end_date, currency=currency,
+    )
     payments = supplier_payment_visibility(
         totals=totals, start_date=start_date, end_date=end_date, currency=currency,
+        goods_receipts_value=goods_receipts_value, goods_receipts_count=goods_receipts_count,
     )
     # Net cash movement is defined once, from the same measures the rest of the
     # report exposes, so a reader can always reproduce it: money received less
