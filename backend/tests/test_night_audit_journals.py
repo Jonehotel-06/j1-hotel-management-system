@@ -189,3 +189,66 @@ class CashDropAndExpenseDepartmentTests(BaseAPITestCase):
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(response.json()["data"]["department"], "Kitchen")
         self.assertEqual(Expense.objects.get(reference=response.json()["data"]["reference"]).department, "Kitchen")
+
+
+class NightAuditInHouseTests(BaseAPITestCase):
+    """Regression: the audit pack must run against real in-house stays.
+
+    The first deployment crashed here because the room-assignment prefetch
+    used a related name that only exists on Room, not on Stay — a path the
+    empty-database tests never exercised.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from apps.finance.services.folio_service import get_or_create_main_folio_for_stay
+        from apps.stays.models import Stay, StayRoom
+
+        self.manager = make_staff("night-audit-stay-manager@staff.dev", role=User.Role.MANAGER)
+        self.today = hotel_today()
+        self.room_type = make_room_type("Night audit in-house suite", price="20000.00")
+        self.room = make_room(self.room_type, "702")
+        booking = make_booking(
+            make_guest("night-audit-stay@example.com"), self.room_type,
+            rooms=[self.room], check_in=self.today - timedelta(days=1),
+            check_out=self.today + timedelta(days=1), total="20000.00",
+        )
+        stay = Stay.objects.create(
+            reference=f"STY-{booking.booking_reference}", booking=booking, guest=booking.guest,
+            status=Stay.Status.IN_HOUSE, expected_arrival=booking.check_in,
+            expected_departure=booking.check_out,
+        )
+        StayRoom.objects.create(stay=stay, room=self.room, assigned_by=self.manager)
+        self.stay = stay
+        self.folio, _ = get_or_create_main_folio_for_stay(stay=stay, actor=self.manager)
+        create_posted_transaction(
+            transaction_type=FinancialTransaction.Type.OTHER_CHARGE,
+            source_key="night-audit-stay:charge:1",
+            actor=self.manager,
+            source_reference=booking.booking_reference,
+            lines=[
+                {"account_code": accounting.ACCOUNTS_RECEIVABLE, "direction": FinancialLine.Direction.DEBIT, "amount": "5000.00", "folio": self.folio},
+                {"account_code": accounting.OTHER_OPERATING_REVENUE, "direction": FinancialLine.Direction.CREDIT, "amount": "5000.00"},
+            ],
+            postings=[{"line_index": 0, "folio": self.folio, "kind": "CHARGE", "effect": "DEBIT", "amount": "5000.00"}],
+        )
+
+    def test_in_house_stay_appears_with_unbilled_folio_balance(self):
+        self.auth(self.manager)
+        response = self.client.get("/api/admin/finance/reports/night-audit/")
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()["data"]
+        self.assertEqual(data["in_house_count"], 1)
+        self.assertEqual(len(data["unbilled_in_house_folios"]), 1)
+        row = data["unbilled_in_house_folios"][0]
+        self.assertEqual(row["stay_reference"], self.stay.reference)
+        self.assertEqual(row["room"], "702")
+        self.assertEqual(row["folio_balance"], "5000.00")
+        self.assertFalse(
+            any(d["type"] == "OCCUPIED_NOT_IN_HOUSE" for d in data["discrepancies"]),
+            data["discrepancies"],
+        )
+        self.assertFalse(
+            any(d["type"] == "IN_HOUSE_NO_FOLIO" for d in data["discrepancies"]),
+            data["discrepancies"],
+        )

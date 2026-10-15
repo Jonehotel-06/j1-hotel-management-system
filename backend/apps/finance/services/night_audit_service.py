@@ -128,10 +128,10 @@ def daily_reconciliation(*, business_date=None) -> dict:
     in_house = list(
         Stay.objects.filter(status=Stay.Status.IN_HOUSE)
         .select_related("booking", "guest")
-        .prefetch_related("stay_occupancies__room")
+        .prefetch_related("stay_rooms__room")
     )
     def _stay_room(stay):
-        for occupancy in stay.stay_occupancies.all():
+        for occupancy in stay.stay_rooms.all():
             if occupancy.released_at is None:
                 return occupancy.room
         return None
@@ -171,7 +171,7 @@ def daily_reconciliation(*, business_date=None) -> dict:
             unbilled.append({
                 "stay_reference": stay.reference,
                 "guest": stay.guest.full_name if stay.guest_id else "",
-                "room": room.number if room is not None else "",
+                "room": room.room_number if room is not None else "",
                 "folio_balance": money(balance),
             })
         if folio_id is None:

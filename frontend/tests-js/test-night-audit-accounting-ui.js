@@ -66,3 +66,9 @@ test("POS records cash drops against the cashier's open drawer", () => {
   assert.match(POS, /resourceAction\("financeCashSessions",ref,"drop",values\)/);
   assert.match(POS, /dropButton\.disabled=!state\.drawer/);
 });
+
+test("Accounting and Reports export rows wrap instead of stretching buttons", () => {
+  assert.match(ACCOUNTING, /display:flex;gap:0\.75rem;flex-wrap:wrap;align-items:center;/);
+  assert.match(ACCOUNTING, /<span class="caption" style="flex:1 1 12rem;min-width:0;">Exports the ledger/);
+  assert.match(REPORTS, /<span class="caption" style="flex:1 1 12rem;min-width:0;">Exports the ledger/);
+});
