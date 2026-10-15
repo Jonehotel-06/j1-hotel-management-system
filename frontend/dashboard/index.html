@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.12">
+<link rel="stylesheet" href="../css/main.css?v=1.1.15">
 
 </head>
 <body>
@@ -73,15 +73,11 @@
 <section class="panel">
   <div class="panel-head"><h2>Quick actions</h2></div>
   <div class="panel-body">
-    <div class="quick-actions">
-      <a class="quick-action" href="bookings.html"><span data-icon="plus"></span> New booking</a>
-      <a class="quick-action" href="check-in.html"><span data-icon="logOut"></span> Check-in</a>
-      <a class="quick-action" href="check-out.html"><span data-icon="logOut"></span> Check-out</a>
-      <a class="quick-action" href="guests.html"><span data-icon="search"></span> Search guest</a>
-      <a class="quick-action" href="bookings.html"><span data-icon="search"></span> Search booking</a>
-      <a class="quick-action" href="payments.html"><span data-icon="wallet"></span> Record payment</a>
-      <a class="quick-action" href="accounting.html"><span data-icon="barChart"></span> Accounting</a>
-    </div>
+    <!-- Built from the access registry (js/dashboard.js → PAGE_ACCESS): a
+         department is never offered a shortcut into another department's
+         screen. The Accounting shortcut used to be shown to receptionists and
+         bounce them to /403.html. -->
+    <div class="quick-actions" data-quick-actions></div>
   </div>
 </section>
 
@@ -116,17 +112,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.12"></script>
-<script src="../js/config.js?v=1.1.12"></script>
-<script src="../js/utils.js?v=1.1.12"></script>
-<script src="../js/icons.js?v=1.1.12"></script>
-<script src="../js/api.js?v=1.1.12"></script>
-<script src="../js/theme.js?v=1.1.12"></script>
-<script src="../js/ui.js?v=1.1.12"></script>
-<script src="../js/auth.js?v=1.1.12"></script>
-<script src="../js/hotel-data.js?v=1.1.12"></script>
-<script src="../js/navigation.js?v=1.1.12"></script>
-<script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script>
+<script src="../js/runtime-config.js?v=1.1.15"></script>
+<script src="../js/config.js?v=1.1.15"></script>
+<script src="../js/utils.js?v=1.1.15"></script>
+<script src="../js/icons.js?v=1.1.15"></script>
+<script src="../js/api.js?v=1.1.15"></script>
+<script src="../js/theme.js?v=1.1.15"></script>
+<script src="../js/ui.js?v=1.1.15"></script>
+<script src="../js/auth.js?v=1.1.15"></script>
+<script src="../js/hotel-data.js?v=1.1.15"></script>
+<script src="../js/navigation.js?v=1.1.15"></script>
+<script src="../js/dashboard.js?v=1.1.15"></script><script src="../js/table-fit.js?v=1.1.15"></script>
 <script>
   JONE.ui.initChrome();
   // Role check: operational roles (CHEF, HOUSEKEEPING, etc.) have dedicated departmental consoles.
@@ -144,6 +140,32 @@
   // The dashboard stats payload includes unread_count, so it supplies the
   // shared badge below instead of boot() issuing a duplicate count request.
   JONE.dashboard.boot("receptionist", { deferNotificationBadge: true });
+
+  /* Quick actions are the dashboard's own navigation. Each one is rendered only
+     when the access registry says this user may open the page it points at, so
+     a department never gets a shortcut into another department's screen. */
+  (function(){
+    var host = document.querySelector("[data-quick-actions]");
+    if (!host) return;
+    var links = [
+      { href: "bookings.html", icon: "plus", label: "New booking" },
+      { href: "check-in.html", icon: "logOut", label: "Check-in" },
+      { href: "check-out.html", icon: "logOut", label: "Check-out" },
+      { href: "guests.html", icon: "search", label: "Search guest" },
+      { href: "bookings.html", icon: "search", label: "Search booking" },
+      { href: "payments.html", icon: "wallet", label: "Record payment" },
+      { href: "accounting.html", icon: "barChart", label: "Accounting" }
+    ];
+    var allowed = links.filter(function(link){
+      return !!(window.JONE && JONE.dashboard && JONE.dashboard.canOpenPage &&
+        JONE.dashboard.canOpenPage(link.href));
+    });
+    host.innerHTML = allowed.map(function(link){
+      return '<a class="quick-action" href="' + link.href + '"><span data-icon="' + link.icon + '"></span> ' +
+        JONE.esc(link.label) + "</a>";
+    }).join("");
+    JONE.icons.inject(host);
+  })();
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
 
 (function(){
@@ -299,8 +321,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.12"></script>
-<script src="../js/version.js?v=1.1.12"></script>
-<script src="../js/update-checker.js?v=1.1.12"></script>
+<script src="../js/pwa.js?v=1.1.15"></script>
+<script src="../js/version.js?v=1.1.15"></script>
+<script src="../js/update-checker.js?v=1.1.15"></script>
 </body>
 </html>

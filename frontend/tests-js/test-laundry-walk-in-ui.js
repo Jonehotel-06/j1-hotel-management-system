@@ -72,16 +72,22 @@ test("the guest-request page no longer carries a laundry panel", () => {
 test("every role that could reach the old panel can still reach the page", () => {
   const line = DASHBOARD.split("\n").find((l) => l.includes('label: "Laundry"'));
   assert.ok(line, "Laundry navigation entry not found");
-  for (const role of ["admin", "manager", "receptionist", "housekeeper", "porter", "security", "bartender"]) {
-    assert.ok(line.includes(`"${role}"`), `laundry page lost access for ${role}`);
-  }
-  // The page's own gate lists the same roles, so the entry and the page agree.
+  /* The department rule is the access registry (PAGE_ACCESS), not a role list
+     repeated on the menu entry — the entry is filtered through canOpenPage. */
+  assert.ok(!/roles:/.test(line), "the Laundry menu entry must not carry its own role list");
+  const service = DASHBOARD.match(/const SERVICE_DEPARTMENTS = \[([\s\S]*?)\]; "/) ||
+    DASHBOARD.match(/const SERVICE_DEPARTMENTS = \[([\s\S]*?)\];/);
+  assert.ok(service, "SERVICE_DEPARTMENTS (the guest-service department set) is defined");
+  assert.match(DASHBOARD, /"laundry\.html": \{ roles: SERVICE_DEPARTMENTS \}/);
   const gate = LAUNDRY.match(/JONE\.dashboard\.boot\(\[([^\]]+)\]\)/);
   assert.ok(gate, "laundry page has no role gate");
   for (const role of ["admin", "manager", "receptionist", "housekeeper", "porter", "security", "bartender"]) {
+    assert.ok(service[1].includes(`"${role}"`), `laundry page lost access for ${role}`);
+    // The page's own gate lists the same roles, so the entry and the page agree.
     assert.ok(gate[1].includes(`"${role}"`), `laundry page gate is missing ${role}`);
   }
 });
+
 
 // --- Receiving for either kind of customer --------------------------------
 

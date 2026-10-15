@@ -756,6 +756,17 @@ const API = (() => {
     if (!base) throw notConfigured("bookings");
     return get(`${base}/${encodeURIComponent(lookup)}/folio-clearance/`, opts);
   };
+  /* Desk settlement of the guest's WHOLE bill (stay balance + folio charges),
+     the money the staff member just received:
+         POST /api/admin/bookings/{lookup}/settle-balance/
+             { amount, provider, notes?, include_unbilled?, cash_session_reference? }
+     It answers with the payment AND the refreshed folio read, so the check-out
+     dialog and the gate-pass decision update from the same transaction. */
+  const settleBookingBalance = (lookup, payload, opts = {}) => {
+    const base = BOOKINGS_EP();
+    if (!base) throw notConfigured("bookings");
+    return post(`${base}/${encodeURIComponent(lookup)}/settle-balance/`, payload || {}, opts);
+  };
   const noShowBooking    = (lookup, opts = {}) => bookingAction("no-show", lookup, {}, opts);
   /* Re-point one existing reservation row at a different physical room.
      Contract (apps/bookings/serializers_admin.py → AssignRoomSerializer):
@@ -985,6 +996,7 @@ const API = (() => {
     rescheduleBooking, getOccupancyCalendar, listMissedBookings, listLateArrivals,
     listGuestDiscounts, createGuestDiscount, updateGuestDiscount, deactivateGuestDiscount,
     confirmBooking, staffCancelBooking, checkInBooking, checkOutBooking, bookingFolioClearance,
+    settleBookingBalance,
     noShowBooking, assignRoom, recordPayment, listPayrollSalaryPayments,
     recordPayrollSalaryPayment, reversePayrollSalaryPayment, searchBookings, searchCheckout,
     submitPosOrder, updatePosOrderStatus, capturePosTender, updatePosKitchenTicketStatus, openPosCashSession, closePosCashSession,

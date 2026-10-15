@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.12">
+<link rel="stylesheet" href="../css/main.css?v=1.1.15">
 </head>
 <body>
 <div class="dash">
@@ -46,7 +46,7 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.12"></script><script src="../js/config.js?v=1.1.12"></script><script src="../js/utils.js?v=1.1.12"></script><script src="../js/icons.js?v=1.1.12"></script><script src="../js/api.js?v=1.1.12"></script><script src="../js/theme.js?v=1.1.12"></script><script src="../js/ui.js?v=1.1.12"></script><script src="../js/auth.js?v=1.1.12"></script><script src="../js/navigation.js?v=1.1.12"></script><script src="../js/dashboard.js?v=1.1.12"></script><script src="../js/table-fit.js?v=1.1.12"></script><script src="../js/operations.js?v=1.1.12"></script>
+<script src="../js/runtime-config.js?v=1.1.15"></script><script src="../js/config.js?v=1.1.15"></script><script src="../js/utils.js?v=1.1.15"></script><script src="../js/icons.js?v=1.1.15"></script><script src="../js/api.js?v=1.1.15"></script><script src="../js/theme.js?v=1.1.15"></script><script src="../js/ui.js?v=1.1.15"></script><script src="../js/auth.js?v=1.1.15"></script><script src="../js/navigation.js?v=1.1.15"></script><script src="../js/dashboard.js?v=1.1.15"></script><script src="../js/table-fit.js?v=1.1.15"></script><script src="../js/operations.js?v=1.1.15"></script>
 <script>
 JONE.ui.initChrome();
 var __serviceRequestsAllowed=JONE.dashboard.boot(["admin","manager","general_manager","front_desk_supervisor","receptionist","housekeeping","housekeeping_manager","housekeeper","porter","maintenance","maintenance_technician","waiter","bartender","security"]);
@@ -56,11 +56,14 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   var DATA=JONE.dashboard.DATA, OPS=JONE.operations, rowsEl=document.querySelector("[data-sr-rows]"), pager=document.querySelector("[data-sr-pagination]"), liveStatus=document.querySelector("[data-sr-live-status]");
   var state={page:1};
   var statusNext={OPEN:["ACKNOWLEDGED","IN_PROGRESS","ESCALATED","CANCELLED"],ACKNOWLEDGED:["IN_PROGRESS","ESCALATED","CANCELLED"],IN_PROGRESS:["RESOLVED","ESCALATED"],ESCALATED:["ACKNOWLEDGED","IN_PROGRESS","RESOLVED","CANCELLED"],RESOLVED:["CLOSED","IN_PROGRESS"]};
-  function isDispatcher(){var auth=window.Auth;if(auth&&auth.state&&auth.state.capabilitiesLoaded)return !!(auth.hasCapability&&auth.hasCapability("guest_request.assign"));return !!(auth&&auth.hasAnyRole&&auth.hasAnyRole(["admin","manager","receptionist"]));}
+  function isDispatcher(){var auth=window.Auth;if(auth&&auth.state&&auth.state.capabilitiesLoaded)return !!(auth.hasCapability&&auth.hasCapability("guest_request.assign"));return !!(auth&&auth.hasAnyRole&&auth.hasAnyRole(["admin","manager","general_manager","front_desk_supervisor","receptionist","housekeeping_manager"]));}
   function isCreator(){return isDispatcher();}
   function canCreatePosDraft(item){
     if(!item||item.channel!=="QR"||item.category!=="FOOD_BEVERAGE"||!item.table_number||item.pos_order_reference||["RESOLVED","CLOSED","CANCELLED"].indexOf(item.status)>=0)return false;
     var auth=window.Auth;
+    /* The draft opens the POS screen, so the viewer must be able to open it at
+       all — the access registry decides that, not a hand-written role list. */
+    if(!(window.JONE&&JONE.dashboard&&JONE.dashboard.canOpenPage&&JONE.dashboard.canOpenPage("pos.html")))return false;
     if(auth&&auth.state&&auth.state.capabilitiesLoaded)return !!(auth.hasCapability&&auth.hasCapability("guest_request.manage")&&(auth.hasCapability("restaurant.order.manage")||auth.hasCapability("bar.order.manage")));
     return !!(auth&&auth.hasAnyRole&&auth.hasAnyRole(["admin","manager","general_manager","waiter","bartender"]));
   }
@@ -94,7 +97,10 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   async function dispatch(reference){var result=await JONE.dashboard.formModal({title:"Dispatch "+reference,submitText:"Save dispatch",wide:true,fields:[assigneePicker(),{name:"owner_team",label:"Owner team",type:"select",options:[{value:"",label:"Keep current team"},{value:"FRONT_DESK",label:"Front desk"},{value:"HOUSEKEEPING",label:"Housekeeping"},{value:"MAINTENANCE",label:"Maintenance"},{value:"FOOD_BEVERAGE",label:"Food & beverage"},{value:"MANAGEMENT",label:"Management"}]},{name:"due_at",label:"Due by",type:"datetime-local"},{name:"note",label:"Dispatch note",type:"textarea",rows:3}],onSubmit:async function(values){await window.API.resourceAction("serviceRequests",reference,"assign",OPS.omitEmpty(values));return{message:"Dispatch recorded."};}});if(result){JONE.ui.toast("Dispatch recorded.","success");load();}}
   async function changeStatus(reference,target){var result=await JONE.dashboard.formModal({title:"Update request status",submitText:"Save status",fields:[{name:"note",label:"Update note",type:"textarea",rows:3,placeholder:"Optional update for the guest and team"},{name:"guest_visible",label:"Show this update to the guest",type:"checkbox",help:"Only guest-visible updates appear in the verified guest portal."}],values:{guest_visible:true},onSubmit:async function(values){await window.API.resourceAction("serviceRequests",reference,"status",{status:target,note:values.note||"",guest_visible:values.guest_visible});return{message:"Status updated."};}});if(result){JONE.ui.toast("Request status updated.","success");load();}}
   async function claim(reference){try{await window.API.resourceAction("serviceRequests",reference,"claim",{});JONE.ui.toast("Request claimed.","success");load();}catch(err){JONE.ui.toast((err&&err.message)||"The request could not be claimed.","error");}}
-  function createPosDraft(reference){window.location.href="pos.html?service_request="+encodeURIComponent(reference);}
+  function createPosDraft(reference){
+    if(!(window.JONE&&JONE.dashboard&&JONE.dashboard.canOpenPage&&JONE.dashboard.canOpenPage("pos.html"))){JONE.ui.toast("Your department cannot open the POS screen.","error");return;}
+    window.location.href="pos.html?service_request="+encodeURIComponent(reference);
+  }
   async function route(reference,kind){var action=kind==="housekeeping"?"housekeeping-task":"maintenance-work-order";try{var response=await window.API.resourceAction("serviceRequests",reference,action,{}),data=response.data||{};JONE.ui.toast((kind==="housekeeping"?"Housekeeping task ":"Work order ")+(data.task_reference||data.work_order_reference||"linked")+" linked.","success");load();}catch(err){JONE.ui.toast((err&&err.message)||"The linked operation could not be created.","error");}}
   async function view(reference){var body=JONE.el("div",{class:"loading-skeleton",textContent:"Loading request…"});var comment=JONE.el("button",{class:"btn btn-sm btn-outline",type:"button",textContent:"Add comment"});var footer=JONE.el("div",{},comment);JONE.ui.modal.open({title:"Guest request "+reference,body:body,size:"modal-lg",footer:footer});comment.addEventListener("click",function(){commentRequest(reference);});try{var response=await window.API.getOne("serviceRequests",reference),item=response.data||{},events=(item.events||[]).map(function(event){return '<li><strong>'+JONE.esc(human(event.type))+'</strong> · '+JONE.esc(event.created_at?JONE.formatDateTime(event.created_at):"—")+(event.actor_email?" · "+JONE.esc(event.actor_email):"")+(event.message?'<br><span class="caption">'+JONE.esc(event.message)+'</span>':"")+'</li>';}).join("")||"<li>No timeline events recorded.</li>";body.innerHTML='<dl class="profile-grid"><div><dt>Guest / caller</dt><dd>'+JONE.esc(item.guest_name||(item.table_number?"Table guest":"—"))+'</dd></div><div><dt>Room / table</dt><dd>'+JONE.esc(item.room_number?"Room "+item.room_number:item.table_number?"Table "+item.table_number:"—")+'</dd></div><div><dt>Channel</dt><dd>'+JONE.esc(human(item.channel))+(item.qr_link_reference?" · "+JONE.esc(item.qr_link_reference):"")+'</dd></div><div><dt>Status</dt><dd>'+JONE.dashboard.statusPill(item.status)+'</dd></div><div><dt>Priority</dt><dd>'+JONE.dashboard.statusPill(item.priority)+'</dd></div></dl><h4 style="margin:1rem 0 .45rem;">Details</h4><p>'+JONE.esc(item.detail||"No additional details.")+'</p><h4 style="margin:1rem 0 .45rem;">Timeline</h4><ul>'+events+'</ul>';JONE.icons.inject(body);}catch(err){body.innerHTML='<div class="empty-state"><h3>Request unavailable</h3><p>'+JONE.esc((err&&err.message)||"Please try again.")+'</p></div>';}}
   async function commentRequest(reference){JONE.ui.modal.close();var result=await JONE.dashboard.formModal({title:"Add request comment",submitText:"Add comment",fields:[{name:"message",label:"Comment",type:"textarea",rows:4,required:true},{name:"guest_visible",label:"Show this comment to the guest",type:"checkbox"}],onSubmit:async function(values){await window.API.resourceAction("serviceRequests",reference,"comments",values);return{message:"Comment recorded."};}});if(result){JONE.ui.toast("Comment recorded.","success");view(reference);load();}}
@@ -108,6 +114,6 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
 })();
 </script>
 
-<script src="../js/pwa.js?v=1.1.12"></script><script src="../js/version.js?v=1.1.12"></script><script src="../js/update-checker.js?v=1.1.12"></script>
+<script src="../js/pwa.js?v=1.1.15"></script><script src="../js/version.js?v=1.1.15"></script><script src="../js/update-checker.js?v=1.1.15"></script>
 </body>
 </html>

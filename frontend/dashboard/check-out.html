@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.13">
+<link rel="stylesheet" href="../css/main.css?v=1.1.15">
 
 </head>
 <body>
@@ -87,17 +87,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.13"></script>
-<script src="../js/config.js?v=1.1.13"></script>
-<script src="../js/utils.js?v=1.1.13"></script>
-<script src="../js/icons.js?v=1.1.13"></script>
-<script src="../js/api.js?v=1.1.13"></script>
-<script src="../js/theme.js?v=1.1.13"></script>
-<script src="../js/ui.js?v=1.1.13"></script>
-<script src="../js/auth.js?v=1.1.13"></script>
-<script src="../js/hotel-data.js?v=1.1.13"></script>
-<script src="../js/navigation.js?v=1.1.13"></script>
-<script src="../js/dashboard.js?v=1.1.13"></script><script src="../js/table-fit.js?v=1.1.13"></script><script src="../js/thermal-receipt.js?v=1.1.13"></script>
+<script src="../js/runtime-config.js?v=1.1.15"></script>
+<script src="../js/config.js?v=1.1.15"></script>
+<script src="../js/utils.js?v=1.1.15"></script>
+<script src="../js/icons.js?v=1.1.15"></script>
+<script src="../js/api.js?v=1.1.15"></script>
+<script src="../js/theme.js?v=1.1.15"></script>
+<script src="../js/ui.js?v=1.1.15"></script>
+<script src="../js/auth.js?v=1.1.15"></script>
+<script src="../js/hotel-data.js?v=1.1.15"></script>
+<script src="../js/navigation.js?v=1.1.15"></script>
+<script src="../js/dashboard.js?v=1.1.15"></script><script src="../js/table-fit.js?v=1.1.15"></script><script src="../js/thermal-receipt.js?v=1.1.15"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("receptionist");
@@ -140,12 +140,22 @@
   }
 
   function card(b){
-    var due = Number(b.amount_due || 0);
+    /* The card must state what the guest ACTUALLY owes. The stay projection
+       (amount_due) misses everything the guest consumed on top of the room and
+       charged to their folio — food, drinks, room service, laundry — so a guest
+       could show "Outstanding ₦0" at the desk while still owing the hotel money
+       for their own requests. `outstanding_balance` is the authoritative figure
+       (stay + posted folio charges) the folio and the ledger agree on; fall back
+       to the stay projection only when the API did not send it. */
+    var stayDue = Number(b.amount_due || 0);
+    var folioCharges = Number(b.folio_charges || 0);
+    var due = (b.outstanding_balance != null && b.outstanding_balance !== "")
+      ? Number(b.outstanding_balance) : stayDue;
     var ref = refOf(b);
     var inHouse = String(b.status).toUpperCase() === "CHECKED_IN";
     var actions = inHouse
       ? '<button class="btn btn-block btn-accent" data-checkout-btn="' + JONE.esc(ref) + '"' +
-        (due > 0 ? ' data-due="1"' : "") + '>' +
+        (due > 0 ? ' data-due="1" data-due-amount="' + JONE.esc(String(due)) + '"' : "") + '>' +
         '<span data-icon="logOut" data-size="16"></span> Check out' +
         (due > 0 ? " (balance " + JONE.esc(JONE.formatNaira(due)) + ")" : "") + "</button>"
       : '<button class="btn btn-block btn-outline" data-checkin-btn="' + JONE.esc(ref) + '">' +
@@ -179,15 +189,26 @@
         moneyCell("Paid", b.amount_paid) +
         moneyCell("Outstanding", due, due > 0 ? "text-danger" : "text-success") +
       "</div>" +
+      (folioCharges > 0
+        ? '<p class="co-card-note caption">Includes ' + JONE.esc(JONE.formatNaira(folioCharges)) +
+          " of purchases and guest requests charged to the folio — see View folio / gate pass.</p>"
+        : "") +
       '<footer class="co-card-actions">' +
         actions +
         (canViewFolio()
           ? '<button class="btn btn-block btn-outline" data-folio-btn="' + JONE.esc(ref) + '">' +
             '<span data-icon="receipt" data-size="16"></span> View folio / gate pass</button>' : "") +
-        /* Shared rule: no outstanding balance -> no Record payment button. */
+        /* Shared rule: no outstanding balance -> no Record payment button.
+           (That dialog settles the STAY projection; money owed for the guest's
+           own requests is collected in the folio, which is why a booking whose
+           room is paid can still offer a settlement below.) */
         (JONE.dashboard.canRecordPayment(b)
           ? '<button class="btn btn-block btn-outline" data-pay-btn="' + JONE.esc(b.id) + '">' +
             '<span data-icon="wallet" data-size="16"></span> Record payment</button>' : "") +
+        /* Money owed for the guest's requests: one place to collect it. */
+        (folioCharges > 0 && inHouse
+          ? '<button class="btn btn-block btn-accent" data-folio-btn="' + JONE.esc(ref) + '">' +
+            '<span data-icon="wallet" data-size="16"></span> Settle requests &amp; print gate pass</button>' : "") +
         '<a class="btn btn-block btn-ghost" href="booking-details.html?ref=' + encodeURIComponent(ref) + '">' +
           '<span data-icon="fileText" data-size="16"></span> Full booking</a>' +
       "</footer>" +
@@ -201,8 +222,15 @@
   /* Folio & gate clearance: everything the guest consumed (food, drinks,
      snacks, laundry and other folio charges), what they paid, and whether a
      gate pass may be printed. All figures come from the backend folio read —
-     the page never computes a balance itself. */
-  async function openClearance(ref){
+     the page never computes a balance itself.
+
+     The bill is STATED, not hinted at: money owed for the guest's own requests
+     (restaurant, bar, room service, laundry) is part of "amount to settle"
+     even before it is billed to the folio, and the gate pass stays blocked
+     until every naira is collected and recorded by the staff member who
+     received it. That recording happens right here, so the figure the desk sees
+     after taking the money is the ledger's figure, not an estimate. */
+  async function openClearance(ref, booking){
     var body = JONE.el("div", { class: "loading-skeleton", textContent: "Loading folio…" });
     JONE.ui.modal.open({ title: "Folio & gate clearance · " + ref, body: body, size: "modal-lg" });
     if (!window.API || typeof window.API.bookingFolioClearance !== "function") {
@@ -211,53 +239,164 @@
     }
     try {
       var res = await window.API.bookingFolioClearance(ref);
-      var d = res.data || {};
-      var charges = (d.charges || []).map(function(c){
+      renderClearance(body, ref, res.data || {}, booking);
+    } catch (err) {
+      body.innerHTML = '<div class="empty-state"><h3>Folio unavailable</h3><p>' + JONE.esc((err && err.message) || "Please try again.") + "</p></div>";
+    }
+  }
+
+  function clearanceRows(list, emptyText){
+    if (!list.length) return '<p class="caption">' + JONE.esc(emptyText) + "</p>";
+    return '<div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>' +
+      list.map(function(c){
         return '<tr><td>' + JONE.esc(c.date || "—") + '</td><td>' + JONE.esc(c.description || c.kind || "Charge") +
           (c.source_reference ? '<br><small>' + JONE.esc(c.source_reference) + "</small>" : "") +
           '</td><td class="num">' + JONE.esc(JONE.formatNaira(c.amount || 0)) + "</td></tr>";
-      }).join("");
-      var credits = (d.credits || []).map(function(c){
-        return '<tr><td>' + JONE.esc(c.date || "—") + '</td><td>' + JONE.esc(c.description || c.kind || "Payment") +
-          '</td><td class="num">' + JONE.esc(JONE.formatNaira(c.amount || 0)) + "</td></tr>";
-      }).join("");
-      var unbilled = d.unbilled_laundry || [];
-      var openReq = d.open_requests || [];
-      var html = '<dl class="profile-grid">' +
-        '<div><dt>Guest</dt><dd>' + JONE.esc(d.guest_name || "Guest") + "</dd></div>" +
-        '<div><dt>Room</dt><dd>' + JONE.esc((d.room_numbers || []).join(", ") || "—") + "</dd></div>" +
-        '<div><dt>Stay</dt><dd>' + JONE.esc([d.check_in, d.check_out].filter(Boolean).join(" → ") || "—") + "</dd></div>" +
-        '<div><dt>Status</dt><dd>' + JONE.dashboard.statusPill(d.status || "") + "</dd></div></dl>" +
-        '<h4 style="margin:1rem 0 .5rem;">Accommodation</h4>' +
-        '<dl class="profile-grid"><div><dt>Total</dt><dd>' + JONE.esc(JONE.formatNaira((d.accommodation || {}).total_amount || 0)) + "</dd></div>" +
-        '<div><dt>Paid</dt><dd>' + JONE.esc(JONE.formatNaira((d.accommodation || {}).amount_paid || 0)) + "</dd></div>" +
-        '<div><dt>Due</dt><dd>' + JONE.esc(JONE.formatNaira((d.accommodation || {}).amount_due || 0)) + "</dd></div></dl>" +
-        '<h4 style="margin:1rem 0 .5rem;">Purchases &amp; charges (food, drinks, laundry, extras)</h4>' +
-        (charges ? '<div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>' + charges + "</tbody></table></div>"
-                 : '<p class="caption">No extra purchases were charged to this guest.</p>') +
-        (credits ? '<h4 style="margin:1rem 0 .5rem;">Payments &amp; credits on the folio</h4><div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th></tr></thead><tbody>' + credits + "</tbody></table></div>" : "") +
-        (unbilled.length ? '<p class="text-danger" style="margin-top:1rem;"><strong>Not yet billed:</strong> ' +
-          unbilled.map(function(o){ return JONE.esc(o.reference) + " (" + JONE.esc(JONE.formatNaira(o.total_amount || 0)) + ")"; }).join(", ") +
-          " — bill this laundry before issuing a gate pass (sidebar → Laundry).</p>" : "") +
-        (openReq.length ? '<p style="margin-top:.75rem;"><strong>Open guest requests:</strong> ' +
-          openReq.map(function(r){ return JONE.esc(r.summary || r.reference); }).join("; ") +
-          " — confirm these are fulfilled/settled before the guest leaves.</p>" : "");
-      if (d.cleared && !unbilled.length) {
-        html += '<p class="text-success" style="margin-top:1rem;"><strong>All bills cleared.</strong> Nothing is outstanding — you may print the gate pass, then complete check-out.</p>' +
-          '<button class="btn btn-accent" type="button" data-print-gate-pass="' + JONE.esc(d.booking_reference || ref) + '">' +
-          '<span data-icon="printer" data-size="16"></span> Print gate clearance receipt</button>';
-      } else if (d.cleared && unbilled.length) {
-        html += '<p class="text-danger" style="margin-top:1rem;"><strong>Do not issue a gate pass yet</strong> — the unbilled laundry above must be billed and settled first.</p>';
-      } else {
-        html += '<p class="text-danger" style="margin-top:1rem;"><strong>Outstanding balance: ' + JONE.esc(JONE.formatNaira(d.outstanding_balance || 0)) +
-          ".</strong> Ask the guest to settle it — use <em>Record payment</em> on the guest card — then re-open this folio before printing a gate pass.</p>";
+      }).join("") + "</tbody></table></div>";
+  }
+
+  function billLine(label, amount, help){
+    return '<div class="folio-bill-line"><span>' + JONE.esc(label) +
+      (help ? '<br><small class="muted">' + JONE.esc(help) + "</small>" : "") +
+      '</span><strong>' + JONE.esc(JONE.formatNaira(amount || 0)) + "</strong></div>";
+  }
+
+  function renderClearance(body, ref, d, booking){
+    var charges = d.charges || [];
+    var credits = d.credits || [];
+    var unpaid = d.unpaid_requests || [];
+    var openReq = d.open_requests || [];
+    var blockers = d.gate_pass_blockers || [];
+    var acc = d.accommodation || {};
+    var toSettle = Number(d.amount_to_settle || 0);
+
+    var html = '<dl class="profile-grid">' +
+      '<div><dt>Guest</dt><dd>' + JONE.esc(d.guest_name || "Guest") + "</dd></div>" +
+      '<div><dt>Room</dt><dd>' + JONE.esc((d.room_numbers || []).join(", ") || "—") + "</dd></div>" +
+      '<div><dt>Stay</dt><dd>' + JONE.esc([d.check_in, d.check_out].filter(Boolean).join(" → ") || "—") + "</dd></div>" +
+      '<div><dt>Status</dt><dd>' + JONE.dashboard.statusPill(d.status || "") + "</dd></div></dl>" +
+
+      /* ---------------------------- the bill ---------------------------- */
+      '<h4 style="margin:1rem 0 .5rem;">Bill to settle</h4>' +
+      '<div class="folio-bill">' +
+        billLine("Accommodation balance", acc.amount_due, "Room total " + JONE.formatNaira(acc.total_amount || 0) + " · paid " + JONE.formatNaira(acc.amount_paid || 0)) +
+        billLine("Purchases & charges on the folio", d.folio_balance) +
+        billLine("Requests not yet paid for", d.unpaid_requests_total, "Received by the guest but not billed to the folio yet") +
+        '<div class="folio-bill-total"><span>Amount to settle</span><strong>' + JONE.esc(JONE.formatNaira(toSettle)) + "</strong></div>" +
+      "</div>" +
+
+      /* --------------------------- itemisation -------------------------- */
+      '<h4 style="margin:1rem 0 .5rem;">Purchases &amp; charges (food, drinks, laundry, extras)</h4>' +
+      clearanceRows(charges, "No extra purchases were charged to this guest.") +
+      (credits.length ? '<h4 style="margin:1rem 0 .5rem;">Payments &amp; credits on the folio</h4>' + clearanceRows(credits, "") : "") +
+
+      /* --------------- money owed for the guest's own requests ----------- */
+      (unpaid.length ?
+        '<h4 style="margin:1rem 0 .5rem;">Requests not yet paid for</h4>' +
+        '<div class="table-wrap"><table class="table"><thead><tr><th>Reference</th><th>Item</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>' +
+        unpaid.map(function(r){
+          return "<tr><td>" + JONE.esc(r.reference) + "</td><td>" + JONE.esc(r.description || r.kind) +
+            '</td><td class="num">' + JONE.esc(JONE.formatNaira(r.amount || 0)) + "</td><td>" + JONE.esc(r.status || "—") + "</td></tr>";
+        }).join("") + "</tbody></table></div>" +
+        '<p class="caption">These are part of the amount to settle above. Recording the payment bills them to the folio and settles them in one step — nothing is billed twice.</p>'
+        : "") +
+
+      (openReq.length ?
+        '<h4 style="margin:1rem 0 .5rem;">Guest requests still open</h4>' +
+        '<ul class="caption" style="margin:0 0 0 1rem;">' +
+        openReq.map(function(r){ return "<li>" + JONE.esc(r.summary || r.reference) + " (" + JONE.esc(r.status || "") + ")</li>"; }).join("") +
+        '</ul><p class="caption">Confirm each request is fulfilled — or close it — before the guest leaves.</p>'
+        : "");
+
+    /* ---------------------- the gate-pass decision ---------------------- */
+    if (d.gate_pass_allowed) {
+      html += '<p class="text-success" style="margin-top:1rem;"><strong>All bills cleared and no request is outstanding.</strong> You may print the gate pass, then complete check-out.</p>' +
+        '<button class="btn btn-accent" type="button" data-print-gate-pass="' + JONE.esc(d.booking_reference || ref) + '">' +
+        '<span data-icon="printer" data-size="16"></span> Print gate clearance receipt</button>';
+    } else {
+      html += '<div class="folio-blocked"><p class="text-danger" style="margin:0 0 .35rem;"><strong>Do not issue a gate pass yet.</strong></p><ul style="margin:0 0 0 1rem;">' +
+        blockers.map(function(b){
+          return "<li>" + JONE.esc(b.label) + (b.amount ? " — " + JONE.esc(JONE.formatNaira(b.amount)) : "") +
+            (b.count ? " (" + JONE.esc(String(b.count)) + ")" : "") + "</li>";
+        }).join("") +
+        "</ul></div>";
+    }
+
+    /* ------------- record the money the desk just received --------------- */
+    if (d.can_settle) {
+      html += '<h4 style="margin:1.25rem 0 .5rem;">Record the payment received</h4>' +
+        '<div class="folio-settle">' +
+          '<p class="caption" style="margin:0 0 .5rem;">Enter exactly what the guest handed over. It is recorded against your account and applied to the folio immediately' +
+            (unpaid.length ? " (the unpaid requests above are billed to the folio in the same step)" : "") + ".</p>" +
+          '<div class="field"><label class="field-label" for="co-settle-amount">Amount received</label>' +
+            '<input class="input" id="co-settle-amount" type="number" min="0.01" step="0.01" value="' + JONE.esc(String(toSettle.toFixed(2))) + '"></div>' +
+          '<div class="field"><label class="field-label" for="co-settle-method">How the guest paid</label>' +
+            '<select class="select" id="co-settle-method">' +
+              '<option value="CASH">Cash at reception</option>' +
+              '<option value="POS">POS / card terminal</option>' +
+              '<option value="BANK_TRANSFER">Bank transfer</option>' +
+            "</select></div>" +
+          '<div class="field"><label class="field-label" for="co-settle-drawer">Cash session reference (cash only)</label>' +
+            '<input class="input" id="co-settle-drawer" type="text" maxlength="64" placeholder="Your own open drawer" autocomplete="off"></div>' +
+          '<div class="field"><label class="field-label" for="co-settle-notes">Notes (optional)</label>' +
+            '<input class="input" id="co-settle-notes" type="text" maxlength="255" placeholder="e.g. settled at the desk, receipt issued"></div>' +
+          '<button class="btn btn-accent" type="button" data-settle-balance="' + JONE.esc(d.booking_reference || ref) + '">' +
+            '<span data-icon="wallet" data-size="16"></span> Record payment &amp; clear the folio</button>' +
+          '<p class="caption" data-settle-status aria-live="polite" style="margin:.5rem 0 0;"></p>' +
+        "</div>";
+    } else if (blockers.length) {
+      html += '<p class="caption" style="margin-top:1rem;">' + JONE.esc(d.settle_blocked_reason || "") + "</p>";
+    }
+
+    body.innerHTML = html;
+    JONE.icons.inject(body);
+
+    var printBtn = body.querySelector("[data-print-gate-pass]");
+    if (printBtn) printBtn.addEventListener("click", function(){ printGatePass(d); });
+    var settleBtn = body.querySelector("[data-settle-balance]");
+    if (settleBtn) settleBtn.addEventListener("click", function(){ recordSettlement(body, ref, d, booking, settleBtn); });
+  }
+
+  /* Record the money received at the desk for the WHOLE bill (stay + the
+     guest's requests) and re-render from the backend's refreshed folio read.
+     The response is the authority: the dialog never does the arithmetic. */
+  async function recordSettlement(body, ref, d, booking, button){
+    var statusEl = body.querySelector("[data-settle-status]");
+    var amountEl = body.querySelector("#co-settle-amount");
+    var methodEl = body.querySelector("#co-settle-method");
+    var drawerEl = body.querySelector("#co-settle-drawer");
+    var notesEl = body.querySelector("#co-settle-notes");
+    var amount = Number(amountEl && amountEl.value);
+    var method = (methodEl && methodEl.value) || "CASH";
+    var drawer = String((drawerEl && drawerEl.value) || "").trim();
+    function say(text){
+      if (statusEl) statusEl.textContent = text;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) { say("Enter the amount the guest actually handed over."); amountEl && amountEl.focus(); return; }
+    if (method === "CASH" && !drawer) { say("Cash must go into your own open drawer — enter its cash-session reference."); drawerEl && drawerEl.focus(); return; }
+    if (method !== "CASH" && drawer) { say("Remove the cash-session reference for a POS or bank transfer."); return; }
+    button.disabled = true;
+    say("Recording the payment…");
+    try {
+      var res = await window.API.settleBookingBalance(ref, {
+        amount: amount.toFixed(2),
+        provider: method,
+        notes: (notesEl && notesEl.value) || "",
+        include_unbilled: true,
+        cash_session_reference: method === "CASH" ? drawer : ""
+      });
+      var payload = (res && res.data) || {};
+      var folio = payload.folio || {};
+      JONE.ui.toast("Payment " + (payload.receipt_reference || "") + " recorded by " + (payload.recorded_by || "you") + ".", "success");
+      if (folio.gate_pass_allowed) {
+        JONE.ui.toast("The bill is settled in full — the gate pass may be printed.", "success");
       }
-      body.innerHTML = html;
-      JONE.icons.inject(body);
-      var printBtn = body.querySelector("[data-print-gate-pass]");
-      if (printBtn) printBtn.addEventListener("click", function(){ printGatePass(d); });
+      renderClearance(body, ref, folio, booking);
+      if (typeof load === "function") await load(input ? input.value.trim() : "");
     } catch (err) {
-      body.innerHTML = '<div class="empty-state"><h3>Folio unavailable</h3><p>' + JONE.esc((err && err.message) || "Please try again.") + "</p></div>";
+      button.disabled = false;
+      say((err && err.message) || "The payment could not be recorded. Nothing was charged.");
+      JONE.ui.toast((err && err.message) || "The payment could not be recorded.", "error");
     }
   }
 
@@ -382,7 +521,10 @@
     var folioBtn = e.target.closest && e.target.closest("[data-folio-btn]");
     if (folioBtn) {
       if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
-      openClearance(folioBtn.getAttribute("data-folio-btn"));
+      var folioRef = folioBtn.getAttribute("data-folio-btn");
+      var folioBooking = null;
+      for (var j = 0; j < found.length; j++) if (String(found[j].booking_reference) === String(folioRef)) folioBooking = found[j];
+      openClearance(folioRef, folioBooking);
       return;
     }
 
@@ -413,7 +555,9 @@
     if (hasDue) {
       var ok = await JONE.ui.confirm({
         title: "Check out with an outstanding balance?",
-        message: "This booking still has an unpaid balance. The balance stays on the record and can be settled separately.",
+        message: "This booking still owes " + JONE.formatNaira(Number(btn.getAttribute("data-due-amount") || 0)) +
+          " — room balance and/or unpaid guest requests on the folio. It stays on the record and can be settled separately, " +
+          "but the gate pass cannot be issued until it is cleared.",
         confirmText: "Check out anyway", danger: true,
       });
       if (!ok) return;
@@ -434,8 +578,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.13"></script>
-<script src="../js/version.js?v=1.1.13"></script>
-<script src="../js/update-checker.js?v=1.1.13"></script>
+<script src="../js/pwa.js?v=1.1.15"></script>
+<script src="../js/version.js?v=1.1.15"></script>
+<script src="../js/update-checker.js?v=1.1.15"></script>
 </body>
 </html>

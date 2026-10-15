@@ -63,9 +63,14 @@ test("receipt list waits for capabilities before fetching rows or deriving contr
   assert.match(receipts, /Auth\.loadCapabilities\(\)\.catch\(function\(\)\{ return \[\]; \}\)/);
 });
 
-test("payment detail booking shortcut is hidden without both booking scope and a legacy detail role", () => {
+test("payment detail booking shortcut needs the access registry AND the booking scope", () => {
   const dashboard = fs.readFileSync(path.join(FRONTEND, "js/dashboard.js"), "utf8");
-  assert.match(dashboard, /function canOpenPaymentBooking\(\)[\s\S]*hasAnyRole\(\["admin", "manager", "receptionist"\]\)[\s\S]*hasCapability\("booking\.read"\)[\s\S]*hasCapability\("booking\.manage"\)/);
+  /* The link into the booking screen is governed by the one department rule
+     (canOpenPage → PAGE_ACCESS) plus the server's booking capability. The
+     hand-written ["admin","manager","receptionist"] list that used to sit here
+     denied a general manager and a front desk supervisor what receptionists
+     were shown, and could drift from the page's own gate. */
+  assert.match(dashboard, /function canOpenPaymentBooking\(\)[\s\S]*canOpenPage\("booking-details\.html"\)[\s\S]*hasCapability\("booking\.read"\)[\s\S]*hasCapability\("booking\.manage"\)/);
   assert.match(dashboard, /initial\.booking_reference && canOpenPaymentBooking\(\)/);
 });
 
@@ -74,5 +79,9 @@ test("standalone staff receipt awaits capabilities and hides unauthorized action
   assert.match(details, /var receiptDetailCapabilitiesReady =[^;]*Auth\.loadCapabilities\(\)/);
   assert.ok(details.indexOf("await receiptDetailCapabilitiesReady;") < details.indexOf("getStaffBookingReceipt(ref)"));
   assert.match(details, /hasCapability\("payment\.receipt\.send"\)/);
-  assert.match(details, /hasAnyRole\(\["admin", "manager", "receptionist"\]\)/);
+  /* The booking link is shown only when the reader's department may open the
+     booking screen (the access registry in js/dashboard.js) AND the server
+     grants booking data. */
+  assert.match(details, /canOpenPage\("booking-details\.html"\)/);
+  assert.match(details, /hasCapability\("booking\.read"\)/);
 });

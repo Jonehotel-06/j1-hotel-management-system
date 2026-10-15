@@ -40,6 +40,7 @@ from .serializers_admin import (
     MissedBookingSerializer,
     RecordActionSerializer,
     RescheduleBookingSerializer,
+    SettleGuestBalanceSerializer,
 )
 from .serializers import ReceiptSerializer
 from .services import booking_service
@@ -325,6 +326,200 @@ class AdminBookingCheckOutView(_BookingActionView):
 
 
 @extend_schema(tags=["Admin · Bookings"], summary="Folio and gate-clearance summary for a booking")
+def _folio_clearance_payload(booking, *, user=None):
+    """The check-out desk's single read of the guest's bill and gate clearance.
+
+    Money is STATED, never implied:
+
+      * ``accommodation`` is the stay projection (total / paid / due);
+      * ``charges`` / ``credits`` are the immutable folio postings for everything
+        the guest consumed on top of the stay (restaurant, bar, room service,
+        laundry, discounts, payments);
+      * ``unpaid_requests`` lists request-linked money that is NOT on the folio
+        yet (unbilled in-house laundry, a delivered-but-uncharged room-service
+        order) together with the action that clears it, so nothing the guest
+        consumed can be missing from the figure the desk collects;
+      * ``amount_to_settle`` is that figure: the folio's outstanding balance plus
+        everything still unbilled;
+      * ``gate_pass_allowed`` is False while ANY of it is outstanding or a
+        request is still open, so a gate pass can never tell the gate that "all
+        bills are cleared" while the guest still owes the hotel money or is
+        waiting on a request.
+
+    Capability-gated by the caller: viewing a guest's folio is the existing
+    ``folio.view`` privilege, not a general booking grant.
+    """
+    from decimal import Decimal
+
+    from apps.accounts.capabilities import has_capability
+    from apps.finance.models import FinancialTransaction, FolioPosting
+    from apps.finance.services.folio_service import (
+        booking_folio_charge_balance,
+        booking_outstanding_balance,
+    )
+    from apps.guest_services.models import LaundryOrder, ServiceRequest
+    from apps.pos.models import PosOrder
+
+    postings = (
+        FolioPosting.objects.filter(folio__booking=booking)
+        .exclude(transaction__type=FinancialTransaction.Type.ACCOMMODATION_CHARGE)
+        .filter(transaction__status=FinancialTransaction.Status.POSTED)
+        .select_related("transaction")
+        .order_by("business_date", "created_at", "pk")
+    )
+    charges: list[dict] = []
+    credits: list[dict] = []
+    for posting in postings:
+        row = {
+            "date": posting.business_date.isoformat() if posting.business_date else "",
+            "description": posting.description or posting.get_kind_display(),
+            "kind": posting.kind,
+            "amount": money(posting.amount),
+            "source_reference": posting.source_reference or "",
+            "transaction_reference": posting.transaction.reference if posting.transaction_id else "",
+        }
+        (charges if posting.effect == FolioPosting.Effect.DEBIT else credits).append(row)
+
+    folio_balance = booking_folio_charge_balance(booking=booking)
+    outstanding = booking_outstanding_balance(booking=booking, folio_charge_balance=folio_balance)
+    try:
+        stay = booking.stay
+    except Exception:  # noqa: BLE001 - a booking without a stay has no folio liabilities
+        stay = None
+
+    unbilled_laundry: list[dict] = []
+    unpaid_requests: list[dict] = []
+    open_requests: list[dict] = []
+    if stay is not None:
+        for order in (
+            LaundryOrder.objects.filter(stay=stay, financial_transaction__isnull=True)
+            .exclude(status=LaundryOrder.Status.CANCELLED)
+            .order_by("created_at")
+        ):
+            row = {
+                "reference": order.reference,
+                "kind": "LAUNDRY",
+                "description": f"Laundry {order.reference}",
+                "status": order.status,
+                "amount": money(order.total_amount),
+            }
+            unbilled_laundry.append(
+                {"reference": order.reference, "status": order.status,
+                 "total_amount": money(order.total_amount)}
+            )
+            unpaid_requests.append({**row, "billed": False, "action": "BILL_AND_SETTLE"})
+        # Delivered food/drink charged to the room is billed to the folio when it
+        # is delivered. If an order somehow has no charge transaction it is still
+        # a liability — state it rather than let the desk hand over a bill that
+        # is short of what the guest consumed.
+        for order in (
+            PosOrder.objects.filter(stay=stay, charge_transaction__isnull=True)
+            .exclude(status__in=[PosOrder.Status.CANCELLED, PosOrder.Status.VOIDED,
+                                 PosOrder.Status.DRAFT])
+            .order_by("created_at")
+        ):
+            unpaid_requests.append(
+                {
+                    "reference": order.reference,
+                    "kind": "ROOM_SERVICE",
+                    "description": f"{order.get_mode_display()} {order.reference}",
+                    "status": order.status,
+                    "amount": money(order.total_amount),
+                    "billed": False,
+                    "action": "BILL_AND_SETTLE",
+                }
+            )
+        open_requests = [
+            {"reference": req.reference, "category": req.category, "status": req.status,
+             "summary": req.summary}
+            for req in ServiceRequest.objects.filter(stay=stay)
+            .exclude(status__in=[
+                ServiceRequest.Status.RESOLVED,
+                ServiceRequest.Status.CLOSED,
+                ServiceRequest.Status.CANCELLED,
+            ])
+            .order_by("created_at")
+        ]
+
+    unbilled_total = sum((Decimal(row["amount"]) for row in unpaid_requests), Decimal("0.00"))
+    amount_to_settle = (Decimal(outstanding) + unbilled_total).quantize(Decimal("0.01"))
+
+    blockers: list[dict] = []
+    if Decimal(outstanding) > Decimal("0.00"):
+        blockers.append({
+            "code": "OUTSTANDING_BALANCE",
+            "label": "Money owed on the folio",
+            "amount": money(outstanding),
+        })
+    if unbilled_total > Decimal("0.00"):
+        blockers.append({
+            "code": "UNPAID_REQUESTS",
+            "label": "Requests not yet paid for (not on the folio)",
+            "amount": money(unbilled_total),
+        })
+    if open_requests:
+        blockers.append({
+            "code": "OPEN_REQUESTS",
+            "label": "Guest requests still open",
+            "count": len(open_requests),
+        })
+
+    payable = booking.status in ("PENDING", "CONFIRMED", "CHECKED_IN")
+    can_settle = bool(
+        user is not None
+        and getattr(user, "is_authenticated", False)
+        and has_capability(user, "booking.manage")
+        and has_capability(user, "payment.capture")
+        and payable
+        and amount_to_settle > Decimal("0.00")
+    )
+    settle_blocked_reason = ""
+    if not can_settle:
+        if not payable:
+            settle_blocked_reason = f"A booking with status {booking.get_status_display()} cannot take a desk payment."
+        elif amount_to_settle <= Decimal("0.00"):
+            settle_blocked_reason = "Nothing is outstanding on this bill."
+        else:
+            settle_blocked_reason = "Recording money at the desk requires the booking-management and payment-capture permissions."
+
+    return {
+        "booking_reference": booking.booking_reference,
+        "guest_name": booking.guest.full_name if booking.guest_id else "",
+        "room_numbers": [
+            assignment.room.room_number
+            for assignment in booking.room_assignments.all()
+            if assignment.room_id
+        ],
+        "status": booking.status,
+        "check_in": booking.check_in.isoformat() if booking.check_in else "",
+        "check_out": booking.check_out.isoformat() if booking.check_out else "",
+        "currency": booking.currency,
+        "accommodation": {
+            "total_amount": money(booking.total_amount),
+            "amount_paid": money(booking.amount_paid),
+            "amount_due": money(booking.amount_due),
+        },
+        "charges": charges,
+        "credits": credits,
+        "charges_total": money(sum((Decimal(row["amount"]) for row in charges), Decimal("0.00"))),
+        "credits_total": money(sum((Decimal(row["amount"]) for row in credits), Decimal("0.00"))),
+        "folio_balance": money(folio_balance),
+        "outstanding_balance": money(outstanding),
+        "cleared": outstanding == Decimal("0.00"),
+        "unbilled_laundry": unbilled_laundry,
+        "open_requests": open_requests,
+        # --- the bill the desk must collect, and what blocks the gate ---------
+        "unpaid_requests": unpaid_requests,
+        "unpaid_requests_total": money(unbilled_total),
+        "amount_to_settle": money(amount_to_settle),
+        "gate_pass_allowed": not blockers,
+        "gate_pass_blockers": blockers,
+        "can_settle": can_settle,
+        "settle_blocked_reason": settle_blocked_reason,
+    }
+
+
+@extend_schema(tags=["Admin · Bookings"], summary="Check-out folio and gate clearance for a booking")
 class AdminBookingFolioClearanceView(APIView):
     """Checkout-desk clearance read: what the guest consumed, what was paid,
     whether anything is still owed, and what has not been billed yet — the
@@ -342,89 +537,59 @@ class AdminBookingFolioClearanceView(APIView):
     required_capability = "folio.view"
 
     def get(self, request, lookup):
-        from decimal import Decimal
+        return success_response(_folio_clearance_payload(_get_admin_booking(lookup), user=request.user))
 
-        from apps.finance.models import FinancialTransaction, FolioPosting
-        from apps.finance.services.folio_service import (
-            booking_folio_charge_balance,
-            booking_outstanding_balance,
-        )
-        from apps.guest_services.models import LaundryOrder, ServiceRequest
 
+@extend_schema(tags=["Admin · Bookings"], summary="Record the money received for a guest's whole bill")
+class AdminBookingSettleBalanceView(APIView):
+    """Take payment at the desk for EVERYTHING the guest owes, and show it on the folio.
+
+    Money that a guest owed for their own requests (restaurant, bar, room
+    service, laundry) had no way in once the room itself was paid, so the folio
+    stayed outstanding and the gate pass stayed blocked. This endpoint settles
+    the combined bill in one transaction and answers with the refreshed folio
+    read, so the dialog and the gate-pass decision come from the same
+    transaction that took the money.
+
+    The ``Payment`` row records the acting staff member: the money is attributed
+    to the person who received and recorded it, and cash still requires that
+    cashier's own open drawer. Capability-gated on booking management +
+    payment capture (the same pair as /api/admin/payments/record/).
+    """
+
+    permission_classes = [HasCapability]
+    required_capabilities = ("booking.manage", "payment.capture")
+    serializer_class = SettleGuestBalanceSerializer
+
+    def post(self, request, lookup):
+        from apps.finance.services.payment_collection_service import settle_outstanding_balance
+        from apps.payments.serializers import PaymentSerializer
+
+        serializer = SettleGuestBalanceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
         booking = _get_admin_booking(lookup)
-        postings = (
-            FolioPosting.objects.filter(folio__booking=booking)
-            .exclude(transaction__type=FinancialTransaction.Type.ACCOMMODATION_CHARGE)
-            .filter(transaction__status=FinancialTransaction.Status.POSTED)
-            .select_related("transaction")
-            .order_by("business_date", "created_at", "pk")
+        payment, breakdown = settle_outstanding_balance(
+            booking=booking,
+            actor=request.user,
+            amount=data["amount"],
+            provider=data["provider"],
+            notes=data.get("notes", ""),
+            request=request,
+            include_unbilled=data.get("include_unbilled", True),
+            cash_session_reference=data.get("cash_session_reference", ""),
         )
-        charges: list[dict] = []
-        credits: list[dict] = []
-        for posting in postings:
-            row = {
-                "date": posting.business_date.isoformat() if posting.business_date else "",
-                "description": posting.description or posting.get_kind_display(),
-                "kind": posting.kind,
-                "amount": money(posting.amount),
-                "source_reference": posting.source_reference or "",
-                "transaction_reference": posting.transaction.reference if posting.transaction_id else "",
-            }
-            (charges if posting.effect == FolioPosting.Effect.DEBIT else credits).append(row)
-
-        folio_balance = booking_folio_charge_balance(booking=booking)
-        outstanding = booking_outstanding_balance(booking=booking, folio_charge_balance=folio_balance)
-        try:
-            stay = booking.stay
-        except Exception:
-            stay = None
-        unbilled_laundry: list[dict] = []
-        open_requests: list[dict] = []
-        if stay is not None:
-            unbilled_laundry = [
-                {"reference": order.reference, "status": order.status, "total_amount": money(order.total_amount)}
-                for order in LaundryOrder.objects.filter(stay=stay, financial_transaction__isnull=True)
-                .exclude(status=LaundryOrder.Status.CANCELLED)
-                .order_by("created_at")
-            ]
-            open_requests = [
-                {"reference": req.reference, "category": req.category, "status": req.status, "summary": req.summary}
-                for req in ServiceRequest.objects.filter(stay=stay)
-                .exclude(status__in=[
-                    ServiceRequest.Status.RESOLVED,
-                    ServiceRequest.Status.CLOSED,
-                    ServiceRequest.Status.CANCELLED,
-                ])
-                .order_by("created_at")
-            ]
+        booking.refresh_from_db()
+        payload = PaymentSerializer(payment).data
+        payload["receipt_reference"] = payment.reference
+        payload["has_receipt"] = True
+        payload["settlement"] = breakdown
+        payload["recorded_by"] = getattr(request.user, "email", "")
+        payload["folio"] = _folio_clearance_payload(booking, user=request.user)
         return success_response(
-            {
-                "booking_reference": booking.booking_reference,
-                "guest_name": booking.guest.full_name if booking.guest_id else "",
-                "room_numbers": [
-                    assignment.room.room_number
-                    for assignment in booking.room_assignments.all()
-                    if assignment.room_id
-                ],
-                "status": booking.status,
-                "check_in": booking.check_in.isoformat() if booking.check_in else "",
-                "check_out": booking.check_out.isoformat() if booking.check_out else "",
-                "currency": booking.currency,
-                "accommodation": {
-                    "total_amount": money(booking.total_amount),
-                    "amount_paid": money(booking.amount_paid),
-                    "amount_due": money(booking.amount_due),
-                },
-                "charges": charges,
-                "credits": credits,
-                "charges_total": money(sum((Decimal(row["amount"]) for row in charges), Decimal("0.00"))),
-                "credits_total": money(sum((Decimal(row["amount"]) for row in credits), Decimal("0.00"))),
-                "folio_balance": money(folio_balance),
-                "outstanding_balance": money(outstanding),
-                "cleared": outstanding == Decimal("0.00"),
-                "unbilled_laundry": unbilled_laundry,
-                "open_requests": open_requests,
-            }
+            payload,
+            message="Payment recorded and applied to the folio.",
+            status=status.HTTP_201_CREATED,
         )
 
 
@@ -577,9 +742,15 @@ class AdminBookingSendReceiptView(APIView):
 
         # Idempotency & rapid duplicate guard:
         # 1. Block a duplicate while one is already in flight (PENDING/SENDING).
-        # 2. Block rapid duplicate clicks/submissions within a 30-second window
-        #    (or matching idempotency_key) after a successful SENT delivery
-        #    unless force/force_resend is explicitly requested.
+        # 2. Block rapid duplicate clicks/submissions after a successful SENT
+        #    delivery unless force/force_resend is explicitly requested. The
+        #    window is 30 seconds for a request that carries an idempotency key
+        #    (the shipped frontend always does) and 10 minutes for a request
+        #    that carries none — an older cached build or a hand-made call
+        #    cannot be de-duplicated by key, and that is exactly the client
+        #    shape that produced duplicate receipts: a stray click sent a second
+        #    one minutes after the first. A guest must never receive two copies
+        #    of the same receipt.
         # 3. A previous FAILED attempt never blocks a retry.
         idempotency_key = ""
         force_resend = False
@@ -597,7 +768,12 @@ class AdminBookingSendReceiptView(APIView):
             EmailLog.objects.filter(booking_reference=booking.booking_reference)
         )
         now = timezone.now()
-        dedup_cutoff = now - timedelta(seconds=30)
+        # Keyless callers (an older cached build, a manual request) get the wide
+        # window; a keyed caller keeps the tight 30-second one so a deliberate
+        # resend from the current UI still works normally.
+        dedup_cutoff = now - (
+            timedelta(minutes=10) if not idempotency_key else timedelta(seconds=30)
+        )
         with transaction.atomic():
             Booking.objects.select_for_update().filter(pk=booking.pk).first()
             in_flight_log = (

@@ -47,10 +47,71 @@ test("sidebar links Laundry to its own page with its own icon", () => {
 test("check-out cards offer a capability-gated folio / gate-pass view", () => {
   assert.match(CHECKOUT, /data-folio-btn=/);
   assert.match(CHECKOUT, /hasAnyCapability\(\["folio\.view"\]\)/);
-  assert.match(CHECKOUT, /async function openClearance\(ref\)/);
+  assert.match(CHECKOUT, /async function openClearance\(ref, booking\)/);
   assert.match(CHECKOUT, /API\.bookingFolioClearance\(ref\)/);
   assert.match(API, /bookingFolioClearance/);
   assert.match(API, /folio-clearance\//);
+});
+
+test("the folio states the bill for the guest's requests and blocks the gate pass", () => {
+  const START = CHECKOUT.indexOf("async function openClearance(ref, booking){");
+  const END = CHECKOUT.indexOf("/* The gate pass is a POS thermal receipt");
+  assert.ok(START > 0 && END > START, "the clearance dialog was not found in the shipped page");
+  const DIALOG = CHECKOUT.slice(START, END);
+
+  // The figure the desk collects is the server's, and it visibly includes what
+  // the guest's own requests still owe (unbilled requests are money, not a
+  // footnote in a warning line).
+  assert.match(DIALOG, /d\.amount_to_settle/);
+  assert.match(DIALOG, /d\.unpaid_requests_total/);
+  assert.match(DIALOG, /d\.unpaid_requests \|\| \[\]/);
+  assert.match(DIALOG, /Requests not yet paid for/);
+  // The gate pass is only offered on the server's decision.
+  assert.match(DIALOG, /if \(d\.gate_pass_allowed\)/);
+  assert.match(DIALOG, /d\.gate_pass_blockers \|\| \[\]/);
+  assert.match(DIALOG, /Do not issue a gate pass yet\./);
+  // The old client-side rule (a cleared folio plus a look at unbilled laundry)
+  // cannot come back: the decision is never re-derived in the browser.
+  assert.doesNotMatch(DIALOG, /if \(d\.cleared && !unbilled\.length\)/);
+});
+
+test("the desk records the money received and the folio reflects it at once", () => {
+  const START = CHECKOUT.indexOf("async function recordSettlement(");
+  const END = CHECKOUT.indexOf("function serverSearch(term){");
+  assert.ok(START > 0 && END > START, "recordSettlement was not found in the shipped page");
+  const SETTLE = CHECKOUT.slice(START, END);
+
+  // Money is recorded against the acting staff member's own identity, with the
+  // method and (for cash) the drawer the money went into.
+  assert.match(SETTLE, /window\.API\.settleBookingBalance\(ref, \{/);
+  assert.match(SETTLE, /provider: method/);
+  assert.match(SETTLE, /include_unbilled: true/);
+  assert.match(SETTLE, /cash_session_reference: method === "CASH" \? drawer : ""/);
+  assert.match(SETTLE, /Cash must go into your own open drawer/);
+  // The response is the authority: the dialog re-renders from the folio the
+  // backend just wrote, never from browser arithmetic.
+  assert.match(SETTLE, /var folio = payload\.folio \|\| \{\}/);
+  assert.match(SETTLE, /renderClearance\(body, ref, folio, booking\)/);
+  assert.match(SETTLE, /payload\.recorded_by/);
+  // A failure must never look like a success.
+  assert.match(SETTLE, /Nothing was charged/);
+});
+
+test("the settlement control is capability-gated and only offered when payable", () => {
+  assert.match(CHECKOUT, /if \(d\.can_settle\) \{/);
+  assert.match(CHECKOUT, /data-settle-balance=/);
+  assert.match(CHECKOUT, /d\.settle_blocked_reason/);
+  assert.match(API, /settleBookingBalance/);
+  assert.match(API, /settle-balance\//);
+});
+
+test("the check-out card states the real outstanding figure, not just the room", () => {
+  // amount_due is the STAY projection; a guest who owes for their own requests
+  // must not read as "Outstanding 0" at the desk.
+  assert.match(CHECKOUT, /var due = \(b\.outstanding_balance != null && b\.outstanding_balance !== ""\)/);
+  assert.match(CHECKOUT, /var folioCharges = Number\(b\.folio_charges \|\| 0\)/);
+  assert.match(CHECKOUT, /Settle requests &amp; print gate pass/);
+  assert.match(CHECKOUT, /data-due-amount=/);
 });
 
 test("the gate pass is a POS thermal receipt listing all purchases, cleared", () => {
@@ -60,10 +121,12 @@ test("the gate pass is a POS thermal receipt listing all purchases, cleared", ()
   assert.match(CHECKOUT, /ALL BILLS CLEARED — this guest is not owing the hotel\. Please allow exit at the gate\./);
   assert.match(CHECKOUT, /\(d\.charges \|\| \[\]\)\.forEach/);
   assert.match(CHECKOUT, /data-print-gate-pass/);
-  // The print action only exists in the cleared branch of the modal.
-  assert.match(CHECKOUT, /if \(d\.cleared && !unbilled\.length\)/);
+  // The print action only exists in the branch the SERVER allows: every unpaid
+  // request and every open request blocks it (the browser no longer decides).
+  assert.match(CHECKOUT, /if \(d\.gate_pass_allowed\)/);
+  assert.match(CHECKOUT, /data-print-gate-pass/);
   assert.match(CHECKOUT, /Do not issue a gate pass yet/);
-  assert.match(CHECKOUT, /Outstanding balance:/);
+  assert.match(CHECKOUT, /d\.gate_pass_blockers \|\| \[\]/);
 });
 
 test("thermal receipts support an optional note without changing POS receipts", () => {

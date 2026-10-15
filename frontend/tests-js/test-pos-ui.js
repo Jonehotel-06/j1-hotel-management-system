@@ -140,6 +140,10 @@ test("staff capability hints load from the authenticated endpoint and gate a nav
   loadScript(ctx, "js/dashboard.js");
 
   await ctx.window.Auth.loadCapabilities();
+  /* A menu entry is allowed when the access registry admits this ROLE to the
+     page AND the capability set grants the work — capabilities alone are not a
+     department, so the signed-in role is set here exactly as a session would. */
+  ctx.window.Auth.state.role = "waiter";
   assert.deepEqual(Array.from(ctx.window.Auth.state.capabilities), ["restaurant.order.manage"]);
   assert.equal(ctx.window.Auth.hasCapability("restaurant.order.manage"), true);
   assert.equal(ctx.window.Auth.hasCapability("bar.order.manage"), false);

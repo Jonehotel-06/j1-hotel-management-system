@@ -406,3 +406,25 @@ class LateArrivalBookingSerializer(AdminBookingListSerializer):
 
     def get_check_in_blocked_reason(self, obj) -> str:
         return self._check_in_state(obj)[1]
+
+
+class SettleGuestBalanceSerializer(serializers.Serializer):
+    """Check-out settlement of the guest's whole bill (stay + folio charges).
+
+    ``record_offline_payment`` only ever settled the stay projection, so money
+    owed for a guest's requests (restaurant, bar, room service, laundry) had no
+    way in once the room was paid. This serializer carries the money the desk
+    actually received; whether it is *acceptable* is decided by the finance
+    service against the database row, never against browser arithmetic.
+    """
+
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=1,
+                                      max_value=99_999_999)
+    provider = serializers.ChoiceField(choices=["CASH", "POS", "BANK_TRANSFER"])
+    notes = serializers.CharField(required=False, allow_blank=True, default="", max_length=255)
+    # Default True: the figure the desk collected includes the guest's unbilled
+    # in-house requests, so they are billed to the folio in the same transaction
+    # (idempotent) instead of being silently left off the bill.
+    include_unbilled = serializers.BooleanField(required=False, default=True)
+    cash_session_reference = serializers.CharField(required=False, allow_blank=True, default="",
+                                                   max_length=64)
