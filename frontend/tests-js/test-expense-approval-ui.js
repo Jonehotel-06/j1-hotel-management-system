@@ -79,7 +79,9 @@ test("an EXPENSE approval is decided with its expense reference, not the approva
 
 test("a cash variance is never routed through the approvals endpoint from this table", () => {
   assert.match(APPROVAL_ACTIONS, /type==="CASH_VARIANCE"/);
-  assert.match(APPROVAL_ACTIONS, /Review with the cash drawer/);
+  // The drawer review button now lives in Cash management, where the session
+  // and its variance are; this link is the only variance action in the list.
+  assert.match(APPROVAL_ACTIONS, /Review in Cash management/);
   // The variance branch returns before any decision button is composed, so a
   // cash variance can never be decided here (the backend refuses it too).
   const varianceBranch = APPROVAL_ACTIONS.slice(
@@ -98,7 +100,7 @@ test("other registry approvals use the approval's own reference and the refunds 
 });
 
 test("decision buttons fail closed until the server-resolved capabilities arrive", () => {
-  assert.match(ACCOUNTING, /var CAN = \{ approveExpense:false, refunds:false \};/);
+  assert.match(ACCOUNTING, /var CAN = \{ approveExpense:false, refunds:false, reviewDrawer:false \};/);
   assert.match(ACCOUNTING, /window\.Auth\.hasCapability\("expense\.approve"\)/);
   assert.match(ACCOUNTING, /window\.Auth\.hasCapability\("payment\.refund\.approve"\)/);
   // The tables re-render when the capability list lands, so a reviewer does
@@ -107,7 +109,7 @@ test("decision buttons fail closed until the server-resolved capabilities arrive
   // without the refund capability is told about that section instead of the
   // whole page reporting a permissions failure.
   assert.match(ACCOUNTING, /if\(changed\)\{ renderExpenses\(\); renderApprovals\(\);/);
-  assert.match(ACCOUNTING, /if\(changed\)\{ renderExpenses\(\); renderApprovals\(\); refreshApprovalsSection\(\); \}/);
+  assert.match(ACCOUNTING, /if\(changed\)\{ renderExpenses\(\); renderApprovals\(\); renderCash\(\); refreshApprovalsSection\(\); \}/);
   assert.match(ACCOUNTING, /function refreshApprovalsSection\(requestId\)/);
   assert.match(ACCOUNTING, /\n  capabilityReady\(\);/);
 });

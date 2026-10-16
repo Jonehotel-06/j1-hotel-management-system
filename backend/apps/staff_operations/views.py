@@ -446,6 +446,13 @@ class AttendanceRecordListView(APIView):
             queryset = queryset.filter(staff_id=staff_id)
         if status_value := request.query_params.get("status"): queryset = queryset.filter(status=status_value)
         if business_date := request.query_params.get("business_date"): queryset = queryset.filter(business_date=business_date)
+        # Item F: the personal clock controls ask for the caller's OPEN record
+        # explicitly (open=true). The Clock in control is then disabled from the
+        # server's own state — including a record opened at the terminal by a
+        # biometric clock-in or an issued code, or one opened on an earlier day
+        # that was never clocked out. Newest first, so one record is unambiguous.
+        if str(request.query_params.get("open", "")).strip().lower() in ("1", "true", "yes"):
+            queryset = queryset.filter(clock_out_at__isnull=True).order_by("-clock_in_at")
         return _page(self, request, queryset, AttendanceRecordListSerializer)
 
 

@@ -283,6 +283,40 @@ def clock_attendance(*, staff: User, action: str, actor: User, idempotency_key, 
     return current, True
 
 
+def ensure_open_attendance_record(*, staff: User, idempotency_key: str = "") -> tuple[AttendanceRecord, bool]:
+    """Guarantee exactly ONE open attendance record for a staff member.
+
+    The single implementation behind "identifying a staff member at the system
+    IS their clock-in": the biometric terminal, the workstation code issuance
+    and the supervised fallback all go through here, so no flow can ever open a
+    second record or record a duplicate clock-in. An existing open record is
+    always reused and a new one is opened only when the staff member has none;
+    the returned ``created`` flag says which happened, so callers can report it
+    honestly instead of claiming a clock-in that did not occur.
+
+    Clocking stays attributed to the staff member themselves — the rule
+    ``clock_attendance`` enforces — while each caller keeps its own authority:
+    the terminal's Receptionist Desktop check, the supervisor's fallback
+    authorisation, the workstation-code gate. Those gates are never relaxed by
+    this helper; it only decides whether the attendance record already exists.
+
+    Both steps run in one transaction with the staff row locked, so two
+    simultaneous terminal requests for the same employee cannot both open a
+    record: the second waits, then finds and reuses the first one.
+    """
+    with transaction.atomic():
+        staff = _locked_operational_staff(staff)
+        current = _open_attendance_record(staff=staff)
+        if current is not None:
+            return current, False
+        return clock_attendance(
+            staff=staff,
+            action=AttendanceEvent.Type.CLOCK_IN,
+            actor=staff,
+            idempotency_key=idempotency_key or f"attendance-auto:{staff.pk}:{secrets.token_hex(8)}",
+        )
+
+
 @transaction.atomic
 def request_leave(*, staff: User, leave_type: str, start_date: date, end_date: date, reason: str, idempotency_key, actor: User) -> tuple[LeaveRequest, bool]:
     if actor.pk != staff.pk or not has_capability(actor, "leave.request"):

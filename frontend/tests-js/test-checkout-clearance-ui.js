@@ -133,3 +133,26 @@ test("thermal receipts support an optional note without changing POS receipts", 
   assert.match(THERMAL, /receipt\.note/);
   assert.match(THERMAL, /Optional receipt-specific note/);
 });
+
+test("checking out with money owed offers the payment path, not only an override", () => {
+  // Reported: "no button to mark it as paid during check-out for guests that
+  // requested something and then makes payment". The old flow only asked
+  // "check out anyway?".
+  assert.match(CHECKOUT, /function settleOrOverride\(ref, amountLabel\)/);
+  assert.match(CHECKOUT, /"Record payment & clear the bill"/);
+  assert.match(CHECKOUT, /"Check out anyway \(balance stays owed\)"/);
+  assert.match(CHECKOUT, /if \(choice === "settle"\)/);
+  assert.match(CHECKOUT, /openClearance\(ref, dueBooking\)/);
+  // The override is still explicit, and still says what stays owed.
+  assert.match(CHECKOUT, /allow_balance_due: true/);
+  assert.match(CHECKOUT, /JONE\.ui\.modal\.open\(\{\s*title: "Guest still owes money"/);
+});
+
+test("the payment taken at check-out goes through the folio, never a side route", () => {
+  // One endpoint records the money (the folio settlement); nothing in this page
+  // marks a bill paid locally or invents a second payment API.
+  assert.doesNotMatch(CHECKOUT, /markAsPaid|mark_paid|paid_offline/);
+  assert.match(CHECKOUT, /window\.API\.settleBookingBalance\(ref, \{/);
+  // A request that is not on the folio yet is billed first, in the same step.
+  assert.match(CHECKOUT, /include_unbilled: true/);
+});

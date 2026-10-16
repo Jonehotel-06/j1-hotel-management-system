@@ -21,11 +21,37 @@
   // their column names ("On hand", "Counted", "Variance", "Expected", "Received",
   // "Initiated") are atomic values, not prose, and were the columns still
   // shredding mid-number before this list was extended.
-  var ATOMIC = /(^|[^a-z])(date|dates|day|days|time|when|amount|amounts|total|totals|price|prices|rate|rates|balance|balances|paid|due|subtotal|tax|fee|fees|discount|qty|quantity|quantities|nights?|rooms?|no|number|ref|reference|id|code|status|state|actions?|phone|ip|count|counted|variance|expected|initiated|received|ordered|issued|returned|outstanding|opening|closing|hand|lines?|updated|created|last|seen|check|clock|cost|value|stock|level|period|shift|percent|ngn|rating|score|pct)([^a-z]|$)/i;
+  //
+  // Widened again for the tables reported as "data breaks to the next line" on
+  // housekeeping, laundry, the workstation registry, staff, POS/room service,
+  // approvals, workforce (schedules/leave), reports and inventory
+  // (hand-off/catalog/movement ledger/profitability). The gap was the same one:
+  // a reference ("Task", "Order", "Request", "Workstation", "Movement",
+  // "Purchase order"), a moment ("Clocked In", "Planned start", "Incurred",
+  // "Waiting since", "Submitted", "Captured", "Timestamp", "Requested",
+  // "Recorded"), a measure ("Worked", "Hours", "Gross", "Net", "Deduction",
+  // "Margin", "Refund", "Overtime", "Basic", "Share", "Target", "Bucket",
+  // "Transactions", "Ledger transactions") or a short code/enum ("Unit",
+  // "Reorder", "Version", "Tracking", "Source", "Settlement", "Category",
+  // "Payment", "Method", "Department", "Employee", "Role", "Dashboard Path",
+  // "Subdomain URLs", "Unit", "Valid", "Open", "Used", "Sleeps", "Beds",
+  // "Capacity", "Occupied", "Available") was not in the vocabulary, so the
+  // column was never marked and the value split mid-token. References break at
+  // their hyphens ("TSK-20261016-" / "A1B2C3"), dates between their words and
+  // money at nothing — all of it looked like broken data.
+  //
+  // Only atomic values are named here. Names, prose and free text stay in PROSE
+  // below (it wins), and headings in neither list are left wrapping by default.
+  var ATOMIC = /(^|[^a-z])(date|dates|day|days|time|timestamp|when|amount|amounts|total|totals|price|prices|rate|rates|balance|balances|paid|due|subtotal|tax|fee|fees|discount|qty|quantity|quantities|nights?|rooms?|no|number|ref|reference|id|code|status|state|actions?|phone|ip|count|counted|variance|expected|initiated|received|ordered|issued|returned|outstanding|opening|closing|hand|lines?|updated|created|last|seen|check|clock|clocked|cost|value|stock|level|period|shift|percent|ngn|rating|score|pct|order|orders|task|tasks|request|requests|requested|booking|bookings|stay|stays|workstation|workstations|movement|movements|template|templates|employee|employees|department|departments|worked|hours|gross|net|deduction|deductions|margin|profit|bucket|buckets|incurred|planned|scheduled|start|starts|end|ends|login|logins|waiting|since|unit|units|reorder|version|tracking|source|sources|settlement|settlements|category|categories|payment|payments|method|methods|receipt|receipts|path|paths|url|urls|subdomain|subdomains|dashboard|dashboards|transaction|transactions|recorded|submitted|captured|refund|refunds|refunded|refundable|used|open|occupied|available|capacity|sleeps|beds|valid|attendance|effective|featured|pieces|basic|overtime|share|shares|target|targets|arrival|arrivals)([^a-z]|$)/i;
 
   // Headings that hold prose, names or free text. A match here always wins
   // over ATOMIC so "Room type", "Guest name" or "Notes" keep wrapping.
-  var PROSE = /(name|description|desc|notes?|summary|address|message|detail|details|comment|comments|reason|subject|title|email|guest|item|menu|type|label|location|text|contact|reviewer|staff|actor|by|preview|body|question|answer|feedback)/i;
+  // Headings that hold prose, names or free text — and always win over ATOMIC.
+  // "responses/allegations/strengths/weaknesses/improvements/areas/components"
+  // were added with the widening above so the columns that merely CONTAIN an
+  // atomic word keep wrapping: "Employee Response", "Category & Allegation",
+  // "Areas to Improve", "Strengths", "Components per unit".
+  var PROSE = /(name|description|desc|notes?|summary|address|message|detail|details|comment|comments|reason|subject|title|email|guest|item|menu|type|label|location|text|contact|reviewer|staff|actor|by|preview|body|question|answer|feedback|responses?|allegations?|strengths?|weaknesses|improvements?|areas?|components?)/i;
 
   function labelOf(cell) {
     return String((cell && cell.textContent) || "").replace(/\s+/g, " ").trim();

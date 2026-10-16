@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.16">
+<link rel="stylesheet" href="../css/main.css?v=1.1.21">
 
 </head>
 <body>
@@ -105,17 +105,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.16"></script>
-<script src="../js/config.js?v=1.1.16"></script>
-<script src="../js/utils.js?v=1.1.16"></script>
-<script src="../js/icons.js?v=1.1.16"></script>
-<script src="../js/api.js?v=1.1.16"></script>
-<script src="../js/theme.js?v=1.1.16"></script>
-<script src="../js/ui.js?v=1.1.16"></script>
-<script src="../js/auth.js?v=1.1.16"></script>
-<script src="../js/hotel-data.js?v=1.1.16"></script>
-<script src="../js/navigation.js?v=1.1.16"></script>
-<script src="../js/dashboard.js?v=1.1.16"></script><script src="../js/table-fit.js?v=1.1.16"></script>
+<script src="../js/runtime-config.js?v=1.1.21"></script>
+<script src="../js/config.js?v=1.1.21"></script>
+<script src="../js/utils.js?v=1.1.21"></script>
+<script src="../js/icons.js?v=1.1.21"></script>
+<script src="../js/api.js?v=1.1.21"></script>
+<script src="../js/theme.js?v=1.1.21"></script>
+<script src="../js/ui.js?v=1.1.21"></script>
+<script src="../js/auth.js?v=1.1.21"></script>
+<script src="../js/hotel-data.js?v=1.1.21"></script>
+<script src="../js/navigation.js?v=1.1.21"></script>
+<script src="../js/dashboard.js?v=1.1.21"></script><script src="../js/table-fit.js?v=1.1.21"></script>
 <script>
   JONE.ui.initChrome();
   var __approvalsAllowed = JONE.dashboard.boot(["admin", "manager", "general_manager", "accounts_manager", "accountant", "hr_manager", "inventory_clerk", "storekeeper", "procurement_officer", "front_desk_supervisor"]);
@@ -134,7 +134,7 @@
 
   function section(cat) {
     var rows = (cat.items || []).map(function(item) {
-      return '<tr><td class="cell-nowrap"><strong>' + JONE.esc(item.reference || "—") + "</strong><br><small>" +
+      return '<tr><td class="cell-nowrap"><strong>' + JONE.esc(item.reference || "—") + "</strong><br><small class=\"caption\">" +
         JONE.esc(item.title || "") + '</small></td><td class="cell-clamp">' + JONE.esc(item.detail || "—") +
         '</td><td class="cell-nowrap">' + JONE.esc(item.requested_by || "—") + '</td><td class="cell-nowrap">' +
         JONE.esc(item.requested_at ? JONE.formatDateTime(item.requested_at) : "—") + '</td><td class="num cell-nowrap">' +
@@ -178,8 +178,8 @@
   load();
 })();
 </script>
-<script src="../js/pwa.js?v=1.1.16"></script>
-<script src="../js/version.js?v=1.1.16"></script>
-<script src="../js/update-checker.js?v=1.1.16"></script>
+<script src="../js/pwa.js?v=1.1.21"></script>
+<script src="../js/version.js?v=1.1.21"></script>
+<script src="../js/update-checker.js?v=1.1.21"></script>
 </body>
 </html>

@@ -223,6 +223,92 @@ def post_expense(*, expense: Expense, actor) -> tuple[Expense, bool]:
 
 
 @transaction.atomic
+def attach_expense_payment_evidence(
+    *, expense: Expense, actor, payment_reference="", receipt_url="", receipt_file=None, paid_on=None,
+) -> tuple[Expense, bool]:
+    """Store the proof of a supplier payment that has ALREADY left the money.
+
+    Posting a CASH / BANK_TRANSFER / CARD expense credits the tender account, so
+    the money is treated as having gone out at posting and there is no later
+    settlement to post. Until now the transfer slip for such an expense had
+    nowhere to live, and only an on-account settlement could carry receipt
+    evidence. This records that evidence on the expense itself:
+
+      * the transfer receipt file or link and the bank/card reference,
+      * the date the desk says the money was paid,
+      * a PAID event, so the attachment is on the append-only expense history.
+
+    It posts **no ledger line**: no financial figure moves, and
+    ``outstanding_supplier_payables`` / ``total_cash_disbursements`` (both read
+    from posted ledger lines) are unchanged by this call. Existing evidence is
+    never overwritten — a second attachment is refused instead of replacing the
+    first, so the record stays honest.
+    """
+    if not has_capability(actor, "expense.manage"):
+        raise PermissionDenied("This user cannot record supplier payment evidence.")
+    expense = Expense.objects.select_for_update().get(pk=expense.pk)
+    if expense.status != Expense.Status.POSTED:
+        raise ValidationError("Only a posted expense can carry supplier payment evidence.")
+    if expense.payment_method == Expense.PaymentMethod.PAYABLE and not (
+        expense.paid_at or expense.settlement_transaction_id
+    ):
+        raise ValidationError(
+            "This expense is on account and has not been paid yet. Record the payment first "
+            "(Record supplier payment), then attach the receipt if you still need to."
+        )
+
+    payment_reference = str(payment_reference or "").strip()[:160]
+    receipt_url = str(receipt_url or "").strip()[:200]
+    if receipt_file is None and not payment_reference and not receipt_url:
+        raise ValidationError({
+            "receipt": "Attach the receipt file, paste the receipt link, or enter the transfer reference."
+        })
+    if receipt_file is not None and expense.payment_receipt_file:
+        raise ValidationError({"receipt": "A payment receipt file is already recorded for this expense."})
+    if receipt_url and expense.payment_receipt_url:
+        raise ValidationError({"receipt_url": "A payment receipt link is already recorded for this expense."})
+    if payment_reference and expense.payment_reference:
+        raise ValidationError({"payment_reference": "A payment reference is already recorded for this expense."})
+
+    paid_on = paid_on or hotel_today()
+    if paid_on > hotel_today():
+        raise ValidationError({"paid_on": "A supplier payment cannot be dated in the future."})
+
+    # Only the fields the caller actually supplied are written: attaching a
+    # receipt file to an expense that was settled with a bank reference must
+    # never blank that reference (or the other evidence) out.
+    updates = {}
+    if receipt_file is not None:
+        updates["payment_receipt_file"] = receipt_file
+    if payment_reference:
+        updates["payment_reference"] = payment_reference
+    if receipt_url:
+        updates["payment_receipt_url"] = receipt_url
+    stamps_paid = not expense.paid_at
+    if stamps_paid:
+        # Stamped once, and only when posting did not already record the money
+        # as out: the expense list and the payment key stay truthful.
+        updates["paid_at"] = timezone.now()
+        updates["paid_by"] = actor
+    Expense.objects.filter(pk=expense.pk).update(**updates)
+    expense.refresh_from_db()
+    _event(
+        expense=expense, event_type=ExpenseEvent.Type.PAID, actor=actor,
+        details={
+            "evidence_only": True,
+            "payment_method": expense.payment_method,
+            "payment_reference": payment_reference,
+            "receipt_url": receipt_url,
+            "receipt_file": bool(receipt_file),
+            "paid_on": paid_on.isoformat(),
+            "stamped_paid": stamps_paid,
+            "ledger_effect": "none",
+        },
+    )
+    return expense, True
+
+
+@transaction.atomic
 def settle_expense_payment(
     *, expense: Expense, actor, method, payment_reference="",
     cash_session=None, receipt_url="", receipt_file=None, paid_on=None,

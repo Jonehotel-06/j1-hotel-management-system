@@ -31,6 +31,7 @@ __all__ = [
     "delete_quietly",
     "storage_backend_label",
     "is_remote_storage",
+    "verify_stored_upload",
 ]
 
 
@@ -120,6 +121,52 @@ def delete_quietly(file_field) -> None:
         file_field.storage.delete(name)
     except Exception:  # pragma: no cover - cleanup must never mask the real error
         logger.warning("Could not delete orphaned media object '%s'.", name)
+
+
+def verify_stored_upload(file_field) -> tuple[bool, str]:
+    """Confirm a just-saved upload can really be served back.
+
+    A save can look successful in every way and still leave nothing usable: the
+    media root may be unwritable or not served by the deployment, or a bucket
+    may refuse the object or expose no public address. Then the staff member sees
+    a photo that never appears and no reason why.
+
+    Returns ``(True, "")`` when the stored object is present in its storage and
+    has an address, otherwise ``(False, reason)`` where ``reason`` is a sentence
+    the dashboard shows verbatim. Nothing is fabricated: a failure here means the
+    upload needs an administrator, and it says so.
+    """
+    if not file_field:
+        return False, "No photo was uploaded, so there is nothing to store."
+    name = getattr(file_field, "name", "") or ""
+    if not name:
+        return False, "The photo was not written to storage."
+    storage = getattr(file_field, "storage", default_storage)
+    try:
+        exists = storage.exists(name)
+    except Exception as exc:  # noqa: BLE001 - report the storage problem, never mask it
+        logger.error(
+            "Could not verify stored media '%s' using %s: %s: %s",
+            name, storage_backend_label(storage), type(exc).__name__, exc,
+        )
+        return False, (
+            "The photo was saved but media storage could not be checked "
+            f"({type(exc).__name__}), so it may not display. Ask an administrator to check "
+            f"image storage ({storage_backend_label(storage)})."
+        )
+    if not exists:
+        return False, (
+            "The photo did not reach media storage, so it cannot display anywhere. "
+            f"Storage in use: {storage_backend_label(storage)}. An administrator must make "
+            "media storage writable and public before photos will appear."
+        )
+    try:
+        url = file_field.url
+    except (ValueError, NotImplementedError):
+        return False, "The stored photo has no public address (MEDIA_URL is not configured)."
+    if not url:
+        return False, "The stored photo has no public address (MEDIA_URL is not configured)."
+    return True, ""
 
 
 def save_upload(callback, *, context=""):

@@ -367,11 +367,20 @@ class ProfileView(generics.RetrieveUpdateAPIView):
         partial = request.method == "PATCH"
         serializer = self.get_serializer(self.get_object(), data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return success_response(
-            UserSerializer(self.get_object(), context={"request": request}).data,
-            message="Profile updated.",
-        )
+        # The storage write happens inside save(); a backend that refuses the
+        # file must become a message the staff member can act on instead of a
+        # generic failure, and never a silent success.
+        from apps.core.storage import StorageUploadError, save_upload, verify_stored_upload
+
+        user = save_upload(serializer.save, context="profile photo")
+        payload = UserSerializer(user, context={"request": request}).data
+        if "profile_image" in getattr(serializer, "validated_data", {}):
+            # 200 must MEAN the photo is stored: say so, or say exactly what is
+            # wrong so the uploader can show it.
+            stored, warning = verify_stored_upload(user.profile_image)
+            payload["profile_image_stored"] = stored
+            payload["profile_image_warning"] = warning
+        return success_response(payload, message="Profile updated.")
 
 
 @extend_schema(tags=["Auth"], summary="Change password (authenticated)")

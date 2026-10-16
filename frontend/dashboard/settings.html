@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.16">
+<link rel="stylesheet" href="../css/main.css?v=1.1.21">
 
 </head>
 <body>
@@ -130,16 +130,11 @@
       </div>
 
       <h3 style="font-size:var(--fs-md);margin:1.4rem 0 0.9rem;">Pricing &amp; booking</h3>
-      <p class="form-note" style="margin:0 0 0.8rem;font-size:var(--fs-sm);color:var(--text-muted,inherit);">Customers are charged from approved prices plus permitted charges less discounts — no tax is added to guest bills.</p>
+      <p class="form-note" style="margin:0 0 0.8rem;font-size:var(--fs-sm);color:var(--text-muted,inherit);">Customers are charged from approved prices plus permitted charges less discounts — no tax is added to guest bills and there is no customer-tax field here to set. The hotel's own statutory tax figures are reported (never billed to guests) under Financial Statements on the Accounting page.</p>
       <div class="form-grid fg-4">
         <div class="field"><label class="field-label" for="st-currency">Currency</label><input class="input" id="st-currency" name="currency" placeholder="NGN" maxlength="3"></div>
         <div class="field"><label class="field-label" for="st-fee">Service fee</label><input class="input" id="st-fee" name="service_fee" type="number" step="0.01" min="0"></div>
         <div class="field"><label class="field-label" for="st-deposit">Deposit %</label><input class="input" id="st-deposit" name="deposit_percent" type="number" step="0.01" min="0" max="100"></div>
-        <div class="field"><label class="field-label" for="st-stat-enabled">Statutory tax accrual (hotel cost, never billed to guests)</label><select class="input" id="st-stat-enabled" name="statutory_tax_enabled"><option value="true">Accrue (visible for remittance review)</option><option value="false">Do not accrue</option></select></div>
-      </div>
-      <div class="form-grid fg-3">
-        <div class="field"><label class="field-label" for="st-stat-rate">Statutory tax rate % (e.g. VAT 7.5)</label><input class="input" id="st-stat-rate" name="statutory_tax_rate_percent" type="number" step="0.01" min="0" max="100"></div>
-        <div class="field"><label class="field-label" for="st-stat-basis">Statutory tax basis</label><select class="input" id="st-stat-basis" name="statutory_tax_basis"><option value="EXCLUSIVE">Compute on net selling amount (default)</option><option value="INCLUSIVE">Extract from guest total (accountant decision)</option></select></div>
         <div class="field"><label class="field-label" for="st-pending">Pending window (min)</label><input class="input" id="st-pending" name="pending_booking_minutes" type="number" min="5"></div>
       </div>
       <div class="form-grid fg-3">
@@ -197,17 +192,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.16"></script>
-<script src="../js/config.js?v=1.1.16"></script>
-<script src="../js/utils.js?v=1.1.16"></script>
-<script src="../js/icons.js?v=1.1.16"></script>
-<script src="../js/api.js?v=1.1.16"></script>
-<script src="../js/theme.js?v=1.1.16"></script>
-<script src="../js/ui.js?v=1.1.16"></script>
-<script src="../js/auth.js?v=1.1.16"></script>
-<script src="../js/hotel-data.js?v=1.1.16"></script>
-<script src="../js/navigation.js?v=1.1.16"></script>
-<script src="../js/dashboard.js?v=1.1.16"></script><script src="../js/table-fit.js?v=1.1.16"></script>
+<script src="../js/runtime-config.js?v=1.1.21"></script>
+<script src="../js/config.js?v=1.1.21"></script>
+<script src="../js/utils.js?v=1.1.21"></script>
+<script src="../js/icons.js?v=1.1.21"></script>
+<script src="../js/api.js?v=1.1.21"></script>
+<script src="../js/theme.js?v=1.1.21"></script>
+<script src="../js/ui.js?v=1.1.21"></script>
+<script src="../js/auth.js?v=1.1.21"></script>
+<script src="../js/hotel-data.js?v=1.1.21"></script>
+<script src="../js/navigation.js?v=1.1.21"></script>
+<script src="../js/dashboard.js?v=1.1.21"></script><script src="../js/table-fit.js?v=1.1.21"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("admin");
@@ -228,8 +223,7 @@
 
   var FIELDS = ["hotel_name","tagline","description","address","city","state","country",
     "phone","email","google_maps_url","google_review_url","social_links","check_in_time","check_out_time",
-    "min_stay_nights","max_stay_nights","currency","statutory_tax_enabled",
-    "statutory_tax_rate_percent","statutory_tax_basis","service_fee",
+    "min_stay_nights","max_stay_nights","currency","service_fee",
     "deposit_percent","pending_booking_minutes","cancellation_deadline_hours",
     "cancellation_fee_percent","restrict_check_in_to_booked_date","front_desk_desktop_ip","policy_text"];
 
@@ -516,8 +510,8 @@
   load();
 })();
 </script>
-<script src="../js/pwa.js?v=1.1.16"></script>
-<script src="../js/version.js?v=1.1.16"></script>
-<script src="../js/update-checker.js?v=1.1.16"></script>
+<script src="../js/pwa.js?v=1.1.21"></script>
+<script src="../js/version.js?v=1.1.21"></script>
+<script src="../js/update-checker.js?v=1.1.21"></script>
 </body>
 </html>

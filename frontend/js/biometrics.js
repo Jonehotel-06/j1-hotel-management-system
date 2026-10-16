@@ -201,6 +201,25 @@
     return res && res.data;
   }
 
+  /* Identifying a staff member at the workstation IS their clock-in: the server
+     reuses the open attendance record or opens one, so every terminal action
+     leaves exactly ONE open record and the staff member's own Clock in control
+     stays disabled until they clock out. `created` (CLOCK_IN / ISSUE_CODE) and
+     `attendance_created` (supervised fallback) say whether THIS action opened
+     the record — the one honest difference between "clocked in now" and
+     "already clocked in, code re-issued". An empty string means the action did
+     not touch attendance (verify status, break, clock-out). */
+  function attendanceNote(result) {
+    var res = result || {};
+    if (res.created === true || res.attendance_created === true) {
+      return "Clocked in now. One attendance record is open for this staff member, and their Clock in stays disabled until they clock out.";
+    }
+    if (res.created === false || res.attendance_created === false) {
+      return "Already clocked in. The open attendance record was reused — no second record was created — and Clock in stays disabled until they clock out.";
+    }
+    return "";
+  }
+
   window.JONE = window.JONE || {};
   window.JONE.biometrics = {
     MIN_CAPTURE_POINTS: MIN_CAPTURE_POINTS,
@@ -209,6 +228,7 @@
     requestEnrollment: requestEnrollment,
     issueTemporaryWorkstationToken: issueTemporaryWorkstationToken,
     getReceptionTerminalStatus: getReceptionTerminalStatus,
-    executeReceptionTerminalAction: executeReceptionTerminalAction
+    executeReceptionTerminalAction: executeReceptionTerminalAction,
+    attendanceNote: attendanceNote
   };
 })(window);

@@ -25,6 +25,7 @@ from .serializers import (
     JournalCreateSerializer,
     ExpenseDetailSerializer,
     ExpenseListSerializer,
+    ExpensePaymentEvidenceSerializer,
     ExpenseReviewSerializer,
     FinancialControlPolicySerializer,
     FinancialTransactionDetailSerializer,
@@ -34,7 +35,14 @@ from .serializers import (
 )
 from .services.approval_service import review_approval
 from .services.cash_session_service import review_cash_variance
-from .services.expense_service import create_expense, post_expense, review_expense, settle_expense_payment, submit_expense
+from .services.expense_service import (
+    attach_expense_payment_evidence,
+    create_expense,
+    post_expense,
+    review_expense,
+    settle_expense_payment,
+    submit_expense,
+)
 from .services.folio_service import folio_balance_queryset
 from apps.core.utils import hotel_today
 
@@ -506,6 +514,58 @@ class ExpenseSettlePaymentView(APIView):
             message="Supplier payment recorded; the expense is now marked paid."
             if created
             else "This expense was already marked paid.",
+        )
+
+
+@extend_schema(
+    tags=["Admin · Finance"],
+    summary="Attach the receipt for a supplier payment that has already been made",
+)
+class ExpensePaymentEvidenceView(APIView):
+    """Store transfer-receipt evidence without posting a ledger entry.
+
+    A bank/cash/card expense already credits its tender account when it is
+    posted, so there is nothing left to settle. This endpoint records the proof
+    the desk holds (receipt file or link, reference, date paid) on that expense.
+    An on-account expense that is still unpaid must be settled through
+    ``/settle-payment/`` instead, and this endpoint says so rather than
+    recording evidence for a payment that has not happened.
+    """
+
+    permission_classes = [HasCapability]
+    required_capability = "expense.manage"
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def post(self, request, reference):
+        serializer = ExpensePaymentEvidenceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        expense, _ = attach_expense_payment_evidence(
+            expense=_expense_or_404(request, reference),
+            actor=request.user,
+            payment_reference=data.get("payment_reference", ""),
+            receipt_url=data.get("receipt_url", ""),
+            receipt_file=request.FILES.get("receipt"),
+            paid_on=data.get("paid_on"),
+        )
+        log_action(
+            actor=request.user,
+            action="EXPENSE_PAYMENT_EVIDENCE_ADDED",
+            instance=expense,
+            request=request,
+            metadata={
+                "reference": expense.reference,
+                "payment_method": expense.payment_method,
+                "payment_reference": data.get("payment_reference", ""),
+                "has_file": bool(request.FILES.get("receipt")),
+            },
+        )
+        return success_response(
+            ExpenseDetailSerializer(_expense_or_404(request, expense.reference, detail=True)).data,
+            message=(
+                "Payment receipt recorded. The expense is already settled in the ledger, "
+                "so no new posting was made."
+            ),
         )
 
 

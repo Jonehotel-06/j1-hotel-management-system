@@ -152,6 +152,44 @@ the desk exactly as before. See `docs/ATTENDANCE_WORKSTATION_SETUP.md` §4a. Man
 instructions, including what to check after deploying behind a load balancer, are
 in `docs/ATTENDANCE_WORKSTATION_SETUP.md`.
 
+### Profiles: the owner's profile and a staff member's profile
+
+**Profile** is one page that knows which account is reading it.
+
+* An **employee** sees their own employment record — personal and employment
+  details, salary and payslips, attendance, shifts, leave, disciplinary and
+  review records — read-only. It is resolved from the signed-in session, so no
+  other employee's record can be opened by changing an address.
+* The **Administrator is the hotel owner (the CEO), not an employee**. The
+  owner account has no salary, attendance, shift roster, leave or disciplinary
+  record to show, so that page is an **owner profile**: the owner's own account
+  and sign-in security, plus tiles for the screens the owner runs (Staff &
+  access, Settings, Accounting, Reports). Each tile is resolved through the
+  access registry, so an account can only be offered a screen it may open.
+
+Keeping the two apart has three consequences worth knowing:
+
+1. **The owner is never listed as staff.** The Staff page roster lists staff
+   accounts; the Administrator is not one of them and is not offered in the
+   assignee pickers, so a shift, an attendance record, a leave request or a
+   disciplinary case cannot be raised against the owner by mistake. The account
+   itself is still reachable through the labelled **Owner account** button on
+   the Staff page, and its own details are managed on the owner profile.
+2. **The API refuses the staff record for the owner**, with a plain explanation
+   rather than an empty employee record — and it refuses before any employee
+   record could be created for the account.
+3. **Nothing already recorded is changed.** Any existing attendance, roster,
+   payroll or document rows are left exactly as they are; only what the owner is
+   *shown on their own profile* changes.
+
+**Months worked & salary payment status** (in *Salary & payslips*) is drawn the
+way the occupancy calendar is drawn: a grid of month cells, a chip legend, year
+navigation and a detail panel. Each cell shows that month's own worked, approved
+leave and missed scheduled days and the salary recorded for it; select a month
+to see its payroll periods. A month with no attendance, roster or payslip record
+says **No record** — it never prints zeroes as if they were facts, and no figure
+is ever derived in the browser.
+
 ### Operations, finance, and workforce
 
 The staff sidebar groups the operational modules. Every list is bounded and
@@ -167,6 +205,79 @@ states rather than invented records.
 | Inventory and procurement | Issue/receive stock through append-only movements. Use suppliers and purchase-order approvals; never silently edit a historical goods receipt or stock balance. |
 | Workforce and payroll | Schedule shifts, clock attendance through source-keyed events, and review leave independently. Compensation terms are effective-dated basic salary, housing/transport allowances, overtime rate, currency, and notes. Payroll does not calculate government PAYE, pension, NHF/NHIS, Tax ID, benefit-in-kind, tax-claim, or opening-YTD amounts; use only genuine internal deduction reasons such as approved absence, lateness, spoilage, or an individually approved disciplinary deduction. A missing-stock case never deducts pay when recorded. Only an Admin may approve sharing it equally across a snapshot of all active/on-leave staff in that department; the next eligible payroll run then applies each share once and shows the case reference. Rejection creates no deduction. Approval posts gross wages, net salary payable, and internal deductions payable to the ledger. Bank payout/reconciliation/provider integration is deferred. Corrections are replacement runs, never edits to historical snapshots. |
 | Reports | Read charges/revenue, collections, refunds/reversals, expenses, and cash variance as distinct measures. Legacy payment totals are compatibility information, not a substitute for the financial ledger. |
+
+### Attendance: the terminal clock-in and the issued code are the same clock-in
+
+A staff member is **clocked in** the moment the system identifies them — there is
+no separate step to complete afterwards. That is true for every route that names
+the person:
+
+* the biometric terminal's **Clock In & Issue 6-Digit Code** (a matched finger);
+* **Re-Issue 6-Digit Code**, the receptionist's or an administrator's "issue this
+  staff member a code" action (same matched-finger gate);
+* a **supervised fallback** (manager with a recorded capture failure, or an
+  administrator), which is the only route that runs without a probe and is
+  audited with the authorising account and the reason.
+
+Each of these leaves **exactly one** open attendance record. If the staff member
+already has one (for example they were clocked in earlier, or the terminal
+action is retried), the open record is reused — the code is bound to it, no
+second record and no duplicate clock-in event is created — and the terminal says
+so ("Already clocked in … no second record was created") instead of implying a
+new clock-in. A fingerprint that does not match, a pending enrolment, or an
+ineligible employment status leaves **no** attendance behind: the record is only
+opened after verification succeeds.
+
+While a record is open, that staff member's own **Clock in** control is disabled
+with the reason shown, and it becomes available again only after they clock out.
+Attendance on a personal screen is read when the page loads, when the attendance
+tab is opened, and when the browser returns to the page (tab switch or window
+focus) — this page does not poll — so a clock-in recorded at the desk appears as
+soon as the staff member looks at their own screen. If a Clock in button is
+pressed before that refresh, the server refuses it with the reason ("Clock out
+the current attendance record before clocking in again"), and the panel
+immediately re-reads and disables the button rather than failing silently. The
+Receptionist Desktop rule (desk key or registered address) is unchanged: staff
+clock in at the desk, and management accounts may authorise from elsewhere.
+A staff member on an active break is not issued a code until the break ends.
+
+### Tables: which values may wrap, and which may not
+
+Long values must never widen the page, but a *reference, date, amount, status or
+code* must never break onto a second line either — a shredded
+`TSK-20261016-A1B2` reads as broken data. The rule the console uses, on every
+dashboard table:
+
+| Class | Applies to | Behaviour |
+|---|---|---|
+| `.cell-nowrap` | an atomic cell the page knows about (references, dates, action clusters) | one line; an over-wide table scrolls sideways inside `.table-wrap` |
+| `.cell-fit` | added automatically by `js/table-fit.js` from the column heading | same as `.cell-nowrap`, for every column the classifier recognises |
+| `.cell-sub` | one identifier inside an otherwise prose column (the SKU above its item name, a shift reference under a staff name, a phone number under a customer) | the identifier stays whole, the prose beside it still wraps |
+| `.cell-clamp` | genuinely long free text (audit summaries, item lists) | bounded width, wraps inside it, never widens the table |
+
+Names, descriptions, notes and summaries keep wrapping between words — that is
+deliberate, and pinned by `frontend/tests-js/test-table-fit.js`. A table can opt
+out entirely with `data-table-fit="off"`. Columns whose heading is not in the
+classifier's vocabulary are left wrapping rather than guessed at.
+
+On phones every ordinary table cell is already kept on one line and the table
+scrolls inside `.table-wrap`; the staff roster (`.table-staff`) is the exception
+— it restacks into cards and wraps inside each card by design. Action clusters
+in a table cell stay on one line on desktop (the table scrolls instead of
+stacking View/Claim/Dispatch/Complete into three rows), and status pills and
+badges never fold inside their own background.
+
+### Cancelling a booking that has already taken a payment
+
+On **Check-out → Full booking** (`dashboard/booking-details.html`) the Cancel
+button (book cancellation, with its confirm dialog) is DISABLED, with the reason
+on hover, as soon as the booking carries recorded money — a payment, a part
+payment, or a refund. Cancelling a paid booking directly would leave money with
+nothing to refund against, so the money route is the cancellation / refund
+workflow in **Enquiries → Cancellation / refund**, which records the refund
+against the payment. An unpaid booking still shows a working Cancel. The API and
+the booking-cancel permission are unchanged; only the paid case is closed on the
+screen.
 
 ### Arrivals and check-in
 
