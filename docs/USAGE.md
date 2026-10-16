@@ -206,6 +206,41 @@ states rather than invented records.
 | Workforce and payroll | Schedule shifts, clock attendance through source-keyed events, and review leave independently. Compensation terms are effective-dated basic salary, housing/transport allowances, overtime rate, currency, and notes. Payroll does not calculate government PAYE, pension, NHF/NHIS, Tax ID, benefit-in-kind, tax-claim, or opening-YTD amounts; use only genuine internal deduction reasons such as approved absence, lateness, spoilage, or an individually approved disciplinary deduction. A missing-stock case never deducts pay when recorded. Only an Admin may approve sharing it equally across a snapshot of all active/on-leave staff in that department; the next eligible payroll run then applies each share once and shows the case reference. Rejection creates no deduction. Approval posts gross wages, net salary payable, and internal deductions payable to the ledger. Bank payout/reconciliation/provider integration is deferred. Corrections are replacement runs, never edits to historical snapshots. |
 | Reports | Read charges/revenue, collections, refunds/reversals, expenses, and cash variance as distinct measures. Legacy payment totals are compatibility information, not a substitute for the financial ledger. |
 
+### Attendance: the terminal clock-in and the issued code are the same clock-in
+
+A staff member is **clocked in** the moment the system identifies them — there is
+no separate step to complete afterwards. That is true for every route that names
+the person:
+
+* the biometric terminal's **Clock In & Issue 6-Digit Code** (a matched finger);
+* **Re-Issue 6-Digit Code**, the receptionist's or an administrator's "issue this
+  staff member a code" action (same matched-finger gate);
+* a **supervised fallback** (manager with a recorded capture failure, or an
+  administrator), which is the only route that runs without a probe and is
+  audited with the authorising account and the reason.
+
+Each of these leaves **exactly one** open attendance record. If the staff member
+already has one (for example they were clocked in earlier, or the terminal
+action is retried), the open record is reused — the code is bound to it, no
+second record and no duplicate clock-in event is created — and the terminal says
+so ("Already clocked in … no second record was created") instead of implying a
+new clock-in. A fingerprint that does not match, a pending enrolment, or an
+ineligible employment status leaves **no** attendance behind: the record is only
+opened after verification succeeds.
+
+While a record is open, that staff member's own **Clock in** control is disabled
+with the reason shown, and it becomes available again only after they clock out.
+Attendance on a personal screen is read when the page loads, when the attendance
+tab is opened, and when the browser returns to the page (tab switch or window
+focus) — this page does not poll — so a clock-in recorded at the desk appears as
+soon as the staff member looks at their own screen. If a Clock in button is
+pressed before that refresh, the server refuses it with the reason ("Clock out
+the current attendance record before clocking in again"), and the panel
+immediately re-reads and disables the button rather than failing silently. The
+Receptionist Desktop rule (desk key or registered address) is unchanged: staff
+clock in at the desk, and management accounts may authorise from elsewhere.
+A staff member on an active break is not issued a code until the break ends.
+
 ### Arrivals and check-in
 
 **Check-in** lists today's expected arrivals and everyone currently in-house.

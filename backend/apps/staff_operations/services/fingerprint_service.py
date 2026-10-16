@@ -698,6 +698,12 @@ def issue_temporary_workstation_credential(
 ):
     """Verify biometric fingerprint at workstation terminal and mint temporary sign-in credential.
 
+    Identifying the staff member here IS their clock-in: when the caller has not
+    supplied an attendance record, the open one is reused or opened — after the
+    finger has matched, never before — so a refused probe can never leave
+    attendance behind and a code can only ever exist against an open record
+    (which is what makes clock-out expire it).
+
     Returns (raw_temp_token, expires_at_iso) by default, or a dict with `access_code` when `return_details=True`.
     """
     if not staff.is_active:
@@ -739,6 +745,18 @@ def issue_temporary_workstation_credential(
         workstation_reference=workstation_reference,
     )
 
+    # Item F: a matched finger at the workstation is the staff member's
+    # clock-in. The record is opened here — after the match, never before — and
+    # an existing open record is reused rather than duplicated. The minted code
+    # stays bound to that record, so clock-out still expires it.
+    attendance_created = None
+    if attendance_record is None:
+        from .staff_operations_service import ensure_open_attendance_record
+
+        attendance_record, attendance_created = ensure_open_attendance_record(
+            staff=staff, idempotency_key=f"ws-code:{source_key}"
+        )
+
     details = mint_temporary_workstation_credential(
         staff=staff,
         workstation_reference=workstation_reference,
@@ -747,6 +765,8 @@ def issue_temporary_workstation_credential(
         issued_by=staff,
         mode="BIOMETRIC",
     )
+    if attendance_created is not None:
+        details["attendance_created"] = attendance_created
     details["match_score"] = score
     if return_details:
         return details
@@ -999,19 +1019,15 @@ def reception_attendance_workstation_action(
         }
 
     if action_norm == "CLOCK_IN":
-        open_att = (
-            AttendanceRecord.objects.filter(staff=resolved_staff, clock_out_at__isnull=True)
-            .order_by("-clock_in_at")
-            .first()
+        # Item F: this action IS the clock-in. The shared helper reuses an open
+        # record and only opens one when the staff member has none, inside one
+        # locked transaction, so a repeated terminal clock-in can never create a
+        # second record or a duplicate event.
+        from .staff_operations_service import ensure_open_attendance_record
+
+        open_att, created = ensure_open_attendance_record(
+            staff=resolved_staff, idempotency_key=source_key
         )
-        created = False
-        if open_att is None:
-            open_att, created = clock_attendance(
-                staff=resolved_staff,
-                action="CLOCK_IN",
-                actor=resolved_staff,
-                idempotency_key=source_key,
-            )
 
         cred_details = issue_temporary_workstation_credential(
             staff=resolved_staff,
@@ -1043,13 +1059,17 @@ def reception_attendance_workstation_action(
         }
 
     if action_norm == "ISSUE_CODE":
-        open_att = (
-            AttendanceRecord.objects.filter(staff=resolved_staff, clock_out_at__isnull=True)
-            .order_by("-clock_in_at")
-            .first()
+        # Item F: issuing the code identifies the staff member, so it IS their
+        # clock-in — with no open record the code opens one (after the probe
+        # above matched, never before) and an existing open record is reused,
+        # never duplicated. The code stays bound to that record. A staff member
+        # on an active break is refused instead: the code would sign them in to
+        # a workstation mid-break, and that policy is unchanged.
+        from .staff_operations_service import ensure_open_attendance_record
+
+        open_att, created = ensure_open_attendance_record(
+            staff=resolved_staff, idempotency_key=source_key
         )
-        if open_att is None:
-            raise ValidationError({"attendance": "Staff member must clock in before a workstation access code can be issued."})
         if open_att.status != AttendanceRecord.Status.ON_DUTY:
             raise ValidationError({"attendance": "Staff member must be on active duty (not on break) to issue a workstation access code."})
         cred_details = issue_temporary_workstation_credential(
@@ -1063,6 +1083,7 @@ def reception_attendance_workstation_action(
         return {
             "action": "ISSUE_CODE",
             "status": "CODE_ISSUED",
+            "created": created,
             "outcome": outcome,
             "match_score": match_score,
             "staff_id": resolved_staff.pk,

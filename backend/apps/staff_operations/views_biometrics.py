@@ -110,7 +110,13 @@ class FingerprintEnrollmentActionView(APIView):
 
 
 class TemporaryWorkstationCredentialIssueView(APIView):
-    """Verify staff fingerprint at approved reception terminal and issue temporary login token + numeric code."""
+    """Verify staff fingerprint at approved reception terminal and issue temporary login token + numeric code.
+
+    Item F: identifying the staff member here IS their clock-in. The attendance
+    record is opened (or the open one reused — never duplicated) after the probe
+    has matched, and the code is bound to that record, so clock-out expires it.
+    A refused probe leaves no attendance behind.
+    """
     permission_classes = []  # Authenticated by presented terminal key + staff email + fingerprint
 
     def post(self, request):
@@ -149,6 +155,7 @@ class TemporaryWorkstationCredentialIssueView(APIView):
             _raise_django(exc)
 
         profile = getattr(user, "staff_profile", None)
+        attendance_created = bool(details.get("attendance_created"))
         return success_response({
             "temporary_token": details["temporary_token"],
             "access_code": details["access_code"],
@@ -160,7 +167,12 @@ class TemporaryWorkstationCredentialIssueView(APIView):
             "staff_name": user.full_name,
             "employee_code": profile.employee_code if profile else "",
             "attendance_reference": details["attendance_reference"],
-        }, message="Temporary workstation sign-in credential and numeric access code generated.")
+            "attendance_created": attendance_created,
+        }, message=(
+            "Staff member clocked in and a temporary workstation access code generated."
+            if attendance_created
+            else "Temporary workstation sign-in credential and numeric access code generated."
+        ))
 
 
 #: Why a request that NAMED the desk was still refused: the desk is enrolled,

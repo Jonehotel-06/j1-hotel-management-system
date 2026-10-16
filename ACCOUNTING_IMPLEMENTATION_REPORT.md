@@ -1,12 +1,14 @@
 # Implementation report — accounting page reorganisation and the four reported bugs
 
-Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18 → 1.1.19` · everything in this
-report is implemented in the repo (frontend + backend), not recommended.
+Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18 → 1.1.19 → 1.1.20` ·
+everything in this report is implemented in the repo (frontend + backend), not recommended.
 
 §1–§7 cover `1.1.16`; §8 covers `1.1.17` (supplier payment receipts); §9 covers the five
 follow-up reports in `1.1.18` (settings tax controls, the cash-variance approval button,
 guest-request bills on the folio, the check-out payment path, and profile-photo uploads);
-§10 covers `1.1.19` (the owner/CEO profile and the staff profile's months view).
+§10 covers `1.1.19` (the owner/CEO profile and the staff profile's months view);
+§11 covers `1.1.20` (a terminal clock-in or issued code *is* the clock-in, and the personal
+Clock in control is disabled for that staff member until they clock out).
 
 Scope: the ten accounting requirements (A), the four reported bugs (B1–B4), the
 `-₦576,800.00` Guest Receivables investigation, and the tests for all of it.
@@ -585,3 +587,83 @@ iterates staff profiles) is not modified. What changed is **who is offered**
   created for it cannot be verified from this repository (its database is not
   part of it). If one exists it is deliberately left in place; it is no longer
   surfaced as a staff record and the owner is no longer offered as staff.
+
+---
+
+# 11. Follow-up (1.1.20) — the terminal clock-in / issued code is the clock-in
+
+## 11.1 What was reported
+
+> "Immediately a staff takes attendance through biometric terminal or admin issues
+> a code to the staff, the system should automatically clock-in the staff then
+> disable the clock-in button for that staff until they clock-out."
+
+## 11.2 What the code actually did before
+
+| Route that names a staff member | Before |
+|---|---|
+| Terminal **CLOCK_IN** (`reception_attendance_workstation_action`) | Already correct: it reused an open record and only called `clock_attendance()` when there was none, returning `created`. |
+| Terminal **ISSUE_CODE** ("admin issues a code") | **Refused** when the staff member had no open record — `"Staff member must clock in before a workstation access code can be issued."` So a code could not be issued to someone who was not already clocked in. |
+| `POST …/biometrics/temporary-credential/` (the desk's credential endpoint) | Same refusal, raised inside `mint_temporary_workstation_credential`. |
+| **MANUAL_FALLBACK** (supervised) | Already opened the record, but its result did not say whether it had done so. |
+| Personal **Clock in** (`workforce.html`) | Rendered whenever the *visible, date-filtered* list held no open record, and the panel never re-read attendance — so a terminal clock-in left a stale, enabled Clock in button on the staff member's own screen. The server already refused the duplicate; the screen did not show it. |
+
+## 11.3 What changed
+
+One rule, implemented once:
+`staff_operations_service.ensure_open_attendance_record()` guarantees exactly one
+open attendance record per staff member — it reuses the open record and opens one
+only when there is none, inside a single transaction with the staff row locked,
+and reports whether it opened it. Every identifying route calls it, and the
+record is only ever opened **after** the probe has matched.
+
+| File | Change |
+|---|---|
+| `backend/apps/staff_operations/services/staff_operations_service.py` | New `ensure_open_attendance_record()`. Nothing else in the module changed: `clock_attendance()` still refuses a second CLOCK_IN while a record is open, and it is still the only thing that creates a record. |
+| `backend/apps/staff_operations/services/fingerprint_service.py` | CLOCK_IN and ISSUE_CODE use the helper (ISSUE_CODE now opens the record instead of refusing; its response carries `created`, like CLOCK_IN). `issue_temporary_workstation_credential()` opens/reuses the record when the caller did not supply one, after the match. The on-break refusal for code issuance and `mint_temporary_workstation_credential()`'s "no open record → no code" invariant are unchanged. |
+| `backend/apps/staff_operations/services/attendance_fallback_service.py` | Uses the same helper and reports `attendance_created`. |
+| `backend/apps/staff_operations/views_biometrics.py` | The credential endpoint returns `attendance_created` and an honest message ("Staff member clocked in and a temporary workstation access code generated."). |
+| `backend/apps/staff_operations/views.py` | `GET …/attendance/?open=true` — a filter on the existing list endpoint (no new endpoint): the caller's open record(s), newest first. |
+| `frontend/dashboard/workforce.html` | The personal Clock in control is now rendered **disabled with a visible reason** whenever an open record exists, in both the on-duty and on-break states; the open record is read from the server's `open=true` query (`loadMyOpenRecord()`, `state.myOpenRecord`) instead of the on-screen page of the list; attendance is re-read when the attendance tab opens and when the browser returns to the page (tab switch or focus); a refused clock-in shows the server's reason and immediately re-reads the panel. **No polling was added** — the page still has no `setInterval`. |
+| `frontend/js/biometrics.js` | `JONE.biometrics.attendanceNote(result)` — the one place that words the difference between "clocked in now" and "already clocked in, code re-issued". |
+| `frontend/dashboard/terminals.html`, `frontend/dashboard/workforce.html` | The terminal result card shows that note. |
+| `docs/USAGE.md` | "Attendance: the terminal clock-in and the issued code are the same clock-in". |
+
+## 11.4 What deliberately did not change
+
+* **No new endpoints, no new module, no migration, no new financial or figure rule.**
+* The Receptionist Desktop gate (`_assert_reception_workstation`) and the
+  second-CLOCK_IN refusal in `clock_attendance()` are untouched — F was fixed by
+  reusing/opening records server-side, never by loosening those guards.
+* The terminal's own **Clock In** button stays idempotent rather than disabled:
+  the desk must still be able to re-issue a code for a staff member who is
+  already clocked in (the record is reused; the result card says so).
+* Attendance rows, events, audit rows and fingerprints are not edited, deleted
+  or back-filled. No attendance is created without a matched probe (only the
+  audited supervised fallback runs without one, exactly as before).
+
+## 11.5 Evidence
+
+| Check | Result |
+|---|---|
+| `tests.test_attendance_workstation_policy` | **30 OK** — new/updated: the first issuance opens the record exactly once and binds the code to it; a failed probe creates no attendance and no credential; repeated terminal CLOCK_IN reuses the same record and reports `created:false`; code issuance opens the record and re-issuance creates no second one; a code is still refused on an active break; the supervised fallback reports `attendance_created` once and never duplicates; the personal Clock in is refused while the terminal record is open and works again after clock-out; `open=true` returns exactly the caller's open record (and a manager can read a named staff member's). |
+| Regression batch — `tests.test_fingerprint_biometrics`, `test_attendance_off_desk_management`, `test_fingerprint_device_mock`, `test_fingerprint_staff_management`, `test_front_desk_desktop_ip`, `test_receptionist_desktop_ip`, `test_staff_operations`, `test_staff_operations_api`, `test_lateness_deductions`, `test_staff_face_verification`, `test_query_efficiency` | **Ran 129, OK** |
+| `frontend/tests-js/test-attendance-auto-clockin-ui.js` | **12 tests** — the page's own code runs in the stub DOM: a terminal record renders a disabled Clock in with its reason and keeps break/clock-out reachable, an on-break record only offers "End break", no record renders an enabled Clock in, the enabled state ignores a *completed* record, the open-record request carries `open=true&staff_id=&page_size=1` and drives the panel (and a failed query leaves no stale disabled button), the note distinguishes a clock-in from a reused record and stays silent for status/break/clock-out, plus source contracts: event-driven refresh with no polling, visible refusal and reload, and one wording (not copied per page). |
+| `node --test tests-js/` | **446 tests: 444 pass, 1 skipped, 1 pre-existing failure** (root web-app manifest scope, `test-pwa-dashboard-only.js`) |
+| `python3 validate.py` | 70 HTML / 30 JS **ALL OK** |
+
+## 11.6 Honest limits
+
+* "Immediately" on the staff member's **own** screen means the next read of the
+  panel: the attendance tab being opened, or the browser returning to the page
+  (tab switch/focus). This app deliberately has no polling on that page (pinned
+  by `tests-js/test-workforce-ui.js`), so an open tab that is never touched is
+  not updated live. The protection itself is server-side and immediate: a stale
+  click is refused with the reason, and the panel then re-reads and disables the
+  button.
+* The workstation-code endpoint (`temporary-credential`) has no dashboard caller
+  today (it is the desk's API surface); it is covered by its own backend tests.
+* A staff member who never clocks out keeps the single open record — the next
+  clock-in reuses it rather than opening a new one, which is exactly what
+  "disabled until they clock out" means. Closing an old record is still a
+  manager correction, as before.

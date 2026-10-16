@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="J-ONE Staff"><link rel="stylesheet" href="../css/main.css?v=1.1.19">
+<meta name="apple-mobile-web-app-title" content="J-ONE Staff"><link rel="stylesheet" href="../css/main.css?v=1.1.20">
 </head>
 <body>
 <div class="dash"><aside class="dash-sidebar" aria-label="Staff navigation"><div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div><nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
@@ -145,7 +145,7 @@
     </div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.19"></script><script src="../js/config.js?v=1.1.19"></script><script src="../js/utils.js?v=1.1.19"></script><script src="../js/icons.js?v=1.1.19"></script><script src="../js/api.js?v=1.1.19"></script><script src="../js/theme.js?v=1.1.19"></script><script src="../js/ui.js?v=1.1.19"></script><script src="../js/auth.js?v=1.1.19"></script><script src="../js/navigation.js?v=1.1.19"></script><script src="../js/dashboard.js?v=1.1.19"></script><script src="../js/table-fit.js?v=1.1.19"></script><script src="../js/operations.js?v=1.1.19"></script><script src="../js/biometrics.js?v=1.1.19"></script>
+<script src="../js/runtime-config.js?v=1.1.20"></script><script src="../js/config.js?v=1.1.20"></script><script src="../js/utils.js?v=1.1.20"></script><script src="../js/icons.js?v=1.1.20"></script><script src="../js/api.js?v=1.1.20"></script><script src="../js/theme.js?v=1.1.20"></script><script src="../js/ui.js?v=1.1.20"></script><script src="../js/auth.js?v=1.1.20"></script><script src="../js/navigation.js?v=1.1.20"></script><script src="../js/dashboard.js?v=1.1.20"></script><script src="../js/table-fit.js?v=1.1.20"></script><script src="../js/operations.js?v=1.1.20"></script><script src="../js/biometrics.js?v=1.1.20"></script>
 <script>
 JONE.ui.initChrome();var __terminalAllowed=JONE.dashboard.boot(["admin","manager","general_manager"]);document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
 (function(){"use strict";if(!__terminalAllowed)return;var OPS=JONE.operations,rows=document.querySelector("[data-terminal-rows]"),pager=document.querySelector("[data-terminal-pagination]"),current=document.querySelector("[data-terminal-current]"),state={page:1,cache:{}};
@@ -215,6 +215,8 @@ async function loadReceptionTerminal(){
 function renderRtActionResult(res){
   if(!rtResult||!res)return;
   var codeHtml="";
+  /* Item F: say whether this action is the clock-in or reused an open record. */
+  var attendanceNote=JONE.biometrics.attendanceNote(res);
   if(res.access_code){
     codeHtml='<div style="margin-top:0.75rem;padding:0.85rem;border:1px dashed var(--color-primary,#373435);border-radius:8px;text-align:center;">'+
       '<div class="caption muted">6-DIGIT NUMERIC WORKSTATION ACCESS CODE</div>'+
@@ -226,6 +228,7 @@ function renderRtActionResult(res){
     '<div><strong>'+JONE.esc(res.staff_name||"—")+'</strong> ('+JONE.esc(res.employee_code||"—")+')</div>'+
     '<div class="caption muted">Department: '+JONE.esc(res.department||"—")+' · Role: '+JONE.esc(String(res.role||"").replace(/_/g," "))+'</div>'+
     '<div style="margin-top:0.5rem;">Attendance Status: '+JONE.dashboard.statusPill(res.attendance_status||res.status||"VERIFIED")+'</div>'+
+    (attendanceNote?'<p class="caption muted" data-rt-attendance-note>'+JONE.esc(attendanceNote)+'</p>':'')+
     codeHtml;
 }
 
@@ -266,4 +269,4 @@ var rtRefresh=document.getElementById("reception-terminal-refresh");
 if(rtRefresh)rtRefresh.addEventListener("click",function(){loadReceptionTerminal();});
 loadReceptionTerminal();
 })();
-</script><script src="../js/pwa.js?v=1.1.19"></script><script src="../js/version.js?v=1.1.19"></script><script src="../js/update-checker.js?v=1.1.19"></script></body></html>
+</script><script src="../js/pwa.js?v=1.1.20"></script><script src="../js/version.js?v=1.1.20"></script><script src="../js/update-checker.js?v=1.1.20"></script></body></html>

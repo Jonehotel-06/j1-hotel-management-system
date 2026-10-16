@@ -29,6 +29,7 @@ from .base import BaseAPITestCase
 from .factories import make_staff
 
 CLOCK_URL = "/api/admin/staff-operations/attendance/clock/"
+ATTENDANCE_URL = "/api/admin/staff-operations/attendance/"
 TERMINAL_URL = "/api/admin/staff-operations/biometrics/reception-terminal/"
 CREDENTIAL_URL = "/api/admin/staff-operations/biometrics/temporary-credential/"
 LOGIN_URL = "/api/auth/login/"
@@ -132,14 +133,41 @@ class ReceptionistDesktopEnforcementTests(WorkstationPolicyTestCase):
 class AccessCodeLifecycleTests(WorkstationPolicyTestCase):
     """Items 5 and 7: one code per attendance session, dead on clock-out."""
 
-    def test_code_is_not_issued_before_the_employee_has_clocked_in(self):
+    def test_issuing_the_first_code_opens_the_attendance_record_once(self):
+        """Item F: identifying the employee IS the clock-in — no prior clock-in needed."""
         self.unauth()
         response = self.client.post(CREDENTIAL_URL, {
             "email": self.worker.email, "fingerprint_probe": MATCHING_PROBE,
         }, format="json", **self.desk_headers)
-        self.assertEqual(response.status_code, 400, response.content)
-        self.assertIn("Clock in", str(response.data))
-        self.assertFalse(TemporaryWorkstationCredential.objects.filter(staff=self.worker).exists())
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.data["data"]
+        self.assertTrue(data["attendance_created"], response.content)
+        record = AttendanceRecord.objects.get(staff=self.worker)
+        self.assertIsNone(record.clock_out_at)
+        self.assertEqual(record.status, AttendanceRecord.Status.ON_DUTY)
+        self.assertEqual(record.reference, data["attendance_reference"])
+        self.assertEqual(TemporaryWorkstationCredential.objects.get(staff=self.worker).attendance_record_id, record.pk)
+
+        # Issuing again reuses that open record and never opens a second one.
+        again = self.client.post(CREDENTIAL_URL, {
+            "email": self.worker.email, "fingerprint_probe": MATCHING_PROBE,
+        }, format="json", **self.desk_headers)
+        self.assertEqual(again.status_code, 200, again.content)
+        self.assertFalse(again.data["data"]["attendance_created"], again.content)
+        self.assertEqual(AttendanceRecord.objects.filter(staff=self.worker).count(), 1)
+        self.assertEqual(
+            AttendanceRecord.objects.filter(staff=self.worker, clock_out_at__isnull=True).count(), 1
+        )
+
+    def test_a_failed_probe_never_creates_attendance(self):
+        """Item F: the record is opened only AFTER the finger matched."""
+        self.unauth()
+        response = self.client.post(CREDENTIAL_URL, {
+            "email": self.worker.email, "fingerprint_probe": MISMATCHING_PROBE,
+        }, format="json", **self.desk_headers)
+        self.assertEqual(response.status_code, 403, response.content)
+        self.assertFalse(AttendanceRecord.objects.filter(staff=self.worker).exists())
+        self.assertFalse(TemporaryWorkstationCredential.objects.exists())
 
     def test_clock_in_issues_a_bound_single_use_code(self):
         data = self.clock_in_at_desk()
@@ -343,3 +371,141 @@ class FallbackPermissionMatrixTests(WorkstationPolicyTestCase):
         self.assertEqual(response.status_code, 403, response.content)
         self.assertIn("Receptionist Desktop", response.data["message"])
         self.assertFalse(TemporaryWorkstationCredential.objects.exists())
+
+
+class AutoClockInOnIdentificationTests(WorkstationPolicyTestCase):
+    """Item F: identifying a staff member IS their clock-in; one open record only.
+
+    Every terminal action that names a staff member (biometric CLOCK_IN, code
+    issuance, supervised fallback) must leave exactly one open attendance
+    record — the existing one reused, a new one opened only when there is none —
+    and the code stays bound to that record so clock-out expires it. The
+    personal Clock in control is then refused (and disabled in the UI) until the
+    staff member clocks out. No probe means no clock-in, ever.
+    """
+
+    def test_repeated_terminal_clock_in_keeps_one_open_record(self):
+        first = self.clock_in_at_desk()
+        self.assertTrue(first["created"], first)
+        second = self.terminal({
+            "action": "CLOCK_IN", "email": self.worker.email, "fingerprint_probe": MATCHING_PROBE,
+        })
+        self.assertEqual(second.status_code, 200, second.content)
+        self.assertFalse(second.data["data"]["created"], second.content)
+        self.assertEqual(second.data["data"]["attendance_reference"], first["attendance_reference"])
+        self.assertEqual(AttendanceRecord.objects.filter(staff=self.worker).count(), 1)
+        self.assertEqual(AttendanceRecord.objects.filter(staff=self.worker, clock_out_at__isnull=True).count(), 1)
+
+    def test_code_issuance_opens_the_record_and_binds_the_code_to_it(self):
+        response = self.terminal({
+            "action": "ISSUE_CODE", "email": self.worker.email, "fingerprint_probe": MATCHING_PROBE,
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.data["data"]
+        self.assertTrue(data["created"], response.content)
+        record = AttendanceRecord.objects.get(staff=self.worker)
+        self.assertIsNone(record.clock_out_at)
+        self.assertEqual(record.reference, data["attendance_reference"])
+        self.assertEqual(TemporaryWorkstationCredential.objects.get(staff=self.worker).attendance_record_id, record.pk)
+
+        again = self.terminal({
+            "action": "ISSUE_CODE", "email": self.worker.email, "fingerprint_probe": MATCHING_PROBE,
+        })
+        self.assertEqual(again.status_code, 200, again.content)
+        self.assertFalse(again.data["data"]["created"], again.content)
+        self.assertEqual(AttendanceRecord.objects.filter(staff=self.worker).count(), 1)
+
+    def test_code_is_refused_while_the_employee_is_on_break(self):
+        """An issued code signs a workstation in; the on-break policy is unchanged."""
+        self.clock_in_at_desk()
+        started = self.terminal({
+            "action": "BREAK_START", "email": self.worker.email, "fingerprint_probe": MATCHING_PROBE,
+        })
+        self.assertEqual(started.status_code, 200, started.content)
+        refused = self.terminal({
+            "action": "ISSUE_CODE", "email": self.worker.email, "fingerprint_probe": MATCHING_PROBE,
+        })
+        self.assertEqual(refused.status_code, 400, refused.content)
+        self.assertIn("on active duty", str(refused.data))
+        record = AttendanceRecord.objects.get(staff=self.worker)
+        self.assertEqual(record.status, AttendanceRecord.Status.ON_BREAK)
+        self.assertEqual(
+            TemporaryWorkstationCredential.objects.filter(staff=self.worker).count(), 1,
+            "a refused issuance mints nothing",
+        )
+
+    def test_fallback_opens_the_record_once_and_reports_it(self):
+        failure = self.terminal({
+            "action": "RECORD_FAILURE", "email": self.worker.email,
+            "failure_classification": "DEVICE_UNAVAILABLE",
+        })
+        self.assertEqual(failure.status_code, 200, failure.content)
+        first = self.terminal({
+            "action": "MANUAL_FALLBACK", "email": self.worker.email,
+            "manual_override_reason": "Scanner at the front desk could not read the finger.",
+        }, headers={}, user=self.admin)
+        self.assertEqual(first.status_code, 200, first.content)
+        self.assertTrue(first.data["data"]["attendance_created"], first.content)
+        self.assertEqual(AttendanceRecord.objects.filter(staff=self.worker, clock_out_at__isnull=True).count(), 1)
+
+        second = self.terminal({
+            "action": "MANUAL_FALLBACK", "email": self.worker.email,
+            "manual_override_reason": "Scanner at the front desk still could not read the finger.",
+        }, headers={}, user=self.admin)
+        self.assertEqual(second.status_code, 200, second.content)
+        self.assertFalse(second.data["data"]["attendance_created"], second.content)
+        self.assertEqual(AttendanceRecord.objects.filter(staff=self.worker).count(), 1)
+
+    def test_personal_clock_in_is_refused_until_the_staff_member_clocks_out(self):
+        self.clock_in_at_desk()
+        self.auth(self.worker)
+        refused = self.client.post(CLOCK_URL, {
+            "action": "CLOCK_IN", "idempotency_key": "after-terminal-1",
+        }, format="json", **self.desk_headers)
+        self.assertEqual(refused.status_code, 400, refused.content)
+        self.assertIn("Clock out", str(refused.data))
+        self.assertEqual(AttendanceRecord.objects.filter(staff=self.worker).count(), 1)
+
+        out = self.terminal({
+            "action": "CLOCK_OUT", "email": self.worker.email, "fingerprint_probe": MATCHING_PROBE,
+        })
+        self.assertEqual(out.status_code, 200, out.content)
+        self.auth(self.worker)
+        allowed = self.client.post(CLOCK_URL, {
+            "action": "CLOCK_IN", "idempotency_key": "after-clock-out-1",
+        }, format="json", **self.desk_headers)
+        self.assertEqual(allowed.status_code, 201, allowed.content)
+        self.assertEqual(AttendanceRecord.objects.filter(staff=self.worker).count(), 2)
+        self.assertEqual(AttendanceRecord.objects.filter(staff=self.worker, clock_out_at__isnull=True).count(), 1)
+
+    def test_open_filter_reports_exactly_the_record_the_button_must_respect(self):
+        self.clock_in_at_desk()
+        self.auth(self.worker)
+        open_response = self.client.get(ATTENDANCE_URL, {"open": "true"})
+        self.assertEqual(open_response.status_code, 200, open_response.content)
+        self.assertEqual(len(open_response.data["data"]), 1)
+        self.assertEqual(open_response.data["data"][0]["status"], "ON_DUTY")
+        self.assertIsNone(open_response.data["data"][0]["clock_out_at"])
+
+        self.terminal({"action": "CLOCK_OUT", "email": self.worker.email, "fingerprint_probe": MATCHING_PROBE})
+        self.auth(self.worker)
+        closed = self.client.get(ATTENDANCE_URL, {"open": "true"})
+        self.assertEqual(closed.status_code, 200, closed.content)
+        self.assertEqual(closed.data["data"], [], closed.content)
+
+    def test_a_manager_reads_a_staff_members_open_record_through_the_same_filter(self):
+        other = make_staff("policy.open-filter@staff.dev", role=User.Role.CHEF)
+        self.auth(self.manager)
+        response = self.client.get(ATTENDANCE_URL, {"open": "true", "staff_id": other.pk})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.data["data"], [], response.content)
+
+        self.auth(self.worker)
+        self.client.post(CLOCK_URL, {
+            "action": "CLOCK_IN", "idempotency_key": "open-filter-1",
+        }, format="json", **self.desk_headers)
+        self.auth(self.manager)
+        mine = self.client.get(ATTENDANCE_URL, {"open": "true", "staff_id": self.worker.pk})
+        self.assertEqual(mine.status_code, 200, mine.content)
+        self.assertEqual(len(mine.data["data"]), 1, mine.content)
+        self.assertEqual(mine.data["data"][0]["staff"], self.worker.pk)

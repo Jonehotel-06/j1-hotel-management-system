@@ -184,26 +184,19 @@ def issue_manual_fallback_code(
             "reported reader problem). Record the failure from the terminal first, or ask an administrator."
         )
 
+    attendance_created = False
     if attendance_record is None and clock_in:
         # Authorised: now the employee's attendance for this fallback is opened.
         # Clocking stays attributed to the staff member (their record); the
-        # supervisor's authorisation is the audit entry written below. An open
-        # record is reused, so a repeated fallback can never open a second one.
-        from ..models import AttendanceRecord
-        from .staff_operations_service import clock_attendance
+        # supervisor's authorisation is the audit entry written below. The
+        # shared helper reuses an open record, so a repeated fallback can never
+        # open a second one, and it reports whether this call opened it.
+        from .staff_operations_service import ensure_open_attendance_record
 
-        attendance_record = (
-            AttendanceRecord.objects.filter(staff=staff, clock_out_at__isnull=True)
-            .order_by("-clock_in_at")
-            .first()
+        attendance_record, attendance_created = ensure_open_attendance_record(
+            staff=staff,
+            idempotency_key=f"attendance-fallback:{staff.pk}:{secrets.token_hex(8)}",
         )
-        if attendance_record is None:
-            attendance_record, _created = clock_attendance(
-                staff=staff,
-                action="CLOCK_IN",
-                actor=staff,
-                idempotency_key=f"attendance-fallback:{staff.pk}:{secrets.token_hex(8)}",
-            )
 
     outcome_record = FingerprintVerificationAttempt.objects.create(
         staff=staff,
@@ -259,6 +252,7 @@ def issue_manual_fallback_code(
             "department": staff_department_code(staff),
             "workstation": workstation_reference,
             "attendance_status": getattr(attendance_record, "status", ""),
+            "attendance_created": attendance_created,
             "clock_in_at": attendance_record.clock_in_at.isoformat()
             if attendance_record is not None and attendance_record.clock_in_at
             else None,
