@@ -31,10 +31,34 @@ test("Accounting renders the night audit daily flash and checks", () => {
   assert.match(ACCOUNTING, /id="na-load"/);
   assert.match(ACCOUNTING, /data-na="adr"/);
   assert.match(ACCOUNTING, /data-na="revpar"/);
-  assert.match(ACCOUNTING, /data-tbody="na-drawers"/);
   assert.match(ACCOUNTING, /data-tbody="na-unbilled"/);
   assert.match(ACCOUNTING, /API_ENDPOINTS\.financeNightAudit/);
   assert.match(ACCOUNTING, /renderNightAudit/);
+  // The checks themselves are unchanged: the pack still reads the drawer,
+  // discrepancy and in-house folio data the reconciliation service returns.
+  assert.match(ACCOUNTING, /data\.cash_drawers/);
+  assert.match(ACCOUNTING, /row\.variance/);
+  assert.match(ACCOUNTING, /data\.discrepancies/);
+  assert.match(ACCOUNTING, /unbilled_in_house_folios/);
+});
+
+test("the night audit reconciles drawers without duplicating the cash table", () => {
+  // One authoritative drawer table: Cash management owns the expected-vs-counted
+  // rows, and the night audit reports the reconciliation outcome and links to it.
+  assert.match(ACCOUNTING, /id="cash-management"/);
+  assert.match(ACCOUNTING, /data-tbody="acct-cash"/);
+  assert.match(ACCOUNTING, /data-na-drawers-summary/);
+  assert.match(ACCOUNTING, /href="#cash-management"/);
+  const nightAudit = ACCOUNTING.slice(
+    ACCOUNTING.indexOf('data-acc-section="night-audit"'),
+    ACCOUNTING.indexOf('data-acc-section="detailed-measures"'),
+  );
+  assert.ok(nightAudit.length > 0, "night audit section not found");
+  // No second drawer table is rendered inside the night audit section.
+  assert.doesNotMatch(nightAudit, /data-tbody="na-drawers"/);
+  assert.match(nightAudit, /data-na-drawers-summary/);
+  // The summary counts the drawers the reconciliation service returned.
+  assert.match(ACCOUNTING, /renderFinanceAlerts\(data\)/);
 });
 
 test("Accounting posts balanced manual journals through the ledger endpoint", () => {

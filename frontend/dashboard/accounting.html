@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.15">
+<link rel="stylesheet" href="../css/main.css?v=1.1.16">
 
 </head>
 <body>
@@ -31,6 +31,37 @@
       </span>
     </div>
     <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <script>
+    /* Sidebar pre-paint: the menu is painted from this ROLE's cached snapshot
+       during HTML parsing, so it is on screen with the page instead of
+       rebuilding after the dashboard scripts boot. The snapshot is used only
+       when the role it was rendered for is the role in this browser's stored
+       session; anything else (no cache, another account, signed out) leaves the
+       menu empty — the dashboard script then renders it properly. */
+    (function(){
+      var nav=document.querySelector("[data-dash-nav]");
+      if(!nav)return;
+      var role=null;
+      try{
+        var raw=window["local"+"Storage"].getItem("jone.auth");
+        if(raw){var p=JSON.parse(raw)||{};var u=p.user||p;role=(u&&u.role)||p.role||null;if(role)role=String(role).toLowerCase();}
+      }catch(e){role=null;}
+      if(!role)return;
+      var snap=null;
+      try{snap=JSON.parse(window.sessionStorage.getItem("jone.dash.nav")||"null");}catch(e){snap=null;}
+      if(!snap||snap.role!==role||typeof snap.html!=="string"||!snap.html)return;
+      nav.innerHTML=snap.html;
+      var here=location.pathname.split("/").pop()||"index.html";
+      var items=nav.querySelectorAll("a.dash-nav-item");
+      for(var i=0;i<items.length;i++){
+        items[i].classList.remove("is-active");
+        items[i].removeAttribute("aria-current");
+        var href=(items[i].getAttribute("href")||"").split("?")[0].split("#")[0];
+        if(href===here){items[i].classList.add("is-active");items[i].setAttribute("aria-current","page");}
+      }
+      nav.setAttribute("data-nav-snapshot","1");
+    })();
+    </script>
     <div class="dash-sidebar-footer">
       <div data-dash-user></div>
       <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
@@ -56,7 +87,7 @@
     </header>
     <main class="dash-content">
 
-<section class="panel">
+<section class="panel" aria-label="Reporting period">
   <div class="filter-bar">
     <label class="field-label" style="align-self:center;">Period:</label>
     <div class="field"><select class="select" id="rp-range" aria-label="Report range"><option value="1" selected>Today</option><option value="yesterday">Yesterday</option><option value="7">This week (7 days)</option><option value="30">This month (30 days)</option><option value="365">This year</option><option value="custom">Custom dates</option></select></div>
@@ -65,119 +96,221 @@
     <div class="field"><button class="btn btn-sm" id="rp-apply" type="button">Apply</button></div>
   </div>
   <div class="panel-body">
-    <section class="kpi-grid is-loading" data-finance-kpis aria-busy="true" aria-label="Ledger financial summary">
+    <!-- FINANCIAL OVERVIEW — the six figures that answer "how did money move?".
+         Every other measure lives in its own section below (Posted Transactions,
+         Expenses, Supplier Accounts, Cash Management, Approvals, Statements,
+         Detailed Financial Measures, Reports) so no number is stated twice on
+         this screen. Amounts come from the posted ledger summary, unchanged. -->
+    <h2 class="section-title" data-finance-heading>Financial overview</h2>
+    <section class="kpi-grid" data-finance-kpis aria-busy="true" aria-label="Financial overview">
       <div class="kpi"><div class="kpi-label">Recognized revenue</div><div class="kpi-value" data-rp="recognized-revenue">--</div><div class="kpi-sub" data-rp="recognized-revenue-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Collections</div><div class="kpi-value" data-rp="collections">--</div><div class="kpi-sub" data-rp="collections-sub">&nbsp;</div></div>
-      <div class="kpi"><div class="kpi-label">Supplier payments made</div><div class="kpi-value" data-rp="supplier-payments">--</div><div class="kpi-sub" data-rp="supplier-payments-sub">&nbsp;</div></div>
-      <div class="kpi"><div class="kpi-label">Outstanding payables</div><div class="kpi-value" data-rp="outstanding-payables">--</div><div class="kpi-sub" data-rp="outstanding-payables-sub">&nbsp;</div></div>
-      <div class="kpi"><div class="kpi-label">Supplier goods received</div><div class="kpi-value" data-rp="goods-received">--</div><div class="kpi-sub" data-rp="goods-received-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Operating expenses</div><div class="kpi-value" data-rp="operating-expenses">--</div><div class="kpi-sub" data-rp="operating-expenses-sub">&nbsp;</div></div>
-      <div class="kpi"><div class="kpi-label">Refunds</div><div class="kpi-value" data-rp="refunds">--</div><div class="kpi-sub" data-rp="refunds-sub">&nbsp;</div></div>
-      <div class="kpi"><div class="kpi-label">Payments made</div><div class="kpi-value" data-rp="payments-made">--</div><div class="kpi-sub">Cash paid-out + net salaries</div></div>
-      <div class="kpi"><div class="kpi-label">Operating result</div><div class="kpi-value" data-rp="operating-result">--</div><div class="kpi-sub">Revenue − expenses − payroll</div></div>
+      <div class="kpi"><div class="kpi-label">Net operating result</div><div class="kpi-value" data-rp="operating-result">--</div><div class="kpi-sub">Recognized revenue − operating expenses − accrued payroll</div></div>
+      <div class="kpi"><div class="kpi-label">Outstanding supplier payables</div><div class="kpi-value" data-rp="outstanding-payables">--</div><div class="kpi-sub" data-rp="outstanding-payables-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Total cash disbursed</div><div class="kpi-value" data-rp="cash-disbursed">--</div><div class="kpi-sub" data-rp="cash-disbursed-sub">&nbsp;</div></div>
     </section>
     <p class="caption" data-finance-basis style="margin:0.85rem 0 0;">Posted immutable ledger · Business date · NGN</p>
 
-    <div class="panel-grid" style="margin-top:1.5rem;">
-      <section class="panel" style="border:1px solid var(--color-border);">
-        <div class="panel-head"><h2>Ledger financial measures</h2></div>
-        <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-          <thead><tr><th>Measure</th><th>Amount</th><th class="hide-sm">Ledger transactions</th></tr></thead>
-          <tbody data-tbody="report-finance"></tbody>
-        </table></div></div>
-      </section>
-      <section class="panel" style="border:1px solid var(--color-border);">
-        <div class="panel-head"><h2>Revenue by department</h2><div class="panel-actions"><span class="caption">Recognized revenue only — not cash collected</span></div></div>
-        <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-          <thead><tr><th>Department</th><th>Amount</th><th class="hide-sm">Share</th></tr></thead>
-          <tbody data-tbody="report-departments"></tbody>
-        </table></div></div>
-      </section>
-    </div>
-    <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
-      <div class="panel-head"><h2>Night audit &amp; daily flash</h2><div class="panel-actions"><input class="input" type="date" id="na-date" data-allow-past aria-label="Night audit date"><button class="btn btn-sm" type="button" id="na-load">Run night audit</button></div></div>
-      <div class="panel-body">
-        <section class="kpi-grid" aria-label="Daily flash">
-          <div class="kpi"><div class="kpi-label">Revenue (day)</div><div class="kpi-value" data-na="revenue">--</div></div>
-          <div class="kpi"><div class="kpi-label">Occupancy</div><div class="kpi-value" data-na="occupancy">--</div><div class="kpi-sub" data-na="rooms">&nbsp;</div></div>
-          <div class="kpi"><div class="kpi-label">ADR</div><div class="kpi-value" data-na="adr">--</div><div class="kpi-sub">Accommodation revenue ÷ occupied rooms</div></div>
-          <div class="kpi"><div class="kpi-label">RevPAR</div><div class="kpi-value" data-na="revpar">--</div><div class="kpi-sub">Accommodation revenue ÷ available rooms</div></div>
-          <div class="kpi"><div class="kpi-label">Tenders captured</div><div class="kpi-value" data-na="tenders">--</div><div class="kpi-sub" data-na="tenders-sub">&nbsp;</div></div>
-          <div class="kpi"><div class="kpi-label">Discrepancies</div><div class="kpi-value" data-na="discrepancies">--</div><div class="kpi-sub">Drawer, room and billing checks</div></div>
-        </section>
-        <div class="panel-grid" style="margin-top:1rem;">
-          <div><h3 style="margin:0 0 .5rem;">Tenders by method</h3><div class="table-wrap"><table class="table"><thead><tr><th>Method</th><th class="num">Captured</th><th class="num">Refunded</th></tr></thead><tbody data-tbody="na-tenders"></tbody></table></div></div>
-          <div><h3 style="margin:0 0 .5rem;">Cash drawers</h3><div class="table-wrap"><table class="table"><thead><tr><th>Drawer</th><th class="num">Expected</th><th class="num">Counted</th><th class="num">Variance</th><th>Status</th></tr></thead><tbody data-tbody="na-drawers"></tbody></table></div></div>
-        </div>
-        <div class="panel-grid" style="margin-top:1rem;">
-          <div><h3 style="margin:0 0 .5rem;">Discrepancies &amp; checks</h3><div data-na-list="discrepancies"><p class="caption">Run the night audit to check drawers, occupied rooms and in-house billing.</p></div></div>
-          <div><h3 style="margin:0 0 .5rem;">In-house folios with balance due</h3><div class="table-wrap"><table class="table"><thead><tr><th>Stay</th><th>Guest</th><th>Room</th><th class="num">Balance</th></tr></thead><tbody data-tbody="na-unbilled"></tbody></table></div></div>
-        </div>
-      </div>
-    </section>
-    <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
-      <div class="panel-head"><h2>Financial statements</h2><div class="panel-actions"><input class="input" type="date" id="bs-asof" data-allow-past aria-label="Balance sheet as of"><button class="btn btn-sm" type="button" id="bs-load">Load statements</button></div></div>
-      <div class="panel-body">
-        <p class="caption" style="margin-top:0;">Balance sheet and cash flow are computed from the same posted ledger as every figure above — no separate statement books. Opening balances are posted as balanced journals against <strong>Equity · Opening balance offset</strong> (Post journal entry) dated before go-live. <span data-bs="recon"></span></p>
-        <div class="panel-grid">
-          <div><h3 style="margin:0 0 .5rem;">Balance sheet <span class="caption" data-bs="asof"></span></h3><div class="table-wrap"><table class="table"><thead><tr><th>Account</th><th class="num">Amount</th></tr></thead><tbody data-tbody="bs-sheet"></tbody></table></div></div>
-          <div><h3 style="margin:0 0 .5rem;">Cash flow <span class="caption" data-cf="period"></span></h3><div class="table-wrap"><table class="table"><thead><tr><th>Measure</th><th class="num">Amount</th></tr></thead><tbody data-tbody="cf-flow"></tbody></table></div><p class="caption" data-cf="note"></p></div>
-        </div>
-      </div>
-    </section>
-    <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
-      <div class="panel-head"><h2>Posted ledger transactions</h2><div class="panel-actions"><button class="btn btn-sm" type="button" id="acct-journal"><span data-icon="plus" data-size="15"></span> Post journal entry</button></div></div>
+    <!-- Attention strip: only rendered when the night audit found something
+         that needs a person. The details stay in Night Audit &amp; Operations. -->
+    <div class="finance-alerts" data-finance-alerts hidden></div>
+
+    <details class="panel finance-subpanel" data-acc-section="revenue-departments" open>
+      <summary class="panel-head"><h2>Revenue by department</h2><span class="caption">Recognized revenue only — not cash collected</span></summary>
       <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-        <thead><tr><th>Date</th><th>Reference</th><th>Type</th><th>Description</th><th>Status</th></tr></thead>
-        <tbody data-tbody="ledger-tx"></tbody>
+        <thead><tr><th>Department</th><th class="num">Amount</th><th class="hide-sm num">Share</th></tr></thead>
+        <tbody data-tbody="report-departments"></tbody>
       </table></div></div>
-    </section>
-    
-    <div class="panel-grid" style="margin-top:1.5rem;">
-      <section class="panel" style="border:1px solid var(--color-border);">
-        <div class="panel-head"><h2>Expenses</h2><div class="panel-actions"><button class="btn btn-sm" type="button" id="acct-create-expense"><span data-icon="plus" data-size="15"></span> Create expense</button></div></div>
-        <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-          <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Payee</th><th class="cell-nowrap">Department</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Status</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
-          <tbody data-tbody="acct-expenses"></tbody>
-        </table></div></div>
-      </section>
-      <section class="panel" style="border:1px solid var(--color-border);">
-        <div class="panel-head"><h2>Cash drawers</h2></div>
-        <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-          <thead><tr><th>Reference</th><th>Cashier</th><th>Expected</th><th>Counted</th><th>Variance</th><th>Status</th></tr></thead>
-          <tbody data-tbody="acct-cash"></tbody>
-        </table></div></div>
-      </section>
+    </details>
+  </div>
+</section>
+
+<!-- POSTED TRANSACTIONS — the immutable ledger as posted. -->
+<details class="panel finance-section" data-acc-section="transactions">
+  <summary class="panel-head"><h2>Posted transactions</h2>
+    <span class="caption">Immutable ledger entries, posted or reversed</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body no-pad">
+    <div class="section-actions"><button class="btn btn-sm" type="button" id="acct-journal"><span data-icon="plus" data-size="15"></span> Post journal entry</button></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th class="cell-nowrap">Date</th><th class="cell-nowrap">Reference</th><th class="cell-nowrap">Type</th><th class="cell-clamp">Description</th><th class="cell-nowrap">Status</th></tr></thead>
+      <tbody data-tbody="ledger-tx"></tbody>
+    </table></div>
+  </div>
+</details>
+
+<!-- EXPENSES -->
+<details class="panel finance-section" data-acc-section="expenses">
+  <summary class="panel-head"><h2>Expenses</h2>
+    <span class="caption">Recorded, approved and posted operating costs</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body no-pad">
+    <div class="section-actions"><button class="btn btn-sm" type="button" id="acct-create-expense"><span data-icon="plus" data-size="15"></span> Create expense</button></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Payee</th><th class="cell-nowrap">Department</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Status</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody data-tbody="acct-expenses"></tbody>
+    </table></div>
+  </div>
+</details>
+
+<!-- SUPPLIER ACCOUNTS AND PAYABLES — the invoice, payment and goods stages,
+     which the overview deliberately does not repeat. -->
+<details class="panel finance-section" data-acc-section="suppliers">
+  <summary class="panel-head"><h2>Supplier accounts and payables</h2>
+    <span class="caption">Goods received, invoices recognized, payments made</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body">
+    <div class="kpi-grid kpi-grid-3" aria-label="Supplier account stages">
+      <div class="kpi"><div class="kpi-label">Supplier goods received</div><div class="kpi-value" data-rp="goods-received">--</div><div class="kpi-sub" data-rp="goods-received-sub">Stock only — not a posted invoice</div></div>
+      <div class="kpi"><div class="kpi-label">Supplier invoices recognized</div><div class="kpi-value" data-rp="invoices-recognized">--</div><div class="kpi-sub">Approved supplier cost in the period</div></div>
+      <div class="kpi"><div class="kpi-label">Supplier payments made</div><div class="kpi-value" data-rp="supplier-payments">--</div><div class="kpi-sub" data-rp="supplier-payments-sub">&nbsp;</div></div>
     </div>
-    <section class="panel" style="border:1px solid var(--color-border);margin-top:1.5rem;">
-      <div class="panel-head"><h2>Pending financial approvals</h2></div>
-      <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-        <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-nowrap">Type</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Status</th><th class="cell-clamp">Requester</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
-        <tbody data-tbody="acct-approvals"></tbody>
-      </table></div></div>
+    <p class="caption" style="margin:0.9rem 0 0.5rem;">Outstanding payables — documents recorded on credit that have not been paid yet. Recording the payment here marks the supplier cost as paid; the payables total stays in the overview.</p>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Supplier</th><th class="cell-nowrap">Status</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody data-tbody="acct-payables"></tbody>
+    </table></div>
+    <p class="caption" style="margin-top:0.75rem;">Full supplier register, purchase orders and goods receipts live in <a href="procurement.html">Procurement</a> and <a href="inventory.html">Inventory</a>.</p>
+  </div>
+</details>
+
+<!-- CASH MANAGEMENT — the ONE authoritative drawer table. Other sections link
+     here (id="cash-management") instead of repeating drawer detail. -->
+<details class="panel finance-section" data-acc-section="cash" id="cash-management">
+  <summary class="panel-head"><h2>Cash management</h2>
+    <span class="caption">Drawer reconciliation — the authoritative cash table</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body no-pad">
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Cashier</th><th class="num cell-nowrap">Expected</th><th class="num cell-nowrap">Counted</th><th class="num cell-nowrap">Variance</th><th class="cell-nowrap">Status</th></tr></thead>
+      <tbody data-tbody="acct-cash"></tbody>
+    </table></div>
+  </div>
+</details>
+
+<!-- FINANCIAL APPROVALS -->
+<details class="panel finance-section" data-acc-section="approvals">
+  <summary class="panel-head"><h2>Financial approvals</h2>
+    <span class="caption">Refunds, discounts, voids and adjustments awaiting a decision</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body no-pad">
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-nowrap">Type</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Status</th><th class="cell-clamp">Requester</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody data-tbody="acct-approvals"></tbody>
+    </table></div>
+  </div>
+</details>
+
+<!-- FINANCIAL STATEMENTS -->
+<details class="panel finance-section" data-acc-section="statements">
+  <summary class="panel-head"><h2>Financial statements</h2>
+    <span class="caption">Balance sheet and cash flow from the same posted ledger</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body">
+    <div class="section-actions">
+      <label class="field-label" for="bs-asof">As of</label>
+      <input class="input" type="date" id="bs-asof" data-allow-past aria-label="Balance sheet as of">
+      <button class="btn btn-sm" type="button" id="bs-load">Load statements</button>
+      <span class="caption" data-bs="recon"></span>
+    </div>
+    <details class="finance-help">
+      <summary>How these statements are built</summary>
+      <p class="caption">Balance sheet and cash flow are computed from the same posted ledger as every figure above — no separate statement books. Opening balances are posted as balanced journals against <strong>Equity · Opening balance offset</strong> (Post journal entry) dated before go-live. Equity includes current earnings (all posted revenue less expenses to date, not yet closed into retained earnings). Cash-flow lines are classified once from each transaction's counter-accounts: equity counters are financing, everything else in this chart is operating. Drawer float openings are internal and excluded.</p>
+    </details>
+    <div class="panel-grid">
+      <div><h3 class="section-title">Balance sheet <span class="caption" data-bs="asof"></span></h3><div class="table-wrap"><table class="table"><thead><tr><th class="cell-clamp">Account</th><th class="num cell-nowrap">Amount</th></tr></thead><tbody data-tbody="bs-sheet"></tbody></table></div><p class="caption" data-bs="receivable-note" hidden></p></div>
+      <div><h3 class="section-title">Cash flow <span class="caption" data-cf="period"></span></h3><div class="table-wrap"><table class="table"><thead><tr><th class="cell-clamp">Measure</th><th class="num cell-nowrap">Amount</th></tr></thead><tbody data-tbody="cf-flow"></tbody></table></div><p class="caption" data-cf="note"></p></div>
+    </div>
+  </div>
+</details>
+
+<!-- NIGHT AUDIT & OPERATIONS — operational daily pack. Drawer detail lives in
+     Cash management above; this section only reports the checks and links. -->
+<details class="panel finance-section" data-acc-section="night-audit" id="night-audit-ops">
+  <summary class="panel-head"><h2>Night audit &amp; operations</h2>
+    <span class="caption">Occupancy, ADR, RevPAR, tenders and the daily reconciliation checks</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body">
+    <div class="section-actions">
+      <label class="field-label" for="na-date">Business date</label>
+      <input class="input" type="date" id="na-date" data-allow-past aria-label="Night audit date">
+      <button class="btn btn-sm" type="button" id="na-load">Run night audit</button>
+    </div>
+    <section class="kpi-grid kpi-grid-3" aria-label="Daily flash">
+      <div class="kpi"><div class="kpi-label">Revenue (day)</div><div class="kpi-value" data-na="revenue">--</div></div>
+      <div class="kpi"><div class="kpi-label">Occupancy</div><div class="kpi-value" data-na="occupancy">--</div><div class="kpi-sub" data-na="rooms">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">ADR</div><div class="kpi-value" data-na="adr">--</div><div class="kpi-sub">Accommodation revenue ÷ occupied rooms</div></div>
+      <div class="kpi"><div class="kpi-label">RevPAR</div><div class="kpi-value" data-na="revpar">--</div><div class="kpi-sub">Accommodation revenue ÷ available rooms</div></div>
+      <div class="kpi"><div class="kpi-label">Tenders captured</div><div class="kpi-value" data-na="tenders">--</div><div class="kpi-sub" data-na="tenders-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Checks needing attention</div><div class="kpi-value" data-na="discrepancies">--</div><div class="kpi-sub">Drawer, room and billing checks</div></div>
     </section>
-<div style="margin-top:1.5rem;display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
+    <h3 class="section-title">Tenders by method</h3>
+    <div class="table-wrap"><table class="table"><thead><tr><th class="cell-clamp">Method</th><th class="num cell-nowrap">Captured</th><th class="num cell-nowrap">Refunded</th></tr></thead><tbody data-tbody="na-tenders"></tbody></table></div>
+    <h3 class="section-title">Drawer reconciliation</h3>
+    <div data-na-drawers-summary class="finance-note"><p class="caption">Run the night audit to check today's drawers.</p></div>
+    <details class="panel-grid-collapsible">
+      <summary class="section-title">Discrepancies &amp; in-house balances</summary>
+      <div class="panel-grid" style="margin-top:0.75rem;">
+        <div><h4 class="section-title-sm">Discrepancies &amp; checks</h4><div data-na-list="discrepancies"><p class="caption">Run the night audit to check drawers, occupied rooms and in-house billing.</p></div></div>
+        <div><h4 class="section-title-sm">In-house folios with balance due</h4><div class="table-wrap"><table class="table"><thead><tr><th class="cell-nowrap">Stay</th><th class="cell-clamp">Guest</th><th class="cell-nowrap">Room</th><th class="num cell-nowrap">Balance</th></tr></thead><tbody data-tbody="na-unbilled"></tbody></table></div></div>
+      </div>
+    </details>
+  </div>
+</details>
+
+<!-- DETAILED FINANCIAL MEASURES — every distinct ledger measure, including the
+     ones that are currently zero (historical tax, payroll reversals, discounts)
+     and every supplier stage. Kept for audit and reconciliation. -->
+<details class="panel finance-section" data-acc-section="detailed-measures">
+  <summary class="panel-head"><h2>Detailed financial measures</h2>
+    <span class="caption">All ledger measures — overlapping views kept for audit, not for the overview</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
+    <thead><tr><th class="cell-clamp">Measure</th><th class="num cell-nowrap">Amount</th><th class="hide-sm num cell-nowrap">Ledger transactions</th></tr></thead>
+    <tbody data-tbody="report-finance"></tbody>
+  </table></div></div>
+</details>
+
+<!-- REPORTS AND EXPORTS -->
+<details class="panel finance-section" data-acc-section="reports">
+  <summary class="panel-head"><h2>Reports and exports</h2>
+    <span class="caption">Period exports and the full reporting suite</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body">
+    <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
       <button class="btn btn-sm btn-outline" id="export-csv" type="button"><span data-icon="download" data-size="16"></span> Export CSV</button>
       <button class="btn btn-sm btn-outline" id="export-xlsx" type="button">Export Excel</button>
       <button class="btn btn-sm btn-outline" id="export-pdf" type="button">Export PDF</button>
       <span class="caption" style="flex:1 1 12rem;min-width:0;">Exports the ledger financial measures and operational report data currently shown above.</span>
     </div>
+    <p class="caption" style="margin-top:0.85rem;">Financial reports, expense records and the receivables aging are on <a href="reports.html">Reports</a>; the night audit pack stays on this page. Supplier statements are on <a href="procurement.html">Procurement</a>.</p>
   </div>
-</section>
+</details>
+
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.15"></script>
-<script src="../js/config.js?v=1.1.15"></script>
-<script src="../js/utils.js?v=1.1.15"></script>
-<script src="../js/icons.js?v=1.1.15"></script>
-<script src="../js/api.js?v=1.1.15"></script>
-<script src="../js/theme.js?v=1.1.15"></script>
-<script src="../js/ui.js?v=1.1.15"></script>
-<script src="../js/auth.js?v=1.1.15"></script>
-<script src="../js/hotel-data.js?v=1.1.15"></script>
-<script src="../js/navigation.js?v=1.1.15"></script>
-<script src="../js/dashboard.js?v=1.1.15"></script><script src="../js/table-fit.js?v=1.1.15"></script>
+<script src="../js/runtime-config.js?v=1.1.16"></script>
+<script src="../js/config.js?v=1.1.16"></script>
+<script src="../js/utils.js?v=1.1.16"></script>
+<script src="../js/icons.js?v=1.1.16"></script>
+<script src="../js/api.js?v=1.1.16"></script>
+<script src="../js/theme.js?v=1.1.16"></script>
+<script src="../js/ui.js?v=1.1.16"></script>
+<script src="../js/auth.js?v=1.1.16"></script>
+<script src="../js/hotel-data.js?v=1.1.16"></script>
+<script src="../js/navigation.js?v=1.1.16"></script>
+<script src="../js/dashboard.js?v=1.1.16"></script><script src="../js/table-fit.js?v=1.1.16"></script>
 <script>
   JONE.ui.initChrome();
   // boot() redirects receptionists to 403.html. If a navigation is ever
@@ -197,6 +330,9 @@
   var ex=document.querySelector("[data-tbody=acct-expenses]");
   var cash=document.querySelector("[data-tbody=acct-cash]");
   var ap=document.querySelector("[data-tbody=acct-approvals]");
+  var payables=document.querySelector("[data-tbody=acct-payables]");
+  var alertsBox=document.querySelector("[data-finance-alerts]");
+  var drawerSummary=document.querySelector("[data-na-drawers-summary]");
   var financeKpis=document.querySelector("[data-finance-kpis]");
   var financeBasis=document.querySelector("[data-finance-basis]");
   var range=document.getElementById("rp-range");
@@ -223,7 +359,9 @@
       };
       var changed=(next.approveExpense!==CAN.approveExpense)||(next.refunds!==CAN.refunds);
       CAN=next;
-      if(changed){ renderExpenses(); renderApprovals(); }
+      /* The approvals section changes shape with the refund-approval capability:
+         load it for a reviewer, explain the section for everyone else. */
+      if(changed){ renderExpenses(); renderApprovals(); refreshApprovalsSection(); }
     }).catch(function(){
       /* Role-based UX stays the fallback; server-side checks are unaffected. */
     });
@@ -345,8 +483,15 @@
     financeKpis.setAttribute("aria-busy",loading?"true":"false");
   }
 
-  function financeErrorMessage(err){
-    if(err&&err.status===403) return "Your account does not have permission to view financial reports.";
+  /* A 403 is about ONE section, not the whole page. "Your account does not have
+     permission to view financial reports" belongs to the ledger summary and the
+     statements (reports.financial.view); a section the reader cannot see says
+     which section, so the rest of the page never reads as broken. */
+  function financeErrorMessage(err,section){
+    if(err&&err.status===403){
+      return "Your account does not have permission to view "+(section||"financial reports")+".";
+    }
+    if(err&&err.status===401) return "Your session has expired. Sign in again to load this section.";
     return (err&&err.message)||"Please try again in a moment.";
   }
 
@@ -363,7 +508,7 @@
     error.setAttribute("data-finance-kpi-error","");
     error.setAttribute("role","alert");
     title.textContent="Financial summary could not be loaded.";
-    detail.textContent=financeErrorMessage(err);
+    detail.textContent=financeErrorMessage(err,"the financial overview");
     retry.className="btn btn-sm btn-outline";
     retry.type="button";
     retry.textContent="Try again";
@@ -375,7 +520,9 @@
   }
 
   function resetFinanceKpis(){
-    ["recognized-revenue","collections","operating-expenses","refunds","payments-made","operating-result","supplier-payments","outstanding-payables","goods-received"].forEach(function(name){
+    ["recognized-revenue","collections","operating-expenses","operating-result",
+     "outstanding-payables","cash-disbursed",
+     "supplier-payments","invoices-recognized","goods-received"].forEach(function(name){
       setKpi(name,"--");
       setKpi(name+"-sub","");
     });
@@ -385,12 +532,22 @@
     latest.financial=report||{};
     setFinanceKpisLoading(false);
     var currency=reportCurrency(latest.financial);
+    /* The FINANCIAL OVERVIEW carries six figures and nothing twice. Every
+       calculation is the existing posted-ledger measure, unchanged:
+         recognized revenue        recognized_revenue
+         collections               collections
+         operating expenses        operating_expenses
+         net operating result      gross_operating_result (revenue − operating
+                                   expenses − accrued payroll; the label the
+                                   owner asked for, the definition unchanged)
+         outstanding payables      supplier_payments.outstanding_supplier_payables
+         total cash disbursed      supplier_payments.total_cash_disbursements
+       Refunds, net collections, discounts, tax, reversals, payroll and the
+       supplier stages stay in Detailed financial measures / Supplier accounts. */
     var kpis=[
       { name:"recognized-revenue", key:"recognized_revenue" },
       { name:"collections", key:"collections" },
       { name:"operating-expenses", key:"operating_expenses" },
-      { name:"refunds", key:"refunds" },
-      { name:"payments-made", key:"actual_payments_made" },
       { name:"operating-result", key:"gross_operating_result" }
     ];
     kpis.forEach(function(item){
@@ -401,10 +558,16 @@
        block, which separates the invoice stage from the disbursement stage. A
        measure that does not exist renders as a dash, never as a fabricated zero. */
     var supplier=(latest.financial.supplier_payments)||{};
-    setKpi("supplier-payments",supplier.supplier_payments_made==null?"--":formatMoney(supplier.supplier_payments_made,currency));
-    setKpi("supplier-payments-sub","Invoices recognized "+formatMoney(supplier.supplier_invoices_recognized||0,currency));
+    /* The overview's payables card, and the total that actually left the bank
+       (supplier payments + operating costs paid + net salaries + other). */
     setKpi("outstanding-payables",supplier.outstanding_supplier_payables==null?"--":formatMoney(supplier.outstanding_supplier_payables,currency));
-    setKpi("outstanding-payables-sub",supplier.payable_settlement_posting_available===false?"Credited balance; no settlement posting exists yet":"No outstanding balance");
+    setKpi("outstanding-payables-sub",supplier.payable_settlement_posting_available===false?"Credited balance; no settlement posting exists yet":"Open payable documents");
+    setKpi("cash-disbursed",supplier.total_cash_disbursements==null?"--":formatMoney(supplier.total_cash_disbursements,currency));
+    setKpi("cash-disbursed-sub","Supplier "+formatMoney(supplier.supplier_payments_made||0,currency)+" · expenses paid "+formatMoney(supplier.operating_expenses_paid||0,currency)+" · net salaries "+formatMoney(supplier.net_payroll_paid||0,currency));
+    /* Supplier ACCOUNT section: the stages, kept apart from the overview. */
+    setKpi("supplier-payments",supplier.supplier_payments_made==null?"--":formatMoney(supplier.supplier_payments_made,currency));
+    setKpi("supplier-payments-sub","Actually disbursed in this period");
+    setKpi("invoices-recognized",supplier.supplier_invoices_recognized==null?"--":formatMoney(supplier.supplier_invoices_recognized,currency));
     setKpi("goods-received",supplier.goods_receipts_value==null?"--":formatMoney(supplier.goods_receipts_value,currency));
     setKpi("goods-received-sub",String(supplier.goods_receipts_count||0)+" goods receipt(s) · stock only, not a posted invoice");
     if(financeBasis){
@@ -429,7 +592,7 @@
     resetFinanceKpis();
     setFinanceKpisError(err);
     if(financeBasis) financeBasis.textContent="Financial ledger report unavailable for this period.";
-    if(ft) DATA.error(ft,"Financial summary couldn't be loaded",financeErrorMessage(err),3,false);
+    if(ft) DATA.error(ft,"Financial summary couldn't be loaded",financeErrorMessage(err,"the financial overview"),3,false);
   }
 
   /* The API layer unwraps the {success,data,pagination} envelope, so a list
@@ -490,7 +653,7 @@
     getReport(window.APP_CONFIG.API_ENDPOINTS.financeTransactions,financialParams).then(function(response){
       if(requestId===loadSequence) renderTransactions(response.data||response||{});
     },function(err){
-      if(requestId===loadSequence && tx) DATA.error(tx,"Ledger transactions couldn't be loaded",financeErrorMessage(err),5);
+      if(requestId===loadSequence && tx) DATA.error(tx,"Ledger transactions couldn't be loaded",financeErrorMessage(err,"posted transactions"),5);
     });
     // Accepts either the shared API envelope ({data,pagination}) or the bare array.
     function rowsOf(payload){return listRows(payload&&!Array.isArray(payload)&&payload.data!==undefined?payload.data:payload);}
@@ -677,23 +840,23 @@
   }
 
     getReport(window.APP_CONFIG.API_ENDPOINTS.financeExpenses,{start:dates.from,end:dates.to}).then(function(response){
-      if(requestId!==loadSequence||!ex) return;
+      if(requestId!==loadSequence) return;
       var rows=rowsOf(response);
       if(!Array.isArray(rows)) rows=[];
       latest.expenses=rows;
       renderExpenses();
-    },function(err){ if(requestId===loadSequence&&ex) DATA.error(ex,"Expenses couldn't be loaded",financeErrorMessage(err),4); });
+      renderPayables();
+    },function(err){
+      if(requestId!==loadSequence) return;
+      if(ex) DATA.error(ex,"Expenses couldn't be loaded",financeErrorMessage(err,"expenses"),4);
+      if(payables) DATA.error(payables,"Supplier payables couldn't be loaded",financeErrorMessage(err,"supplier accounts"),4);
+    });
     getReport(window.APP_CONFIG.API_ENDPOINTS.financeCashSessions,{}).then(function(response){
       if(requestId!==loadSequence||!cash) return;
       var rows=rowsOf(response); if(!Array.isArray(rows)) rows=[];
-      cash.innerHTML=rows.length?rows.map(function(row){return "<tr><td>"+JONE.esc(row.reference||"—")+"</td><td>"+JONE.esc(row.cashier_email||"—")+"</td><td class=\"num\">"+JONE.esc(moneyCell(row.expected_cash))+"</td><td class=\"num\">"+JONE.esc(moneyCell(row.counted_cash))+"</td><td class=\"num\">"+JONE.esc(moneyCell(row.variance))+"</td><td>"+JONE.esc(row.status||"—")+"</td></tr>";}).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No cash sessions</h3></div></td></tr>";
-    },function(err){ if(requestId===loadSequence&&cash) DATA.error(cash,"Cash sessions couldn't be loaded",financeErrorMessage(err),6); });
-    getReport(window.APP_CONFIG.API_ENDPOINTS.financeApprovals,{status:"PENDING"}).then(function(response){
-      if(requestId!==loadSequence||!ap) return;
-      var rows=rowsOf(response); if(!Array.isArray(rows)) rows=[];
-      latest.approvals=rows;
-      renderApprovals();
-    },function(err){ if(requestId===loadSequence&&ap) DATA.error(ap,"Approvals couldn't be loaded",financeErrorMessage(err),5); });
+      cash.innerHTML=rows.length?rows.map(function(row){return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.cashier_email||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.expected_cash))+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.counted_cash))+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.variance))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td></tr>";}).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No cash sessions</h3></div></td></tr>";
+    },function(err){ if(requestId===loadSequence&&cash) DATA.error(cash,"Cash sessions couldn't be loaded",financeErrorMessage(err,"cash management"),6); });
+    refreshApprovalsSection(requestId);
 
   }
 
@@ -707,6 +870,71 @@
     if(JONE.icons) JONE.icons.inject(ex);
   }
 
+  /* The approvals section, decided by capability.
+
+     Pending approvals are gated by payment.refund.approve on the server. A
+     reader who does not hold it is told about THIS section — the old code
+     called the endpoint anyway and answered every 403 with the page-wide
+     sentence "Your account does not have permission to view financial
+     reports", which made the whole Accounting screen look broken for an
+     accountant who can read every other figure on it. */
+  function approvalsNotForThisRole(message){
+    if(!ap) return;
+    ap.innerHTML='<tr><td colspan="6"><div class="empty-state"><h3>Approvals are not part of your role</h3>'+
+      "<p>"+JONE.esc(message)+"</p></div></td></tr>";
+    if(JONE.icons) JONE.icons.inject(ap);
+  }
+
+  function refreshApprovalsSection(requestId){
+    if(!ap) return;
+    var stale=function(){ return requestId!=null&&requestId!==loadSequence; };
+    if(capabilitiesKnown()&&!CAN.refunds){
+      approvalsNotForThisRole("Refunds, discounts, voids and adjustments are approved by a manager or the accounts manager.");
+      return;
+    }
+    getReport(window.APP_CONFIG.API_ENDPOINTS.financeApprovals,{status:"PENDING"}).then(function(response){
+      if(stale()) return;
+      var rows=rowsOf(response); if(!Array.isArray(rows)) rows=[];
+      latest.approvals=rows;
+      renderApprovals();
+    },function(err){
+      if(stale()) return;
+      if(err&&err.status===403){
+        approvalsNotForThisRole("Your account does not have permission to view pending approvals.");
+        return;
+      }
+      DATA.error(ap,"Approvals couldn't be loaded",financeErrorMessage(err,"pending approvals"),5);
+    });
+  }
+
+  /* Outstanding supplier payables: expense documents recorded on credit
+     (payment_method PAYABLE) that have not been paid yet. The stages they
+     belong to (invoices recognized, payments made, goods received) are the
+     figures above; this table is the worklist, with the SAME controlled
+     "Record supplier payment" action the expenses table uses. */
+  function renderPayables(){
+    if(!payables||!Array.isArray(latest.expenses)) return;
+    var rows=latest.expenses.filter(function(row){
+      return String(row.payment_method||"").toUpperCase()==="PAYABLE" && !row.paid_at;
+    });
+    payables.innerHTML=rows.length?rows.map(function(row){
+      return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td>"+
+        "<td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.amount))+"</td>"+
+        "<td class=\"cell-nowrap\"><div class=\"row-actions\">"+
+        (row.status==="POSTED"?'<button class="btn btn-sm btn-accent" type="button" data-expense-settle="'+JONE.esc(row.reference||"")+'">Record supplier payment</button>':"")+
+        '<button class="btn btn-sm btn-outline" type="button" data-expense-details="'+JONE.esc(row.reference||"")+'">Details</button>'+
+        "</div></td></tr>";
+    }).join(""):'<tr><td colspan="5"><div class="empty-state"><h3>No outstanding supplier payables</h3><p>Everything recorded on credit has been paid.</p></div></td></tr>';
+    if(JONE.icons) JONE.icons.inject(payables);
+  }
+
+  /* Has the capability read finished? Until it has, the role-based fallback
+     decides (the same fallback the tables use), so a slow read can never be
+     mistaken for "this account has no approval authority". */
+  function capabilitiesKnown(){
+    return !!(window.Auth&&window.Auth.state&&window.Auth.state.capabilitiesLoaded);
+  }
+
   /* Pending approvals table. An EXPENSE request is decided through the expense
      review endpoint using its own expense reference (source_reference); every
      other registrable type is decided on the approvals endpoint. A cash
@@ -715,7 +943,9 @@
   function approvalActions(row){
     var type=String(row.type||"").toUpperCase();
     if(type==="CASH_VARIANCE"){
-      return '<span class="caption">Review with the cash drawer</span>';
+      /* Cash management owns the drawer table; a variance is reviewed there,
+         never decided from this list. */
+      return '<a class="btn btn-sm btn-outline" href="#cash-management">Review with the cash drawer</a>';
     }
     if(type==="EXPENSE"){
       var expenseRef=JONE.esc(row.source_reference||"");
@@ -991,7 +1221,14 @@
       var body = document.querySelector("[data-tbody=bs-sheet]");
       if (body) {
         var html = "<tr><td colspan=\"2\" style=\"font-weight:700;\">Assets</td></tr>";
-        (sheet.assets || []).forEach(function (r) { html += bsRow(r.label || r.account_code, r.amount); });
+        var receivableRow = null, receivablesNegative = false;
+        (sheet.assets || []).forEach(function (r) {
+          if (r.account_code === "ASSET.GUEST_RECEIVABLE") {
+            receivableRow = r;
+            receivablesNegative = Number(r.amount) < 0;
+          }
+          html += bsRow(r.label || r.account_code, r.amount);
+        });
         html += bsRow("Total assets", sheet.total_assets, true);
         html += "<tr><td colspan=\"2\" style=\"font-weight:700;\">Liabilities</td></tr>";
         (sheet.liabilities || []).forEach(function (r) { html += bsRow(r.label || r.account_code, r.amount); });
@@ -1002,6 +1239,26 @@
         html += bsRow("Total equity", sheet.total_equity, true);
         html += bsRow("Total liabilities & equity", sheet.total_liabilities_and_equity, true);
         body.innerHTML = html;
+      }
+      /* A guest receivable that is credit-normal is not a hidden problem and it
+         is not a display bug: it is money already applied to guest folios beyond
+         the charges those folios carry (advance payments on cancelled, no-show or
+         part-stayed bookings). The amount is shown exactly as the ledger reports
+         it; the note names the cause and the approved route back to zero, because
+         posted transactions are never edited. */
+      var receivableNote = document.querySelector("[data-bs=receivable-note]");
+      if (receivableNote) {
+        if (receivablesNegative && receivableRow) {
+          receivableNote.hidden = false;
+          receivableNote.textContent = "Guest receivables are credit-normal by " + moneyCell(receivableRow.amount) + ": " +
+            "more has been applied to guest folios than the charges posted to them — typically advance payments on " +
+            "cancelled, no-show or part-stayed bookings. The ledger is unedited. Clear it through the existing " +
+            "approved route: refund the guest balance through Approvals, or post a balanced reclassification journal " +
+            "to Guest deposits held. Ask the accountant to run `python manage.py guest_receivable_check` for the folios behind it.";
+        } else {
+          receivableNote.hidden = true;
+          receivableNote.textContent = "";
+        }
       }
       var asofEl = document.querySelector("[data-bs=asof]"); if (asofEl) asofEl.textContent = sheet.as_of ? ("as of " + sheet.as_of) : "";
       var recon = document.querySelector("[data-bs=recon]");
@@ -1037,6 +1294,51 @@
   var naDate = document.getElementById("na-date");
   var naSeq = 0;
   function naSet(name, value) { var el = document.querySelector("[data-na=\"" + name + "\"]"); if (el) el.textContent = value; }
+  /* Small alert summary in the overview: it appears only when the night audit
+     found something a person must act on, and it never restates the figures —
+     it names the condition and points at the section that owns it. */
+  function renderFinanceAlerts(data) {
+    if (!alertsBox) return;
+    var items = [];
+    var drawers = (data && data.cash_drawers) || [];
+    var unreconciled = drawers.filter(function (row) { return row.counted_cash == null || row.status === "OPEN"; });
+    if (unreconciled.length) {
+      items.push({
+        tone: "warn",
+        text: unreconciled.length + " unreconciled cash drawer" + (unreconciled.length === 1 ? "" : "s"),
+        href: "#cash-management",
+        action: "Review"
+      });
+    }
+    var discrepancies = (data && data.discrepancies) || [];
+    if (discrepancies.length) {
+      items.push({
+        tone: "warn",
+        text: discrepancies.length + " unresolved room or billing check" + (discrepancies.length === 1 ? "" : "s"),
+        href: "#night-audit-ops",
+        action: "Review"
+      });
+    }
+    var unbilled = (data && data.unbilled_in_house_folios) || [];
+    if (unbilled.length) {
+      var due = unbilled.reduce(function (sum, row) { return sum + (Number(row.folio_balance) || 0); }, 0);
+      items.push({
+        tone: "warn",
+        text: unbilled.length + " in-house folio" + (unbilled.length === 1 ? "" : "s") + " with " + moneyCell(due) + " outstanding",
+        href: "#night-audit-ops",
+        action: "Review"
+      });
+    }
+    if (!items.length) { alertsBox.hidden = true; alertsBox.innerHTML = ""; return; }
+    alertsBox.hidden = false;
+    alertsBox.innerHTML = items.map(function (item) {
+      return '<div class="finance-alert" data-tone="' + item.tone + '"><span data-icon="alertTriangle" data-size="16"></span>' +
+        "<span>" + JONE.esc(item.text) + "</span>" +
+        '<a class="btn btn-sm btn-outline" href="' + item.href + '">' + JONE.esc(item.action) + "</a></div>";
+    }).join("");
+    if (JONE.icons) JONE.icons.inject(alertsBox);
+  }
+
   function renderNightAudit(data) {
     var flash = data.daily_flash || {}, tenders = data.tenders || {};
     naSet("revenue", moneyCell(flash.total_revenue));
@@ -1054,13 +1356,25 @@
     if (tt) tt.innerHTML = methods.length ? methods.map(function (m) {
       return "<tr><td>" + JONE.esc(m.replace(/_/g, " ")) + "</td><td class=\"num\">" + JONE.esc(moneyCell(captured[m])) + "</td><td class=\"num\">" + JONE.esc(moneyCell(refunded[m])) + "</td></tr>";
     }).join("") : "<tr><td colspan=\"3\"><div class=\"empty-state\"><h3>No POS tenders this day</h3></div></td></tr>";
-    var dt2 = document.querySelector("[data-tbody=na-drawers]");
-    if (dt2) {
+    /* Drawer detail is NOT repeated here: Cash management owns the one
+       authoritative drawer table. This reports the reconciliation outcome and
+       links to it. */
+    if (drawerSummary) {
       var drawers = data.cash_drawers || [];
-      dt2.innerHTML = drawers.length ? drawers.map(function (row) {
-        return "<tr><td>" + JONE.esc(row.reference || "\u2014") + "<div class=\"caption\">" + JONE.esc(row.cashier || "") + "</div></td><td class=\"num\">" + JONE.esc(moneyCell(row.expected_cash)) + "</td><td class=\"num\">" + JONE.esc(row.counted_cash != null ? moneyCell(row.counted_cash) : "\u2014") + "</td><td class=\"num\">" + JONE.esc(row.variance != null ? moneyCell(row.variance) : "\u2014") + "</td><td>" + JONE.esc(row.status || "\u2014") + "</td></tr>";
-      }).join("") : "<tr><td colspan=\"5\"><div class=\"empty-state\"><h3>No cash drawers this day</h3></div></td></tr>";
+      var closed = drawers.filter(function (row) { return row.counted_cash != null && row.status !== "OPEN"; });
+      var open = drawers.length - closed.length;
+      var varianceTotal = drawers.reduce(function (sum, row) {
+        return sum + (row.variance == null ? 0 : Number(row.variance) || 0);
+      }, 0);
+      drawerSummary.innerHTML = drawers.length
+        ? "<p><strong>" + drawers.length + "</strong> drawer" + (drawers.length === 1 ? "" : "s") +
+          " on this business date · <strong>" + closed.length + "</strong> counted · " +
+          (open ? "<strong>" + open + "</strong> still unreconciled" : "all counted") +
+          " · net variance <strong>" + JONE.esc(moneyCell(varianceTotal)) + "</strong></p>" +
+          '<p><a class="btn btn-sm btn-outline" href="#cash-management">Open Cash management</a></p>'
+        : "<p class=\"caption\">No cash drawers were opened on this business date.</p>";
     }
+    renderFinanceAlerts(data);
     var dl = document.querySelector("[data-na-list=discrepancies]");
     if (dl) dl.innerHTML = discrepancies.length ? "<ul style=\"margin:0;padding-left:1.1rem;\">" + discrepancies.map(function (d) {
       return "<li><strong>" + JONE.esc(d.reference || "") + "</strong> \u00b7 " + JONE.esc(d.detail || "") + "</li>";
@@ -1154,6 +1468,29 @@
   /* Resolve the account's real capabilities once, then re-render the decision
      tables so the buttons a reviewer is entitled to appear without a reload. */
   capabilityReady();
+
+  /* Collapsible sections: a link to a folded section opens it first, so an
+     alert can point at Cash management (or the night audit) and the reader
+     lands on the content rather than on a closed header. */
+  function openSectionFromHash(){
+    var id=(location.hash||"").replace(/^#/,"");
+    if(!id) return;
+    var target=document.getElementById(id);
+    if(!target) return;
+    var box=target.closest?target.closest("details"):null;
+    while(box){ box.open=true; box=box.parentElement&&box.parentElement.closest?box.parentElement.closest("details"):null; }
+  }
+  document.addEventListener("click",function(event){
+    var link=event.target.closest?event.target.closest("a[href^='#']"):null;
+    if(!link) return;
+    var id=(link.getAttribute("href")||"").replace(/^#/,"");
+    var target=id?document.getElementById(id):null;
+    if(!target) return;
+    var box=target.closest?target.closest("details"):null;
+    while(box){ box.open=true; box=box.parentElement&&box.parentElement.closest?box.parentElement.closest("details"):null; }
+  });
+  openSectionFromHash();
+  window.addEventListener("hashchange",openSectionFromHash);
 
   var applyBtn=document.getElementById("rp-apply");
   if(applyBtn) applyBtn.addEventListener("click",function(){
@@ -1258,8 +1595,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.15"></script>
-<script src="../js/version.js?v=1.1.15"></script>
-<script src="../js/update-checker.js?v=1.1.15"></script>
+<script src="../js/pwa.js?v=1.1.16"></script>
+<script src="../js/version.js?v=1.1.16"></script>
+<script src="../js/update-checker.js?v=1.1.16"></script>
 </body>
 </html>

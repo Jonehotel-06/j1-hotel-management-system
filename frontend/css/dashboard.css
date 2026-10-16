@@ -60,6 +60,23 @@
   color: #9AA3AF;
   padding: 0 0.75rem 0.4rem;
 }
+/* Sidebar placeholder while a role's menu is being decided (first visit only:
+   every later navigation paints the cached menu before the page even parses).
+   Bars, never a partial menu — a department must not read a link it may not
+   open, and an empty column reads as a broken page. */
+.dash-nav-skeleton {
+  height: 0.8rem;
+  margin: 0.55rem 0.75rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14);
+  animation: dashNavPulse 1.2s ease-in-out infinite;
+}
+.dash-nav-skeleton:nth-child(2) { width: 78%; }
+.dash-nav-skeleton:nth-child(3) { width: 64%; }
+.dash-nav-skeleton:nth-child(4) { width: 71%; }
+@keyframes dashNavPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dash-nav-skeleton { animation: none; } }
+
 .dash-nav-item {
   display: flex; align-items: center; gap: 0.7rem;
   padding: 0.55rem 0.75rem;
@@ -2077,3 +2094,107 @@ body.receipt-view-page .receipt-utility-actions .btn-outline:hover {
 /* The check-out card states what part of the outstanding figure came from the
    guest's own requests (folio charges), not just the room. */
 .co-card-note { margin: 0.5rem 0 0; }
+
+/* ------------------ Collapsible finance sections (details) -----------------
+   Accounting and Reports fold their long tables into <details class="panel">
+   whose <summary> is the section header, so a section keeps the normal panel
+   look while its rows stay out of the way until wanted. The header is the
+   toggle: the whole title bar is clickable and keyboard reachable. */
+details.panel > summary.panel-head {
+  cursor: pointer;
+  list-style: none;
+  border-bottom: 1px solid transparent;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+details.panel > summary.panel-head::-webkit-details-marker { display: none; }
+details.panel > summary.panel-head:hover { background: var(--color-surface-alt); }
+details.panel > summary.panel-head:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+details.panel[open] > summary.panel-head {
+  background: var(--color-surface-alt);
+  border-bottom-color: var(--color-border);
+}
+details.panel[open] > summary.panel-head:hover { background: var(--color-surface-deep); }
+.acc-chevron {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+  color: var(--color-text-faint);
+  transition: transform 160ms var(--ease, ease);
+}
+details[open] > summary .acc-chevron { transform: rotate(180deg); }
+/* A collapsed section is still a landmark the alerts can link to (#cash-management,
+   #night-audit-ops), so it must clear the sticky topbar when scrolled to. */
+.finance-section { scroll-margin-top: 4.5rem; }
+.finance-section > summary .caption,
+.finance-subpanel > summary .caption { flex: 1 1 auto; min-width: 0; }
+
+/* A stage row of three figures (supplier stages, daily flash) in one line. */
+.kpi-grid-3 { grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); }
+
+/* Panel folded into the overview (Revenue by department). */
+.finance-subpanel {
+  margin-top: var(--sp-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+.finance-subpanel > summary.panel-head { padding: 0.85rem 1rem; }
+
+/* Headings and action rows inside a section body. */
+.section-title { font-size: var(--fs-md); margin: var(--sp-5) 0 var(--sp-3); color: var(--color-heading); }
+.section-title:first-child { margin-top: 0; }
+.section-title-sm { font-size: var(--fs-sm); margin: 0 0 var(--sp-2); color: var(--color-heading); }
+.section-actions {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  padding: 0.9rem 1.25rem;
+}
+.section-actions + .table-wrap { border-top: 1px solid var(--color-border); }
+
+/* Night-audit drawer reconciliation line (the table itself stays in Cash management). */
+.finance-note { padding: 0.75rem 1.25rem; border-top: 1px solid var(--color-border); }
+.finance-note p { margin: 0 0 0.5rem; }
+.finance-note p:last-child { margin-bottom: 0; }
+
+/* Attention strip in the overview: rendered only when the night audit found
+   something a person must act on, and pointing at the section that owns it. */
+.finance-alerts { display: grid; gap: var(--sp-2); margin-top: var(--sp-4); }
+.finance-alerts[hidden] { display: none; }
+.finance-alert {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface-alt);
+  font-size: var(--fs-sm);
+  min-width: 0;
+}
+.finance-alert[data-tone="warn"] { border-color: var(--color-warning); background: var(--color-warning-bg); }
+.finance-alert > span, .finance-alert > strong { min-width: 0; }
+.finance-alert > .btn { margin-left: auto; flex: 0 0 auto; }
+.finance-alert [data-icon] { flex: 0 0 auto; color: var(--color-warning); }
+
+/* Short help panel that replaces long explanatory prose in a section body. */
+.finance-help {
+  margin: var(--sp-3) 0 var(--sp-4);
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-alt);
+}
+.finance-help > summary { cursor: pointer; font-size: var(--fs-sm); font-weight: 600; color: var(--color-heading); }
+.finance-help p { margin: 0.6rem 0 0.2rem; }
+
+/* Lower half of the night-audit pack (discrepancies + in-house balances). */
+.panel-grid-collapsible {
+  margin-top: var(--sp-4);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--sp-3);
+}
+.panel-grid-collapsible > summary { cursor: pointer; list-style: none; }
+.panel-grid-collapsible > summary::-webkit-details-marker { display: none; }
+
+@media (max-width: 640px) {
+  .section-actions { padding: 0.75rem 0.9rem; }
+  .finance-note { padding: 0.6rem 0.9rem; }
+  .finance-alert { align-items: flex-start; flex-wrap: wrap; }
+  .finance-alert > .btn { margin-left: 0; }
+}

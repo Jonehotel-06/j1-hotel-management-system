@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.15">
+<link rel="stylesheet" href="../css/main.css?v=1.1.16">
 
 </head>
 <body>
@@ -28,6 +28,37 @@
       <span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span>
     </div>
     <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <script>
+    /* Sidebar pre-paint: the menu is painted from this ROLE's cached snapshot
+       during HTML parsing, so it is on screen with the page instead of
+       rebuilding after the dashboard scripts boot. The snapshot is used only
+       when the role it was rendered for is the role in this browser's stored
+       session; anything else (no cache, another account, signed out) leaves the
+       menu empty — the dashboard script then renders it properly. */
+    (function(){
+      var nav=document.querySelector("[data-dash-nav]");
+      if(!nav)return;
+      var role=null;
+      try{
+        var raw=window["local"+"Storage"].getItem("jone.auth");
+        if(raw){var p=JSON.parse(raw)||{};var u=p.user||p;role=(u&&u.role)||p.role||null;if(role)role=String(role).toLowerCase();}
+      }catch(e){role=null;}
+      if(!role)return;
+      var snap=null;
+      try{snap=JSON.parse(window.sessionStorage.getItem("jone.dash.nav")||"null");}catch(e){snap=null;}
+      if(!snap||snap.role!==role||typeof snap.html!=="string"||!snap.html)return;
+      nav.innerHTML=snap.html;
+      var here=location.pathname.split("/").pop()||"index.html";
+      var items=nav.querySelectorAll("a.dash-nav-item");
+      for(var i=0;i<items.length;i++){
+        items[i].classList.remove("is-active");
+        items[i].removeAttribute("aria-current");
+        var href=(items[i].getAttribute("href")||"").split("?")[0].split("#")[0];
+        if(href===here){items[i].classList.add("is-active");items[i].setAttribute("aria-current","page");}
+      }
+      nav.setAttribute("data-nav-snapshot","1");
+    })();
+    </script>
     <div class="dash-sidebar-footer">
       <div data-dash-user></div>
       <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
@@ -93,16 +124,16 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.15"></script>
-<script src="../js/config.js?v=1.1.15"></script>
-<script src="../js/utils.js?v=1.1.15"></script>
-<script src="../js/icons.js?v=1.1.15"></script>
-<script src="../js/api.js?v=1.1.15"></script>
-<script src="../js/theme.js?v=1.1.15"></script>
-<script src="../js/ui.js?v=1.1.15"></script>
-<script src="../js/auth.js?v=1.1.15"></script>
-<script src="../js/navigation.js?v=1.1.15"></script>
-<script src="../js/dashboard.js?v=1.1.15"></script><script src="../js/table-fit.js?v=1.1.15"></script>
+<script src="../js/runtime-config.js?v=1.1.16"></script>
+<script src="../js/config.js?v=1.1.16"></script>
+<script src="../js/utils.js?v=1.1.16"></script>
+<script src="../js/icons.js?v=1.1.16"></script>
+<script src="../js/api.js?v=1.1.16"></script>
+<script src="../js/theme.js?v=1.1.16"></script>
+<script src="../js/ui.js?v=1.1.16"></script>
+<script src="../js/auth.js?v=1.1.16"></script>
+<script src="../js/navigation.js?v=1.1.16"></script>
+<script src="../js/dashboard.js?v=1.1.16"></script><script src="../js/table-fit.js?v=1.1.16"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("admin");
@@ -332,8 +363,8 @@
   load(1);
 })();
 </script>
-<script src="../js/pwa.js?v=1.1.15"></script>
-<script src="../js/version.js?v=1.1.15"></script>
-<script src="../js/update-checker.js?v=1.1.15"></script>
+<script src="../js/pwa.js?v=1.1.16"></script>
+<script src="../js/version.js?v=1.1.16"></script>
+<script src="../js/update-checker.js?v=1.1.16"></script>
 </body>
 </html>
