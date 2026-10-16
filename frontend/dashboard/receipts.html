@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.15">
+<link rel="stylesheet" href="../css/main.css?v=1.1.16">
 
 </head>
 <body>
@@ -31,6 +31,37 @@
       </span>
     </div>
     <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <script>
+    /* Sidebar pre-paint: the menu is painted from this ROLE's cached snapshot
+       during HTML parsing, so it is on screen with the page instead of
+       rebuilding after the dashboard scripts boot. The snapshot is used only
+       when the role it was rendered for is the role in this browser's stored
+       session; anything else (no cache, another account, signed out) leaves the
+       menu empty — the dashboard script then renders it properly. */
+    (function(){
+      var nav=document.querySelector("[data-dash-nav]");
+      if(!nav)return;
+      var role=null;
+      try{
+        var raw=window["local"+"Storage"].getItem("jone.auth");
+        if(raw){var p=JSON.parse(raw)||{};var u=p.user||p;role=(u&&u.role)||p.role||null;if(role)role=String(role).toLowerCase();}
+      }catch(e){role=null;}
+      if(!role)return;
+      var snap=null;
+      try{snap=JSON.parse(window.sessionStorage.getItem("jone.dash.nav")||"null");}catch(e){snap=null;}
+      if(!snap||snap.role!==role||typeof snap.html!=="string"||!snap.html)return;
+      nav.innerHTML=snap.html;
+      var here=location.pathname.split("/").pop()||"index.html";
+      var items=nav.querySelectorAll("a.dash-nav-item");
+      for(var i=0;i<items.length;i++){
+        items[i].classList.remove("is-active");
+        items[i].removeAttribute("aria-current");
+        var href=(items[i].getAttribute("href")||"").split("?")[0].split("#")[0];
+        if(href===here){items[i].classList.add("is-active");items[i].setAttribute("aria-current","page");}
+      }
+      nav.setAttribute("data-nav-snapshot","1");
+    })();
+    </script>
     <div class="dash-sidebar-footer">
       <div data-dash-user></div>
       <button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,0.2);">
@@ -62,7 +93,7 @@
   </div>
   <div class="panel-body no-pad">
     <div class="table-wrap"><table class="table">
-      <thead><tr><th>Receipt</th><th>Booking</th><th class="hide-sm">Guest</th><th>Amount</th><th class="hide-sm">Issued</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th>Receipt</th><th>Booking</th><th class="hide-sm cell-nowrap">Guest</th><th>Amount</th><th class="hide-sm">Issued</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody data-tbody="receipts"></tbody>
     </table></div>
     <div class="pagination" data-pagination></div>
@@ -71,19 +102,19 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.15"></script>
-<script src="../js/config.js?v=1.1.15"></script>
-<script src="../js/utils.js?v=1.1.15"></script>
-<script src="../js/icons.js?v=1.1.15"></script>
-<script src="../js/api.js?v=1.1.15"></script>
-<script src="../js/theme.js?v=1.1.15"></script>
-<script src="../js/ui.js?v=1.1.15"></script>
-<script src="../js/auth.js?v=1.1.15"></script>
-<script src="../js/hotel-data.js?v=1.1.15"></script>
-<script src="../js/navigation.js?v=1.1.15"></script>
-<script src="../js/receipt-email-modal.js?v=1.1.15"></script>
-<script src="../js/dashboard.js?v=1.1.15"></script><script src="../js/table-fit.js?v=1.1.15"></script>
-<script src="../js/receipt.js?v=1.1.15"></script>
+<script src="../js/runtime-config.js?v=1.1.16"></script>
+<script src="../js/config.js?v=1.1.16"></script>
+<script src="../js/utils.js?v=1.1.16"></script>
+<script src="../js/icons.js?v=1.1.16"></script>
+<script src="../js/api.js?v=1.1.16"></script>
+<script src="../js/theme.js?v=1.1.16"></script>
+<script src="../js/ui.js?v=1.1.16"></script>
+<script src="../js/auth.js?v=1.1.16"></script>
+<script src="../js/hotel-data.js?v=1.1.16"></script>
+<script src="../js/navigation.js?v=1.1.16"></script>
+<script src="../js/receipt-email-modal.js?v=1.1.16"></script>
+<script src="../js/dashboard.js?v=1.1.16"></script><script src="../js/table-fit.js?v=1.1.16"></script>
+<script src="../js/receipt.js?v=1.1.16"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot(["admin", "manager", "receptionist", "front_desk_supervisor", "general_manager", "accounts_manager", "accountant"]);
@@ -118,7 +149,7 @@
     tbody.innerHTML=list.map(function(r){
       var b=r.booking_reference;
       var bookingCell=b?(canOpenBookingReference()?'<a href="booking-details.html?ref='+encodeURIComponent(b)+'">'+JONE.esc(b)+'</a>':JONE.esc(b)):"—";
-      return '<tr><td class="cell-nowrap">'+JONE.esc(r.reference||"—")+'<span class="receipt-mobile-guest hide-md">'+JONE.esc(r.guest_name||"—")+'</span></td><td class="cell-nowrap">'+bookingCell+'</td><td class="hide-sm">'+JONE.esc(r.guest_name||"—")+'</td><td class="num cell-nowrap">'+JONE.esc(JONE.formatNaira(r.amount))+'</td><td class="hide-sm cell-nowrap">'+JONE.esc(r.paid_at?JONE.formatDate(r.paid_at,"mid"):(r.created_at?JONE.formatDate(r.created_at,"mid"):"—"))+'</td><td class="cell-nowrap">'+(b?'<button class="btn btn-sm btn-outline" type="button" data-view-receipt="'+JONE.esc(b)+'"><span data-icon="printer" data-size="15"></span> View receipt</button>':"—")+'</td></tr>';
+      return '<tr><td class="cell-nowrap">'+JONE.esc(r.reference||"—")+'<span class="receipt-mobile-guest hide-md">'+JONE.esc(r.guest_name||"—")+'</span></td><td class="cell-nowrap">'+bookingCell+'</td><td class="hide-sm cell-nowrap">'+JONE.esc(r.guest_name||"—")+'</td><td class="num cell-nowrap">'+JONE.esc(JONE.formatNaira(r.amount))+'</td><td class="hide-sm cell-nowrap">'+JONE.esc(r.paid_at?JONE.formatDate(r.paid_at,"mid"):(r.created_at?JONE.formatDate(r.created_at,"mid"):"—"))+'</td><td class="cell-nowrap">'+(b?'<button class="btn btn-sm btn-outline" type="button" data-view-receipt="'+JONE.esc(b)+'"><span data-icon="printer" data-size="15"></span> View receipt</button>':"—")+'</td></tr>';
     }).join("") || '<tr><td colspan="6"><div class="empty-state"><span data-icon="receipt"></span><h3>No receipts yet</h3><p>Receipts appear here as payments are confirmed.</p></div></td></tr>';
     JONE.icons.inject(tbody);
   }
@@ -201,8 +232,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.15"></script>
-<script src="../js/version.js?v=1.1.15"></script>
-<script src="../js/update-checker.js?v=1.1.15"></script>
+<script src="../js/pwa.js?v=1.1.16"></script>
+<script src="../js/version.js?v=1.1.16"></script>
+<script src="../js/update-checker.js?v=1.1.16"></script>
 </body>
 </html>

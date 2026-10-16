@@ -102,8 +102,13 @@ test("decision buttons fail closed until the server-resolved capabilities arrive
   assert.match(ACCOUNTING, /window\.Auth\.hasCapability\("expense\.approve"\)/);
   assert.match(ACCOUNTING, /window\.Auth\.hasCapability\("payment\.refund\.approve"\)/);
   // The tables re-render when the capability list lands, so a reviewer does
-  // not have to reload the page to see their own decision buttons.
-  assert.match(ACCOUNTING, /if\(changed\)\{ renderExpenses\(\); renderApprovals\(\); \}/);
+  // not have to reload the page to see their own decision buttons — and the
+  // approvals section is re-decided with the real capability, so an accountant
+  // without the refund capability is told about that section instead of the
+  // whole page reporting a permissions failure.
+  assert.match(ACCOUNTING, /if\(changed\)\{ renderExpenses\(\); renderApprovals\(\);/);
+  assert.match(ACCOUNTING, /if\(changed\)\{ renderExpenses\(\); renderApprovals\(\); refreshApprovalsSection\(\); \}/);
+  assert.match(ACCOUNTING, /function refreshApprovalsSection\(requestId\)/);
   assert.match(ACCOUNTING, /\n  capabilityReady\(\);/);
 });
 

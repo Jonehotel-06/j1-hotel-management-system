@@ -222,6 +222,82 @@
     return true;
   }
 
+  /* ========================================================================
+     SIDEBAR SNAPSHOT — the menu must not rebuild on every page click.
+
+     The sidebar is rendered by JavaScript, so navigating between pages used to
+     look like the menu "reloading": it painted empty, painted once from the
+     role fallback while the capability read was still in flight (which could
+     show a limited account links that read removes a moment later), then
+     painted AGAIN once capabilities landed.
+
+     Fix, in three parts:
+
+       1. the rendered menu is cached per ROLE in sessionStorage;
+       2. a tiny inline script placed directly after <nav data-dash-nav> (in
+          every dashboard page) paints that cache during HTML parsing, so the
+          menu is on screen with the rest of the page and nothing shifts;
+       3. the cache is painted only when the role it was rendered for matches
+          the role in this browser's stored session — a mismatch, a signed-out
+          browser or a missing cache leaves the menu EMPTY (fail closed), never
+          unfiltered.
+
+     The live render still runs on every page load: when it produces exactly
+     what is already painted it writes nothing (no flicker), and when the
+     server's capabilities have changed it replaces the menu once.
+     ======================================================================== */
+  const NAV_SNAPSHOT_KEY = "jone.dash.nav";
+
+  function navSnapshotRole() {
+    try {
+      const raw = window.localStorage ? window.localStorage.getItem("jone.auth") : null;
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) || {};
+      const user = parsed.user || parsed;
+      const role = (user && user.role) || parsed.role || null;
+      return role ? String(role).toLowerCase() : null;
+    } catch (_) { return null; }
+  }
+
+  function readNavSnapshot() {
+    try {
+      const raw = window.sessionStorage ? window.sessionStorage.getItem(NAV_SNAPSHOT_KEY) : null;
+      if (!raw) return null;
+      const snap = JSON.parse(raw);
+      if (!snap || typeof snap.html !== "string" || !snap.html) return null;
+      /* Fail closed: a snapshot rendered for another role is never shown. */
+      if (!snap.role || snap.role !== navSnapshotRole()) return null;
+      return snap;
+    } catch (_) { return null; }
+  }
+
+  function writeNavSnapshot(role, html) {
+    try {
+      if (!window.sessionStorage) return;
+      if (!role || !html) { window.sessionStorage.removeItem(NAV_SNAPSHOT_KEY); return; }
+      window.sessionStorage.setItem(NAV_SNAPSHOT_KEY, JSON.stringify({ role: role, html: html, at: Date.now() }));
+    } catch (_) { /* private mode / quota: the menu still renders, just later */ }
+  }
+
+  /* Re-exported for the inline pre-paint script and for tests. */
+  function paintNavSnapshot(container) {
+    const nav = container || document.querySelector("[data-dash-nav]");
+    if (!nav) return false;
+    const snap = readNavSnapshot();
+    if (!snap) return false;
+    nav.innerHTML = snap.html;
+    const here = location.pathname.split("/").pop() || "index.html";
+    nav.querySelectorAll("a.dash-nav-item").forEach((a) => {
+      a.classList.remove("is-active");
+      a.removeAttribute("aria-current");
+      const href = (a.getAttribute("href") || "").split("?")[0].split("#")[0];
+      if (href === here) { a.classList.add("is-active"); a.setAttribute("aria-current", "page"); }
+    });
+    if (window.JONE && JONE.icons && typeof JONE.icons.inject === "function") JONE.icons.inject(nav);
+    nav.setAttribute("data-nav-snapshot", "1");
+    return true;
+  }
+
   function renderSidebar(containerSel) {
     const container = document.querySelector(containerSel);
     if (!container) return;
@@ -246,8 +322,37 @@
       });
       html += "</div>";
     });
+    /* Nothing to do when the menu already on screen IS this menu — that is
+       what stops the sidebar visibly reloading on every navigation. */
+    const painted = container.getAttribute("data-nav-html");
+    writeNavSnapshot(navSnapshotRole(), html);
+    if (painted === html) {
+      const here = current.split("/").pop() || "index.html";
+      container.querySelectorAll("a.dash-nav-item").forEach((a) => {
+        const href = (a.getAttribute("href") || "").split("?")[0].split("#")[0];
+        const on = href === here;
+        a.classList.toggle("is-active", on);
+        if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+      });
+      container.removeAttribute("data-nav-snapshot");
+      container.setAttribute("data-nav-html", html);
+      return;
+    }
     container.innerHTML = html;
+    container.removeAttribute("data-nav-snapshot");
+    container.setAttribute("data-nav-html", html);
     JONE.icons.inject(container);
+  }
+
+  /* A first visit has no snapshot: show quiet placeholder bars instead of an
+     empty column while the role's menu is decided, so nothing can be shown
+     that the reader is not entitled to. */
+  function navSkeleton(containerSel) {
+    const c = document.querySelector(containerSel);
+    if (!c || c.getAttribute("data-nav-html") || c.children.length) return;
+    let html = "";
+    for (let i = 0; i < 4; i++) html += '<div class="dash-nav-skeleton" aria-hidden="true"></div>';
+    c.innerHTML = '<div class="dash-nav-group" role="status" aria-label="Loading navigation">' + html + "</div>";
   }
 
   /* ------------------------- Role / user header ---------------------------- */
@@ -858,7 +963,20 @@
   function boot(minRole, options) {
     options = options || {};
     if (!window.Auth.guard(minRole)) return false;
-    renderSidebar("[data-dash-nav]");
+    /* The menu is painted from this role's snapshot when one exists (already
+       done by the pre-paint script, in the same paint as the page); otherwise
+       it is rendered ONCE, after the capability read settles, so a limited
+       account is never shown links the fallback would remove a moment later. */
+    const snapshotPainted = !!document.querySelector("[data-dash-nav][data-nav-snapshot]");
+    const capsReady = !!(window.Auth && window.Auth.state && window.Auth.state.capabilitiesLoaded);
+    const canDefer = !!(window.Auth && typeof window.Auth.loadCapabilities === "function");
+    if (!snapshotPainted) navSkeleton("[data-dash-nav]");
+    /* A menu whose entries include CAPABILITY gates must not be painted from
+       the role fallback alone: that is the window in which a limited account
+       could read links the real capability read then removes. Render now only
+       when the capabilities are already known (or cannot be fetched at all);
+       otherwise the single reconciliation pass below paints it. */
+    if (capsReady || !canDefer) renderSidebar("[data-dash-nav]");
     renderUser("[data-dash-user]");
     setupSidebar();
     setupStickyTopbar();
@@ -867,12 +985,19 @@
     window.JONE.nav && window.JONE.nav.initDashboardNav();
     if (window.JONE.nav) window.JONE.nav.markActive(document);
     if (window.Auth && typeof window.Auth.loadCapabilities === "function") {
+      /* One reconciliation pass, whether the read succeeds or fails: the
+         role-filtered menu remains the safe fallback when capabilities are
+         unavailable, and the pass writes nothing when nothing changed. */
       window.Auth.loadCapabilities().then(() => {
         renderSidebar("[data-dash-nav]");
         window.JONE.nav && window.JONE.nav.initDashboardNav();
         if (window.JONE.nav) window.JONE.nav.markActive(document);
         refreshApprovalsBadge();
-      }).catch(() => { /* role-filtered navigation remains a safe UX fallback */ });
+      }).catch(() => {
+        renderSidebar("[data-dash-nav]");
+        window.JONE.nav && window.JONE.nav.initDashboardNav();
+        if (window.JONE.nav) window.JONE.nav.markActive(document);
+      });
     }
     // Most pages need one badge request, fanned out to every badge target.
     // A page that already fetches an authoritative unread count can defer this
@@ -2092,6 +2217,9 @@
     renderSidebar, renderUser, setupSidebar, setupStickyTopbar, renderTopbarBell, renderBottomNav,
     navItemAllowed, notifBadge, statusPill, boot, renderDepartmentSummaryBanner, startLiveRefresh, topbar, NAV, badge, DATA, formModal,
     canOpenPage, pageAccessFor, PAGE_ACCESS,
+    /* Sidebar cache: the inline pre-paint script and the tests resolve the
+       menu through these, never through a hand-built list. */
+    navSnapshot: { paint: paintNavSnapshot, read: readNavSnapshot, write: writeNavSnapshot, role: navSnapshotRole, key: NAV_SNAPSHOT_KEY },
     /* Shared read-only dialog host. Pages that need a details/drill-down dialog
        (expense details, receipt details, audit details) use this instead of
        building their own modal: one markup, one ESC/backdrop contract, one focus
