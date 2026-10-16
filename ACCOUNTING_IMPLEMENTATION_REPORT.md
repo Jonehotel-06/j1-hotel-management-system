@@ -1,6 +1,6 @@
 # Implementation report — accounting page reorganisation and the four reported bugs
 
-Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18 → 1.1.19 → 1.1.20 → 1.1.21 → 1.1.22` ·
+Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18 → 1.1.19 → 1.1.20 → 1.1.21 → 1.1.22 → 1.1.23` ·
 everything in this report is implemented in the repo (frontend + backend), not recommended.
 
 §1–§7 cover `1.1.16`; §8 covers `1.1.17` (supplier payment receipts); §9 covers the five
@@ -13,7 +13,10 @@ Clock in control is disabled for that staff member until they clock out);
 pages, and the booking Cancel that stayed usable after the guest had already paid);
 §13 covers `1.1.22` (the inventory-system review: item classification, explicit direct
 sales, honest units, internal issues with custody — full operational detail in
-[`docs/INVENTORY_SYSTEM_REVIEW.md`](docs/INVENTORY_SYSTEM_REVIEW.md)).
+[`docs/INVENTORY_SYSTEM_REVIEW.md`](docs/INVENTORY_SYSTEM_REVIEW.md));
+§14 covers `1.1.23` (a fully paid room netted against an unpaid laundry bill, which showed
+"purchases and charges −416,800", "amount to settle 0" and a cleared gate pass — detail in
+[`docs/FOLIO_BALANCE_CLASSIFICATION.md`](docs/FOLIO_BALANCE_CLASSIFICATION.md)).
 
 Scope: the ten accounting requirements (A), the four reported bugs (B1–B4), the
 `-₦576,800.00` Guest Receivables investigation, and the tests for all of it.
@@ -867,3 +870,102 @@ inactive item/location or shortage still parks the whole hand-off **before** any
   counts, received units) — never merge it.
 * The sandbox has no headless browser, so the console changes are proved by the shipped
   source contracts and the test suites above rather than by screenshots.
+
+---
+
+# 14. Follow-up (1.1.23) — a paid room that hid an unpaid laundry bill
+
+Full deployment detail, the migration-by-migration account and the rollback note live in
+[`docs/FOLIO_BALANCE_CLASSIFICATION.md`](docs/FOLIO_BALANCE_CLASSIFICATION.md). This
+section records the defect, the arithmetic that caused it, and the evidence.
+
+## 14.1 What was reported
+
+Booking `J1-20261012-D3DF9254`: accommodation **₦420,000 fully paid**, laundry **₦3,200
+unpaid** — and yet the folio read
+
+| Field | Shown | Correct |
+|---|---|---|
+| Purchases and charges on the folio | **−₦416,800** | ₦3,200 |
+| Amount to settle | **₦0** | ₦3,200 |
+| Gate pass | **clear** | blocked |
+
+## 14.2 What the code actually did — the double count
+
+One guest has two balances: the **accommodation** balance (the booking's own
+total/paid/due) and the **folio charges** (restaurant, bar, room service, laundry). Two
+independent projections both summed the folio postings:
+
+* `booking_folio_charge_map()` excluded the nightly `ACCOMMODATION_CHARGE` debits — those
+  are the booking's own total split by night, so including them would count the room twice —
+  but it **included the accommodation payment credit**. The same ₦420,000 therefore counted
+  once in `booking.amount_paid` *and* again as a folio credit:
+  `3,200 − 420,000 = −416,800`.
+* `booking_outstanding_balance()` = `booking.amount_due + folio_charge_balance`, floored at
+  zero → `0 + (−416,800) → 0`, so `cleared` was true and `gate_pass_allowed` was true.
+* `settle_outstanding_balance()` reads the same figure as
+  `folio_due = max(folio_charge_balance, 0) = 0`, so `bill_total` was `stay_due (0) + 0` and
+  the desk could not even take the laundry money: it answered `409 PAYMENT_ALREADY_COMPLETED`
+  ("already fully paid").
+
+## 14.3 What changed
+
+Money is now **classified by the balance it settles** — at the moment the posting is
+created, never by re-reading it afterwards:
+
+* `FolioPosting.settles` (`ACCOMMODATION` / `FOLIO_CHARGES`, blank = historical, counted
+  with the folio charges).
+* Room money (`apply_unallocated_payments_for_booking`, i.e. a booking payment released
+  from guest deposits onto the folio) is `ACCOMMODATION` and is **excluded** from the
+  folio-charge balance; the desk settlement (`settle_outstanding_balance`) is
+  `FOLIO_CHARGES` and still reduces it. A refund inherits the classification of the
+  allocation it reverses, so refunding room money cannot create a folio charge either.
+* Discounts, adjustments and reversals are unchanged and still reduce the folio charges —
+  this is not "ignore all payment credits".
+* The folio-clearance read states the room money separately
+  (`accommodation_settlements[]`, `accommodation_settlements_total`) instead of netting it,
+  and the check-out dialog shows it under "Accommodation payments on the folio (for
+  reference)" with the reason, plus "Purchases … less credits … already applied" on the
+  bill line.
+
+No posting row, payment, allocation, booking figure or stock record was edited, deleted or
+re-posted: the correction is a classification plus a read-model change, and the ledger keeps
+the ₦420,000 credit and the ₦3,200 charge exactly as posted.
+
+## 14.4 What deliberately did not change
+
+* `booking.amount_due`, `amount_paid`, the nightly `ACCOMMODATION_CHARGE` postings,
+  `Payment`/`PaymentAllocation` rows and `RefundApplication` evidence are untouched.
+* `auto_checkout_due_bookings()` still checks out with `allow_balance_due=True`; the balance
+  it leaves behind is now the correct one.
+* No new endpoint, no new module, no new dependency, no POS or receipt change; existing
+  folio-clearance keys keep their names and meanings (the response is additive).
+* Historical postings keep the blank value and therefore keep the old reading until the
+  deployment pass labels them.
+
+## 14.5 Evidence
+
+| Check | Result |
+|---|---|
+| `backend/tests/test_folio_balance_classification.py` | **11 tests, all pass** — the reported booking (paid room + ₦3,200 laundry ⇒ ₦3,200 to settle and the gate blocked; the desk can collect it, and the money is classified `FOLIO_CHARGES`); paid room with no extras ⇒ ₦0 and nothing to collect; a discount still reduces the charges and a refund of room money does not touch them; room-service + laundry charges both count and stock still depletes; the bookings list, the booking detail, the helpers and the raw folio ledger all agree; every pre-existing financial row survives a read and a settlement byte for byte; the deployment pass classifies existing postings (a pre-release database reads −416,800 and reads 3,200 after the pass, with the amounts untouched), is idempotent, and its reverse clears only its own labels; a desk settlement and its refund are labelled `FOLIO_CHARGES` while the room payment keeps `ACCOMMODATION` |
+| `python3 manage.py test tests.test_folio_balance_classification tests.test_checkout_folio_clearance tests.test_laundry_folio_billing --parallel 1` | **Ran 32 tests … OK** |
+| `python3 manage.py test tests.test_folio_balance_classification tests.test_checkout_folio_clearance tests.test_finance tests.test_laundry_folio_billing tests.test_guest_receivable_check tests.test_expense_payment_evidence tests.test_auto_checkout --parallel 1` | **Ran 70 tests … OK** |
+| `python3 manage.py test tests.test_payments tests.test_payment_rbac tests.test_payments_statements_exports_laundry tests.test_booking_balances tests.test_accommodation_reconciliation tests.test_night_audit_journals tests.test_guest_discounts tests.test_cancellation_refunds tests.test_stays tests.test_guest_checkout --parallel 1` | **Ran 108 tests … OK** |
+| `python3 manage.py test tests.test_pos tests.test_pos_api tests.test_pos_department_api tests.test_pos_restaurant_tables tests.test_accounting_inventory_reconciliation tests.test_expense_payment_evidence tests.test_expenses tests.test_finance_api --parallel 1` | **Ran 37 tests … OK** |
+| `python3 manage.py migrate` (0013 + 0014) | applied cleanly; `makemigrations --check --dry-run` → `No changes detected`; `manage.py check` → no issues |
+| `frontend/tests-js/test-checkout-clearance-ui.js` | **13 tests, 13 pass** (including the new rule that room money is shown as room money and never netted, and that no client-side arithmetic can re-derive the balance) |
+| `cd frontend && python3 validate.py` | 70 HTML / 30 JS **ALL OK**; `checkinline.py dashboard/check-out.html` → 3 blocks OK |
+| `cd frontend && node --test tests-js/` | **472 tests: 470 pass, 1 skipped, 1 pre-existing failure** (the PWA root web-app-manifest scope test, unrelated and failing before this release) |
+
+## 14.6 Honest limits
+
+* The sandbox database is an empty development SQLite file, so the production rows for
+  `J1-20261012-D3DF9254` could not be inspected; the defect, its arithmetic and the fix are
+  proved by the fixture above, which reproduces the reported booking exactly (₦420,000 paid
+  room, ₦3,200 laundry) through the real production paths
+  (`Payment` → `_ensure_main_folio` → `apply_unallocated_payments_for_booking` → laundry
+  create/advance/bill → `folio-clearance` → `settle-balance`).
+* The deployment pass classifies by evidence (a payment allocation that released the money
+  from guest deposits; `settled_via="checkout_folio"` for desk settlements). Where a
+  historical database holds a folio payment with neither trace, the posting keeps the blank
+  value and the old reading; `guest_receivable_check` remains the read-only way to see it.

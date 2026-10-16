@@ -230,6 +230,13 @@ def create_posted_transaction(
         effect = raw_posting.get("effect")
         if kind not in FolioPosting.Kind.values or effect not in FolioPosting.Effect.values:
             raise LedgerIntegrityError({"postings": "Posting kind and effect must be valid."})
+        # Which guest balance this item settles. Blank means "counted with the
+        # folio charges" (the historical reading); a money posting that settles
+        # the accommodation must say so, otherwise it would be netted against
+        # unrelated purchases and could hide an unpaid bill.
+        settles = str(raw_posting.get("settles") or "").strip()
+        if settles and settles not in FolioPosting.Settles.values:
+            raise LedgerIntegrityError({"postings": "posting.settles must be a known balance classification."})
         posting_amount = _money(raw_posting.get("amount", line.amount), label="posting.amount")
         if posting_amount != line.amount:
             raise LedgerIntegrityError({"postings": "A folio posting amount must equal its source financial line."})
@@ -239,6 +246,7 @@ def create_posted_transaction(
             line=line,
             kind=kind,
             effect=effect,
+            settles=settles,
             amount=posting_amount,
             currency=(raw_posting.get("currency") or financial_transaction.currency).upper(),
             description=str(raw_posting.get("description") or line.description or "")[:500],

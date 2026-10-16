@@ -334,7 +334,12 @@ def _folio_clearance_payload(booking, *, user=None):
       * ``accommodation`` is the stay projection (total / paid / due);
       * ``charges`` / ``credits`` are the immutable folio postings for everything
         the guest consumed on top of the stay (restaurant, bar, room service,
-        laundry, discounts, payments);
+        laundry) together with the discounts, adjustments, reversals and
+        payments that settle THEM. Money that settles the accommodation is
+        listed separately in ``accommodation_settlements`` and is deliberately
+        NOT netted here: the accommodation block above already reports it, and
+        netting it twice is what let a fully paid room hide an unpaid laundry
+        charge;
       * ``unpaid_requests`` lists request-linked money that is NOT on the folio
         yet (unbilled in-house laundry, a delivered-but-uncharged room-service
         order) together with the action that clears it, so nothing the guest
@@ -369,6 +374,7 @@ def _folio_clearance_payload(booking, *, user=None):
     )
     charges: list[dict] = []
     credits: list[dict] = []
+    accommodation_settlements: list[dict] = []
     for posting in postings:
         row = {
             "date": posting.business_date.isoformat() if posting.business_date else "",
@@ -378,6 +384,13 @@ def _folio_clearance_payload(booking, *, user=None):
             "source_reference": posting.source_reference or "",
             "transaction_reference": posting.transaction.reference if posting.transaction_id else "",
         }
+        if posting.settles == FolioPosting.Settles.ACCOMMODATION:
+            # Money that settles the room. It is shown (the desk must be able to
+            # see where the guest's payment went) but it is NOT part of the
+            # folio-charge balance: that money is already counted as
+            # accommodation paid above.
+            accommodation_settlements.append({**row, "settles": posting.settles})
+            continue
         (charges if posting.effect == FolioPosting.Effect.DEBIT else credits).append(row)
 
     folio_balance = booking_folio_charge_balance(booking=booking)
@@ -503,6 +516,13 @@ def _folio_clearance_payload(booking, *, user=None):
         "credits": credits,
         "charges_total": money(sum((Decimal(row["amount"]) for row in charges), Decimal("0.00"))),
         "credits_total": money(sum((Decimal(row["amount"]) for row in credits), Decimal("0.00"))),
+        # Money that SETTLES the accommodation, kept out of the folio-charge
+        # balance above and reported here instead, so the desk can still see
+        # where the guest's room payment went.
+        "accommodation_settlements": accommodation_settlements,
+        "accommodation_settlements_total": money(
+            sum((Decimal(row["amount"]) for row in accommodation_settlements), Decimal("0.00"))
+        ),
         "folio_balance": money(folio_balance),
         "outstanding_balance": money(outstanding),
         "cleared": outstanding == Decimal("0.00"),
@@ -527,9 +547,12 @@ class AdminBookingFolioClearanceView(APIView):
 
     Itemisation comes from the immutable folio postings. Accommodation
     postings are excluded because they are the nightly split of the booking's
-    own total (counting them again would double the room). Totals reuse the
-    audit-D4 helpers so this read can never disagree with the bookings list
-    or the checkout response. Capability-gated: viewing a guest's folio is
+    own total (counting them again would double the room), and so is money that
+    SETTLES the accommodation: it is already reported as accommodation paid, and
+    netting it against unrelated purchases is what produced a negative folio
+    balance that hid an unpaid laundry bill. Totals reuse the audit-D4 helpers
+    so this read can never disagree with the bookings list or the checkout
+    response. Capability-gated: viewing a guest's folio is
     the existing ``folio.view`` privilege, not a general booking grant.
     """
 
