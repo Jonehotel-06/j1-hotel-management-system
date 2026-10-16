@@ -14,6 +14,34 @@ ZERO = Decimal("0.00")
 POSITIVE = MinValueValidator(Decimal("0.0001"))
 
 
+class StockDepartment(models.TextChoices):
+    """Receiving department for an internal stock issue or return.
+
+    The codes mirror ``accounts.Workstation.Department`` where the two lists
+    overlap (a workstation and a store issue must agree on what "KITCHEN"
+    means) and add the store-facing areas the workstation list does not carry.
+    ``OTHER`` exists so a legitimate but unlisted area can still be recorded
+    with a free-text recipient and reason rather than being blocked.
+    """
+
+    KITCHEN = "KITCHEN", "Kitchen"
+    RESTAURANT = "RESTAURANT", "Restaurant"
+    BAR = "BAR", "Bar"
+    HOUSEKEEPING = "HOUSEKEEPING", "Housekeeping"
+    LAUNDRY = "LAUNDRY", "Laundry"
+    MAINTENANCE = "MAINTENANCE", "Maintenance"
+    FRONT_DESK = "FRONT_DESK", "Front desk"
+    ACCOUNTS = "ACCOUNTS", "Accounts"
+    INVENTORY = "INVENTORY", "Inventory / stores"
+    PROCUREMENT = "PROCUREMENT", "Administration & procurement"
+    PORTER = "PORTER", "Portering"
+    SECURITY = "SECURITY", "Security"
+    HR = "HR", "Human resources"
+    MANAGEMENT = "MANAGEMENT", "Management"
+    OTHER = "OTHER", "Other department"
+
+
+
 class StockLocation(TimeStampedModel):
     code = models.CharField(max_length=40, unique=True)
     name = models.CharField(max_length=120, unique=True)
@@ -51,9 +79,42 @@ class Supplier(TimeStampedModel):
 
 
 class StockItem(TimeStampedModel):
+    """One stocked thing, classified by HOW the hotel actually uses it.
+
+    The four item types exist so the same physical goods are consumed by the
+    right mechanism instead of one blanket rule:
+
+    * ``SELLABLE_PRODUCT`` — a bar bottle, beer crate or packaged water sold
+      through POS exactly as it is stocked. Depletion is either an explicit
+      direct-sale configuration (one menu unit = N base units from one named
+      store) or a real recipe; it is never inferred.
+    * ``RECIPE_INGREDIENT`` — rice, seasoning, oil, tomatoes, meat. Depletion
+      happens only through a ``StockRecipe`` that states how much of each
+      ingredient one menu unit consumes, in the ingredient's own unit.
+    * ``CONSUMABLE`` — cleaning products, laundry detergent, toiletries. These
+      never appear on a POS menu; they leave the store through an internal
+      issue to a department.
+    * ``REUSABLE_ASSET`` — towels, bedsheets, glasses, plates, cutlery,
+      equipment. Tracked in the same ledger, but an issue is a *custody*
+      event, so the receiving department and the named recipient are required
+      and must be returned before the item is written off.
+    """
+
+    class ItemType(models.TextChoices):
+        SELLABLE_PRODUCT = "SELLABLE_PRODUCT", "Directly sellable product"
+        RECIPE_INGREDIENT = "RECIPE_INGREDIENT", "Recipe ingredient"
+        CONSUMABLE = "CONSUMABLE", "Operational consumable"
+        REUSABLE_ASSET = "REUSABLE_ASSET", "Reusable asset"
+
     sku = models.CharField(max_length=80, unique=True, db_index=True)
     name = models.CharField(max_length=255)
     category = models.CharField(max_length=120, blank=True, default="", db_index=True)
+    #: How the hotel uses the item (see ``ItemType``). Defaults to CONSUMABLE so
+    #: every pre-existing row keeps its current, non-POS behaviour until an
+    #: authorised user classifies it.
+    item_type = models.CharField(
+        max_length=24, choices=ItemType.choices, default=ItemType.CONSUMABLE, db_index=True
+    )
     base_unit = models.CharField(max_length=30, default="UNIT")
     # Optional supplier packaging, recorded so staff can receive stock the way
     # it is actually bought (a pack or bag of loose pieces) while the ledger
@@ -70,13 +131,50 @@ class StockItem(TimeStampedModel):
     preferred_supplier = models.ForeignKey(Supplier, null=True, blank=True, on_delete=models.SET_NULL, related_name="preferred_items")
     is_active = models.BooleanField(default=True, db_index=True)
     notes = models.TextField(blank=True, default="")
+    # Explicit direct-sale configuration: "this stocked product IS this POS
+    # menu item, sold one-for-one (or N base units per menu unit) out of this
+    # store". It replaces the old SKU/name guesswork — nothing is deducted, and
+    # no recipe is ever created, unless an authorised user configured this
+    # here or a real StockRecipe exists. ``direct_sale_quantity`` is the number
+    # of BASE units one menu unit consumes (a crate menu item = 24 bottles).
+    direct_sale_menu_item = models.ForeignKey(
+        "pos.MenuItem", null=True, blank=True, on_delete=models.PROTECT, related_name="direct_sale_stock_items"
+    )
+    direct_sale_quantity = models.DecimalField(
+        max_digits=14, decimal_places=4, default=Decimal("1.0000"), validators=[POSITIVE]
+    )
+    direct_sale_location = models.ForeignKey(
+        StockLocation, null=True, blank=True, on_delete=models.PROTECT, related_name="direct_sale_items"
+    )
 
     class Meta:
         ordering = ["category", "name"]
         indexes = [models.Index(fields=["is_active", "category"])]
+        constraints = [
+            # One menu item can only be sold out of one stock item. Two stock
+            # items claiming the same menu item would deduct the same sale
+            # twice; the configuration itself forbids the double-count.
+            models.UniqueConstraint(
+                fields=["direct_sale_menu_item"],
+                condition=models.Q(direct_sale_menu_item__isnull=False),
+                name="one_direct_sale_stock_item_per_menu_item",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.sku} · {self.name}"
+
+    @property
+    def is_direct_sale_configured(self) -> bool:
+        """True when this product deducts itself from an explicit configuration."""
+        return bool(
+            self.direct_sale_menu_item_id and self.direct_sale_location_id
+            and self.direct_sale_quantity and self.direct_sale_quantity > Decimal("0.0000")
+        )
+
+    @property
+    def is_reusable_asset(self) -> bool:
+        return self.item_type == self.ItemType.REUSABLE_ASSET
 
 
 class StockBalance(TimeStampedModel):
@@ -120,6 +218,13 @@ class StockMovement(models.Model):
     occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
     source_reference = models.CharField(max_length=120, blank=True, default="", db_index=True)
     notes = models.CharField(max_length=500, blank=True, default="")
+    # Internal issuance evidence. A store issue is only auditable if the ledger
+    # itself says which department received the goods and which named person
+    # took custody of them; the acting (issuing) staff is already ``actor`` and
+    # the date is ``occurred_at``. Both are blank for receipts, POS consumption,
+    # transfers and adjustments, which are not department hand-overs.
+    department = models.CharField(max_length=24, choices=StockDepartment.choices, blank=True, default="", db_index=True)
+    recipient = models.CharField(max_length=120, blank=True, default="")
     metadata = models.JSONField(default=dict, blank=True)
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="stock_movements")
 
@@ -257,7 +362,15 @@ class StockRecipe(TimeStampedModel):
 class StockRecipeLine(models.Model):
     recipe = models.ForeignKey(StockRecipe, on_delete=models.PROTECT, related_name="lines")
     item = models.ForeignKey(StockItem, on_delete=models.PROTECT, related_name="recipe_lines")
+    #: The authoritative deduction quantity, always in the component item's own
+    #: base unit, so a plate of rice deducts the configured grams of rice and
+    #: never a whole bag.
     quantity_per_menu_unit = models.DecimalField(max_digits=14, decimal_places=4, validators=[POSITIVE])
+    # What the person actually typed ("250" + "g") before conversion. Evidence
+    # only — it never deducts anything — so an auditor can reconcile a BOM line
+    # against the unit the kitchen wrote down without re-deriving the maths.
+    entered_quantity = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    entered_unit = models.CharField(max_length=30, blank=True, default="")
 
     class Meta:
         ordering = ["pk"]

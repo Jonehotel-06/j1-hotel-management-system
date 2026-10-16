@@ -206,12 +206,36 @@ def _recipe_basis(item_ids):
             if area:
                 departments.setdefault(item_id, set()).add(area)
     # Direct-sale fallback: most bar/retail products are sold exactly as they
-    # are stocked (one menu item = one stock item) and only acquire a recipe
-    # when the first delivered order auto-links them. Those products still
-    # have a real selling price — the matching active menu item's price — so
-    # their expected revenue and gross profit must show immediately instead of
-    # waiting for a recipe to exist.
+    # are stocked (one menu item = one stock item). Their selling price is the
+    # price of the menu item the stock item is *configured* to be sold as — an
+    # explicit, auditable link — so expected revenue and gross profit show
+    # without a recipe. An unconfigured item is still matched by SKU or name
+    # for display only (this projection never deducts anything and never
+    # creates a recipe); the inventory console's configuration audit lists
+    # those items so they can be configured properly.
     missing_ids = [item_id for item_id in item_ids if not per_item.get(item_id)]
+    if missing_ids:
+        configured = (
+            StockItem.objects.filter(
+                pk__in=missing_ids, direct_sale_menu_item__isnull=False, direct_sale_location__isnull=False,
+            )
+            .select_related("direct_sale_menu_item", "direct_sale_menu_item__category")
+        )
+        for item in configured:
+            menu = item.direct_sale_menu_item
+            quantity = item.direct_sale_quantity or ZERO
+            if not menu or not menu.base_price or menu.base_price <= ZERO or quantity <= ZERO:
+                continue
+            if not menu.is_active:
+                continue
+            # A crate of 24 bottles earns its menu price per crate, so the
+            # implied price of ONE base unit is the menu price over the
+            # configured conversion.
+            per_item[item.pk] = [(menu.base_price / quantity)]
+            price_kinds[item.pk] = "MENU_ITEM_MATCH"
+            if menu.category_id:
+                departments.setdefault(item.pk, set()).add(menu.category.get_service_area_display())
+        missing_ids = [item_id for item_id in missing_ids if not per_item.get(item_id)]
     if missing_ids:
         stock_rows = {
             row.pk: row for row in StockItem.objects.filter(pk__in=missing_ids).only("pk", "sku", "name")
@@ -329,7 +353,10 @@ def product_profitability_projection(*, search="", location_id=None, department=
             "latest_receipt_cost": _quantize(latest_cost.get(key), MONEY_QUANTUM) if latest_cost.get(key) is not None else None,
             "selling_price": _quantize(selling_price, MONEY_QUANTUM) if selling_price is not None else None,
             "price_basis": price_basis,
-            "recipe_count": len(prices),
+            # A price taken from a menu item (a configured direct sale, or the
+            # display-only SKU/name match) comes from no recipe at all, so it
+            # reports zero onward uses instead of implying a BOM exists.
+            "recipe_count": 0 if price_basis == "MENU_ITEM_MATCH" else len(prices),
             "current_stock": _quantize(quantity, QUANTITY_QUANTUM),
             "reorder_level": _quantize(item.reorder_level or ZERO, QUANTITY_QUANTUM),
             "needs_reorder": (balance.quantity_on_hand or ZERO) <= (item.reorder_level or ZERO),

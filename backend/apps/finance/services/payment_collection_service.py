@@ -20,7 +20,8 @@ from apps.payments.services.payment_service import (
 )
 
 from ..models import (
-    FinancialEvent, FinancialLine, FinancialTransaction, Folio, PaymentAllocation, RefundApplication,
+    FinancialEvent, FinancialLine, FinancialTransaction, Folio, FolioPosting, PaymentAllocation,
+    RefundApplication,
 )
 from . import accounting
 from .ledger_service import LedgerIntegrityError, create_posted_transaction
@@ -101,12 +102,18 @@ def ensure_payment_collection(*, payment, actor=None) -> tuple[FinancialTransact
 
 
 @transaction.atomic
-def apply_payment_to_folio(*, payment, folio, actor=None, amount=None) -> tuple[PaymentAllocation, bool]:
+def apply_payment_to_folio(*, payment, folio, actor=None, amount=None, settles="") -> tuple[PaymentAllocation, bool]:
     """Apply one payment's available deposit to a matching open folio.
 
     The initial vertical slice deliberately has one immutable application per
     payment/folio pair. Future split-folio UI can issue distinct explicit
     allocation keys without changing the collection event or its audit trail.
+
+    ``settles`` records WHICH balance the money settles (see
+    ``FolioPosting.Settles``). Stay/deposit money is ``ACCOMMODATION``: the
+    booking's own projection already counts it, so it must not also reduce the
+    guest's folio charges — that double count is what made a fully paid room
+    hide an unpaid laundry charge.
     """
     payment = Payment.objects.select_for_update().select_related("booking", "user").get(pk=payment.pk)
     folio = Folio.objects.select_for_update().select_related("booking").get(pk=folio.pk)
@@ -179,6 +186,12 @@ def apply_payment_to_folio(*, payment, folio, actor=None, amount=None) -> tuple[
                 "kind": "PAYMENT",
                 "effect": "CREDIT",
                 "amount": requested,
+                # Which guest balance this money settles. A caller that is
+                # paying down the STAY passes ACCOMMODATION so the credit can
+                # never be netted against unrelated folio charges; the desk
+                # settlement passes FOLIO_CHARGES. Blank keeps the historical
+                # "counts with the folio charges" reading.
+                "settles": settles,
                 "description": f"Payment {payment.reference}",
                 "source_reference": payment.reference,
             }
@@ -228,6 +241,10 @@ def apply_unallocated_payments_for_booking(*, booking, folio, actor=None) -> lis
         if Decimal(payment.amount) - already_allocated <= Decimal("0.00"):
             continue
         allocation, created = apply_payment_to_folio(
+            # A booking payment is money for the STAY: it lands on the folio as
+            # an AR credit, but it may never be netted against the guest's
+            # purchases and service charges.
+            settles=FolioPosting.Settles.ACCOMMODATION,
             payment=payment,
             folio=folio,
             actor=actor,
@@ -290,6 +307,20 @@ def ensure_processed_refund(*, refund, actor=None) -> tuple[FinancialTransaction
         .filter(payment=payment)
         .order_by("created_at", "pk")
     )
+    # A refund re-charges whichever balance its allocation settled: refunding
+    # folio-charge money re-opens those charges, while refunding accommodation
+    # money must not invent a folio charge the guest never ran up.
+    allocation_settles = {
+        allocation.pk: (
+            FolioPosting.objects.filter(
+                transaction_id=allocation.transaction_id, folio_id=allocation.folio_id, kind=FolioPosting.Kind.PAYMENT
+            )
+            .values_list("settles", flat=True)
+            .first()
+            or ""
+        )
+        for allocation in allocations
+    }
     original_allocated = sum((allocation.amount for allocation in allocations), Decimal("0.00"))
     for allocation in allocations:
         if remaining <= Decimal("0.00"):
@@ -316,6 +347,7 @@ def ensure_processed_refund(*, refund, actor=None) -> tuple[FinancialTransaction
                 "kind": "REFUND",
                 "effect": "DEBIT",
                 "amount": portion,
+                "settles": allocation_settles.get(allocation.pk, ""),
                 "description": f"Refund {payment.reference}",
                 "source_reference": source_key,
             }
@@ -559,7 +591,12 @@ def settle_outstanding_balance(
     if folio_part > Decimal("0.00"):
         if folio is None:
             raise ValidationError("This guest has no folio to apply the payment to.")
-        apply_payment_to_folio(payment=payment, folio=folio, actor=actor, amount=folio_part)
+        apply_payment_to_folio(
+            payment=payment, folio=folio, actor=actor, amount=folio_part,
+            # This is money the guest handed over FOR the folio charges, so it
+            # is the one payment that legitimately reduces them.
+            settles=FolioPosting.Settles.FOLIO_CHARGES,
+        )
 
     stay_part = (received - folio_part).quantize(Decimal("0.01"))
     if stay_part > Decimal("0.00"):

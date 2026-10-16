@@ -244,11 +244,42 @@ class FolioPosting(ImmutableFinancialModel):
         DEBIT = "DEBIT", "Increases guest balance"
         CREDIT = "CREDIT", "Reduces guest balance"
 
+    class Settles(models.TextChoices):
+        """Which guest balance a posting belongs to.
+
+        One folio carries two separate balances for the same guest:
+
+        * the **accommodation** balance — the booking's own total, reported as
+          total / paid / due (see ``Booking.amount_due``), and
+        * the **folio charges** — everything the guest consumed on top of the
+          stay (restaurant, bar, room service, laundry, other charges) plus the
+          discounts, adjustments, reversals and payments that settle them.
+
+        A posting may only be netted against the balance it actually settles.
+        Netting an accommodation payment against an unrelated laundry charge is
+        what let a fully paid room hide an unpaid laundry bill, so money that
+        settles the accommodation is classified ``ACCOMMODATION`` at the moment
+        it is posted and excluded from the folio-charge balance.
+
+        ``""`` (the default, and every row that predates this field) means the
+        posting is counted with the folio charges, which is the historical
+        reading; it is never used for a posting that settles accommodation.
+        """
+
+        ACCOMMODATION = "ACCOMMODATION", "Settles the accommodation balance"
+        FOLIO_CHARGES = "FOLIO_CHARGES", "Settles folio charges (extras)"
+
     folio = models.ForeignKey(Folio, on_delete=models.PROTECT, related_name="postings")
     transaction = models.ForeignKey(FinancialTransaction, on_delete=models.PROTECT, related_name="folio_postings")
     line = models.OneToOneField(FinancialLine, on_delete=models.PROTECT, related_name="folio_posting")
     kind = models.CharField(max_length=20, choices=Kind.choices, db_index=True)
     effect = models.CharField(max_length=6, choices=Effect.choices)
+    #: Which guest balance this item belongs to (see ``Settles``). Set when the
+    #: posting is created from a financial line that knows what the money was
+    #: for; it is evidence, never a mutable switch (postings are append-only).
+    settles = models.CharField(
+        max_length=16, choices=Settles.choices, blank=True, default="", db_index=True
+    )
     amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[POSITIVE_MONEY])
     currency = models.CharField(max_length=3, default="NGN")
     description = models.CharField(max_length=500, blank=True, default="")

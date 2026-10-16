@@ -544,6 +544,17 @@ class Priority3InventoryCorrectnessTests(TestCase):
             actor=self.admin,
             idempotency_key="rcp-wine-glass-ent",
         )
+        # The 1:1 retail product is *configured* as a direct sale instead of
+        # being inferred from its shared SKU: an explicit configuration is what
+        # makes a delivered sale deduct exactly one bottle from this store, and
+        # nothing is created behind the operator's back (see requirement 5).
+        StockItem.objects.filter(pk=self.water_stock.pk).update(
+            item_type=StockItem.ItemType.SELLABLE_PRODUCT,
+            direct_sale_menu_item=self.water_menu,
+            direct_sale_location=self.location,
+            direct_sale_quantity=Decimal("1.0000"),
+        )
+        self.water_stock.refresh_from_db()
 
     def test_opening_stock_pos_sale_1to1_fallback_returns_and_void_reversal(self):
         # 1. Record Opening Stock: 10 L of Wine, 20 bottles of Water

@@ -750,7 +750,19 @@ const API = (() => {
   const checkInBooking   = (lookup, opts = {}) => bookingAction("check-in", lookup, {}, opts);
   const checkOutBooking  = (lookup, payload, opts = {}) => bookingAction("check-out", lookup, payload || {}, opts);
   /* Checkout-desk folio & gate-clearance read (folio.view capability):
-     GET /api/admin/bookings/{lookup}/folio-clearance/ */
+     GET /api/admin/bookings/{lookup}/folio-clearance/
+
+     Money is stated, never implied. `charges` / `charges_total` are the guest's
+     purchases and service charges; `credits` / `credits_total` are the
+     discounts, adjustments, reversals and folio payments that settle THEM; and
+     `accommodation_settlements` / `accommodation_settlements_total` are the
+     payments that settle the ROOM. Accommodation money is listed separately on
+     purpose: it is already counted in `accommodation.amount_paid`, so netting it
+     against the guest's purchases made a fully paid room hide an unpaid laundry
+     bill ("purchases and charges −416,800", "amount to settle 0", gate pass
+     cleared). `outstanding_balance` / `amount_to_settle` and the
+     `gate_pass_allowed` decision are the server's and must never be re-derived
+     in the browser. */
   const bookingFolioClearance = (lookup, opts = {}) => {
     const base = BOOKINGS_EP();
     if (!base) throw notConfigured("bookings");

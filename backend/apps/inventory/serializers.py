@@ -3,11 +3,39 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from rest_framework import serializers
 
+from apps.pos.models import MenuItem
+
 from .models import (
     GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, StockBalance,
-    StockConsumptionRequest, StockCount, StockCountLine, StockItem, StockLocation, StockMovement,
-    StockRecipe, StockRecipeLine, Supplier,
+    StockConsumptionRequest, StockCount, StockCountLine, StockDepartment, StockItem, StockLocation,
+    StockMovement, StockRecipe, StockRecipeLine, Supplier,
 )
+
+
+class EmptyAsNoneRelatedField(serializers.PrimaryKeyRelatedField):
+    """An untouched select in an edit form posts "", which must mean "unchanged".
+
+    The dashes edit dialog submits every field it rendered, so an optional
+    relation that the user never touched arrives as an empty string rather than
+    as a missing key. Treating it as ``None`` keeps the PATCH partial instead of
+    answering "Invalid pk \"\" - object does not exist".
+    """
+
+    def to_internal_value(self, data):
+        if isinstance(data, str) and data.strip() == "":
+            return None
+        return super().to_internal_value(data)
+
+
+class EmptyAsNoneDecimalField(serializers.DecimalField):
+    """An optional decimal posted as "" means "leave the stored value alone"."""
+
+    def to_internal_value(self, data):
+        if isinstance(data, str) and data.strip() == "":
+            return None
+        if data is None:
+            return None
+        return super().to_internal_value(data)
 
 
 class InventoryMenuItemDirectorySerializer(serializers.Serializer):
@@ -41,15 +69,47 @@ class StockItemSerializer(serializers.ModelSerializer):
     preferred_supplier_name = serializers.CharField(source="preferred_supplier.name", read_only=True, allow_null=True)
     # What one pack/bag costs at the per-piece standard cost; display-only.
     pack_cost = serializers.SerializerMethodField()
+    # How the item is used (sellable product / recipe ingredient / operational
+    # consumable / reusable asset). The label is additive so a screen never has
+    # to reproduce the choice list.
+    item_type_label = serializers.CharField(source="get_item_type_display", read_only=True)
+    # Explicit direct-sale configuration: which POS menu item this stocked
+    # product is sold as, how many base units one menu unit consumes, and which
+    # store it is drawn from. Empty means "deduct only through a recipe".
+    direct_sale_menu_item = EmptyAsNoneRelatedField(
+        queryset=MenuItem.objects.all(), required=False, allow_null=True
+    )
+    direct_sale_menu_item_name = serializers.CharField(
+        source="direct_sale_menu_item.name", read_only=True, allow_null=True
+    )
+    direct_sale_menu_item_sku = serializers.CharField(
+        source="direct_sale_menu_item.sku", read_only=True, allow_null=True
+    )
+    direct_sale_quantity = EmptyAsNoneDecimalField(
+        max_digits=14, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True
+    )
+    direct_sale_location = EmptyAsNoneRelatedField(
+        queryset=StockLocation.objects.all(), required=False, allow_null=True
+    )
+    direct_sale_location_code = serializers.CharField(
+        source="direct_sale_location.code", read_only=True, allow_null=True
+    )
+    direct_sale_configured = serializers.BooleanField(source="is_direct_sale_configured", read_only=True)
 
     class Meta:
         model = StockItem
         fields = [
-            "id", "sku", "name", "category", "base_unit", "units_per_pack", "pack_price", "pack_cost",
-            "reorder_level", "standard_cost", "currency",
-            "preferred_supplier", "preferred_supplier_name", "is_active", "notes", "created_at", "updated_at",
+            "id", "sku", "name", "category", "item_type", "item_type_label", "base_unit", "units_per_pack",
+            "pack_price", "pack_cost", "reorder_level", "standard_cost", "currency",
+            "preferred_supplier", "preferred_supplier_name", "is_active", "notes",
+            "direct_sale_menu_item", "direct_sale_menu_item_name", "direct_sale_menu_item_sku",
+            "direct_sale_quantity", "direct_sale_location", "direct_sale_location_code", "direct_sale_configured",
+            "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "pack_cost", "created_at", "updated_at"]
+        read_only_fields = [
+            "id", "pack_cost", "item_type_label", "direct_sale_menu_item_name", "direct_sale_menu_item_sku",
+            "direct_sale_location_code", "direct_sale_configured", "created_at", "updated_at",
+        ]
 
     def get_pack_cost(self, obj):
         if obj.units_per_pack and obj.standard_cost:
@@ -67,12 +127,57 @@ class StockItemSerializer(serializers.ModelSerializer):
         standard_cost = attrs.get("standard_cost", getattr(self.instance, "standard_cost", None))
         if pack_price and units_per_pack and not standard_cost:
             attrs["standard_cost"] = (pack_price / units_per_pack).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        self._validate_direct_sale(attrs)
         return attrs
+
+    def _validate_direct_sale(self, attrs):
+        """A direct-sale configuration must be complete, and unique per menu item.
+
+        Deducting for a menu item requires either a real recipe or this explicit
+        configuration; half a configuration would deduct from the wrong store
+        (or not at all), and two stock items claiming the same menu item would
+        deduct the same sale twice, so both are refused here.
+        """
+        instance = self.instance
+        menu_item = attrs.get("direct_sale_menu_item", getattr(instance, "direct_sale_menu_item", None))
+        location = attrs.get("direct_sale_location", getattr(instance, "direct_sale_location", None))
+        quantity = attrs.get("direct_sale_quantity", getattr(instance, "direct_sale_quantity", None))
+        if menu_item is None:
+            # Clearing the menu item clears the whole configuration. Leaving a
+            # store or a multiplier behind would be a half configuration that
+            # reads as if something were set up, so both are normalised away in
+            # the same save; the deduction path already ignores either one
+            # without a menu item, so nothing can be deducted from a leftover.
+            attrs["direct_sale_location"] = None
+            attrs["direct_sale_quantity"] = Decimal("1.0000")
+            return
+        if location is None:
+            raise serializers.ValidationError({
+                "direct_sale_location": "Choose the store this product is drawn from; that store's balance is what the sale deducts."
+            })
+        if quantity is None or quantity <= Decimal("0.0000"):
+            raise serializers.ValidationError({
+                "direct_sale_quantity": "Enter how many base units one menu unit deducts (24 for a crate of 24 bottles)."
+            })
+        clash = (
+            StockItem.objects.filter(direct_sale_menu_item=menu_item)
+            .exclude(pk=getattr(instance, "pk", None))
+            .first()
+        )
+        if clash is not None:
+            raise serializers.ValidationError({
+                "direct_sale_menu_item": (
+                    f"{clash.sku} · {clash.name} already deducts this menu item. Clear that configuration first: "
+                    "one sale must never be deducted by two stock items."
+                )
+            })
 
 
 class StockBalanceSerializer(serializers.ModelSerializer):
     item_sku = serializers.CharField(source="item.sku", read_only=True)
     item_name = serializers.CharField(source="item.name", read_only=True)
+    item_type = serializers.CharField(source="item.item_type", read_only=True)
+    item_type_label = serializers.CharField(source="item.get_item_type_display", read_only=True)
     base_unit = serializers.CharField(source="item.base_unit", read_only=True)
     reorder_level = serializers.DecimalField(source="item.reorder_level", max_digits=14, decimal_places=4, read_only=True)
     location_code = serializers.CharField(source="location.code", read_only=True)
@@ -81,8 +186,8 @@ class StockBalanceSerializer(serializers.ModelSerializer):
     class Meta:
         model = StockBalance
         fields = [
-            "id", "item", "item_sku", "item_name", "base_unit", "reorder_level", "location", "location_code",
-            "quantity_on_hand", "needs_reorder", "last_movement_at", "updated_at",
+            "id", "item", "item_sku", "item_name", "item_type", "item_type_label", "base_unit", "reorder_level",
+            "location", "location_code", "quantity_on_hand", "needs_reorder", "last_movement_at", "updated_at",
         ]
         read_only_fields = fields
 
@@ -93,16 +198,25 @@ class StockBalanceSerializer(serializers.ModelSerializer):
 class StockMovementSerializer(serializers.ModelSerializer):
     item_sku = serializers.CharField(source="item.sku", read_only=True)
     item_name = serializers.CharField(source="item.name", read_only=True)
+    item_type = serializers.CharField(source="item.item_type", read_only=True)
+    base_unit = serializers.CharField(source="item.base_unit", read_only=True)
     location_code = serializers.CharField(source="location.code", read_only=True)
     actor_email = serializers.EmailField(source="actor.email", read_only=True, allow_null=True)
+    department_label = serializers.SerializerMethodField()
 
     class Meta:
         model = StockMovement
         fields = [
-            "reference", "item_sku", "item_name", "location_code", "type", "quantity_delta", "unit_cost",
-            "currency", "occurred_at", "source_reference", "notes", "actor_email", "metadata",
+            "reference", "item_sku", "item_name", "item_type", "base_unit", "location_code", "type",
+            "quantity_delta", "unit_cost", "currency", "occurred_at", "source_reference", "notes",
+            "department", "department_label", "recipient", "actor_email", "metadata",
         ]
         read_only_fields = fields
+
+    def get_department_label(self, obj):
+        if not obj.department:
+            return ""
+        return dict(StockDepartment.choices).get(obj.department, obj.department)
 
 
 class IssueStockSerializer(serializers.Serializer):
@@ -117,7 +231,15 @@ class IssueStockSerializer(serializers.Serializer):
         ],
         default=StockMovement.Type.ISSUE,
     )
+    # Who is receiving the goods and who takes custody of them. Both optional so
+    # every existing caller keeps working, but they are the audit trail of an
+    # internal issue and are recorded on the immutable movement itself.
+    department = serializers.ChoiceField(
+        choices=StockDepartment.choices, required=False, allow_blank=True, default=""
+    )
+    recipient = serializers.CharField(required=False, allow_blank=True, max_length=120)
     source_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    #: Why the stock is leaving the store. Recorded on the movement's notes.
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
 
@@ -136,6 +258,13 @@ class ReturnStockSerializer(serializers.Serializer):
     location_id = serializers.IntegerField(min_value=1)
     quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
     unit_cost = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.00"), required=False, allow_null=True)
+    direction = serializers.ChoiceField(choices=["IN", "OUT"], required=False, default="IN")
+    department = serializers.ChoiceField(
+        choices=StockDepartment.choices, required=False, allow_blank=True, default=""
+    )
+    recipient = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    #: Cite the issue (STM reference or its source reference) when unused stock or
+    #: a reusable asset comes back; the ledger then enforces the issue ceiling.
     source_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
@@ -316,7 +445,10 @@ class StockRecipeLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StockRecipeLine
-        fields = ["id", "item", "item_sku", "item_name", "base_unit", "quantity_per_menu_unit"]
+        fields = [
+            "id", "item", "item_sku", "item_name", "base_unit", "quantity_per_menu_unit",
+            "entered_quantity", "entered_unit",
+        ]
         read_only_fields = fields
 
 

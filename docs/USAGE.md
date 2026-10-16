@@ -202,9 +202,65 @@ states rather than invented records.
 | POS / room service | Create orders from the live catalog and progress them through the controlled kitchen/service state. Restaurant managers register tables; waiters open a table session before dine-in orders and can attach split checks to it. Eligible table QR requests can launch a linked POS draft; staff still select menu items and submit through the existing workflow. Close is rejected while an order is unfinished or a delivered check is unpaid. Room-service charges still require the authoritative in-house stay/folio validation. |
 | Guest requests, housekeeping, maintenance | Work only in the authorized team queue. Record status/event evidence and use guest-visible comments deliberately; do not expose internal notes through the portal. |
 | Laundry | Its own page in the sidebar (it previously shared the Guest Requests page, which made two sidebar entries open the same screen). Receive priced item lines for either an **in-house guest** — charged once to that stay's folio via **Bill to folio** — or a **walk-in customer** who is not staying with us, identified by their own name and phone and paid at the desk via **Record payment**. A walk-in is never charged to a folio, because there is no guest account to charge; a cash payment must be taken into the acting cashier's own open drawer so the count reconciles at close. Both routes post exactly once and both appear in collections. |
-| Inventory and procurement | Issue/receive stock through append-only movements. Use suppliers and purchase-order approvals; never silently edit a historical goods receipt or stock balance. |
+| Inventory and procurement | Issue/receive stock through append-only movements. Use suppliers and purchase-order approvals; never silently edit a historical goods receipt or stock balance. Every item carries the use it was classified for (see *Stock: the four item types* below); nothing deducts stock unless an authorised user configured it. |
 | Workforce and payroll | Schedule shifts, clock attendance through source-keyed events, and review leave independently. Compensation terms are effective-dated basic salary, housing/transport allowances, overtime rate, currency, and notes. Payroll does not calculate government PAYE, pension, NHF/NHIS, Tax ID, benefit-in-kind, tax-claim, or opening-YTD amounts; use only genuine internal deduction reasons such as approved absence, lateness, spoilage, or an individually approved disciplinary deduction. A missing-stock case never deducts pay when recorded. Only an Admin may approve sharing it equally across a snapshot of all active/on-leave staff in that department; the next eligible payroll run then applies each share once and shows the case reference. Rejection creates no deduction. Approval posts gross wages, net salary payable, and internal deductions payable to the ledger. Bank payout/reconciliation/provider integration is deferred. Corrections are replacement runs, never edits to historical snapshots. |
 | Reports | Read charges/revenue, collections, refunds/reversals, expenses, and cash variance as distinct measures. Legacy payment totals are compatibility information, not a substitute for the financial ledger. |
+
+### Stock: the four item types, direct sales, and internal issues
+
+Every stock item is classified by **how the hotel uses it**, on the item itself
+(Stock catalog -> edit item -> *How this item is used*):
+
+| Type | Leaves the store because | What is required |
+|---|---|---|
+| Directly sellable product | a POS sale | *Sold through POS as* (a menu item), *Stock is deducted from* (the store) and *Base units one menu unit deducts* (`1` for a bottle, `24` for a crate of 24). |
+| Recipe ingredient | a menu item was sold | The menu item's recipe, with each ingredient's quantity typed in the unit the kitchen uses (`250` + `g`). |
+| Operational consumable | an internal issue | Issue stock with the receiving department and the reason. |
+| Reusable asset | an internal issue, and it comes back | Issue stock with the person taking custody; record the return against the issue reference. A write-off needs a reason. |
+
+Rules that follow from the classification and from how the ledger works:
+
+* **Nothing is inferred.** A SKU or name that resembles a menu item no longer
+  creates a recipe and no longer deducts anything. If a delivered product has
+  neither a recipe nor a direct-sale configuration, stock is left alone, the
+  hand-off is parked for review with the product named, and the inventory
+  console shows exactly what was and was not deducted. Configure the product
+  and press *Process* again (or let the catch-up sweep do it) and it deducts
+  once — the guest's charge is never affected either way.
+* **One menu item, one stock item.** A menu item can only be claimed by a single
+  stock item, so the same sale is never deducted twice. Removing the claim also
+  clears the stale store and resets the quantity.
+* **Units are honest.** Mass converts within mass, volume within volume, and
+  packs/cartons/crates only through the item's own pieces-per-pack. A pair that
+  cannot be converted is refused with both units named instead of being posted
+  with a guess. The typed value is kept beside the converted one as evidence.
+* **An issue is not a sale and not a second expense.** It moves goods that were
+  already received and paid for: no POS revenue, no journal entry, no supplier
+  payment. It records who issued it, which store it left, the department and
+  person receiving it, when, and why — on the append-only ledger, where returns
+  and adjustments are visible next to it.
+* **A return cannot exceed its issue.** Cite the issue reference (`STM-...`) and
+  the ledger refuses a quantity larger than what was issued.
+* **Balances only move through movements.** Transfers post both legs or neither,
+  concurrent issues and sales take row locks so a balance cannot go negative,
+  and there is no screen anywhere that edits a balance directly.
+
+Read-only checks (nothing is written, merged or reset):
+
+```bash
+cd backend
+python manage.py inventory_configuration_audit            # what to configure next
+python manage.py inventory_configuration_audit --json     # machine-readable
+python manage.py process_pos_stock_consumption --dry-run  # which hand-offs are open
+```
+
+`inventory_configuration_audit` lists the configured direct sales (and whether
+each is complete), recipes created automatically by an earlier version, items
+that look like a menu item but deduct nothing — with the exact request to send —
+recent internal issues, reusable-asset custody and what is still out, and
+possible duplicate records side by side with their balances and histories.
+Nothing is merged automatically: two items with the same name can be genuinely
+different products.
 
 ### Attendance: the terminal clock-in and the issued code are the same clock-in
 
@@ -385,6 +441,10 @@ python manage.py email_check --send you@x.com   # + one real delivery
 python manage.py smtp_check you@example.com     # full SMTP conversation
 python manage.py check_media_storage            # upload/storage round trip
 python manage.py reconcile_accommodation        # report unposted room nights (read-only)
+python manage.py inventory_configuration_audit  # how every item leaves the store (read-only)
+python manage.py process_pos_stock_consumption --dry-run
+                                                # open POS stock hand-offs; without
+                                                # --dry-run it resolves them idempotently
 python manage.py reconcile_accommodation --post --actor you@example.com
                                                 # re-post them through the idempotent
                                                 # accrual service (nothing changes twice)

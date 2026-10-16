@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
-from django.db.models import F
+from django.db.models import F, Q, Sum
 from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
@@ -19,7 +19,7 @@ from apps.core.utils import hotel_today
 from ..models import (
     GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, StockBalance,
     StockConsumptionRequest, StockConsumptionRequestEvent, StockCount, StockCountEvent, StockCountLine,
-    StockItem, StockLocation, StockMovement, StockRecipe, StockRecipeLine, Supplier,
+    StockDepartment, StockItem, StockLocation, StockMovement, StockRecipe, StockRecipeLine, Supplier,
 )
 
 logger = logging.getLogger("apps")
@@ -33,6 +33,13 @@ MONEY = Decimal("0.01")
 TRIGGER_POS_DELIVERY = "POS_DELIVERY"
 TRIGGER_MANUAL = "MANUAL"
 TRIGGER_CATCH_UP = "CATCH_UP"
+
+#: Marks a deduction that comes from an explicit direct-sale configuration on
+#: the stock item rather than from a StockRecipe. Recorded inside the frozen
+#: hand-off snapshot and (through it) in the movement metadata, so a reader can
+#: always tell which rule depleted the stock — and, crucially, that no recipe
+#: row was invented to do it.
+DIRECT_SALE_SOURCE = "DIRECT_SALE"
 
 
 def _quantity(value, *, field="quantity", positive=False):
@@ -88,6 +95,7 @@ def _locked_balance(*, item, location):
 def record_stock_movement(
     *, item, location, movement_type, quantity_delta, source_key, actor=None,
     unit_cost=None, source_reference="", notes="", metadata=None, allow_negative=False,
+    department="", recipient="",
 ) -> tuple[StockMovement, bool]:
     """Append an immutable movement and update the locked balance projection."""
     if movement_type not in StockMovement.Type.values:
@@ -117,7 +125,9 @@ def record_stock_movement(
                     balance=balance, type=movement_type, quantity_delta=quantity_delta,
                     unit_cost=_cost(unit_cost) if unit_cost is not None else None,
                     currency=item.currency.upper(), source_reference=(source_reference or "")[:120],
-                    notes=(notes or "")[:500], metadata=dict(metadata or {}), actor=actor,
+                    notes=(notes or "")[:500], department=_department(department),
+                    recipient=str(recipient or "").strip()[:120],
+                    metadata=dict(metadata or {}), actor=actor,
                 )
             break
         except IntegrityError:
@@ -132,14 +142,53 @@ def record_stock_movement(
     return movement, True
 
 
+def _department(value, *, field="department"):
+    """Validate a receiving department against the shared vocabulary."""
+    code = str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    if not code:
+        return ""
+    if code not in StockDepartment.values:
+        raise ValidationError({
+            field: f"'{value}' is not a known department. Use one of: "
+                   f"{', '.join(row.value for row in StockDepartment)}."
+        })
+    return code
+
+
 @transaction.atomic
-def issue_stock(*, item, location, quantity, actor, source_key, notes="", source_reference="", movement_type=StockMovement.Type.ISSUE):
+def issue_stock(
+    *, item, location, quantity, actor, source_key, notes="", source_reference="",
+    movement_type=StockMovement.Type.ISSUE, department="", recipient="",
+):
+    """Issue stock out of a store to a department, with custody evidence.
+
+    An internal issue is not a sale and not a new cost: the goods already
+    entered stock through a goods receipt, so this records *who took what, from
+    which store, for which department, why and when* on the immutable ledger
+    (``actor`` issues, ``occurred_at`` dates, ``notes`` carries the reason) and
+    nothing else. No journal entry, no POS revenue and no supplier payment is
+    created here, so the department's consumption can never inflate expenses
+    twice.
+    """
     if movement_type not in {StockMovement.Type.ISSUE, StockMovement.Type.MAINTENANCE_ISSUE, StockMovement.Type.WRITE_OFF}:
         raise ValidationError("This issue operation only supports controlled outgoing stock movement types.")
     quantity = _quantity(quantity, positive=True)
+    department = _department(department)
+    recipient = str(recipient or "").strip()[:120]
+    if item.is_reusable_asset and not recipient:
+        # A towel or a plate leaving the store is custody, not consumption: the
+        # item must come back, so the person holding it has to be named.
+        raise ValidationError({
+            "recipient": f"{item.name} is a reusable asset. Record who is taking custody of it so it can be returned."
+        })
+    if item.is_reusable_asset and movement_type == StockMovement.Type.WRITE_OFF and not (notes or "").strip():
+        raise ValidationError({
+            "notes": "A reusable asset can only be written off with a reason. Use the notes field to say what happened."
+        })
     return record_stock_movement(
         item=item, location=location, movement_type=movement_type, quantity_delta=-quantity,
         source_key=source_key, actor=actor, source_reference=source_reference, notes=notes,
+        department=department, recipient=recipient,
     )
 
 
@@ -333,53 +382,142 @@ def receive_goods(*, purchase_order, receipt_lines, actor, source_key, received_
     return receipt, True
 
 
-UNIT_TO_BASE_FACTORS = {
-    ("ml", "l"): Decimal("0.0010"),
-    ("ml", "litre"): Decimal("0.0010"),
-    ("ml", "liter"): Decimal("0.0010"),
-    ("cl", "l"): Decimal("0.0100"),
-    ("cl", "litre"): Decimal("0.0100"),
-    ("cl", "liter"): Decimal("0.0100"),
-    ("l", "ml"): Decimal("1000.0000"),
-    ("litre", "ml"): Decimal("1000.0000"),
-    ("liter", "ml"): Decimal("1000.0000"),
-    ("l", "cl"): Decimal("100.0000"),
-    ("litre", "cl"): Decimal("100.0000"),
-    ("liter", "cl"): Decimal("100.0000"),
-    ("g", "kg"): Decimal("0.0010"),
-    ("gram", "kg"): Decimal("0.0010"),
-    ("grams", "kg"): Decimal("0.0010"),
-    ("kg", "g"): Decimal("1000.0000"),
-    ("shot", "l"): Decimal("0.0500"),
-    ("shot", "litre"): Decimal("0.0500"),
-    ("shot", "ml"): Decimal("50.0000"),
+#: Canonical unit names. Recipe lines, issues, receipts and stock counts are
+#: typed by humans ("Kg", "grams", "litres", "pcs"), so every accepted spelling
+#: is mapped onto one canonical token before a factor is looked up. Spelling is
+#: never a reason to accept an unknown conversion.
+UNIT_ALIASES = {
+    # mass
+    "mg": "mg", "milligram": "mg", "milligrams": "mg", "milligramme": "mg", "milligrammes": "mg",
+    "g": "g", "gram": "g", "grams": "g", "gramme": "g", "grammes": "g",
+    "kg": "kg", "kilo": "kg", "kilos": "kg", "kilogram": "kg", "kilograms": "kg", "kilogramme": "kg", "kilogrammes": "kg",
+    "t": "t", "tonne": "t", "tonnes": "t", "ton": "t", "tons": "t", "mt": "t",
+    # volume
+    "ml": "ml", "millilitre": "ml", "millilitres": "ml", "milliliter": "ml", "milliliters": "ml",
+    "cl": "cl", "centilitre": "cl", "centilitres": "cl", "centiliter": "cl", "centiliters": "cl",
+    "dl": "dl", "decilitre": "dl", "decilitres": "dl", "deciliter": "dl", "deciliters": "dl",
+    "l": "l", "lt": "l", "ltr": "l", "litre": "l", "litres": "l", "liter": "l", "liters": "l",
+    "shot": "shot",
+    # loose count
+    "pc": "pc", "pcs": "pc", "pce": "pc", "piece": "pc", "pieces": "pc",
+    "unit": "unit", "units": "unit", "ea": "unit", "each": "unit",
+    "dozen": "dozen", "dozens": "dozen", "dz": "dozen", "pair": "pair", "pairs": "pair",
+    # discrete things the hotel stocks one at a time
+    "bottle": "bottle", "bottles": "bottle",
+    "can": "can", "cans": "can", "tin": "tin", "tins": "tin",
+    "sachet": "sachet", "sachets": "sachet", "sachet(s)": "sachet",
+    "plate": "plate", "plates": "plate", "glass": "glass", "glasses": "glass",
+    "towel": "towel", "towels": "towel", "sheet": "sheet", "sheets": "sheet",
+    # supplier containers — convertible only with the item's own pack size
+    "pack": "pack", "packs": "pack", "packet": "pack", "packets": "pack",
+    "carton": "carton", "cartons": "carton", "case": "case", "cases": "case",
+    "crate": "crate", "crates": "crate", "bag": "bag", "bags": "bag",
+    "box": "box", "boxes": "box", "sack": "sack", "sacks": "sack",
+    "roll": "roll", "rolls": "roll", "bundle": "bundle", "bundles": "bundle",
 }
 
+#: Exact ratios inside a family: ``1 <unit> == ratio[unit] * <family base>``
+#: (mass is expressed in grams, volume in millilitres). Every factor is a power
+#: of ten — except the hotel's conventional 50 ml shot — so a conversion is an
+#: exact decimal multiplication and can never introduce a rounding error.
+UNIT_FAMILIES = {
+    "mass": {"mg": Decimal("0.0010"), "g": Decimal("1.0000"), "kg": Decimal("1000.0000"), "t": Decimal("1000000.0000")},
+    "volume": {"ml": Decimal("1.0000"), "cl": Decimal("10.0000"), "dl": Decimal("100.0000"), "l": Decimal("1000.0000"), "shot": Decimal("50.0000")},
+    "count": {"pc": Decimal("1.0000"), "unit": Decimal("1.0000"), "dozen": Decimal("12.0000"), "pair": Decimal("2.0000")},
+}
 
-def convert_stock_quantity(quantity, *, from_unit=None, to_unit=None, conversion_factor=None) -> Decimal:
-    """Convert a recipe/consumption quantity into the stock item's base unit."""
+#: Units that describe a supplier container holding *some* number of the item's
+#: own base units. How many is stored on ``StockItem.units_per_pack``: it is
+#: never guessed from the name, because a wrong crate size silently posts a
+#: wrong quantity to the ledger.
+PACK_UNITS = {"pack", "case", "carton", "crate", "bag", "box", "sack", "roll", "bundle"}
+
+
+def canonical_unit(unit) -> str:
+    """Map "Kg" / "kilograms" / "KG." onto one canonical token ("" when blank)."""
+    token = str(unit or "").strip().lower().rstrip(".")
+    if not token:
+        return ""
+    return UNIT_ALIASES.get(token, token)
+
+
+def _family_member(unit):
+    """``(family, ratio)`` for a unit inside one family, else ``(None, None)``.
+
+    The family matters as much as the ratio: kilograms and litres both have a
+    ratio but they are not convertible, so a conversion is only allowed when
+    both units belong to the *same* family.
+    """
+    for family, ratios in UNIT_FAMILIES.items():
+        if unit in ratios:
+            return family, ratios[unit]
+    return None, None
+
+
+def convert_stock_quantity(quantity, *, from_unit=None, to_unit=None, conversion_factor=None, item=None) -> Decimal:
+    """Convert a typed quantity into a stock item's base unit, exactly.
+
+    Every path either produces an exact :class:`~decimal.Decimal` result or
+    raises: an unknown unit pair is never passed through unchanged, because a
+    silent identity conversion is how a recipe for 250 g of rice ends up
+    deducting 250 kg.
+
+    * an explicit ``conversion_factor`` (the caller's own declaration) wins;
+    * no unit typed, or the same unit on both sides, is an exact identity;
+    * mass and volume convert inside their family at exact ratios, so
+      ``kg -> g`` and ``l -> ml`` are loss-free;
+    * loosed counts (pieces/units/dozen/pair) convert at exact ratios;
+    * a supplier container (pack/carton/crate/...) converts only when the item
+      is supplied and its ``units_per_pack`` gives the container size;
+    * anything else raises ``ValidationError`` naming both units.
+    """
     amount = _quantity(quantity, field="quantity", positive=True)
     if conversion_factor is not None and str(conversion_factor).strip() != "":
         factor = _quantity(conversion_factor, field="conversion_factor", positive=True)
         return (amount * factor).quantize(QTY, rounding=ROUND_HALF_UP)
-    src = str(from_unit or "").strip().lower()
-    dst = str(to_unit or "").strip().lower()
+    src = canonical_unit(from_unit)
+    dst = canonical_unit(to_unit)
     if not src or not dst or src == dst:
-        return amount
-    factor = UNIT_TO_BASE_FACTORS.get((src, dst))
-    if factor is not None:
-        return (amount * factor).quantize(QTY, rounding=ROUND_HALF_UP)
-    return amount
+        return amount.quantize(QTY, rounding=ROUND_HALF_UP)
+    src_family, src_factor = _family_member(src)
+    dst_family, dst_factor = _family_member(dst)
+    if src_family and src_family == dst_family:
+        return (amount * src_factor / dst_factor).quantize(QTY, rounding=ROUND_HALF_UP)
+    if item is not None and getattr(item, "units_per_pack", None):
+        base_unit = canonical_unit(getattr(item, "base_unit", ""))
+        pack_size = _quantity(item.units_per_pack, field="units_per_pack", positive=True)
+        if src in PACK_UNITS and dst == base_unit:
+            return (amount * pack_size).quantize(QTY, rounding=ROUND_HALF_UP)
+        if dst in PACK_UNITS and src == base_unit:
+            return (amount / pack_size).quantize(QTY, rounding=ROUND_HALF_UP)
+    raise ValidationError({
+        "unit": (
+            f"'{from_unit}' cannot be converted to '{to_unit}'. Record this line in the item's own "
+            "unit, set the item's pieces-per-pack when one unit is a pack/carton/crate, or supply "
+            "an explicit conversion factor."
+        )
+    })
 
 
 def _active_recipe_snapshots(menu_item_ids):
-    """Return the current active, serializable recipe mapping for menu IDs.
+    """Return the current active, serializable deduction mapping for menu IDs.
 
     The caller freezes this mapping into a hand-off or its resolution evidence;
     it must never rely on a mutable recipe after a stock movement is posted.
-    When a menu item has no explicit StockRecipe but matches an active StockItem
-    by SKU or name that has a StockBalance location, a 1:1 component recipe is
-    auto-resolved so bar/restaurant/POS sales still deplete Stock on Hand.
+
+    Two — and only two — things may deduct stock for a POS menu item:
+
+    1. a real, active :class:`StockRecipe` (COMPONENTS with BOM lines, or an
+       explicit NO_STOCK decision), or
+    2. an explicit direct-sale configuration on the ``StockItem`` itself
+       (``direct_sale_menu_item`` + ``direct_sale_location`` +
+       ``direct_sale_quantity``), which is represented here as a synthetic
+       snapshot and **creates no recipe row at all**.
+
+    A menu item whose SKU or name merely resembles a stock item is deliberately
+    left unresolved: the hand-off is then parked for review with its evidence,
+    and an operator either configures the direct sale or writes the recipe.
+    Nothing is inferred, and no existing recipe is ever replaced or removed.
     """
     ids = sorted({int(value) for value in menu_item_ids if value is not None})
     if not ids:
@@ -415,50 +553,68 @@ def _active_recipe_snapshots(menu_item_ids):
         }
     missing_ids = [mid for mid in ids if str(mid) not in snapshots]
     if missing_ids:
-        from apps.pos.models import MenuItem
+        snapshots.update(_direct_sale_snapshots(missing_ids))
+    return snapshots
 
-        for menu_item in MenuItem.objects.filter(pk__in=missing_ids, is_active=True).select_related("category"):
-            stock_item = (
-                StockItem.objects.filter(is_active=True, sku__iexact=menu_item.sku).first()
-                or StockItem.objects.filter(is_active=True, name__iexact=menu_item.name).first()
-            )
-            if stock_item is None:
-                continue
-            preferred_balance = (
-                StockBalance.objects.filter(item=stock_item, location__is_active=True)
-                .select_related("location")
-                .order_by("-quantity_on_hand", "pk")
-                .first()
-            )
-            target_location = preferred_balance.location if preferred_balance else (
-                StockLocation.objects.filter(is_active=True).order_by("pk").first()
-            )
-            if target_location is None:
-                continue
-            auto_recipe, _ = create_stock_recipe(
-                menu_item=menu_item,
-                location=target_location,
-                tracking_mode=StockRecipe.TrackingMode.COMPONENTS,
-                components=[{"item_id": stock_item.pk, "quantity_per_menu_unit": "1.0000"}],
-                actor=None,
-                idempotency_key=f"auto-sku-recipe:{menu_item.pk}:{stock_item.pk}:{target_location.pk}",
-                notes="Auto-linked 1:1 stock recipe from matching SKU/name.",
-            )
-            snapshots[str(menu_item.pk)] = {
-                "recipe_reference": auto_recipe.reference,
-                "recipe_version": auto_recipe.version,
-                "menu_item_id": menu_item.pk,
-                "location_id": target_location.pk,
-                "location_code": target_location.code,
-                "tracking_mode": auto_recipe.tracking_mode,
-                "components": [
-                    {
-                        "item_id": stock_item.pk,
-                        "item_sku": stock_item.sku,
-                        "quantity_per_menu_unit": "1.0000",
-                    }
-                ],
-            }
+
+def _direct_sale_snapshots(menu_item_ids):
+    """Explicitly configured direct-sale products, resolved without a recipe.
+
+    A bar bottle, beer crate or pack of water that is sold exactly as it is
+    stocked is deducted because somebody *configured* it: the stock item names
+    the POS menu item it is sold as, the store it is drawn from, and how many
+    base units one menu unit consumes. Nothing is created, guessed or linked
+    here — a configured item keeps its configuration until an authorised user
+    changes it, and an unconfigured item reports a reviewable parked hand-off
+    instead of silently inventing a 1:1 recipe.
+    """
+    ids = sorted({int(value) for value in menu_item_ids if value is not None})
+    if not ids:
+        return {}
+    candidates = (
+        StockItem.objects.filter(
+            is_active=True,
+            direct_sale_menu_item_id__in=ids,
+            direct_sale_location__isnull=False,
+            direct_sale_location__is_active=True,
+        )
+        .select_related("direct_sale_menu_item", "direct_sale_location")
+        .order_by("pk")
+    )
+    snapshots = {}
+    for item in candidates:
+        menu_item_id = item.direct_sale_menu_item_id
+        if str(menu_item_id) in snapshots:
+            # The unique constraint forbids a second stock item claiming the
+            # same menu item; stay deterministic for an imported database that
+            # predates it rather than deducting the same sale twice.
+            continue
+        quantity = item.direct_sale_quantity or Decimal("0.0000")
+        if quantity <= Decimal("0.0000"):
+            continue
+        snapshots[str(menu_item_id)] = {
+            # No recipe exists for this deduction; these three keys stay so a
+            # reader of the evidence can tell the two sources apart.
+            "source": DIRECT_SALE_SOURCE,
+            "direct_sale": True,
+            "recipe_reference": "",
+            "recipe_version": 0,
+            "menu_item_id": menu_item_id,
+            "location_id": item.direct_sale_location_id,
+            "location_code": item.direct_sale_location.code,
+            # COMPONENTS keeps every downstream consumer (all-or-nothing
+            # shortage check, per-item movements, reversal) working unchanged.
+            "tracking_mode": StockRecipe.TrackingMode.COMPONENTS,
+            "stock_item_id": item.pk,
+            "stock_item_sku": item.sku,
+            "components": [
+                {
+                    "item_id": item.pk,
+                    "item_sku": item.sku,
+                    "quantity_per_menu_unit": str(quantity.quantize(QTY, rounding=ROUND_HALF_UP)),
+                }
+            ],
+        }
     return snapshots
 
 
@@ -504,18 +660,28 @@ def create_stock_recipe(*, menu_item, location, tracking_mode, components, actor
     items = {item.pk: item for item in StockItem.objects.select_for_update().filter(pk__in=item_ids, is_active=True)}
     if len(items) != len(item_ids):
         raise ValidationError({"components": "One or more stock items are inactive or missing."})
-    normalized = [
-        (
-            items[item_id],
-            convert_stock_quantity(
-                raw.get("quantity_per_menu_unit"),
-                from_unit=raw.get("unit"),
-                to_unit=items[item_id].base_unit,
-                conversion_factor=raw.get("conversion_factor"),
-            ),
+    normalized = []
+    for raw, item_id in zip(raw_components, item_ids):
+        component = items[item_id]
+        entered_quantity = _quantity(
+            raw.get("quantity_per_menu_unit"), field="quantity_per_menu_unit", positive=True
         )
-        for raw, item_id in zip(raw_components, item_ids)
-    ]
+        entered_unit = str(raw.get("unit") or "").strip()[:30]
+        # The stored deduction is always the component's own base unit (250 g of
+        # rice becomes 0.25 KG), computed with exact decimal maths; the typed
+        # value is kept beside it as evidence and is never used to deduct.
+        normalized.append((
+            component,
+            convert_stock_quantity(
+                entered_quantity,
+                from_unit=entered_unit,
+                to_unit=component.base_unit,
+                conversion_factor=raw.get("conversion_factor"),
+                item=component,
+            ),
+            entered_quantity,
+            entered_unit,
+        ))
     prior = list(StockRecipe.objects.select_for_update().filter(menu_item=menu_item).order_by("-version", "-pk"))
     version = (prior[0].version if prior else 0) + 1
     for active in (row for row in prior if row.is_active):
@@ -536,7 +702,11 @@ def create_stock_recipe(*, menu_item, location, tracking_mode, components, actor
     else:
         raise ValidationError("Could not allocate a unique recipe reference; please retry.")
     StockRecipeLine.objects.bulk_create([
-        StockRecipeLine(recipe=recipe, item=item, quantity_per_menu_unit=quantity) for item, quantity in normalized
+        StockRecipeLine(
+            recipe=recipe, item=item, quantity_per_menu_unit=quantity,
+            entered_quantity=entered_quantity, entered_unit=entered_unit,
+        )
+        for item, quantity, entered_quantity, entered_unit in normalized
     ])
     return recipe, True
 
@@ -597,10 +767,21 @@ def request_pos_stock_consumption(*, order, actor=None):
 def process_pos_stock_consumption(*, request, actor, trigger=TRIGGER_MANUAL):
     """Inventory-only, idempotent posting of POS_CONSUMPTION ledger movements.
 
-    A missing/invalid recipe never causes partial deduction: the request is
-    marked failed with review evidence and can be retried once configuration is
-    corrected. Each aggregate movement has a deterministic request/location/
-    item source key, so a retried processing command converges safely.
+    Two different situations are deliberately kept apart:
+
+    * a menu item with **no** configured deduction (no recipe and no
+      direct-sale configuration) is recorded as ``uncontrolled`` evidence and
+      deducts nothing. Nothing is guessed at, and it does not stop the lines
+      that *are* configured from following their sale either. A hand-off where
+      nothing at all could be deducted is parked ``FAILED`` for inventory
+      review — the gap is visible, the catch-up sweep keeps offering it, and
+      configuring the product later resolves it; and
+    * an **invalid** recipe, an inactive item/location or a stock shortage
+      fails the whole request with review evidence *before* anything is posted,
+      so a partial deduction is never written to the ledger.
+
+    Each aggregate movement has a deterministic request/location/item source
+    key, so a retried processing command converges safely.
 
     ``trigger`` records WHERE the resolution was initiated (POS delivery,
     inventory console, or the catch-up sweep) as append-only evidence.
@@ -625,6 +806,12 @@ def process_pos_stock_consumption(*, request, actor, trigger=TRIGGER_MANUAL):
     fallback_recipes = _active_recipe_snapshots(needed_menu_ids)
     resolved = {}
     missing = []
+    #: Menu items nothing is configured for. They are NOT deducted — an
+    #: unconfigured product must never be guessed at — but they must not stop
+    #: the lines that *are* configured from following their sale either, so
+    #: they are reported as "not deducted" evidence instead of blocking the
+    #: whole order's stock accuracy.
+    uncontrolled = []
     aggregates = {}
     for raw in raw_lines:
         try:
@@ -634,7 +821,7 @@ def process_pos_stock_consumption(*, request, actor, trigger=TRIGGER_MANUAL):
             raise ValidationError("The POS hand-off includes an invalid immutable line snapshot.") from exc
         recipe = snapshot_recipes.get(str(menu_item_id)) or fallback_recipes.get(str(menu_item_id))
         if not recipe:
-            missing.append(str(raw.get("item_sku") or raw.get("item_name") or menu_item_id))
+            uncontrolled.append(str(raw.get("item_sku") or raw.get("item_name") or menu_item_id))
             continue
         if recipe.get("tracking_mode") == StockRecipe.TrackingMode.NO_STOCK:
             resolved[str(menu_item_id)] = recipe
@@ -658,7 +845,11 @@ def process_pos_stock_consumption(*, request, actor, trigger=TRIGGER_MANUAL):
             aggregates[key] = (aggregates.get(key, Decimal("0.0000")) + amount).quantize(QTY)
     if missing:
         request.status = StockConsumptionRequest.Status.FAILED
-        request.resolution_note = "Missing or invalid active recipe for: " + ", ".join(sorted(set(missing)))[:2000]
+        request.resolution_note = (
+            "No configured stock deduction for: " + ", ".join(sorted(set(missing)))[:1700]
+            + ". Define a stock recipe for the menu item, or configure the stock item as a direct sale, "
+              "then process this hand-off again."
+        )[:2000]
         request.resolution_payload = {"resolved_recipes": resolved, "missing": sorted(set(missing)), "trigger": trigger}
         request.save(update_fields=["status", "resolution_note", "resolution_payload", "updated_at"])
         _consumption_event(request=request, event_type=StockConsumptionRequestEvent.Type.FAILED, actor=actor,
@@ -704,14 +895,51 @@ def process_pos_stock_consumption(*, request, actor, trigger=TRIGGER_MANUAL):
                       "resolved_recipes": recipe_evidence, "trigger": trigger},
         )
     has_components = bool(aggregates)
-    request.status = StockConsumptionRequest.Status.PROCESSED if has_components else StockConsumptionRequest.Status.SKIPPED
+    if has_components:
+        request.status = StockConsumptionRequest.Status.PROCESSED
+    elif uncontrolled:
+        # Nothing was deducted and nothing was wrong enough to raise on its own:
+        # the sale is complete but no deduction is configured for it. That is a
+        # configuration gap only a human can close, so the hand-off is parked in
+        # the review queue — visible in the console, and re-offered by the
+        # catch-up sweep — instead of reporting that the items are deliberately
+        # not stock-tracked. No quantity is guessed and no recipe is created.
+        request.status = StockConsumptionRequest.Status.FAILED
+    else:
+        request.status = StockConsumptionRequest.Status.SKIPPED
     request.processed_by = actor; request.processed_at = timezone.now()
-    request.resolution_note = "POS recipe consumption posted." if has_components else "All menu items are explicitly non-stock tracked."
-    request.resolution_payload = {"resolved_recipes": resolved, "movement_count": len(aggregates), "trigger": trigger}
+    if has_components:
+        note = "POS recipe consumption posted."
+        if uncontrolled:
+            # Stated, not hidden: the sale went through, these lines have no
+            # configured deduction, and the inventory console shows this note.
+            note = (
+                f"{note} Not deducted — no stock recipe and no direct-sale configuration for: "
+                + ", ".join(sorted(set(uncontrolled)))[:1200]
+            )
+    elif uncontrolled:
+        note = (
+            "No stock deduction is configured for: " + ", ".join(sorted(set(uncontrolled)))[:1500]
+            + ". Define a stock recipe for the menu item, or configure the stock item as a direct sale "
+              "(POS menu item + store + units per menu unit), then process this hand-off again. Nothing was "
+              "deducted, and no recipe was created."
+        )
+    else:
+        note = "All menu items are explicitly non-stock tracked."
+    request.resolution_note = note[:2000]
+    request.resolution_payload = {
+        "resolved_recipes": resolved, "movement_count": len(aggregates),
+        "uncontrolled": sorted(set(uncontrolled)), "trigger": trigger,
+    }
     request.save(update_fields=["status", "processed_by", "processed_at", "resolution_note", "resolution_payload", "updated_at"])
     _consumption_event(request=request,
-                       event_type=StockConsumptionRequestEvent.Type.PROCESSED if has_components else StockConsumptionRequestEvent.Type.SKIPPED,
-                       actor=actor, details={"movement_count": len(aggregates), "trigger": trigger})
+                       event_type=(
+                           StockConsumptionRequestEvent.Type.PROCESSED if has_components
+                           else StockConsumptionRequestEvent.Type.FAILED if uncontrolled
+                           else StockConsumptionRequestEvent.Type.SKIPPED
+                       ),
+                       actor=actor,
+                       details={"movement_count": len(aggregates), "uncontrolled": sorted(set(uncontrolled)), "trigger": trigger})
     return request, True
 
 
@@ -865,16 +1093,78 @@ def record_opening_stock(*, item, location, quantity, actor, source_key="", idem
     )
 
 
+def _issue_returnable_balance(*, item, source_reference):
+    """How much of a cited issue may still come back into the store.
+
+    Returns ``None`` when the cited reference is not an issue of this item (an
+    order, an invoice, a supplier return), which preserves the existing
+    behaviour for every other kind of return. When it *is* an issue, the
+    outstanding issued quantity is the ceiling: returning more than was issued
+    would create stock the hotel never bought, and this ledger does not invent
+    stock.
+    """
+    reference = str(source_reference or "").strip()
+    if not reference:
+        return None
+    issue = (
+        StockMovement.objects.select_for_update()
+        .filter(
+            Q(reference=reference) | Q(source_reference=reference),
+            item=item,
+            type__in=[StockMovement.Type.ISSUE, StockMovement.Type.MAINTENANCE_ISSUE],
+        )
+        .order_by("pk")
+        .first()
+    )
+    if issue is None:
+        return None
+    candidates = {value for value in (reference, issue.reference, issue.source_reference) if value}
+    issued = (-Decimal(issue.quantity_delta)).quantize(QTY, rounding=ROUND_HALF_UP)
+    returned = (
+        StockMovement.objects.filter(
+            item=item,
+            type=StockMovement.Type.MAINTENANCE_RETURN,
+            source_reference__in=sorted(candidates),
+        ).aggregate(total=Sum("quantity_delta"))["total"]
+    ) or Decimal("0.0000")
+    returned = Decimal(returned).quantize(QTY, rounding=ROUND_HALF_UP)
+    return issue, issued, returned, max(issued - returned, Decimal("0.0000"))
+
+
 @transaction.atomic
 def record_stock_return(
     *, item, location, quantity, actor, source_key="", idempotency_key="",
-    direction="IN", unit_cost=None, source_reference="", notes=""
+    direction="IN", unit_cost=None, source_reference="", notes="", department="", recipient=""
 ):
-    """Record an idempotent return-in or return-out stock movement."""
+    """Record an idempotent return-in or return-out stock movement.
+
+    A return into the store may cite the issue it comes back from
+    (``source_reference``); the ceiling and the return history are then written
+    into the movement's evidence so the issue/return/adjustment trail of a
+    reusable asset is auditable without any side table.
+    """
     key = source_key or idempotency_key
     quantity = _quantity(quantity, positive=True)
     cost = _cost(unit_cost) if unit_cost not in (None, "") else item.standard_cost
     is_outward = str(direction or "IN").upper() in ("OUT", "OUTWARD", "SUPPLIER")
+    evidence = None
+    if not is_outward:
+        limit = _issue_returnable_balance(item=item, source_reference=source_reference)
+        if limit is not None:
+            issue, issued, already_returned, remaining = limit
+            if quantity > remaining:
+                raise ValidationError({
+                    "quantity": (
+                        f"{item.sku} was issued {issued} against {issue.reference} and {already_returned} has "
+                        f"already been returned, so at most {remaining} can be returned to the store."
+                    )
+                })
+            evidence = {
+                "returned_against_issue": issue.reference,
+                "issue_source_reference": issue.source_reference,
+                "issued_quantity": str(issued),
+                "returned_previously": str(already_returned),
+            }
     return record_stock_movement(
         item=item,
         location=location,
@@ -885,6 +1175,9 @@ def record_stock_return(
         unit_cost=cost,
         source_reference=source_reference or ("SUPPLIER_RETURN" if is_outward else "STOCK_RETURN"),
         notes=notes or ("Returned stock to supplier" if is_outward else "Returned stock to store"),
+        metadata=evidence,
+        department=department,
+        recipient=recipient,
     )
 
 

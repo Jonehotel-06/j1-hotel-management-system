@@ -148,6 +148,28 @@ test("checking out with money owed offers the payment path, not only an override
   assert.match(CHECKOUT, /JONE\.ui\.modal\.open\(\{\s*title: "Guest still owes money"/);
 });
 
+test("room money is shown as room money, never netted off the guest purchases", () => {
+  // Reported: a fully paid room (₦420,000) netted against an unpaid ₦3,200
+  // laundry bill showed "purchases and charges −₦416,800" and "amount to settle
+  // ₦0", so the desk cleared a guest who still owed money. The balance is the
+  // server's, and the money that settled the ROOM is stated separately.
+  const START = CHECKOUT.indexOf("async function openClearance(ref, booking){");
+  const END = CHECKOUT.indexOf("/* The gate pass is a POS thermal receipt");
+  const DIALOG = CHECKOUT.slice(START, END);
+
+  assert.match(DIALOG, /d\.accommodation_settlements \|\| \[\]/);
+  assert.match(DIALOG, /d\.accommodation_settlements_total/);
+  assert.match(DIALOG, /Accommodation payments on the folio \(for reference\)/);
+  assert.match(DIALOG, /never offset against the purchases and charges/);
+  // Credits are stated on the bill line instead of silently netting the sum.
+  assert.match(DIALOG, /less credits /);
+  assert.match(DIALOG, /d\.charges_total/);
+  // The figures are read, never recomputed: no client-side arithmetic can turn
+  // the folio balance negative or hide a charge.
+  assert.doesNotMatch(DIALOG, /charges_total\s*-\s*credits_total/);
+  assert.doesNotMatch(DIALOG, /folio_balance\s*=\s*/);
+});
+
 test("the payment taken at check-out goes through the folio, never a side route", () => {
   // One endpoint records the money (the folio settlement); nothing in this page
   // marks a bill paid locally or invents a second payment API.

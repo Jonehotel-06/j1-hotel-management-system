@@ -2,6 +2,7 @@
 import secrets
 from decimal import Decimal, InvalidOperation
 
+from django.db import IntegrityError
 from django.db.models import Count, F, Q
 from django.utils.dateparse import parse_date
 
@@ -89,7 +90,14 @@ class StockItemListCreateView(APIView):
         if search:=request.query_params.get("search"): queryset=queryset.filter(Q(sku__icontains=search)|Q(name__icontains=search))
         return _page(self, request, queryset, StockItemSerializer)
     def post(self, request):
-        serializer=StockItemSerializer(data=request.data); serializer.is_valid(raise_exception=True); item=serializer.save()
+        serializer=StockItemSerializer(data=request.data); serializer.is_valid(raise_exception=True)
+        try:
+            item=serializer.save()
+        except IntegrityError as exc:
+            # The serializer pre-checks the direct-sale configuration; this is
+            # the database's unique constraint winning a race, and it must come
+            # back as a readable 400 rather than a 500.
+            raise ValidationError({"detail": "Another record was saved with the same code or the same direct-sale POS menu item. Reload and try again."}) from exc
         opening_qty = request.data.get("opening_quantity")
         opening_loc_id = request.data.get("opening_location_id")
         if opening_qty not in (None, "", "0", 0, "0.0000") and opening_loc_id:
@@ -126,7 +134,24 @@ class StockItemDetailView(APIView):
     def patch(self, request, pk):
         item=StockItem.objects.select_related("preferred_supplier").filter(pk=pk).first()
         if item is None: raise NotFound("Stock item not found.")
-        serializer=StockItemSerializer(item, data=request.data, partial=True); serializer.is_valid(raise_exception=True); item=serializer.save()
+        serializer=StockItemSerializer(item, data=request.data, partial=True); serializer.is_valid(raise_exception=True)
+        try:
+            item=serializer.save()
+        except IntegrityError as exc:
+            raise ValidationError({"detail": "Another record was saved with the same code or the same direct-sale POS menu item. Reload and try again."}) from exc
+        # Classification and direct-sale configuration decide HOW stock is
+        # deducted, so the change is auditable like any other control change.
+        log_action(
+            actor=request.user, action="STOCK_ITEM_UPDATED", instance=item, request=request,
+            summary=f"Stock item {item.sku} updated",
+            metadata={
+                "sku": item.sku, "item_type": item.item_type,
+                "direct_sale_menu_item": item.direct_sale_menu_item_id,
+                "direct_sale_location": item.direct_sale_location_id,
+                "direct_sale_quantity": str(item.direct_sale_quantity),
+                "direct_sale_configured": item.is_direct_sale_configured,
+            },
+        )
         return success_response(StockItemSerializer(item).data, message="Stock item updated.")
 
 
@@ -138,6 +163,7 @@ class StockBalanceListView(APIView):
         if item_id:=request.query_params.get("item_id"): queryset=queryset.filter(item_id=item_id)
         if location_id:=request.query_params.get("location_id"): queryset=queryset.filter(location_id=location_id)
         if request.query_params.get("reorder") == "true": queryset=queryset.filter(quantity_on_hand__lte=F("item__reorder_level"))
+        if item_type:=request.query_params.get("item_type"): queryset=queryset.filter(item__item_type=item_type)
         return _page(self, request, queryset, StockBalanceSerializer)
 
 
@@ -149,6 +175,8 @@ class StockMovementListView(APIView):
         if item_id:=request.query_params.get("item_id"): queryset=queryset.filter(item_id=item_id)
         if location_id:=request.query_params.get("location_id"): queryset=queryset.filter(location_id=location_id)
         if movement_type:=request.query_params.get("type"): queryset=queryset.filter(type=movement_type)
+        if department:=request.query_params.get("department"): queryset=queryset.filter(department=department)
+        if item_type:=request.query_params.get("item_type"): queryset=queryset.filter(item__item_type=item_type)
         start = request.query_params.get("start")
         end = request.query_params.get("end")
         start_date = parse_date(start) if start else None
@@ -324,7 +352,21 @@ class StockIssueView(APIView):
         key=scoped_key(prefix="stock-issue", scope=f"staff:{request.user.pk}", raw_key=data.get("idempotency_key"))
         if not key: raise ValidationError({"idempotency_key": "An idempotency key is required for stock issue."})
         movement, created=issue_stock(item=item, location=location, quantity=data["quantity"], actor=request.user, source_key=key,
-                                      movement_type=data["type"], source_reference=data.get("source_reference", ""), notes=data.get("notes", ""))
+                                      movement_type=data["type"], source_reference=data.get("source_reference", ""), notes=data.get("notes", ""),
+                                      department=data.get("department", ""), recipient=data.get("recipient", ""))
+        if created:
+            # The immutable movement already carries item, quantity, store,
+            # department, recipient, issuing user and reason; the audit log adds
+            # the request-level trail (who pressed the button, from where).
+            log_action(
+                actor=request.user, action="STOCK_ISSUED", instance=movement, request=request,
+                summary=f"Issued {movement.quantity_delta} {item.base_unit} of {item.sku} to {movement.department or 'no department named'}",
+                metadata={
+                    "reference": movement.reference, "item": item.sku, "location": location.code,
+                    "department": movement.department, "recipient": movement.recipient,
+                    "quantity": str(data["quantity"]), "type": movement.type,
+                },
+            )
         return success_response(StockMovementSerializer(StockMovement.objects.select_related("item", "location", "actor").get(pk=movement.pk)).data,
                                 message="Stock issue recorded." if created else "Existing stock issue returned.",
                                 status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
@@ -367,6 +409,8 @@ class StockReturnView(APIView):
             item=item, location=location, quantity=data["quantity"], actor=request.user,
             source_key=key, unit_cost=data.get("unit_cost"),
             source_reference=data.get("source_reference", ""), notes=data.get("notes", ""),
+            direction=data.get("direction", "IN"),
+            department=data.get("department", ""), recipient=data.get("recipient", ""),
         )
         return success_response(
             StockMovementSerializer(StockMovement.objects.select_related("item", "location", "actor").get(pk=movement.pk)).data,

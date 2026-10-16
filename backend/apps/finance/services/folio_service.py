@@ -107,6 +107,19 @@ def close_folio(*, folio, actor, allow_nonzero_balance=False):
 # accommodation_service._night_components), so including them would count the
 # room twice.
 #
+# MONEY THAT SETTLES THE ACCOMMODATION IS EXCLUDED FOR THE SAME REASON. A
+# payment for the room is posted to the folio as an AR credit (so the folio's
+# own statement is complete) *and* counted in `booking.amount_paid`/`amount_due`
+# — the projection the desk settles the room with. Netting that credit against
+# the guest's purchases as well counted the same money twice and produced the
+# reported defect: a fully paid ₦420,000 room with an unpaid ₦3,200 laundry
+# charge showed "purchases and charges −₦416,800" and "amount to settle ₦0",
+# and the gate pass printed as cleared. Such postings carry
+# ``settles=FolioPosting.Settles.ACCOMMODATION``. Money the guest handed over
+# FOR their folio charges (the desk settlement) is classified
+# ``FOLIO_CHARGES`` and still reduces them; so do discounts, adjustments,
+# reversals and refunds, which is why this is not "ignore all payment credits".
+#
 # Only POSTED (and not reversed) transactions contribute: drafts are not
 # liabilities and a VOIDED transaction has been reversed by a balancing entry.
 # ---------------------------------------------------------------------------
@@ -114,8 +127,11 @@ def booking_folio_charge_map(*, booking_ids):
     """Signed extra-charge balance per booking id — exactly one query.
 
     Debits (posted guest charges) increase the balance; credits (controlled
-    discounts, adjustments, reversals) reduce it. Returns only bookings that
-    actually have such postings; callers treat a missing key as zero.
+    discounts, adjustments, reversals, and payments applied to the folio
+    charges) reduce it. Postings that settle the ACCOMMODATION are excluded:
+    that money is already reflected in the booking's own paid-to-date figure.
+    Returns only bookings that actually have such postings; callers treat a
+    missing key as zero.
     """
     ids = [pk for pk in dict.fromkeys(booking_ids or []) if pk]
     if not ids:
@@ -124,6 +140,9 @@ def booking_folio_charge_map(*, booking_ids):
     rows = (
         FolioPosting.objects.filter(folio__booking_id__in=ids)
         .exclude(transaction__type=FinancialTransaction.Type.ACCOMMODATION_CHARGE)
+        # Accommodation money (a paid room) must not be netted against the
+        # guest's unrelated purchases and service charges.
+        .exclude(settles=FolioPosting.Settles.ACCOMMODATION)
         .filter(transaction__status=FinancialTransaction.Status.POSTED)
         .values("folio__booking_id")
         .annotate(
