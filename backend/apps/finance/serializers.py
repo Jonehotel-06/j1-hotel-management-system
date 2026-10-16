@@ -196,6 +196,19 @@ class CashDropSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
 
 
+class ExpensePaymentEvidenceSerializer(serializers.Serializer):
+    """Evidence for a supplier payment that already left the money.
+
+    The optional receipt FILE is read from ``request.FILES["receipt"]`` by the
+    view; this serializer validates the text/date parts and keeps the URL and
+    date contracts identical to the settlement serializer beside it.
+    """
+
+    payment_reference = serializers.CharField(required=False, allow_blank=True, max_length=160)
+    receipt_url = serializers.URLField(required=False, allow_blank=True, max_length=200)
+    paid_on = serializers.DateField(required=False)
+
+
 class ExpenseCreateSerializer(serializers.Serializer):
     category = serializers.CharField(max_length=120)
     accounting_class = serializers.ChoiceField(choices=[("OPERATING", "Operating expense"), ("INVENTORY", "Inventory asset")], default="OPERATING")

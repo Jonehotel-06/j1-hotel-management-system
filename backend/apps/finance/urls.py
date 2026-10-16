@@ -28,5 +28,6 @@ urlpatterns = [
     path("expenses/<str:reference>/review/", views.ExpenseReviewView.as_view(), name="expense-review"),
     path("expenses/<str:reference>/post/", views.ExpensePostView.as_view(), name="expense-post"),
     path("expenses/<str:reference>/settle-payment/", views.ExpenseSettlePaymentView.as_view(), name="expense-settle-payment"),
+    path("expenses/<str:reference>/payment-evidence/", views.ExpensePaymentEvidenceView.as_view(), name="expense-payment-evidence"),
     path("control-policies/", views.FinancialControlPolicyListCreateView.as_view(), name="control-policies"),
 ]

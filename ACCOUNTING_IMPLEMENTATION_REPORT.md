@@ -1,7 +1,9 @@
 # Implementation report — accounting page reorganisation and the four reported bugs
 
-Baseline commit `2bcaa6c` · version `1.1.15 → 1.1.16` · everything in this report is
-implemented in the repo (frontend + backend), not recommended.
+Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17` · everything in this report
+is implemented in the repo (frontend + backend), not recommended.
+
+§8 covers the follow-up release `1.1.17` (supplier payment receipts); §1–§7 cover `1.1.16`.
 
 Scope: the ten accounting requirements (A), the four reported bugs (B1–B4), the
 `-₦576,800.00` Guest Receivables investigation, and the tests for all of it.
@@ -256,3 +258,87 @@ failure disappear:
   across 43 pages; `tests-js/test-department-page-access.js` covers the
   behaviour, but a future page added without the snippet would simply fall back
   to the skeleton — acceptable, worth remembering.
+
+---
+
+## 8. Follow-up (1.1.17) — supplier payment receipts
+
+### 8.1 What was reported
+
+"There's no option to upload a receipt transferred to suppliers, no button to record
+that payment is made already."
+
+### 8.2 What the code actually did
+
+The supplier-payment step existed, but only for **one** of the two ways an expense can
+leave the hotel:
+
+| How the expense was recorded | Ledger at posting | Payment step offered |
+|---|---|---|
+| `CASH` / `BANK_TRANSFER` / `CARD` | credits cash / bank clearing / card clearing — the money is treated as **already out** | none (correct: there is no payable left), and **no way to attach the transfer slip** |
+| `PAYABLE` (on account) | credits `LIABILITY.ACCOUNTS_PAYABLE` | "Record supplier payment" → posts Dr payables / Cr the tender, stamps paid, and **does** take a receipt file |
+
+So the receipt upload existed but was unreachable for a bill recorded with the default
+payment method, and nothing on the screen explained why no button appeared. On top of
+that, the expense drill-down showed a dash for "Supplier payment" on an already-paid bank
+transfer, and never linked an uploaded payment receipt.
+
+### 8.3 What changed
+
+| File | Change |
+|---|---|
+| `frontend/dashboard/accounting.html` | New **Payment receipt** action on every posted expense that has no pending settlement (money already out, or an already-settled payable); the transfer-receipt dialog (file / link / reference / date paid); explicit payment-method labels in Create expense ("already paid" vs "On account / not paid yet") plus a "Supplier invoice / receipt link" field that the API already accepted; the payables section now explains the two-step flow **in the backend's own words** (it renders the reporting service's `payable_settlement_posting_note`); the drill-down lists every attachment (supplier document, payment receipt file, payment receipt link) and says "Paid at posting — BANK_TRANSFER (no separate supplier payment to record)" instead of a dash |
+| `backend/apps/finance/services/expense_service.py` | `attach_expense_payment_evidence(...)` — stores receipt file/link/reference/date on an expense whose money has already left, writes one append-only `PAID` event that states `ledger_effect: "none"`, and posts nothing |
+| `backend/apps/finance/views.py`, `urls.py` | `POST /api/admin/finance/expenses/<reference>/payment-evidence/` (`expense.manage`, multipart) + audit-log entry `EXPENSE_PAYMENT_EVIDENCE_ADDED` |
+| `backend/tests/test_expense_payment_evidence.py` | **New**, 7 tests (see 8.4) |
+| `frontend/tests-js/test-supplier-payment-receipt-ui.js` | **New**, 6 tests pinning the two-button rule, the dialog fields, the create-dialog wording and the drill-down rendering (run against the page's real `expenseDetailHtml`) |
+| `docs/OWNER_FINANCE.md` | Owner-facing "Guest receivables" and "Paying a supplier — the two ways money leaves" sections |
+
+**One narrow endpoint was added, deliberately.** No existing route could store evidence
+on an already-posted expense: the settlement endpoint correctly refuses a non-payable
+expense (it would post a second cash-out), the detail endpoint is read-only, and posted
+expenses refuse `save()`. The new route reuses the settlement serializer shape, the same
+`expense.manage` capability, the same append-only event model and the same audit log,
+and it never touches the ledger.
+
+### 8.4 Evidence that no figure moves
+
+`tests/test_expense_payment_evidence.py` asserts, for a bank-transfer expense carrying a
+real uploaded PNG plus a link, a reference and a date:
+
+- the receipt is stored and the expense reads as paid;
+- the append-only event says `evidence_only: true` and `ledger_effect: "none"`;
+- `FinancialTransaction`, `FinancialLine` counts and totals are **identical** before and
+  after, and `financial_summary()` returns byte-identical
+  `outstanding_supplier_payables`, `total_cash_disbursements`, `supplier_payments_made`
+  and `operating_expenses`;
+- an on-account expense that is still unpaid is **refused** here with a message pointing
+  at "Record supplier payment" (the step that releases the payable);
+- a settled payable can still gain the receipt it missed, and the settlement's own
+  reference is never blanked out or overwritten;
+- a receptionist without `expense.manage` gets 403; a future payment date is refused.
+
+The last point found a real defect while writing the tests: the first version of the
+service wrote the (empty) `payment_reference` on every call, which wiped the bank
+reference a settlement had already stored. The write is now limited to the fields the
+caller actually supplied.
+
+### 8.5 Tests for this follow-up
+
+| Suite | Result |
+|---|---|
+| `python manage.py test tests.test_expense_payment_evidence` | **7 pass** |
+| `python manage.py test tests.test_expense_api tests.test_expenses tests.test_expense_payment_evidence tests.test_finance tests.test_finance_api tests.test_guest_receivable_check tests.test_supplier_payment_visibility tests.test_approvals_inbox tests.test_report_ranges tests.test_separate_approver_control` | **68 pass** |
+| `cd frontend && node --test tests-js/` | **399 tests — 397 pass, 1 skip, 1 fail** (the same pre-existing manifest failure) |
+| `frontend/validate.py` | **ALL OK** |
+
+### 8.6 Still open from this follow-up
+
+- **A bill recorded with the wrong method cannot be reclassified.** If a supplier bill
+  was entered as "Bank transfer" while the money had not actually left, the ledger says
+  it did. There is no void/reverse route for a posted expense today, so the supported
+  correction is a manual journal (Accounting → Post journal entry) agreed with the
+  accountant, or reversing and re-recording the expense. I did not invent a reclassify
+  endpoint for it; that decision is the owner's.
+- **No browser pass.** The new dialog is covered by markup/vm tests and the API by
+  Django tests, not by a rendered page.
