@@ -1,11 +1,12 @@
 # Implementation report — accounting page reorganisation and the four reported bugs
 
-Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18` · everything in this
+Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18 → 1.1.19` · everything in this
 report is implemented in the repo (frontend + backend), not recommended.
 
 §1–§7 cover `1.1.16`; §8 covers `1.1.17` (supplier payment receipts); §9 covers the five
 follow-up reports in `1.1.18` (settings tax controls, the cash-variance approval button,
-guest-request bills on the folio, the check-out payment path, and profile-photo uploads).
+guest-request bills on the folio, the check-out payment path, and profile-photo uploads);
+§10 covers `1.1.19` (the owner/CEO profile and the staff profile's months view).
 
 Scope: the ten accounting requirements (A), the four reported bugs (B1–B4), the
 `-₦576,800.00` Guest Receivables investigation, and the tests for all of it.
@@ -509,3 +510,78 @@ image-upload suite (`test_image_upload_paths.py`, 7) still passes.
 production depends on the deployment's media storage being writable and publicly readable.
 That is exactly what the new message reports, with the storage backend class named, so the
 administrator has something concrete to fix instead of a silent no-op.
+
+# 10. Follow-up (1.1.19) — the owner's own profile, and the staff profile's months view
+
+## 10.1 What was reported
+
+Two things, in the owner's words: the Administrator's own profile carried staff
+material it should never have — *"my salary, attendance, shift, leave etc …
+Admin should have its own profile as a CEO and not as staff"* — and the staff
+profile's styling *"is not professional yet; the months section should use the
+occupancy page style of design"*.
+
+## 10.2 What the code actually did
+
+* `GET /api/admin/staff-operations/my-profile/` resolves the caller from the
+  session and served **any** role other than GUEST — `User.is_staff_member` is
+  true for every non-guest role, the Administrator included. It then called
+  `ensure_staff_profile()`, which **created an employee record (an `STF-…`
+  employee code and a department) for the owner account** the first time the
+  owner opened their own profile.
+* The page had no role branch at all: `profile.html` called `loadSelfService()`
+  unconditionally, so the CEO saw salary structure, payslips, attendance,
+  shifts, leave, disciplinary, reviews and a lateness-deduction ledger.
+* `OperationalStaffDirectoryView` (`/api/admin/users/directory/`) — the picker
+  behind shift assignment, dispatch, attendance, leave and disciplinary forms —
+  excluded only GUEST, so the owner was offered as an assignable employee.
+* The Staff page's roster query (`role__in`) began with `ADMIN` and the role
+  filter carried an "Administrators" option: the CEO appeared as a staff row.
+* The months block was a six-column table whose "Worked *n* / *n* scheduled ·
+  Missed *n* / *n* scheduled" chips were competing with the numbers beside
+  them, and the record tabs were a loose row of buttons with no container.
+
+## 10.3 What changed
+
+| File | Change |
+|---|---|
+| `backend/apps/staff_operations/views_self_profile.py` | The Administrator is refused **before** the profile lookup, with a plain reason ("The Administrator account is the hotel owner …"). Refusing first is also what stops an employee record being manufactured for the owner. |
+| `backend/apps/accounts/views_admin.py` | The operational staff directory excludes `User.Role.ADMIN` together with GUEST, so the owner cannot be assigned a shift, task, attendance record, leave request or disciplinary case. |
+| `frontend/dashboard/profile.html` | Role-aware page: `isOwner` comes from the signed-in session; the staff panel is hidden **and never fetched** for the owner; a new owner console (`#pf-owner`) shows the owner's account and sign-in facts plus tiles for Staff & access, Settings, Accounting and Reports, each filtered through `JONE.dashboard.canOpenPage()`. For staff, the months table became an occupancy-style month calendar (year navigation, chip legend, `No record` cells, a detail panel holding the month's payroll periods), the record tabs became a segmented strip, panes gained real section headings, and the attendance range became a filter bar. |
+| `frontend/dashboard/staff.html` | The roster query and the role filter no longer include ADMIN; a caption states the rule; a labelled **Owner account** button keeps the account reachable through the existing edit form. |
+| `frontend/css/dashboard.css` | `.ss-tabs`, `.ss-pane h3`, `.owner-tiles`/`.owner-tile`, and the `.mo-*` month calendar, mirroring the occupancy calendar's cells, chips, legend and phone behaviour (one row per cell below 560px). |
+| `docs/USAGE.md` | "Profiles: the owner's profile and a staff member's profile". |
+
+## 10.4 No figure and no record changes
+
+Nothing is deleted and nothing is recalculated. Attendance, roster, payroll,
+document or audit rows that already exist — including any created for the owner
+account before this change — are untouched, and payroll generation (which
+iterates staff profiles) is not modified. What changed is **who is offered**
+(the pickers and the roster) and **what is shown on the owner's own profile**.
+
+## 10.5 Evidence
+
+| Check | Result |
+|---|---|
+| `tests.test_staff_self_profile` + `tests.test_operational_directory_api` | **16 OK** — new: the owner is refused *before* any staff profile is created; the refusal is specific to the owner (a general manager still answers 200); the owner is never offered by the directory, and asking for `roles=ADMIN` returns nobody. |
+| Regression batch — `tests.test_staff`, `tests.test_staff_operations`, `tests.test_staff_operations_api`, `tests.test_query_efficiency`, `tests.test_lateness_deductions` + the two above | **Ran 75, OK** |
+| `frontend/tests-js/test-owner-ceo-profile-ui.js` | **9 tests** — 6 on the shipped page, 3 that *run* the page's own code in the stub DOM (tiles rendered, no staff figure in the rendered console, the empty state when no screen is permitted). |
+| `frontend/tests-js/test-profile-month-calendar-ui.js` | **5 tests** — runs the page's calendar code: 12 cells, `No record` for months the API did not return, chips only for non-zero counts, the current month marked, year navigation clamped to the current year, and a month's payroll periods in its detail panel. |
+| `test-profile-monthly-salary-ip-ui.js`, `test-workforce-ui.js` | reconciled and green (the roster no longer filters for the owner; the months block is pinned to the calendar) |
+| `test-profile-photo-ui.js`, `test-lateness-ui.js`, `test-barcode-scanner.js`, `test-sidebar-profile-link.js`, `test-department-page-access.js` | green |
+| `python3 validate.py` | 70 HTML / 30 JS **ALL OK** |
+| `node --test tests-js/` | **434 tests: 432 pass, 1 skipped, 1 pre-existing failure** (root web-app manifest scope, `test-pwa-dashboard-only.js`) |
+
+## 10.6 Honest limits
+
+* The month calendar shows the API's own 24-month history and navigates by
+  year; months older than that are not queryable because the endpoint does not
+  return them.
+* The Administrator remains the hotel's administrator: this change does not
+  remove the role, its capabilities or its authority — only the owner's staff
+  record and the owner's presence in staff lists.
+* Whether the live production owner account had already had a staff profile
+  created for it cannot be verified from this repository (its database is not
+  part of it). If one exists it is deliberately left in place; it is no longer
+  surfaced as a staff record and the owner is no longer offered as staff.

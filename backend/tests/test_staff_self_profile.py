@@ -236,3 +236,31 @@ class MyStaffProfileTests(BaseAPITestCase):
             "staff": self.alice.pk, "review_date": str(hotel_today()), "rating": 5, "status": "FINALIZED",
         }, format="json")
         self.assertEqual(forbidden.status_code, 403, forbidden.content)
+
+
+class OwnerAccountIsNotAStaffRecordTests(BaseAPITestCase):
+    """The Administrator account is the hotel owner (the CEO), not an employee.
+
+    Reported: the owner's own profile showed staff self-service records — a
+    salary, attendance, shifts and leave. The owner has no employee record, and
+    refusing the request *before* the lazy profile helper runs means no staff
+    profile (and no employee code) is manufactured for the owner either.
+    """
+
+    def test_owner_is_refused_before_any_staff_profile_is_created(self):
+        owner = make_staff("owner-self@hotel.dev", role=User.Role.ADMIN)
+        self.assertFalse(StaffProfile.objects.filter(user=owner).exists())
+        self.auth(owner)
+        response = self.client.get(URL)
+        self.assertEqual(response.status_code, 403, response.content)
+        self.assertIn("hotel owner", response.json()["message"])
+        self.assertFalse(
+            StaffProfile.objects.filter(user=owner).exists(),
+            "refusing the owner must not manufacture an employee record",
+        )
+
+    def test_the_refusal_is_specific_to_the_owner(self):
+        """Managers and HR remain employees: their own record still answers."""
+        manager = make_staff("gm-self@staff.dev", role=User.Role.GENERAL_MANAGER)
+        self.auth(manager)
+        self.assertEqual(self.client.get(URL).status_code, 200)

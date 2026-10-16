@@ -70,3 +70,22 @@ class OperationalStaffDirectoryApiTests(BaseAPITestCase):
         self.auth(cashier)
         response = self.client.get("/api/admin/users/directory/")
         self.assertEqual(response.status_code, 403, response.content)
+
+    def test_the_owner_administrator_is_never_offered_as_staff(self):
+        """The Administrator is the hotel owner, not an assignable employee.
+
+        Reported: the CEO appeared as staff. The owner cannot be rostered,
+        clocked, put on leave or disciplined, so the picker never returns the
+        Administrator account — while still returning real staff.
+        """
+        owner = make_staff("directory-owner@staff.dev", role=User.Role.ADMIN)
+        self.auth(owner)
+        response = self.client.get("/api/admin/users/directory/")
+        self.assertEqual(response.status_code, 200, response.content)
+        ids = {row["id"] for row in response.json()["data"]}
+        self.assertNotIn(owner.pk, ids, "the owner must not be assignable as staff")
+        self.assertTrue(ids, "and the picker still returns the hotel's staff")
+        # Asking for administrators explicitly returns nobody, not the owner.
+        explicit = self.client.get("/api/admin/users/directory/", {"roles": "ADMIN"})
+        self.assertEqual(explicit.status_code, 200, explicit.content)
+        self.assertEqual(explicit.json()["data"], [])

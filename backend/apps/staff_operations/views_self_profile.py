@@ -1,5 +1,9 @@
 """Authenticated staff self-service profile (owner-scoped, read-only).
 
+The Administrator (owner/CEO) account is deliberately excluded: it is not an
+employee, so it has no employee record to serve and no staff profile is
+manufactured for it (see ``MyStaffProfileView.get``).
+
 This is deliberately separate from ``StaffComprehensiveProfileView`` (the
 manager/HR 10-tab record, gated by ``staff.view``/``staff.profile.manage``).
 Here the employee is resolved *only* from ``request.user``: no staff id,
@@ -219,6 +223,17 @@ class MyStaffProfileView(APIView):
         user: User = request.user
         if not user.is_active or getattr(user, "role", None) == User.Role.GUEST or not user.is_staff_member:
             raise PermissionDenied("Staff self-service is available to staff accounts only.")
+        if user.role == User.Role.ADMIN:
+            # The Administrator account is the hotel owner (the CEO), not an
+            # employee. It has no salary, attendance, shift, leave, disciplinary
+            # or review record to serve, and refusing here also means no staff
+            # profile is manufactured for it. Profile shows the owner's own
+            # account, sign-in security and the management screens.
+            raise PermissionDenied(
+                "The Administrator account is the hotel owner, so it has no staff self-service "
+                "record: there is no salary, attendance, shift roster or leave to show. "
+                "Profile shows the owner's account and the management screens instead."
+            )
 
         attendance_from = _parse_date(request, "attendance_from")
         attendance_to = _parse_date(request, "attendance_to")

@@ -152,6 +152,44 @@ the desk exactly as before. See `docs/ATTENDANCE_WORKSTATION_SETUP.md` §4a. Man
 instructions, including what to check after deploying behind a load balancer, are
 in `docs/ATTENDANCE_WORKSTATION_SETUP.md`.
 
+### Profiles: the owner's profile and a staff member's profile
+
+**Profile** is one page that knows which account is reading it.
+
+* An **employee** sees their own employment record — personal and employment
+  details, salary and payslips, attendance, shifts, leave, disciplinary and
+  review records — read-only. It is resolved from the signed-in session, so no
+  other employee's record can be opened by changing an address.
+* The **Administrator is the hotel owner (the CEO), not an employee**. The
+  owner account has no salary, attendance, shift roster, leave or disciplinary
+  record to show, so that page is an **owner profile**: the owner's own account
+  and sign-in security, plus tiles for the screens the owner runs (Staff &
+  access, Settings, Accounting, Reports). Each tile is resolved through the
+  access registry, so an account can only be offered a screen it may open.
+
+Keeping the two apart has three consequences worth knowing:
+
+1. **The owner is never listed as staff.** The Staff page roster lists staff
+   accounts; the Administrator is not one of them and is not offered in the
+   assignee pickers, so a shift, an attendance record, a leave request or a
+   disciplinary case cannot be raised against the owner by mistake. The account
+   itself is still reachable through the labelled **Owner account** button on
+   the Staff page, and its own details are managed on the owner profile.
+2. **The API refuses the staff record for the owner**, with a plain explanation
+   rather than an empty employee record — and it refuses before any employee
+   record could be created for the account.
+3. **Nothing already recorded is changed.** Any existing attendance, roster,
+   payroll or document rows are left exactly as they are; only what the owner is
+   *shown on their own profile* changes.
+
+**Months worked & salary payment status** (in *Salary & payslips*) is drawn the
+way the occupancy calendar is drawn: a grid of month cells, a chip legend, year
+navigation and a detail panel. Each cell shows that month's own worked, approved
+leave and missed scheduled days and the salary recorded for it; select a month
+to see its payroll periods. A month with no attendance, roster or payslip record
+says **No record** — it never prints zeroes as if they were facts, and no figure
+is ever derived in the browser.
+
 ### Operations, finance, and workforce
 
 The staff sidebar groups the operational modules. Every list is bounded and

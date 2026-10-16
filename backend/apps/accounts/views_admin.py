@@ -49,7 +49,16 @@ class OperationalStaffDirectoryView(APIView):
     require_any_capability = True
 
     def get(self, request):
-        queryset = User.objects.filter(is_active=True).exclude(role=User.Role.GUEST).select_related("staff_profile")
+        # The Administrator account is the hotel owner, not an operational staff
+        # member: it is never offered as the assignee of a shift, a task, an
+        # attendance record, a leave request or a disciplinary case, so the
+        # owner cannot be rostered or disciplined by mistake. Owner identity is
+        # presented on the profile page instead.
+        queryset = (
+            User.objects.filter(is_active=True)
+            .exclude(role__in=(User.Role.GUEST, User.Role.ADMIN))
+            .select_related("staff_profile")
+        )
         roles_raw = request.query_params.get("roles") or request.query_params.get("role") or ""
         if roles_raw:
             valid_roles = set(User.Role.values) - {User.Role.GUEST}

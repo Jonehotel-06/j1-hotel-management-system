@@ -2198,3 +2198,104 @@ details[open] > summary .acc-chevron { transform: rotate(180deg); }
   .finance-alert { align-items: flex-start; flex-wrap: wrap; }
   .finance-alert > .btn { margin-left: 0; }
 }
+
+/* ========================================================================
+   STAFF SELF-SERVICE PROFILE (profile.html) AND THE OWNER CONSOLE
+   The staff record reads like the rest of the console: a segmented tab
+   strip, blocks with a small section heading, and — for the months worked —
+   the occupancy calendar's treatment (a grid of cells, a chip legend, year
+   navigation and a detail panel), with months in place of nights. The owner
+   (Administrator/CEO) account has no staff record at all: it gets its own
+   console of account facts and the management screens it runs.
+   ======================================================================== */
+
+/* Segmented tab strip: the active tab is a raised surface, the rest recede. */
+.ss-tabs {
+  display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 1rem;
+  padding: 0.25rem; border: 1px solid var(--color-border);
+  border-radius: var(--radius); background: var(--color-surface-alt);
+}
+.ss-tabs .btn { min-height: 32px; padding: 0 0.85rem; border: 1px solid transparent; }
+.ss-tabs .btn:not(.btn-ghost) {
+  --btn-bg: var(--color-surface); --btn-fg: var(--color-text);
+  border-color: var(--color-border); font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.07);
+}
+.ss-tabs .btn-ghost { --btn-fg: var(--color-text-muted); }
+.ss-tabs .btn-ghost:hover { --btn-bg: var(--color-surface-deep); }
+
+/* A pane is a block: a small section heading, then its facts and tables. */
+.ss-pane { padding-top: 0.25rem; }
+.ss-pane h3 {
+  margin: 1.4rem 0 0.6rem; padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--color-text-muted);
+}
+.ss-pane h3:first-child { margin-top: 0; }
+.ss-pane .table-wrap { margin-bottom: 0.5rem; }
+
+/* ---------------------- Owner (CEO) console tiles ----------------------- */
+.owner-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; }
+.owner-tile {
+  display: flex; align-items: flex-start; gap: 0.7rem; padding: 0.9rem;
+  border: 1px solid var(--color-border); border-radius: var(--radius);
+  background: var(--color-surface); color: inherit;
+  transition: border-color var(--speed-2), transform var(--speed-2);
+}
+.owner-tile:hover { border-color: var(--color-primary); transform: translateY(-1px); }
+.owner-tile-icon { display: inline-flex; flex: 0 0 auto; color: var(--color-text-muted); }
+.owner-tile-text { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.owner-tile-text strong { font-size: var(--fs-sm); }
+.owner-tile-text span { font-size: var(--fs-xs); color: var(--color-text-muted); line-height: 1.45; }
+
+/* ------------- Months worked (occupancy-calendar treatment) ------------- */
+.mo-head { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; flex-wrap: wrap; }
+.mo-head h3 { margin: 0; border-bottom: 0; }
+.mo-nav { display: flex; align-items: center; gap: 0.35rem; flex-wrap: nowrap; }
+.mo-year-label { min-width: 3.6rem; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.mo-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem; margin: 0.75rem 0 0.9rem; font-size: var(--fs-xs); color: var(--color-text-muted); }
+.mo-legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }
+.mo-legend-item .badge { font-size: 0.6rem; }
+.mo-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.4rem; }
+.mo-cell {
+  display: flex; flex-direction: column; align-items: stretch; gap: 0.3rem;
+  min-height: 104px; padding: 0.5rem;
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-surface); font: inherit; color: inherit; text-align: left;
+}
+.mo-cell.has-record { cursor: pointer; }
+.mo-cell.has-record:hover { border-color: var(--color-primary); }
+.mo-cell:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.mo-cell:not(.has-record) { background: var(--color-surface-alt); }
+.mo-cell.is-current { border-color: var(--color-primary); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.mo-name { font-weight: 700; font-size: var(--fs-sm); }
+.mo-chips { display: flex; flex-wrap: wrap; gap: 0.2rem; }
+.mo-chip {
+  display: inline-block; padding: 0.05rem 0.35rem; border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border); background: var(--color-surface-deep);
+  font-size: 0.66rem; font-weight: 700; line-height: 1.6; color: var(--color-text-muted);
+}
+.mo-chip-worked { background: rgba(39, 174, 96, 0.16); border-color: rgba(39, 174, 96, 0.5); color: var(--color-text); }
+.mo-chip-leave { background: rgba(47, 128, 237, 0.14); border-color: rgba(47, 128, 237, 0.45); color: var(--color-text); }
+.mo-chip-missed { background: rgba(235, 87, 87, 0.14); border-color: rgba(235, 87, 87, 0.45); color: var(--color-text); }
+.mo-legend .mo-chip { width: 1.1rem; height: 1.1rem; padding: 0; }
+.mo-foot { margin-top: auto; font-size: 0.72rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.mo-periods { display: block; font-weight: 400; color: var(--color-text-faint); font-size: 0.64rem; }
+.mo-status { display: block; }
+.mo-status .badge { font-size: 0.58rem; padding: 0.25em 0.5em; }
+.mo-empty { margin-top: auto; font-size: 0.68rem; color: var(--color-text-faint); }
+
+@media (max-width: 900px) {
+  .mo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  /* The cells become one row each, exactly as the occupancy calendar does on
+     a phone: the month, its chips and its salary on a single line. */
+  .mo-grid { grid-template-columns: 1fr; }
+  .mo-cell { flex-direction: row; align-items: center; gap: 0.6rem; min-height: 0; padding: 0.55rem 0.7rem; }
+  .mo-name { min-width: 2.6rem; }
+  .mo-foot { margin: 0 0 0 auto; }
+  .ss-tabs { flex-wrap: nowrap; overflow-x: auto; }
+  .ss-tabs .btn { flex: 0 0 auto; }
+}

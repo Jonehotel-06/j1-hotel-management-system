@@ -82,6 +82,13 @@ test("admin staff management can create, filter, and list every supported operat
     "ACCOUNTS_MANAGER", "ACCOUNTANT", "HR_MANAGER", "SECURITY", "PROCUREMENT_OFFICER", "STOREKEEPER", "INVENTORY_CLERK",
   ];
   roles.forEach((role) => assert.match(page, new RegExp('value: "' + role + '"')));
-  roles.forEach((role) => assert.match(page, new RegExp('option value="' + role + '"')));
-  assert.match(page, /role__in: "ADMIN,MANAGER,GENERAL_MANAGER,FRONT_DESK_SUPERVISOR,[^"]*INVENTORY_CLERK"/);
+  /* Every operational role can be filtered for EXCEPT the Administrator: the
+     owner (CEO) is not a staff row and must not be listed or filtered as one
+     (see tests-js/test-owner-ceo-profile-ui.js). The role stays assignable
+     when an account is created or edited. */
+  roles.filter((role) => role !== "ADMIN")
+    .forEach((role) => assert.match(page, new RegExp('option value="' + role + '"')));
+  assert.equal(/option value="ADMIN"/.test(page), false, "the owner is not a roster filter");
+  assert.match(page, /role__in: "MANAGER,GENERAL_MANAGER,FRONT_DESK_SUPERVISOR,[^"]*INVENTORY_CLERK"/);
+  assert.equal(/role__in: "ADMIN,/.test(page), false, "the roster never asks for the owner");
 });

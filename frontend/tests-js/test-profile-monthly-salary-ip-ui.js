@@ -7,7 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { FRONTEND } = require("./harness");
 
-test("staff profile salary section renders current-month and monthly work/payment history", () => {
+test("staff profile renders the months worked as an occupancy-style month calendar", () => {
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "profile.html"), "utf8");
   assert.match(page, /sal\.current_month_work/);
   assert.match(page, /sal\.monthly_history/);
@@ -16,8 +16,23 @@ test("staff profile salary section renders current-month and monthly work/paymen
   assert.match(page, /badge-success/);
   assert.match(page, /badge-danger/);
   assert.match(page, /badge-warning/);
-  assert.match(page, /Worked ' \+ esc\(row\.worked_days\) \+ ' \/ '/);
-  assert.match(page, /Missed ' \+ esc\(row\.missed_days\) \+ ' \/ '/);
+  /* The months are rendered the way the occupancy calendar is rendered: a grid
+     of cells, a chip legend, year navigation and a detail panel per cell. Every
+     chip is built from the API's own monthly fields — a month the API did not
+     return says "No record" instead of printing zeroes. */
+  assert.match(page, /monthlyByKey\[row\.month\] = row/);
+  assert.match(page, /esc\(row\.worked_days\) \+ " worked<\/span>"/);
+  assert.match(page, /esc\(row\.leave_days\) \+ " leave<\/span>"/);
+  assert.match(page, /esc\(row\.missed_days\) \+ " missed<\/span>"/);
+  assert.match(page, /<span class="mo-empty">No record<\/span>/);
+  assert.match(page, /class="mo-grid" id="ss-months" role="grid"/);
+  assert.match(page, /class="mo-legend"/);
+  assert.match(page, /data-mo-prev/);
+  assert.match(page, /data-mo-next/);
+  assert.match(page, /data-mo-current>This year<\/button>/);
+  assert.match(page, /openMonth\(month\.getAttribute\("data-mo-month"\)\)/);
+  assert.match(page, /"Months worked — " \+ row\.month_label/);
+  assert.match(page, /row\.payroll_periods \|\| \[\]/);
   assert.match(page, /PARTIALLY_PAID:\["badge-warning","Part payment"\]/);
   assert.match(page, /NOT_CALCULATED:\["badge-info","No approved payslip yet"\]/);
   assert.match(page, /Missed days count only scheduled shifts that have started/);
