@@ -241,6 +241,44 @@ Receptionist Desktop rule (desk key or registered address) is unchanged: staff
 clock in at the desk, and management accounts may authorise from elsewhere.
 A staff member on an active break is not issued a code until the break ends.
 
+### Tables: which values may wrap, and which may not
+
+Long values must never widen the page, but a *reference, date, amount, status or
+code* must never break onto a second line either — a shredded
+`TSK-20261016-A1B2` reads as broken data. The rule the console uses, on every
+dashboard table:
+
+| Class | Applies to | Behaviour |
+|---|---|---|
+| `.cell-nowrap` | an atomic cell the page knows about (references, dates, action clusters) | one line; an over-wide table scrolls sideways inside `.table-wrap` |
+| `.cell-fit` | added automatically by `js/table-fit.js` from the column heading | same as `.cell-nowrap`, for every column the classifier recognises |
+| `.cell-sub` | one identifier inside an otherwise prose column (the SKU above its item name, a shift reference under a staff name, a phone number under a customer) | the identifier stays whole, the prose beside it still wraps |
+| `.cell-clamp` | genuinely long free text (audit summaries, item lists) | bounded width, wraps inside it, never widens the table |
+
+Names, descriptions, notes and summaries keep wrapping between words — that is
+deliberate, and pinned by `frontend/tests-js/test-table-fit.js`. A table can opt
+out entirely with `data-table-fit="off"`. Columns whose heading is not in the
+classifier's vocabulary are left wrapping rather than guessed at.
+
+On phones every ordinary table cell is already kept on one line and the table
+scrolls inside `.table-wrap`; the staff roster (`.table-staff`) is the exception
+— it restacks into cards and wraps inside each card by design. Action clusters
+in a table cell stay on one line on desktop (the table scrolls instead of
+stacking View/Claim/Dispatch/Complete into three rows), and status pills and
+badges never fold inside their own background.
+
+### Cancelling a booking that has already taken a payment
+
+On **Check-out → Full booking** (`dashboard/booking-details.html`) the Cancel
+button (book cancellation, with its confirm dialog) is DISABLED, with the reason
+on hover, as soon as the booking carries recorded money — a payment, a part
+payment, or a refund. Cancelling a paid booking directly would leave money with
+nothing to refund against, so the money route is the cancellation / refund
+workflow in **Enquiries → Cancellation / refund**, which records the refund
+against the payment. An unpaid booking still shows a working Cancel. The API and
+the booking-cancel permission are unchanged; only the paid case is closed on the
+screen.
+
 ### Arrivals and check-in
 
 **Check-in** lists today's expected arrivals and everyone currently in-house.

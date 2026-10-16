@@ -123,3 +123,64 @@ test("fitAll is a no-op without a document (for example in a worker)", () => {
 });
 
 test.after(() => disposeAll());
+
+/* ---- Reported tables (housekeeping, laundry, workstations, staff, POS, ----
+   approvals, workforce schedules/leave, reports, inventory) -----------------
+
+   These are the exact column headings of the tables reported as "data breaks to
+   the next line". Each one holds a reference, a moment, a measure or a short
+   code — never prose — so it must be classified atomic and keep its value on
+   one line. */
+test("the reported tables' reference/date/measure/code columns stay on one line", () => {
+  const { isAtomicHeading } = loadModule();
+  const headings = [
+    // housekeeping task queue
+    "Task", "Room", "Due", "Status", "Actions",
+    // laundry orders
+    "Order", "Total", "Payment",
+    // reception terminal + workstation registry
+    "Attendance Status", "Clocked In", "Workstation Code State", "Quick Action",
+    "Workstation", "Last seen",
+    // staff page (roster meta line, departments, deductions, capabilities)
+    "Department & Role", "Last login", "Reference", "Approved Deduction",
+    "Capability Code", "Dashboard Path", "Subdomain URLs",
+    // POS / room service
+    "Settlement", "Qty",
+    // approvals queue
+    "Waiting since", "Amount",
+    // workforce: attendance, payslips, leave, schedules, templates, profiles
+    "Business date", "Clock in", "Clock out", "Worked", "Period", "Gross",
+    "Deductions", "Net", "Paid", "Balance", "Dates", "Shift", "Planned start",
+    "Planned end", "Hours", "Employee code", "Request", "Template",
+    // reports
+    "Ledger transactions", "Count", "Check-in", "Balance due", "Age (days)",
+    "Bucket", "Incurred", "Category",
+    // inventory: hand-off, catalog, movement ledger, profitability, counts
+    "On hand", "Reorder level", "State", "Last movement", "Count", "Initiated",
+    "Lines", "Hand-off", "POS order", "Requested", "Version", "Tracking",
+    "Unit", "Reorder", "Standard cost", "Movement", "Quantity", "Recorded",
+    "Unit cost", "Selling price", "Stock value", "Expected revenue",
+    "Expected gross profit", "Margin", "Expected", "Counted", "Variance",
+    "Unit price", "Line total", "Payment method",
+  ];
+  for (const label of headings) {
+    assert.equal(isAtomicHeading(label), true, `expected atomic (one line): ${label}`);
+  }
+});
+
+test("widening the vocabulary did not freeze the prose columns that contain those words", () => {
+  const { isAtomicHeading } = loadModule();
+  for (const label of [
+    "Category & Allegation", "Employee Response", "Areas to Improve",
+    "Components per unit", "Job Positions", "Description", "Detail",
+    "Reason / Review Note", "Requested by", "Resolution", "Active / Total Staff",
+    "Staff", "Guest name", "Room type", "Item", "Menu item", "Location",
+    "Supplier", "Payee", "Assignee", "Measure", "Title & Description",
+    "Late details", "Notes",
+  ]) {
+    assert.equal(isAtomicHeading(label), false, `expected prose (wraps): ${label}`);
+  }
+  /* The exception that proves the rule: a case REFERENCE plus its department is
+     an atomic pair, so it keeps its line. */
+  assert.equal(isAtomicHeading("Case / department"), true);
+});

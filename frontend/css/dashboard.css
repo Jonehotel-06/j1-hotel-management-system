@@ -560,6 +560,9 @@ body.drawer-open .dash-main { overflow: hidden; }
 /* ----------------------------- Status pills ------------------------------ */
 .status-pill {
   display: inline-flex; align-items: center; gap: 0.4em;
+  /* The pill is one atom: "READY FOR INSPECTION" stays on one line rather than
+     folding inside its own rounded background. */
+  white-space: nowrap;
   padding: 0.28em 0.6em;
   border-radius: var(--radius-sm);
   font-size: 0.7rem;
@@ -835,11 +838,27 @@ body.drawer-open .dash-main { overflow: hidden; }
 }
 .table td.cell-nowrap a, .table td.cell-nowrap code { overflow-wrap: normal; }
 
+/* Some columns carry a real value on the first line and prose on the second:
+   the SKU above its item name, a location code above its name, a staff
+   member's shift reference under their name, a phone number under a customer.
+   The heading is prose, so the CELL cannot be frozen — but the value under it
+   is an identifier and must not split mid-token either. Pages mark just that
+   value with .cell-sub; the prose line beside it still wraps. */
+.table td .cell-sub { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+
 /* Auto-classified atomic columns (amounts, dates, references, statuses,
    action clusters). js/table-fit.js adds .cell-fit from the column heading.
    Desktop only: on phones the same rows restack as cards and must wrap. */
 @media (min-width: 721px) {
   .table td.cell-fit, .table th.cell-fit { white-space: nowrap; overflow-wrap: normal; }
+  /* An action cluster is one atomic cell too: View / Claim / Dispatch / Start /
+     Complete belong on ONE line. `flex-wrap: wrap` was letting a four-button
+     column fold into three stacked lines and grow every row — the reported
+     "data breaks to the next line" on housekeeping, laundry, staff, POS,
+     workforce, reports and inventory. The table scrolls inside .table-wrap
+     instead. The card-restacked .table-staff roster is excluded: its columns
+     are fixed and have no scroll room, so its icon buttons still wrap. */
+  .table:not(.table-staff) td .row-actions { flex-wrap: nowrap; }
 }
 /* Phones: generic tables keep their columns and scroll horizontally inside
    .table-wrap (a reference must never break mid-token). The card-restacked
@@ -852,6 +871,11 @@ body.drawer-open .dash-main { overflow: hidden; }
    reference) may still wrap gently — but never letter-by-letter. */
 .table td.cell-nowrap .caption,
 .table td.cell-nowrap .receipt-mobile-guest { white-space: normal; overflow-wrap: break-word; }
+/* The same allowance for the auto-classified atomic columns: the VALUE stays on
+   one line while a caption the page marked as prose (`.caption`: a task summary
+   under its reference, a leave reason under its request) wraps between words
+   instead of forcing the whole column to its longest sentence. */
+.table td.cell-fit .caption { white-space: normal; overflow-wrap: break-word; }
 
 /* --------------------------- Guest column (bookings) ----------------------
    The guest cell holds a NAME line and a phone/email caption. Under the auto
@@ -991,6 +1015,13 @@ tr.is-muted { opacity: 0.55; }
 .table-staff td[data-label="Status"],
 .table-staff td[data-label="Last login"] {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The roster's Department & Role column keeps its two-line layout (department
+   over "job title · role"). It carries no title attribute to fall back on, so
+   it is never clipped: it wraps between words only — the old
+   `overflow-wrap: anywhere` broke "Housekeeping" mid-word. */
+.table-staff td[data-label="Department & Role"] {
+  white-space: normal; overflow-wrap: break-word; word-break: normal;
 }
 .table-staff td[data-label="Actions"] { padding-left: 0.5rem; }
 .table-staff td[data-label="Actions"] .row-actions { justify-content: flex-end; }

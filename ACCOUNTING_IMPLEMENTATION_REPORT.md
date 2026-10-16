@@ -1,6 +1,6 @@
 # Implementation report — accounting page reorganisation and the four reported bugs
 
-Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18 → 1.1.19 → 1.1.20` ·
+Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18 → 1.1.19 → 1.1.20 → 1.1.21` ·
 everything in this report is implemented in the repo (frontend + backend), not recommended.
 
 §1–§7 cover `1.1.16`; §8 covers `1.1.17` (supplier payment receipts); §9 covers the five
@@ -8,7 +8,9 @@ follow-up reports in `1.1.18` (settings tax controls, the cash-variance approval
 guest-request bills on the folio, the check-out payment path, and profile-photo uploads);
 §10 covers `1.1.19` (the owner/CEO profile and the staff profile's months view);
 §11 covers `1.1.20` (a terminal clock-in or issued code *is* the clock-in, and the personal
-Clock in control is disabled for that staff member until they clock out).
+Clock in control is disabled for that staff member until they clock out);
+§12 covers `1.1.21` (table values that were breaking onto a second line on the reported
+pages, and the booking Cancel that stayed usable after the guest had already paid).
 
 Scope: the ten accounting requirements (A), the four reported bugs (B1–B4), the
 `-₦576,800.00` Guest Receivables investigation, and the tests for all of it.
@@ -667,3 +669,101 @@ record is only ever opened **after** the probe has matched.
   clock-in reuses it rather than opening a new one, which is exactly what
   "disabled until they clock out" means. Closing an old record is still a
   manager correction, as before.
+
+
+---
+
+# 12. Follow-up (1.1.21) — table data breaking onto a second line, and the paid-booking Cancel
+
+## 12.1 What was reported
+
+1. "Tables data breaks to the next line" on **Housekeeping, Laundry, the Workstation registry,
+   Staff, POS & room service, Approvals, Workforce (schedules and leave), Reports and
+   Inventory (POS hand-off, catalog, movement ledger, profitability)**.
+2. On **Check-out → Full booking**, a Cancel button was still offered for a booking whose
+   payment had already been made.
+
+## 12.2 Why the values broke, and what changed
+
+The console wraps long values by design (`css/dashboard.css`: `.table td, .table th
+{ overflow-wrap: break-word }`) so a verbose note can never widen the page — but that
+safety net also lets the auto table layout squeeze an identifier column until a value
+splits mid-token. Cells opt out with `.cell-nowrap`, and `js/table-fit.js` adds the same
+opt-out (`.cell-fit`) automatically to every column whose **heading** it recognises as
+atomic. **The gap was that vocabulary**: it had no word for a reference (`Order`, `Task`,
+`Request`, `Movement`, `Workstation`, `Purchase order`), a moment (`Clocked In`,
+`Planned start`, `Incurred`, `Submitted`, `Captured`, `Timestamp`, `Waiting since`,
+`Recorded`), a measure (`Worked`, `Hours`, `Gross`, `Net`, `Deductions`, `Margin`,
+`Ledger transactions`, `Refund`, `Overtime`, `Balance`) or a short code
+(`Settlement`, `Payment`, `Department`, `Employee`, `Unit`, `Version`, `Tracking`,
+`Source`, `Dashboard Path`, `Subdomain URLs`, `Reorder`, `Valid`, `Occupied`,
+`Available`, `Capacity`, `Beds`, `Sleeps`). Those columns were never marked, so their
+values stayed on the break-anywhere rule and shredded (`TSK-20261016-` / `A1B2`).
+
+| Where | Change |
+|---|---|
+| `frontend/js/table-fit.js` | The `ATOMIC` vocabulary extended with every reference / moment / measure / short code above, and `PROSE` extended with `responses / allegations / strengths / weaknesses / improvements / areas / components` so the columns that merely *contain* an atomic word keep wrapping (`Employee Response`, `Category & Allegation`, `Areas to Improve`, `Components per unit`). Headings in neither list still wrap — nothing is guessed. |
+| `frontend/css/dashboard.css` | New `.cell-sub` opt-in: a single identifier inside an otherwise prose column (the SKU above its item name, a shift reference under a staff name, a phone number under a customer) stays whole while the prose beside it wraps. `.status-pill` never folds inside its own background; action clusters in a table cell (`.table:not(.table-staff) td .row-actions`) stay on one line on desktop and the table scrolls instead of stacking View / Claim / Dispatch / Complete into three rows; an atomic column may still wrap a `.caption` line the page marked as prose (a task summary, a leave reason). The roster's Department & Role column wraps between words only — its old `overflow-wrap: anywhere` broke "Housekeeping" mid-word and it carries no title attribute to fall back on. |
+| `frontend/css/components.css` | `.badge` never folds inside itself (same rule as `.status-pill`). |
+| `frontend/dashboard/inventory.html` | SKU / location code / menu-item SKU marked `.cell-sub`; item names, count notes, location names and recipe components marked `.caption` (prose, wraps). Covers balances, counts, recipes, stock items, locations, the movement ledger, count and transfer lines. |
+| `frontend/dashboard/housekeeping.html` | The Task cell's summary is a `.caption` under its reference; the Type + priority cell is one line. |
+| `frontend/dashboard/laundry.html` | The customer cell's phone / room line is `.cell-sub` (the name above it stays prose). |
+| `frontend/dashboard/workforce.html` | The attendance row's shift reference under the staff name is `.cell-sub`; the leave reason and template name are `.caption`. |
+| `frontend/dashboard/staff.html` | Disciplinary category is `.cell-sub` with the allegation as `.caption`; the capability category under its name is `.cell-sub`; the departments "Active / Total Staff" ratio is one line. |
+| `frontend/dashboard/pos.html` | The order's location / table / stay reference is `.cell-sub`. |
+| `frontend/dashboard/approvals.html` | The approval title under its reference is a `.caption` (the reference, requester, waiting-since and amount cells were already atomic). |
+| `frontend/dashboard/reports.html` | No markup change needed: every column in the four reported tables is atomic once the vocabulary covers `Ledger transactions`, `Count`, `Check-in`, `Age (days)`, `Bucket`, `Incurred`, `Category`, `Booking` and `Source`. |
+
+## 12.3 The Cancel on a booking that has taken a payment
+
+On **Check-out → Full booking** (`dashboard/booking-details.html`) `syncActions()` now
+reads the booking's own money snapshot: once `amount_paid > 0` **or** `payment_status` is
+`PAID`, `PARTIALLY_PAID` or `REFUNDED`, the Cancel button stays **visible but disabled**,
+with the reason on hover ("Payment already recorded (…) — cancel this booking through the
+cancellation / refund workflow in Enquiries so the refund is recorded against the
+payment."). It becomes disabled the moment a payment is recorded, because the success
+path re-renders from the authoritative booking snapshot. An unpaid booking keeps a
+working Cancel, the confirm dialog and `API.staffCancelBooking` are unchanged, and the
+click handler refuses a disabled control out loud (a toast with the same reason) instead
+of doing nothing. Recorded payment figures on the screen are the API's, not arithmetic
+done in the browser.
+
+## 12.4 What deliberately did not change
+
+* **No backend change at all in this release**: no endpoint, no serializer, no migration,
+  no new permission, no figure recalculated. The booking-cancel capability and its
+  server-side authority are untouched; only the *screen* closes the direct path when
+  money has been taken.
+* No table column was hidden, truncated or emptied to make the layout fit. Atomic cells
+  scroll horizontally inside `.table-wrap`; prose still wraps. Nothing is guessed: a
+  heading in neither the atomic nor the prose vocabulary keeps wrapping.
+* Phones already kept ordinary table cells on one line (`@media (max-width: 720px)`), so
+  this release changes the desktop tables only; the card-restacked staff roster keeps
+  wrapping inside its cards. `.table-staff`'s deliberate ellipsis columns are unchanged.
+
+## 12.5 Evidence
+
+| Check | Result |
+|---|---|
+| `frontend/tests-js/test-table-fit.js` | **9 tests** — every heading of the nine reported tables (references, dates, measures, codes, quantities: 100+ real column headings) is classified atomic, the prose columns that merely contain an atomic word (`Category & Allegation`, `Employee Response`, `Areas to Improve`, `Components per unit`, …) still wrap, and the previously pinned prose headings are untouched. |
+| `frontend/tests-js/test-table-layout-audit.js` | **13 tests** — the exact CSS contracts (`.cell-nowrap`, `.cell-fit`, `.cell-sub`, `.cell-clamp`, `.table-wrap`, `.status-pill`, `.badge`, the desktop action-cluster rule), the heading sets of every table on the nine reported pages checked against the classifier, `.cell-sub` present on the pages that need it, and the `.caption` allowance under an atomic column. |
+| `frontend/tests-js/test-booking-cancel-paid-ui.js` | **8 tests** — the shipped `syncActions()` is executed in a stub DOM: an unpaid booking keeps an enabled Cancel with no tooltip; a part-paid booking (`amount_paid 2500`) gets a disabled Cancel whose tooltip names the recorded amount and the refund workflow; `PAID` with no amount snapshot is still protected; a `REFUNDED` booking stays closed; a `CHECKED_OUT` booking still hides the control; and the page still calls `API.staffCancelBooking` with its confirm dialog and refuses a disabled cancel out loud. |
+| `node --test tests-js/` | **461 tests: 459 pass, 1 skipped, 1 pre-existing failure** (root web-app manifest scope, `test-pwa-dashboard-only.js`) |
+| `python3 validate.py` | 70 HTML / 30 JS **ALL OK** |
+
+## 12.6 Honest limits
+
+* The audit is static: this sandbox has no headless browser (no Chromium/Chrome/Firefox, no
+  Playwright/Puppeteer), so the fix is proved by the CSS/markup contracts above and by the
+  classifier's own heading inventory, not by screenshots. Open the page and the reported
+  tables should hold their values on one line, with the table scrolling sideways when a
+  column genuinely cannot fit.
+* "Data breaks to the next line" is read as *a value splitting mid-token or mid-date*. A
+  cell that the design itself stacks with `<br>` (a reference over its date, a customer
+  name over their phone) still shows two lines — the first line is now an atomic value and
+  the second is a caption that wraps between words. Long names, notes and descriptions
+  still wrap: freezing those would trade a broken-looking cell for a 2000px table.
+* The Cancel rule uses the booking snapshot the page already has (`amount_paid`,
+  `payment_status`). A booking whose money arrived on a channel that does not update the
+  booking's paid-to-date would still show a working Cancel — the cancel API itself is
+  unchanged, so nothing silently fails; the refund workflow remains the money route.

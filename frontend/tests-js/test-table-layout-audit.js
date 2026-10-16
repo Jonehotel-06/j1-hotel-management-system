@@ -113,3 +113,131 @@ test("the new projection and expense tables participate in the shared system", (
   assert.match(accounting, /<th class="cell-clamp">Payee<\/th>/);
   assert.match(accounting, /<th class="num cell-nowrap">Amount<\/th>/);
 });
+
+/* ---- The reported pages, audited by their own headings -------------------- */
+
+/* Reported: "Tables data breaks to the next line" on housekeeping, laundry, the
+   workstation registry, staff, POS/room service, approvals, workforce
+   (schedules + leave), reports and inventory (hand-off, catalog, movement
+   ledger, profitability). The shared classifier had no word for a reference
+   ("Order", "Task", "Request", "Movement"), a moment ("Clocked In", "Planned
+   start", "Incurred", "Submitted", "Timestamp") or a measure ("Worked", "Net",
+   "Ledger transactions", "Margin"), so those columns were never marked and the
+   values split mid-token. This audit pins the headings of those tables, so the
+   vocabulary cannot silently lose them again. */
+const REPORTED_TABLES = {
+  "housekeeping.html": [
+    ["Task", "Room", "Type", "Assignee", "Due", "Status", "Actions"],
+  ],
+  "laundry.html": [
+    ["Order", "Customer", "Items", "Total", "Status", "Payment", "Actions"],
+  ],
+  "terminals.html": [
+    ["Employee", "Department & Role", "Attendance Status", "Clocked In", "Workstation Code State", "Quick Action"],
+    ["Workstation", "Department", "Status", "Last reported staff", "Last seen", "Actions"],
+  ],
+  "staff.html": [
+    ["Staff", "Department & Role", "Status", "Last login", "Actions"],
+    ["Department", "Subdomain URLs", "Job Positions", "Active / Total Staff", "Dashboard Path"],
+    ["Reference", "Employee", "Category & Summary", "Status", "Action / Warning", "Approved Deduction", "Actions"],
+    ["Capability Code", "Name & Category", "Description", "Granted to Role", "Toggle"],
+  ],
+  "pos.html": [
+    ["Order", "Mode / guest", "Location", "Total", "Status", "Settlement", "Actions"],
+    ["Item", "Qty", "Total"],
+  ],
+  "approvals.html": [
+    ["Reference", "Detail", "Requested by", "Waiting since", "Amount"],
+  ],
+  "workforce.html": [
+    ["Staff", "Business date", "Status", "Clock in", "Clock out", "Worked", "Actions"],
+    ["Period", "Gross", "Deductions", "Net", "Paid", "Balance", "Actions"],
+    ["Request", "Staff", "Dates", "Type", "Status", "Reviewer", "Actions"],
+    ["Shift", "Staff", "Planned start", "Planned end", "Status", "Location", "Actions"],
+    ["Template", "Department", "Hours", "Status", "Actions"],
+    ["Staff", "Employee code", "Department", "Title", "Status", "Actions"],
+  ],
+  "reports.html": [
+    ["Measure", "Amount", "Ledger transactions"],
+    ["Status", "Count"],
+    ["Booking", "Guest", "Check-in", "Balance due", "Age (days)", "Bucket"],
+    ["Reference", "Incurred", "Payee", "Department", "Category", "Amount", "Status"],
+  ],
+  "inventory.html": [
+    ["Item", "Location", "On hand", "Reorder level", "State", "Last movement"],
+    ["Count", "Location", "Initiated", "Status", "Lines", "Actions"],
+    ["Hand-off", "POS order", "Status", "Requested", "Resolution", "Actions"],
+    ["Menu item", "Location", "Version", "Tracking", "Status", "Actions"],
+    ["Item", "Unit", "Reorder", "Standard cost", "Status", "Actions"],
+    ["Location", "Description", "Status", "Actions"],
+    ["Movement", "Item", "Location", "Type", "Quantity", "Source", "Recorded by", "Recorded"],
+    ["Item", "Expected", "Counted", "Variance"],
+  ],
+};
+
+/* Headings that hold a reference, a moment, a measure or a short code: the
+   value must stay on ONE line (nothing else about the column matters). */
+const MUST_STAY_ON_ONE_LINE = /^(Task|Room|Due|Status|Actions|Order|Total|Payment|Employee|Department & Role|Attendance Status|Clocked In|Workstation Code State|Quick Action|Workstation|Last seen|Department|Subdomain URLs|Dashboard Path|Last login|Reference|Employee|Approved Deduction|Capability Code|Settlement|Qty|Waiting since|Amount|Business date|Clock in|Clock out|Worked|Period|Gross|Deductions|Net|Paid|Balance|Dates|Shift|Planned start|Planned end|Hours|Employee code|Request|Template|Ledger transactions|Count|Check-in|Balance due|Age \(days\)|Bucket|Incurred|Category|Booking|Source|Action \/ Warning|On hand|Reorder level|State|Last movement|Initiated|Lines|Hand-off|POS order|Requested|Version|Tracking|Unit|Reorder|Standard cost|Movement|Quantity|Recorded|Expected|Counted|Variance)$/;
+
+test("every heading of the reported tables is either on one line or knowingly prose", () => {
+  const ctx = { window: {}, document: {} };
+  const vm = require("node:vm");
+  vm.runInNewContext(TABLE_FIT, ctx);
+  const isAtomic = ctx.window.JONE_TABLE_FIT.isAtomicHeading;
+
+  const shouldWrap = [];
+  const shouldNot = [];
+  for (const [page, tables] of Object.entries(REPORTED_TABLES)) {
+    for (const headings of tables) {
+      for (const heading of headings) {
+        const expected = MUST_STAY_ON_ONE_LINE.test(heading);
+        if (expected !== isAtomic(heading)) {
+          (expected ? shouldNot : shouldWrap).push(`${page}: ${heading}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(shouldNot, [],
+    "these columns hold a reference/date/measure/code but are still allowed to break mid-value");
+  assert.deepEqual(shouldWrap, [],
+    "these prose columns were frozen onto one line by the widened vocabulary");
+});
+
+test("an atomic column may still wrap the prose caption the page marked as one", () => {
+  // The value stays on one line; a `.caption` line underneath it (a task
+  // summary, a leave reason) wraps between words. Pages use this on exactly the
+  // columns where the second line is free text.
+  assert.match(CSS, /\.table td\.cell-fit \.caption \{ white-space: normal; overflow-wrap: break-word; \}/);
+  const housekeeping = fs.readFileSync(path.join(DASHBOARD, "housekeeping.html"), "utf8");
+  assert.match(housekeeping, /<small class="caption">'\+JONE\.esc\(task\.summary\)/,
+    "the housekeeping task summary is prose under an atomic reference");
+  const workflow = fs.readFileSync(path.join(DASHBOARD, "workforce.html"), "utf8");
+  assert.match(workflow, /<small class="caption">'\+JONE\.esc\(row\.reason/);
+});
+
+test("an atomic value under a prose column stays on one line (.cell-sub)", () => {
+  // "Item" / "Location" / "Product" carry an identifier AND prose, so the whole
+  // cell cannot be frozen: pages mark just the identifier with .cell-sub.
+  assert.match(CSS, /\.table td \.cell-sub \{ white-space: nowrap; overflow-wrap: normal; word-break: normal; \}/);
+  // The attribute may be written plainly (markup) or escaped inside a
+  // double-quoted JS string (laundry.html) — both render the same HTML.
+  const marked = ["inventory.html", "pos.html", "laundry.html", "staff.html", "workforce.html"];
+  for (const page of marked) {
+    const html = fs.readFileSync(path.join(DASHBOARD, page), "utf8");
+    assert.match(html, /class=\\?"cell-sub\\?"/, `${page} must mark its atomic sub-values`);
+  }
+});
+
+test("an action cluster in a table cell is one line on desktop", () => {
+  // Buttons folded into stacked lines on the reported pages (four actions in a
+  // squeezed column). The cluster now stays on one line and the table scrolls.
+  assert.match(CSS, /\.table:not\(\.table-staff\) td \.row-actions \{ flex-wrap: nowrap; \}/);
+  // The card-restacked staff roster keeps wrapping: its columns are fixed.
+  assert.match(CSS, /\.table-staff \{ table-layout: fixed; \}/);
+});
+
+test("status pills and badges never fold inside themselves", () => {
+  const components = fs.readFileSync(path.join(FRONTEND, "css", "components.css"), "utf8");
+  assert.match(CSS, /\.status-pill \{[\s\S]{0,120}white-space: nowrap;/);
+  assert.match(components, /\.badge \{[\s\S]{0,400}?white-space: nowrap;/);
+});
