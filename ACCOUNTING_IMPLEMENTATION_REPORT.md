@@ -1,6 +1,6 @@
 # Implementation report — accounting page reorganisation and the four reported bugs
 
-Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18 → 1.1.19 → 1.1.20 → 1.1.21` ·
+Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18 → 1.1.19 → 1.1.20 → 1.1.21 → 1.1.22` ·
 everything in this report is implemented in the repo (frontend + backend), not recommended.
 
 §1–§7 cover `1.1.16`; §8 covers `1.1.17` (supplier payment receipts); §9 covers the five
@@ -10,7 +10,10 @@ guest-request bills on the folio, the check-out payment path, and profile-photo 
 §11 covers `1.1.20` (a terminal clock-in or issued code *is* the clock-in, and the personal
 Clock in control is disabled for that staff member until they clock out);
 §12 covers `1.1.21` (table values that were breaking onto a second line on the reported
-pages, and the booking Cancel that stayed usable after the guest had already paid).
+pages, and the booking Cancel that stayed usable after the guest had already paid);
+§13 covers `1.1.22` (the inventory-system review: item classification, explicit direct
+sales, honest units, internal issues with custody — full operational detail in
+[`docs/INVENTORY_SYSTEM_REVIEW.md`](docs/INVENTORY_SYSTEM_REVIEW.md)).
 
 Scope: the ten accounting requirements (A), the four reported bugs (B1–B4), the
 `-₦576,800.00` Guest Receivables investigation, and the tests for all of it.
@@ -767,3 +770,100 @@ done in the browser.
   `payment_status`). A booking whose money arrived on a channel that does not update the
   booking's paid-to-date would still show a working Cancel — the cancel API itself is
   unchanged, so nothing silently fails; the refund workflow remains the money route.
+
+
+---
+
+# 13. Inventory system (1.1.22) — sellable products, ingredients, consumables and assets
+
+Full operational detail — deployment steps, the manual configuration each existing item
+may need, and the audit command — lives in
+[`docs/INVENTORY_SYSTEM_REVIEW.md`](docs/INVENTORY_SYSTEM_REVIEW.md). This section records
+what the review found, what changed, and the evidence.
+
+## 13.1 What was reported
+
+Audit and improve the inventory system so that **directly sellable bar products**
+(bottled drinks, beer, packaged water sold through the POS), **restaurant recipe
+ingredients** (rice, Maggi, salt, oil, tomatoes, meat), **hotel operational consumables**
+(cleaning products, laundry detergent, toiletries) and **reusable assets** (towels,
+bedsheets, glasses, plates, cutlery, equipment) are each managed correctly — with
+recipe-accurate deductions (250 g of rice, never a whole bag, kg↔g and l↔ml without
+rounding errors), POS deductions preserved exactly once and from the right store, internal
+issuance to Kitchen/Housekeeping/Laundry/Maintenance that is auditable and is **not** POS
+revenue, no recipe invented from a name match, and locations/valuation still accurate.
+
+## 13.2 What the code actually did before
+
+* `convert_stock_quantity()` returned an **unchanged quantity** when it did not recognise
+  the unit pair — a line typed in kilograms against an item stocked in litres or sachets
+  posted a plausible but wrong deduction, silently.
+* A delivered POS line whose menu item's SKU or name matched a stock item made the system
+  **create a `StockRecipe`** (`notes="Auto-linked 1:1 …"`) that then deducted stock forever.
+  Nothing on any screen said so.
+* Internal issues recorded only item, location, quantity, actor and a free-text reference:
+  no receiving department, no recipient, no reason, no custody for reusable assets, and no
+  ceiling when the same issue was "returned" twice.
+* No field distinguished a towel from a bag of rice, and a crate of 24 bottles could only
+  be expressed as a recipe — with nothing stopping two stock items from claiming the same
+  menu item and deducting one sale twice.
+
+## 13.3 What changed
+
+Four item classes (`StockItem.item_type`; `CONSUMABLE` remains the inert default so every
+existing row keeps its behaviour), an **explicit direct-sale configuration**
+(menu item + store + base units per menu unit, one stock item per menu item, no recipe
+created), a strict unit system (mass/volume/count families, packs only through the item's
+`units_per_pack`, unknown pairs refused by name, exact `Decimal` results, the typed value
+kept as evidence), internal issues carrying department/recipient/reason with a named
+custodian for reusable assets and a return ceiling checked against the issue they cite,
+and a read-only `manage.py inventory_configuration_audit` that says what still has to be
+configured and lists candidate duplicates with their balances and histories.
+
+The POS path never creates, replaces or retires a recipe any more. A delivered line with no
+configured deduction deducts nothing, is recorded as `uncontrolled` evidence, and parks the
+hand-off `FAILED` for review when nothing at all could be deducted; an invalid recipe,
+inactive item/location or shortage still parks the whole hand-off **before** anything posts.
+
+## 13.4 What deliberately did not change
+
+* **No financial figure and no stock figure changed.** No balance, movement, recipe,
+  purchase, receipt or accounting transaction was edited, deleted or reset; nothing was
+  back-filled into a balance. `0006` only adds columns, `0007` only labels items the recipe
+  book already proves a use for (and never overwrites a label an operator set).
+* The accounting rules are untouched: an internal issue writes **no** journal entry, no POS
+  revenue and no supplier payment, so department consumption cannot double-count an expense;
+  the receipt ledger and weighted-average valuation derive from the same `RECEIPT` movements
+  as before.
+* `backend/apps/pos/` was not modified at all — order totals, receipts, barcode scanning and
+  the delivery/cancel/void flows are byte-for-byte the same, and the existing
+  `?item_type=` / `?department=` additions are optional filters.
+* No new dependency, no new endpoint, no new module, no unrelated refactoring.
+
+## 13.5 Evidence
+
+| Check | Result |
+|---|---|
+| `backend/tests/test_inventory_item_management.py` | **32 tests** covering the ten required areas plus the configuration rules and the deployment backfill (a configured crate deducts 24 bottles from its own store only and once; a plate deducts 0.2500 KG of rice with `250 g` kept as evidence; unknown and cross-family units refused; an issue is auditable and creates no financial transaction; a retried issue/sale/sweep deducts once; parallel issues cannot go negative; both transfer legs or neither; weighted average survives receipts/issues/transfers and a direct sale prices at `base_price ÷ direct_sale_quantity`; a matching SKU creates no recipe and parks a reviewable hand-off that deducts once when configured later; a role without the capability gets 403; the backfill classifies only recipe evidence, respects an operator's own label, and is idempotent) |
+| `python3 manage.py test tests.test_inventory_item_management --parallel 1` | **Ran 32 tests … OK** (18.6 s) |
+| `python3 manage.py test tests.test_inventory tests.test_inventory_api tests.test_inventory_sales_depletion tests.test_accounting_inventory_reconciliation tests.test_enterprise_upgrade_suite tests.test_pos_api tests.test_pos_department_api tests.test_service_request_pos_handoff --parallel 1` | **Ran 47 tests … OK** |
+| `python3 manage.py test tests.test_inventory_item_management tests.test_pos --parallel 1` | **Ran 39 tests … OK** |
+| `python3 manage.py check` / `makemigrations --check --dry-run` | no issues / `No changes detected` |
+| `python3 manage.py migrate` + `inventory_configuration_audit [--json]` | migrations applied; read-only report printed |
+| `frontend/tests-js/test-inventory-item-management-ui.js` | **10 tests, 10 pass** (the shipped page source: the four types, the explicit direct sale, the issue/return evidence, the ledger filter, the hand-off wording, and that no new endpoint key was added) |
+| `cd frontend && python3 validate.py` | 70 HTML / 30 JS **ALL OK** |
+| `cd frontend && node --test tests-js/` | **471 tests: 469 pass, 1 skipped, 1 pre-existing failure** (the PWA root web-app-manifest scope test, unrelated and failing before this release) |
+
+## 13.6 Honest limits
+
+* Two decisions stay with the operator, by design: which existing items are reusable
+  assets (the migration labels nothing by name) and whether an auto-created 1:1 recipe
+  should become an explicit direct sale. The audit lists both with the exact advice.
+* `item_type` is a label for the operator and the audit, not a stock figure; the only
+  runtime rule attached to it is the custodian requirement for `REUSABLE_ASSET`.
+* A return can only be capped when it cites an issue reference; a return without one keeps
+  the previous uncapped behaviour.
+* The audit is read-only, so it can only *show* a suspicious duplicate (balances, movement
+  counts, received units) — never merge it.
+* The sandbox has no headless browser, so the console changes are proved by the shipped
+  source contracts and the test suites above rather than by screenshots.
