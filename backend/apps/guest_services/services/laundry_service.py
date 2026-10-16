@@ -129,7 +129,17 @@ def assign_laundry_order(*, order, actor, assignee):
 
 @transaction.atomic
 def advance_laundry_order(*, order, actor, new_status, delivered_to=""):
-    """Move an order along the processing flow; DELIVERED confirms handover."""
+    """Move an order along the processing flow; DELIVERED confirms handover.
+
+    Delivery is also the moment the guest has received the service, so an
+    in-house order is billed to the guest's folio here — the same rule the
+    restaurant and room-service side already follows when an order is handed
+    over. Until this happened, a guest could take delivery of their laundry and
+    the folio stayed silent: the charge existed only as an "unbilled request"
+    warning at check-out, so the folio and the printed bill disagreed. Billing
+    is idempotent (``bill once``) and a walk-in has no folio, so nothing is
+    charged twice and no receivable is invented for a counter customer.
+    """
     if not has_capability(actor, "guest_request.manage"):
         raise PermissionDenied("This user cannot process laundry.")
     order = LaundryOrder.objects.select_for_update().get(pk=order.pk)
@@ -147,6 +157,13 @@ def advance_laundry_order(*, order, actor, new_status, delivered_to=""):
         order.delivered_to = str(delivered_to or "")[:160]
         updates += ["delivered_at", "delivered_by", "delivered_to"]
     order.save(update_fields=updates)
+    if (
+        new_status == LaundryOrder.Status.DELIVERED
+        and order.stay_id is not None
+        and order.financial_transaction_id is None
+        and Decimal(order.total_amount) > ZERO
+    ):
+        bill_laundry_order(order=order, actor=actor)
     return order
 
 

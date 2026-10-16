@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.17">
+<link rel="stylesheet" href="../css/main.css?v=1.1.18">
 
 </head>
 <body>
@@ -109,8 +109,11 @@
       <div class="field"><label class="field-label" for="pf-email">Email (sign-in address)</label><input class="input" id="pf-email" type="email" disabled></div>
       <div class="form-grid fg-2">
         <div class="field"><label class="field-label" for="pf-phone">Phone</label><input class="input" id="pf-phone" name="phone" type="tel" autocomplete="tel"></div>
-        <div class="field"><label class="field-label" for="pf-image">Profile photo</label><input class="input" id="pf-image" name="profile_image" type="file" accept="image/*" style="padding:0.45em;"></div>
+        <div class="field"><label class="field-label" for="pf-image">Profile photo</label><input class="input" id="pf-image" name="profile_image" type="file" accept="image/*" style="padding:0.45em;">
+          <p class="hint" style="margin:.35rem 0 0;">JPG, PNG or WebP. The photo is checked the moment you save it — if your browser cannot display it, this page will tell you why instead of quietly pretending it worked.</p>
+        </div>
       </div>
+      <p class="field-error" id="pf-photo-note" role="alert" style="display:none;"></p>
       <div class="field-error" id="pf-form-error" style="display:none;"></div>
       <button class="btn btn-accent" type="submit" id="pf-save"><span data-icon="save" data-size="15"></span> Save profile</button>
     </form>
@@ -174,17 +177,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.17"></script>
-<script src="../js/config.js?v=1.1.17"></script>
-<script src="../js/utils.js?v=1.1.17"></script>
-<script src="../js/icons.js?v=1.1.17"></script>
-<script src="../js/api.js?v=1.1.17"></script>
-<script src="../js/theme.js?v=1.1.17"></script>
-<script src="../js/ui.js?v=1.1.17"></script>
-<script src="../js/auth.js?v=1.1.17"></script>
-<script src="../js/hotel-data.js?v=1.1.17"></script>
-<script src="../js/navigation.js?v=1.1.17"></script>
-<script src="../js/dashboard.js?v=1.1.17"></script><script src="../js/table-fit.js?v=1.1.17"></script>
+<script src="../js/runtime-config.js?v=1.1.18"></script>
+<script src="../js/config.js?v=1.1.18"></script>
+<script src="../js/utils.js?v=1.1.18"></script>
+<script src="../js/icons.js?v=1.1.18"></script>
+<script src="../js/api.js?v=1.1.18"></script>
+<script src="../js/theme.js?v=1.1.18"></script>
+<script src="../js/ui.js?v=1.1.18"></script>
+<script src="../js/auth.js?v=1.1.18"></script>
+<script src="../js/hotel-data.js?v=1.1.18"></script>
+<script src="../js/navigation.js?v=1.1.18"></script>
+<script src="../js/dashboard.js?v=1.1.18"></script><script src="../js/table-fit.js?v=1.1.18"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot(window.Auth ? window.Auth.OPERATIONAL_ROLES : null);
@@ -231,9 +234,34 @@
     }
   }
 
+  /* Upload honesty. A saved photo is only DONE when the browser can actually
+     fetch it: the server tells us whether the object reached media storage, and
+     the browser tells us whether the address it published really serves an
+     image. Either answer being wrong is the difference between "your photo is
+     set" and "your photo is set for nobody", so it is never assumed. */
+  function probeImage(url){
+    return new Promise(function(resolve){
+      if(!url){ resolve(false); return; }
+      var img = new Image();
+      var done = false;
+      function finish(ok){ if(done) return; done = true; resolve(ok); }
+      img.onload = function(){ finish(true); };
+      img.onerror = function(){ finish(false); };
+      img.src = url + (url.indexOf("?") === -1 ? "?" : "&") + "photo-check=" + Date.now();
+      setTimeout(function(){ finish(false); }, 8000);
+    });
+  }
+  function photoNote(message){
+    var box = $("pf-photo-note");
+    if(!box) return;
+    box.textContent = message || "";
+    box.style.display = message ? "block" : "none";
+  }
+
   $("pf-form").addEventListener("submit", async function(e){
     e.preventDefault();
     var errBox = $("pf-form-error"); errBox.style.display = "none";
+    photoNote("");
     var btn = $("pf-save");
     if(!this.checkValidity()){ this.reportValidity(); return; }
     if(!JONE.guardSubmit(btn)) return;
@@ -246,7 +274,27 @@
     try{
       var res = await window.API.patch(window.APP_CONFIG.API_ENDPOINTS.authProfile, fd);
       me = res.data || me;
-      JONE.ui.toast("Profile updated.","success");
+      var photoState = null;   // null = no photo in this save
+      if(file){
+        if(me.profile_image_stored === false){
+          photoState = false;
+        } else if(me.profile_image_url){
+          // The server kept it; the browser must be able to fetch it too.
+          photoState = await probeImage(me.profile_image_url);
+        } else {
+          photoState = false;
+        }
+      }
+      if(photoState === false){
+        var why = me.profile_image_warning ||
+          "Your photo was saved to your record, but this browser cannot display it — so it will not appear on your profile. An administrator must check where uploaded images are stored and served.";
+        photoNote(why + " Your name and phone number were saved.");
+        JONE.ui.toast("Photo could not be displayed — " + why, "error");
+      } else if(photoState === true){
+        JONE.ui.toast("Profile updated and your photo is showing.","success");
+      } else {
+        JONE.ui.toast("Profile updated.","success");
+      }
       paint();  // refresh avatar/name from the server response
       $("pf-image").value = "";
       // Keep the cached session user in sync (sidebar/topbar name).
@@ -455,8 +503,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.17"></script>
-<script src="../js/version.js?v=1.1.17"></script>
-<script src="../js/update-checker.js?v=1.1.17"></script>
+<script src="../js/pwa.js?v=1.1.18"></script>
+<script src="../js/version.js?v=1.1.18"></script>
+<script src="../js/update-checker.js?v=1.1.18"></script>
 </body>
 </html>

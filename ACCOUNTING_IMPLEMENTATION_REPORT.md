@@ -1,9 +1,11 @@
 # Implementation report — accounting page reorganisation and the four reported bugs
 
-Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17` · everything in this report
-is implemented in the repo (frontend + backend), not recommended.
+Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18` · everything in this
+report is implemented in the repo (frontend + backend), not recommended.
 
-§8 covers the follow-up release `1.1.17` (supplier payment receipts); §1–§7 cover `1.1.16`.
+§1–§7 cover `1.1.16`; §8 covers `1.1.17` (supplier payment receipts); §9 covers the five
+follow-up reports in `1.1.18` (settings tax controls, the cash-variance approval button,
+guest-request bills on the folio, the check-out payment path, and profile-photo uploads).
 
 Scope: the ten accounting requirements (A), the four reported bugs (B1–B4), the
 `-₦576,800.00` Guest Receivables investigation, and the tests for all of it.
@@ -342,3 +344,168 @@ caller actually supplied.
   endpoint for it; that decision is the owner's.
 - **No browser pass.** The new dialog is covered by markup/vm tests and the API by
   Django tests, not by a rendered page.
+
+
+---
+
+# 9. Follow-up reports fixed in `1.1.18`
+
+Five reports, each verified against the shipped code before anything was changed.
+No financial calculation was altered by any of them: the only posting added (9.3) is
+the laundry charge the ledger already posts when an order is billed — the same
+transaction type, the same accounts, the same amount, posted at the moment the guest
+receives the service instead of at the desk's convenience. 9.1, 9.2, 9.4 and 9.5 post
+nothing at all.
+
+## 9.1 Government taxes removed from Settings
+
+**Report.** "Remove government taxes from settings."
+
+**What was actually there.** `dashboard/settings.html` exposed the hotel's *own*
+statutory-tax accrual: accrual on/off, rate, and basis (three inputs, plus their keys in
+the page's editable-field list). Nothing on that page has ever taxed a guest — since the
+2026-10-11 owner policy no customer transaction carries billed tax — so the controls only
+offered a change that could not affect a single guest bill.
+
+**Fix.** The three controls and the three keys in the field list are gone, so the
+dashboard can no longer send a tax setting at all. The page still states the policy in
+plain words ("no tax is added to guest bills") and now says where the hotel's own
+statutory figure is reported. Deliberately **not** removed: the `HotelSettings`
+`statutory_tax_*` columns, `apps/finance/services/tax_policy.py`, the statutory accrual in
+the ledger, the *Statutory tax accrued (not billed to guests)* statement measure, and every
+historical line. No migration, no deleted data, no changed figure.
+
+**Evidence.** `frontend/tests-js/test-settings-tax-removal.js` (6 tests): no tax control
+and no tax key remain; every remaining field in the list still has an input; the policy
+sentence is still published; the Accounting statement measure still exists; and no other
+dashboard page sends a tax key. `backend/tests/test_customer_tax_removal.py` (tax-free
+customer billing, statutory accrual, historical tax kept) still passes.
+
+## 9.2 A button to approve a cash drawer variance ("approve cash collected")
+
+**Report.** "No button to approve cash collected in accounting."
+
+**Root cause.** When a cashier records a physical count that does not match the expected
+cash, the drawer session stops at `PENDING_REVIEW` and cannot close until a manager
+decides. The API for that decision already existed
+(`POST /api/admin/finance/cash-sessions/<reference>/variance-review/`, capability
+`payment.refund.approve`), but the only reference to it anywhere in the UI was the
+Financial approvals row linking to `#cash-management` — and the Cash management table
+rendered no row actions at all. A dead end: the money stayed unreconciled and the cashier
+could not open a new controlled drawer.
+
+**Fix.** Cash management (the one authoritative drawer table) gained a **Decision** column.
+A session in `PENDING_REVIEW` shows **Review & approve** for anyone with
+`payment.refund.approve`; everyone else reads "Manager review required" instead of a
+control they cannot use. The dialog takes the decision and a reason (a rejection must state
+one), calls the existing variance-review endpoint — no new route, and the browser never
+posts an adjustment — and then re-reads the page so the closed drawer and the approvals
+list agree. The approvals-row link is now "Review in Cash management".
+
+**Evidence.** `frontend/tests-js/test-cash-variance-review-ui.js` (7): the button appears
+only for `PENDING_REVIEW` + the capability, the decision goes to
+`resourceAction("financeCashSessions", reference, "variance-review", …)`, no journal or
+adjustment is posted from the page, a rejection demands a reason, and both outcomes are
+stated plainly. `test-expense-approval-ui.js` updated for the new wiring (12 tests).
+`backend/tests/test_finance_api.py::test_manager_uses_controlled_endpoint_to_finish_cash_variance_review`
+still passes.
+
+## 9.3 The folio records a guest's request bill when the guest receives it
+
+**Report.** "Guest folio is not recording guest request bills, but on print receipt it
+appears."
+
+**Root cause.** Restaurant, bar and room-service orders post their folio charge the moment
+they are marked delivered (`apps/pos/services/order_service.py::_post_order_charge`, with
+the `FolioPosting` that keeps the folio and its receivable line in step). An in-house
+**laundry** order did not: it posted only when somebody pressed *Bill to folio* or when the
+desk settled the bill at check-out. In between, the guest had the laundry back, the
+check-out bill stated the money under "Requests not yet paid for", the printed receipt
+showed it — and the folio, the guest's own statement, and every folio figure the desk read
+showed nothing.
+
+**Fix.** `advance_laundry_order` bills an in-house order to the guest's folio at the moment
+it is marked `DELIVERED`, reusing the existing idempotent `bill_laundry_order` (so a second
+delivery or an explicit bill press can never double-charge). Walk-in orders have no folio
+and are never charged to one; a zero-priced order stays deliverable without inventing a
+charge; a cancelled order is never billed. Revenue recognition timing therefore matches the
+restaurant/bar rule — the guest receives the service, the charge posts — with the same
+accounts and amounts as the manual bill it replaces.
+
+**Evidence.** `backend/tests/test_laundry_folio_billing.py` (9): delivery posts exactly one
+folio charge for the order total with a matching receivable; the folio balance, the folio
+charge map and the check-out bill agree; re-billing is a no-op; walk-ins, zero-priced and
+cancelled orders post nothing; settling at the desk still clears it. **Negative control:**
+with the new call disabled, 5 of the 9 fail (no folio posting, blocked gate pass, wrong
+check-out figures) and all 9 pass with it. The 62-test laundry / guest-service / check-out /
+stay batch is green.
+
+**Limit that remains, stated openly.** A request that has been *placed* but not yet
+delivered is not a bill yet — the guest can still cancel it — so it is not on the folio. It
+is still stated at check-out as an unpaid request, and the desk bills and collects it in
+one step (9.4).
+
+## 9.4 Check-out offers "record the payment" as a first-class choice
+
+**Report.** "No button to mark it as paid during checkout for guests that requested
+something and then makes payment."
+
+**Before.** With money outstanding, pressing **Check out** asked one question — "Check out
+with an outstanding balance?" — and the way to take the money sat behind a different button
+(and, for a request that had never been billed, behind a dialog the desk had to know to
+open).
+
+**Fix.** The check-out action now opens a dialog that states the amount owed and offers the
+payment as the primary choice:
+
+* **Record payment & clear the bill** — opens the folio clearance bill, which bills any
+  request that is still not on the folio and applies the money in the same step through the
+  existing `settle-balance` endpoint (nothing is billed twice); or
+* **Check out anyway (balance stays owed)** — the deliberate override, unchanged; and
+* **Cancel**.
+
+The gate-pass rule is untouched: it stays server-decided and blocked until the folio is
+clear, whichever choice the desk makes.
+
+**Evidence.** `frontend/tests-js/test-checkout-clearance-ui.js` (12, +2 new): the dialog,
+both choices, `allow_balance_due: true` on the override only, the settlement going through
+`settleBookingBalance(..., include_unbilled: true)`, and no invented payment route.
+
+## 9.5 Profile photos: stored-and-verified, or a message saying why not
+
+**Report.** "Profile images are still not uploading and it doesn't display any error message
+why it fails."
+
+**Root causes addressed.**
+
+1. `PATCH /api/auth/profile/` — and the administrator's staff edit — answered `200` and
+   nothing more. Neither the API nor the page said whether the photo had reached media
+   storage, and the page toasted "Profile updated." regardless. A photo written to storage
+   nothing can serve therefore looked exactly like a success.
+2. A storage backend that refuses the write surfaced as an unhandled failure instead of a
+   message a staff member can act on.
+
+**Fix.** A new `apps.core.storage.verify_stored_upload()` confirms the saved object is
+present in its storage and has a public address, and both write paths now store through
+`save_upload()` — a refused write becomes `502 STORAGE_UPLOAD_FAILED` with a safe message
+and the record is left untouched. When a photo was submitted, the response carries
+`profile_image_stored` plus `profile_image_warning` naming the storage backend in use. The
+dashboard uses both: the profile page probes the published URL with a real `Image()` load
+(cache-busted, 8-second timeout) and, when the API or the browser says the photo is not
+showing, raises an alert-styled inline message with the reason and an error toast — it only
+claims "your photo is showing" when the browser actually loaded it. The staff editor
+reports the same warning to the administrator instead of a plain success toast.
+
+**Evidence.** `backend/tests/test_profile_image_uploads.py` (18): both surfaces store the
+photo and publish a URL that storage really serves; a non-image is refused with a field
+error the UI can render; a storage that does not hold the object answers
+`profile_image_stored: false` with a reason naming the backend; a storage that cannot be
+checked reports the exception *type* only (no internal detail leaks); a refused write
+answers 502 and records nothing; a replacement photo is stored; a save with no photo says
+nothing about photos. `frontend/tests-js/test-profile-photo-ui.js` (6). The existing
+image-upload suite (`test_image_upload_paths.py`, 7) still passes.
+
+**Honest limit.** The code paths are verified here; whether a photo *displays* in
+production depends on the deployment's media storage being writable and publicly readable.
+That is exactly what the new message reports, with the storage backend class named, so the
+administrator has something concrete to fix instead of a silent no-op.

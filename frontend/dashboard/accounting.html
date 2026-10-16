@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.17">
+<link rel="stylesheet" href="../css/main.css?v=1.1.18">
 
 </head>
 <body>
@@ -183,12 +183,12 @@
      here (id="cash-management") instead of repeating drawer detail. -->
 <details class="panel finance-section" data-acc-section="cash" id="cash-management">
   <summary class="panel-head"><h2>Cash management</h2>
-    <span class="caption">Drawer reconciliation — the authoritative cash table</span>
+    <span class="caption">Drawer reconciliation — the authoritative cash table. A material variance waits here for a manager decision.</span>
     <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
   </summary>
   <div class="panel-body no-pad">
     <div class="table-wrap"><table class="table">
-      <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Cashier</th><th class="num cell-nowrap">Expected</th><th class="num cell-nowrap">Counted</th><th class="num cell-nowrap">Variance</th><th class="cell-nowrap">Status</th></tr></thead>
+      <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Cashier</th><th class="num cell-nowrap">Expected</th><th class="num cell-nowrap">Counted</th><th class="num cell-nowrap">Variance</th><th class="cell-nowrap">Status</th><th class="cell-nowrap"><span class="sr-only">Decision</span></th></tr></thead>
       <tbody data-tbody="acct-cash"></tbody>
     </table></div>
   </div>
@@ -301,17 +301,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.17"></script>
-<script src="../js/config.js?v=1.1.17"></script>
-<script src="../js/utils.js?v=1.1.17"></script>
-<script src="../js/icons.js?v=1.1.17"></script>
-<script src="../js/api.js?v=1.1.17"></script>
-<script src="../js/theme.js?v=1.1.17"></script>
-<script src="../js/ui.js?v=1.1.17"></script>
-<script src="../js/auth.js?v=1.1.17"></script>
-<script src="../js/hotel-data.js?v=1.1.17"></script>
-<script src="../js/navigation.js?v=1.1.17"></script>
-<script src="../js/dashboard.js?v=1.1.17"></script><script src="../js/table-fit.js?v=1.1.17"></script>
+<script src="../js/runtime-config.js?v=1.1.18"></script>
+<script src="../js/config.js?v=1.1.18"></script>
+<script src="../js/utils.js?v=1.1.18"></script>
+<script src="../js/icons.js?v=1.1.18"></script>
+<script src="../js/api.js?v=1.1.18"></script>
+<script src="../js/theme.js?v=1.1.18"></script>
+<script src="../js/ui.js?v=1.1.18"></script>
+<script src="../js/auth.js?v=1.1.18"></script>
+<script src="../js/hotel-data.js?v=1.1.18"></script>
+<script src="../js/navigation.js?v=1.1.18"></script>
+<script src="../js/dashboard.js?v=1.1.18"></script><script src="../js/table-fit.js?v=1.1.18"></script>
 <script>
   JONE.ui.initChrome();
   // boot() redirects receptionists to 403.html. If a navigation is ever
@@ -340,7 +340,7 @@
   var range=document.getElementById("rp-range");
   var fromEl=document.getElementById("rp-from");
   var toEl=document.getElementById("rp-to");
-  var latest={ financial:null, bookings:null, occupancy:null, expenses:null, approvals:null };
+  var latest={ financial:null, bookings:null, occupancy:null, expenses:null, approvals:null, cash:null };
   var operationalPending={ bookings:false, occupancy:false };
   var loadSequence=0;
 
@@ -351,19 +351,23 @@
      that would only fail. They start false (fail closed) and are switched on
      by the server-resolved capability list once it arrives, re-rendering the
      two decision tables so the buttons appear without a page reload. */
-  var CAN = { approveExpense:false, refunds:false };
+  var CAN = { approveExpense:false, refunds:false, reviewDrawer:false };
   function capabilityReady(){
     if(!(window.Auth&&window.Auth.loadCapabilities)) return Promise.resolve();
     return window.Auth.loadCapabilities().then(function(){
       var next={
         approveExpense:window.Auth.hasCapability("expense.approve"),
-        refunds:window.Auth.hasCapability("payment.refund.approve")
+        refunds:window.Auth.hasCapability("payment.refund.approve"),
+        /* A material drawer variance is closed by the same authority that
+           decides refunds and adjustments (payment.refund.approve) — decided
+           through the controlled cash-session route, never from this list. */
+        reviewDrawer:window.Auth.hasCapability("payment.refund.approve")
       };
-      var changed=(next.approveExpense!==CAN.approveExpense)||(next.refunds!==CAN.refunds);
+      var changed=(next.approveExpense!==CAN.approveExpense)||(next.refunds!==CAN.refunds)||(next.reviewDrawer!==CAN.reviewDrawer);
       CAN=next;
-      /* The approvals section changes shape with the refund-approval capability:
-         load it for a reviewer, explain the section for everyone else. */
-      if(changed){ renderExpenses(); renderApprovals(); refreshApprovalsSection(); }
+      /* The approvals and cash sections change shape with the reviewer
+         capability: load them for a reviewer, explain them for everyone else. */
+      if(changed){ renderExpenses(); renderApprovals(); renderCash(); refreshApprovalsSection(); }
     }).catch(function(){
       /* Role-based UX stays the fallback; server-side checks are unaffected. */
     });
@@ -644,7 +648,7 @@
       end:dates.to,
       currency:(window.APP_CONFIG&&window.APP_CONFIG.CURRENCY)||"NGN"
     };
-    latest={ financial:null, bookings:null, occupancy:null, expenses:null, approvals:null };
+    latest={ financial:null, bookings:null, occupancy:null, expenses:null, approvals:null, cash:null };
     operationalPending={ bookings:true, occupancy:true };
     setFinanceKpisLoading(true);
     if(financeBasis) financeBasis.textContent="Loading posted immutable ledger financial measures…";
@@ -701,6 +705,52 @@
     }
     return html;
   }
+  /* Decide a material drawer variance. Accepting the physical count closes the
+     session and completes the cash reconciliation; rejecting it closes the
+     session with the variance on the record instead. Either way the reason is
+     kept as audit evidence, and the drawer is re-read from the server. */
+  async function reviewCashVariance(reference){
+    if(!reference) return;
+    var decision=null;
+    var result=await JONE.dashboard.formModal({
+      title:"Cash drawer variance · "+reference,
+      submitText:"Record decision",
+      fields:[
+        { name:"decision", label:"Decision", type:"select", required:true, value:"APPROVE",
+          options:[
+            { value:"APPROVE", label:"Accept the counted cash and close the drawer" },
+            { value:"REJECT", label:"Do not accept the variance (describe what is wrong)" }
+          ] },
+        { name:"review_note", label:"Reason / note", type:"textarea", rows:3, maxLength:2000,
+          help:"Kept with the decision as audit evidence. A rejection must state the reason." }
+      ],
+      onSubmit: async function(values){
+        var approved=String(values.decision||"").toUpperCase()==="APPROVE";
+        var note=String(values.review_note||"").trim();
+        if(!approved&&!note) throw new Error("A rejected variance needs a reason.");
+        decision={ approved:approved, review_note:note };
+        return { message:"Recording the decision…" };
+      }
+    });
+    if(!result||!decision) return;
+    try{
+      await window.API.resourceAction("financeCashSessions",reference,"variance-review",{
+        approved:decision.approved, review_note:decision.review_note
+      });
+      JONE.ui.toast(decision.approved?"Drawer review recorded — the variance is accepted.":"Drawer review recorded — the variance was not accepted.", "success");
+      JONE.dashboard.panel.close();
+      load();
+    }catch(err){
+      JONE.ui.toast((err&&err.message)||"The drawer review could not be recorded.","error");
+    }
+  }
+  document.addEventListener("click", function (event) {
+    var review = event.target.closest ? event.target.closest("[data-cash-variance]") : null;
+    if (!review) return;
+    event.preventDefault();
+    reviewCashVariance(review.getAttribute("data-cash-variance"));
+  });
+
   /* One delegated listener for every row's details button: rows are re-rendered
      on each load, so a per-row listener would leak and go stale. */
   document.addEventListener("click", function (event) {
@@ -895,8 +945,9 @@
     getReport(window.APP_CONFIG.API_ENDPOINTS.financeCashSessions,{}).then(function(response){
       if(requestId!==loadSequence||!cash) return;
       var rows=rowsOf(response); if(!Array.isArray(rows)) rows=[];
-      cash.innerHTML=rows.length?rows.map(function(row){return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.cashier_email||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.expected_cash))+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.counted_cash))+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.variance))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td></tr>";}).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No cash sessions</h3></div></td></tr>";
-    },function(err){ if(requestId===loadSequence&&cash) DATA.error(cash,"Cash sessions couldn't be loaded",financeErrorMessage(err,"cash management"),6); });
+      latest.cash=rows;
+      renderCash();
+    },function(err){ if(requestId===loadSequence&&cash) DATA.error(cash,"Cash sessions couldn't be loaded",financeErrorMessage(err,"cash management"),7); });
     refreshApprovalsSection(requestId);
 
   }
@@ -909,6 +960,29 @@
     if(!Array.isArray(rows)) return;
     ex.innerHTML=rows.length?rows.map(function(row){return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.department||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.amount))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"cell-nowrap\"><div class=\"row-actions\">" + rowActions(row) + "<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-details=\"" + JONE.esc(row.reference || "") + "\" aria-label=\"View details for expense " + JONE.esc(row.reference || "") + "\">Details</button></div></td></tr>";}).join(""):"<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No expenses in this period</h3></div></td></tr>";
     if(JONE.icons) JONE.icons.inject(ex);
+  }
+
+  /* Cash drawer table. Movement out of a drawer is recorded elsewhere (POS,
+     expenses), so this table is the reconciliation view — and the ONE place a
+     material variance can be decided. A session waiting for that decision is
+     useless without a button: the cash is counted, the drawer cannot close, and
+     the money stays unreconciled. The decision calls the same controlled
+     cash-session variance review the API exposes; it never posts an adjustment
+     from the browser. */
+  function cashVarianceCell(row){
+    var status=String(row.status||"").toUpperCase();
+    if(status!=="PENDING_REVIEW") return '<span class="caption">—</span>';
+    if(!CAN.reviewDrawer) return '<span class="caption">Manager review required</span>';
+    var reference=JONE.esc(row.reference||"");
+    return '<button class="btn btn-sm" type="button" data-cash-variance="'+reference+'" '+
+      'aria-label="Review the cash variance on drawer '+reference+'">Review &amp; approve</button>';
+  }
+  function renderCash(){
+    if(!cash) return;
+    var rows=latest.cash;
+    if(!Array.isArray(rows)) return;
+    cash.innerHTML=rows.length?rows.map(function(row){return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.cashier_email||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.expected_cash))+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.counted_cash))+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.variance))+"</td><td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"cell-nowrap\"><div class=\"row-actions\">"+cashVarianceCell(row)+"</div></td></tr>";}).join(""):"<tr><td colspan=\"7\"><div class=\"empty-state\"><h3>No cash sessions</h3></div></td></tr>";
+    if(JONE.icons) JONE.icons.inject(cash);
   }
 
   /* The approvals section, decided by capability.
@@ -984,9 +1058,9 @@
   function approvalActions(row){
     var type=String(row.type||"").toUpperCase();
     if(type==="CASH_VARIANCE"){
-      /* Cash management owns the drawer table; a variance is reviewed there,
-         never decided from this list. */
-      return '<a class="btn btn-sm btn-outline" href="#cash-management">Review with the cash drawer</a>';
+      /* Cash management owns the drawer table AND the review button; a variance
+         is decided there, never from this list. */
+      return '<a class="btn btn-sm btn-outline" href="#cash-management">Review in Cash management</a>';
     }
     if(type==="EXPENSE"){
       var expenseRef=JONE.esc(row.source_reference||"");
@@ -1673,8 +1747,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.17"></script>
-<script src="../js/version.js?v=1.1.17"></script>
-<script src="../js/update-checker.js?v=1.1.17"></script>
+<script src="../js/pwa.js?v=1.1.18"></script>
+<script src="../js/version.js?v=1.1.18"></script>
+<script src="../js/update-checker.js?v=1.1.18"></script>
 </body>
 </html>

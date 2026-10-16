@@ -263,7 +263,11 @@ class AdminUserDetailView(AdminUserQuerysetMixin, generics.RetrieveUpdateAPIView
         before = {"role": instance.role, "is_active": instance.is_active}
         serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        instance = serializer.save()
+        from apps.core.storage import save_upload
+
+        # Same rule as the self-service profile: a refused photo upload is an
+        # error the administrator can read, not a 500 and not a silent success.
+        instance = save_upload(serializer.save, context="staff photo")
         changes = {}
         for field in before:
             old = before[field]
@@ -278,9 +282,14 @@ class AdminUserDetailView(AdminUserQuerysetMixin, generics.RetrieveUpdateAPIView
             request=request,
         )
         logger.info("Admin %s updated user %s: %s", request.user.id, instance.id, changes)
-        return success_response(
-            AdminUserListSerializer(instance, context={"request": request}).data, message="User updated."
-        )
+        payload = AdminUserListSerializer(instance, context={"request": request}).data
+        if "profile_image" in getattr(serializer, "validated_data", {}):
+            from apps.core.storage import verify_stored_upload
+
+            stored, warning = verify_stored_upload(instance.profile_image)
+            payload["profile_image_stored"] = stored
+            payload["profile_image_warning"] = warning
+        return success_response(payload, message="User updated.")
 
 
 @extend_schema(tags=["Admin · Users"], summary="Staff profile card (photo, role, activity)")

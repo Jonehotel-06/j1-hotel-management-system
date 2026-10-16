@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.17">
+<link rel="stylesheet" href="../css/main.css?v=1.1.18">
 
 </head>
 <body>
@@ -171,16 +171,16 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.17"></script>
-<script src="../js/config.js?v=1.1.17"></script>
-<script src="../js/utils.js?v=1.1.17"></script>
-<script src="../js/icons.js?v=1.1.17"></script>
-<script src="../js/api.js?v=1.1.17"></script>
-<script src="../js/theme.js?v=1.1.17"></script>
-<script src="../js/ui.js?v=1.1.17"></script>
-<script src="../js/auth.js?v=1.1.17"></script>
-<script src="../js/navigation.js?v=1.1.17"></script>
-<script src="../js/dashboard.js?v=1.1.17"></script><script src="../js/table-fit.js?v=1.1.17"></script><script src="../js/operations.js?v=1.1.17"></script>
+<script src="../js/runtime-config.js?v=1.1.18"></script>
+<script src="../js/config.js?v=1.1.18"></script>
+<script src="../js/utils.js?v=1.1.18"></script>
+<script src="../js/icons.js?v=1.1.18"></script>
+<script src="../js/api.js?v=1.1.18"></script>
+<script src="../js/theme.js?v=1.1.18"></script>
+<script src="../js/ui.js?v=1.1.18"></script>
+<script src="../js/auth.js?v=1.1.18"></script>
+<script src="../js/navigation.js?v=1.1.18"></script>
+<script src="../js/dashboard.js?v=1.1.18"></script><script src="../js/table-fit.js?v=1.1.18"></script><script src="../js/operations.js?v=1.1.18"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("admin");
@@ -392,10 +392,21 @@
       multipart: true,
       submitText: id ? "Save changes" : "Create account",
       onSubmit: async function(values, formData){
-        if (id) await window.API.update("users", id, formData);
-        else await window.API.create("users", formData);
+        var res = id
+          ? await window.API.update("users", id, formData)
+          : await window.API.create("users", formData);
         load();
-        JONE.ui.toast(id ? "Staff account updated." : "Staff account created.", "success");
+        /* A photo is only set when it is really stored. The API answers with
+           `profile_image_stored`; saying nothing would leave the administrator
+           believing a photo is on the account when the staff member will never
+           see it. */
+        var saved = (res && res.data) || {};
+        if (saved.profile_image_stored === false){
+          JONE.ui.toast(saved.profile_image_warning ||
+            "The photo was not stored, so it cannot display. Check where uploaded images are kept.", "error");
+        } else {
+          JONE.ui.toast(id ? "Staff account updated." : "Staff account created.", "success");
+        }
       }
     });
   }
@@ -614,8 +625,8 @@
   }
 })();
 </script>
-<script src="../js/pwa.js?v=1.1.17"></script>
-<script src="../js/version.js?v=1.1.17"></script>
-<script src="../js/update-checker.js?v=1.1.17"></script>
+<script src="../js/pwa.js?v=1.1.18"></script>
+<script src="../js/version.js?v=1.1.18"></script>
+<script src="../js/update-checker.js?v=1.1.18"></script>
 </body>
 </html>
