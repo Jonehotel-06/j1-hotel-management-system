@@ -236,7 +236,18 @@ def capability_codes_for_user(user: "User") -> frozenset[str]:
     from .models import Capability, RoleCapability, User, UserCapabilityOverride
 
     if user.role == User.Role.ADMIN:
-        codes = frozenset(Capability.objects.filter(is_active=True).values_list("code", flat=True))
+        # The Administrator is the hotel owner/CEO and the matrix grants that
+        # role every capability by construction (ROLE_CAPABILITY_CODES["ADMIN"]
+        # is the whole catalogue). Resolve it from the maintained catalogue —
+        # not from whatever rows happen to exist in this database — so a
+        # catalogue row that was never seeded, or was switched off by hand, can
+        # never quietly leave the owner unable to see a screen that other staff
+        # can see. Any capability row that still exists stays honoured too.
+        # This only decides WHICH codes an ADMIN account holds; every
+        # server-side gate still runs on every request.
+        codes = frozenset(ALL_CAPABILITY_CODES) | frozenset(
+            Capability.objects.filter(is_active=True).values_list("code", flat=True)
+        )
     else:
         role_codes = set(
             RoleCapability.objects.filter(role=user.role, capability__is_active=True)

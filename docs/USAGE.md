@@ -392,6 +392,29 @@ booking window, cancellation deadline and fee, and the published policy text.
 **Restrict check-in to the booked check-in date** controls early arrivals only.
 Late arrivals are always permitted either way.
 
+## Changing the database (SQLite → MySQL/MariaDB)
+
+The backend reads its database from `backend/.env` (`DATABASE_URL`, or `DB_ENGINE` +
+`DB_NAME`/`DB_USER`/`DB_PASSWORD`/`DB_HOST`/`DB_PORT`). The full procedure — creating the
+utf8mb4 database, the fresh `migrate`, the owner account, and what the `models.W036`
+MariaDB warnings mean — is in
+[`docs/DATABASE_MIGRATIONS_AND_MYSQL.md`](DATABASE_MIGRATIONS_AND_MYSQL.md).
+
+A copied `backend` folder can carry **leftover migration files** from an older copy of the
+project, which makes `manage.py` refuse to run at all
+(*"Conflicting migrations detected; multiple leaf nodes in the migration graph"*). Repair
+that before migrating — it moves the leftovers aside and never deletes anything:
+
+```bash
+cd backend
+python tools/repair_migrations.py --dry-run   # list the leftovers
+python tools/repair_migrations.py            # move them to .migration_backup/<timestamp>/
+python manage.py migrate
+```
+
+Never answer that error with `makemigrations --merge`: it joins a chain that no longer
+matches the models and breaks a fresh database.
+
 ## Releasing a frontend update
 
 `version.json` is the single source of truth for the deployed version.

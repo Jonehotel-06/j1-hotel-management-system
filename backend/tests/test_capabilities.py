@@ -64,3 +64,63 @@ class CapabilityMatrixTests(BaseAPITestCase):
         self.assertEqual(data["role"], User.Role.RECEPTIONIST)
         self.assertIn("booking.manage", data["capabilities"])
         self.assertNotIn("settings.manage", data["capabilities"])
+
+
+class AdministratorCompletenessTests(BaseAPITestCase):
+    """The owner's account must never see LESS of the system than their staff.
+
+    The Administrator role is granted every capability by the matrix, but the
+    resolution used to read only the ``Capability`` rows seeded into a given
+    database. A row that was never seeded (a copy whose migrations were
+    incomplete) or was deactivated by hand therefore removed the capability
+    from the owner — and only from the owner — leaving a screen unreachable for
+    the person responsible for the whole hotel while every other role kept
+    working. The role now resolves from the maintained catalogue.
+    """
+
+    def test_administrator_holds_every_capability_even_if_a_row_is_missing_or_off(self):
+        from apps.accounts.capabilities import ALL_CAPABILITY_CODES
+
+        admin = make_staff("owner-complete@staff.dev", role=User.Role.ADMIN)
+
+        # Two catalogue rows are switched off and every grant of them removed,
+        # which is what an incompletely seeded or hand-edited database looks
+        # like. Capability rows are PROTECTed by their grants, so the grants go
+        # first — exactly the state the resolution must survive.
+        removed = ["reports.financial.view", "payroll.manage"]
+        Capability.objects.filter(code__in=removed).update(is_active=False)
+        RoleCapability.objects.filter(capability__code__in=removed).delete()
+        self.assertFalse(
+            RoleCapability.objects.filter(role=User.Role.ADMIN, capability__code__in=removed).exists()
+        )
+
+        codes = capability_codes_for_user(admin)
+        self.assertEqual(codes, frozenset(ALL_CAPABILITY_CODES))
+        self.assertTrue(has_capability(admin, "reports.financial.view"))
+        self.assertTrue(has_capability(admin, "payroll.manage"))
+
+        # A capability-protected endpoint therefore still answers the owner.
+        self.auth(admin)
+        response = self.client.get("/api/admin/finance/reports/summary/",
+                                   {"start": "2026-01-01", "end": "2026-01-31"})
+        self.assertEqual(response.status_code, 200, response.content)
+
+    def test_other_roles_keep_their_exact_grants(self):
+        """Widening the owner must not widen anybody else."""
+        receptionist = make_staff("owner-scope-desk@staff.dev", role=User.Role.RECEPTIONIST)
+        cashier = make_staff("owner-scope-cashier@staff.dev", role=User.Role.CASHIER)
+
+        Capability.objects.filter(code="payroll.manage").update(is_active=False)
+        RoleCapability.objects.filter(capability__code="payroll.manage").delete()
+
+        self.assertFalse(has_capability(receptionist, "payroll.manage"))
+        self.assertFalse(has_capability(receptionist, "payment.refund.approve"))
+        self.assertFalse(has_capability(cashier, "reports.financial.view"))
+        self.assertFalse(has_capability(cashier, "booking.read"))
+
+    def test_the_gated_endpoint_still_refuses_a_role_without_the_grant(self):
+        cashier = make_staff("owner-scope-gate@staff.dev", role=User.Role.CASHIER)
+        self.auth(cashier)
+        response = self.client.get("/api/admin/finance/reports/summary/",
+                                   {"start": "2026-01-01", "end": "2026-01-31"})
+        self.assertEqual(response.status_code, 403, response.content)

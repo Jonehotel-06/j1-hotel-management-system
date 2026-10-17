@@ -154,9 +154,16 @@ class StockItem(TimeStampedModel):
             # One menu item can only be sold out of one stock item. Two stock
             # items claiming the same menu item would deduct the same sale
             # twice; the configuration itself forbids the double-count.
+            #
+            # Deliberately a PLAIN unique constraint, never a conditional one:
+            # MySQL/MariaDB do not support partial (conditional) unique indexes,
+            # so the condition would silently create NO constraint on those
+            # servers (models.W036) and the double-deduction guard would be
+            # missing exactly where the hotel deploys. NULLs count as distinct
+            # in every supported backend, so unconfigured items (NULL menu
+            # item) remain unconstrained — the behaviour the condition meant.
             models.UniqueConstraint(
                 fields=["direct_sale_menu_item"],
-                condition=models.Q(direct_sale_menu_item__isnull=False),
                 name="one_direct_sale_stock_item_per_menu_item",
             ),
         ]

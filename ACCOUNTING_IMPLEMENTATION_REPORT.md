@@ -1,6 +1,6 @@
 # Implementation report — accounting page reorganisation and the four reported bugs
 
-Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18 → 1.1.19 → 1.1.20 → 1.1.21 → 1.1.22 → 1.1.23` ·
+Baseline commit `2bcaa6c` · versions `1.1.15 → 1.1.16 → 1.1.17 → 1.1.18 → 1.1.19 → 1.1.20 → 1.1.21 → 1.1.22 → 1.1.23 → 1.1.24` ·
 everything in this report is implemented in the repo (frontend + backend), not recommended.
 
 §1–§7 cover `1.1.16`; §8 covers `1.1.17` (supplier payment receipts); §9 covers the five
@@ -16,7 +16,10 @@ sales, honest units, internal issues with custody — full operational detail in
 [`docs/INVENTORY_SYSTEM_REVIEW.md`](docs/INVENTORY_SYSTEM_REVIEW.md));
 §14 covers `1.1.23` (a fully paid room netted against an unpaid laundry bill, which showed
 "purchases and charges −416,800", "amount to settle 0" and a cleared gate pass — detail in
-[`docs/FOLIO_BALANCE_CLASSIFICATION.md`](docs/FOLIO_BALANCE_CLASSIFICATION.md)).
+[`docs/FOLIO_BALANCE_CLASSIFICATION.md`](docs/FOLIO_BALANCE_CLASSIFICATION.md));
+§15 covers `1.1.24` (the MariaDB move: the "conflicting migrations" repair tool, the
+portable stock constraint, and the owner account never being granted fewer capabilities
+than staff — detail in [`docs/DATABASE_MIGRATIONS_AND_MYSQL.md`](docs/DATABASE_MIGRATIONS_AND_MYSQL.md)).
 
 Scope: the ten accounting requirements (A), the four reported bugs (B1–B4), the
 `-₦576,800.00` Guest Receivables investigation, and the tests for all of it.
@@ -969,3 +972,87 @@ the ₦420,000 credit and the ₦3,200 charge exactly as posted.
   from guest deposits; `settled_via="checkout_folio"` for desk settlements). Where a
   historical database holds a folio payment with neither trace, the posting keeps the blank
   value and the old reading; `guest_receivable_check` remains the read-only way to see it.
+
+---
+
+# 15. Follow-up (1.1.24) — the MariaDB move
+
+Full procedure in [`docs/DATABASE_MIGRATIONS_AND_MYSQL.md`](docs/DATABASE_MIGRATIONS_AND_MYSQL.md).
+
+## 15.1 What was reported
+
+`python manage.py migrate` after switching the database platform:
+
+```
+CommandError: Conflicting migrations detected; multiple leaf nodes in the migration graph:
+(0001_initial, 0007_classify_existing_stock_items in inventory; 0002_cancellation_request_workflow,
+0002_initial in enquiries; 0001_initial, 0015_payroll_salary_payment_receipt in staff_operations;
+… 11 apps …)
+```
+
+plus six `models.W036 MariaDB does not support unique constraints with conditions` warnings.
+
+## 15.2 What it was
+
+**Not a database problem.** The copied `backend` folder contained **11 extra migration
+files** from an older copy of the project — the foundation migrations that were renamed
+(`0001_initial` → `0001_<thing>_foundation`) and two renumbered files (`0002_initial`,
+`0002_cancellation_request_workflow`). Two unconnected chains in one app = two leaf nodes =
+Django refuses to run. The same folder fails on SQLite.
+
+`makemigrations --merge` is the wrong fix: it would join a chain whose operations no
+longer match the models, producing "table already exists" on a fresh database.
+
+## 15.3 What changed
+
+* **`backend/tools/repair_migrations.py`** (new) + **`backend/tools/migration_manifest.txt`**
+  (new, 116 files). The script compares the folder against the manifest, **moves** (never
+  deletes) every leftover into `backend/.migration_backup/<UTC timestamp>/`, drops the
+  stale `__pycache__` entries, reports any *missing* manifest file, and supports
+  `--dry-run`, `--restore` and `--write-manifest`.
+* **`inventory/0008_portable_direct_sale_unique.py`** (new) + the model change: the
+  "one stock item per POS menu item" guard was a **conditional** unique constraint, which
+  MariaDB silently does not create (W036) — so the double-deduction guard was missing on
+  the hotel's own database. It is now a plain unique constraint (identical meaning for a
+  nullable column: NULLs are distinct everywhere).
+* **`apps/accounts/capabilities.py`**: the Administrator resolves to the **whole
+  capability catalogue** instead of only the `Capability` rows that happen to exist in the
+  database, so a row that was never seeded or was switched off can never leave the owner
+  unable to see a screen that other staff can see. Other roles keep their exact grants.
+* `backend/.gitignore` ignores `.migration_backup/`.
+
+## 15.4 What deliberately did not change
+
+* No migration file that belongs to this release was deleted or rewritten; no database row
+  was touched; nothing was back-filled or reset.
+* The five remaining conditional constraints (4 on `payments.Refund`, 1 each on the two
+  biometric templates) stay as they are — each one has an application-level guard inside a
+  locked transaction (documented in the §4 table of the deployment doc).
+* No new dependency; no endpoint change; no frontend behaviour change.
+
+## 15.5 Evidence
+
+| Check | Result |
+|---|---|
+| Reproduce: recreate the 11 leftover files | `migrate` → **the exact reported CommandError**, same 11 apps |
+| `python tools/repair_migrations.py` then `migrate` | 11 files moved, `migrate` → `No migrations to apply` (linear graph) |
+| `python tools/repair_migrations.py --restore` | all 11 restored and the error returns — the backup is complete |
+| `python manage.py check` / `makemigrations --check --dry-run` | no issues / `No changes detected` |
+| `tests.test_inventory_item_management` (incl. `PortableConstraintTests`) | **33 tests OK** — the constraint has no condition and the database itself refuses a duplicate menu-item claim |
+| `tests.test_capabilities` (incl. `AdministratorCompletenessTests`) | **8 tests OK** — the owner holds all 53 catalogue capabilities even with rows deactivated/removed, and other roles keep their exact grants (a Cashier is still refused the financial report) |
+| 12-suite inventory/POS/payments run | **129 tests OK** |
+| 11-suite permissions/finance/staff run | **110 tests OK** |
+| `cd frontend && python3 validate.py` | 70 HTML / 30 JS **ALL OK** |
+| `cd frontend && node --test tests-js/` | **472 tests: 470 pass, 1 skipped, 1 pre-existing failure** (PWA root manifest, unrelated) |
+
+## 15.6 Honest limits
+
+* The repair tool verifies the file set, not the database. A database that was **already**
+  built by a mongrel migration chain should be rebuilt (which is what the platform move
+  does); the tool makes the *folder* clean.
+* The manifest must be regenerated when a new migration is added —
+  `python tools/repair_migrations.py --write-manifest` (the release process already runs
+  it; a missing entry would be reported, never silently removed).
+* The owner's account is still deliberately excluded from the **staff directory** and the
+  staff self-service record (1.1.19: the owner is not an employee); that is a design
+  decision, not a permission gap.

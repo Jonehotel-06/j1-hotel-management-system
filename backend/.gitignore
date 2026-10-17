@@ -51,3 +51,6 @@ desktop.ini
 # Hosted persistent-disk mount artifacts (never commit databases)
 jone_hotel-*
 *.sqlite3*
+
+# Leftover migration files moved aside by tools/repair_migrations.py
+.migration_backup/

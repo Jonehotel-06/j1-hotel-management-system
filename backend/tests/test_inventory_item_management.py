@@ -936,3 +936,55 @@ class ItemTypeBackfillTests(InventoryManagementTestCase):
         bottle.refresh_from_db(); measured.refresh_from_db()
         self.assertEqual(bottle.item_type, StockItem.ItemType.SELLABLE_PRODUCT)
         self.assertEqual(measured.item_type, StockItem.ItemType.RECIPE_INGREDIENT)
+
+
+class PortableConstraintTests(InventoryManagementTestCase):
+    """The one-item-per-menu-item guard must exist on MySQL/MariaDB too.
+
+    The original constraint was CONDITIONAL (``condition=Q(...isnull=False)``).
+    MySQL and MariaDB have no partial indexes, so Django created the table
+    WITHOUT the constraint and only printed ``models.W036`` — the double
+    deduction guard that requirement 5 depends on was missing on exactly the
+    servers the hotel runs (the reported ``python manage.py migrate`` warning).
+
+    A plain unique constraint has identical meaning for a nullable column
+    (NULLs compare as distinct everywhere), so it is used instead.
+    """
+
+    def test_the_constraint_is_portable_and_really_enforced(self):
+        from django.db.models import UniqueConstraint
+
+        (constraint,) = [
+            row for row in StockItem._meta.constraints
+            if row.name == "one_direct_sale_stock_item_per_menu_item"
+        ]
+        self.assertIsInstance(constraint, UniqueConstraint)
+        # The condition is what MySQL/MariaDB silently drop (models.W036).
+        self.assertIsNone(
+            getattr(constraint, "condition", None),
+            "a conditional unique constraint would not be created on MariaDB",
+        )
+        self.assertNotIn("condition", getattr(constraint, "kwargs", {}))
+
+        # It is not merely declared: the database refuses the duplicate.
+        from django.db import IntegrityError
+
+        first = StockItem.objects.get(sku="ITM-RICE")
+        StockItem.objects.filter(pk=first.pk).update(direct_sale_menu_item=self.crate_menu)
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                StockItem.objects.create(
+                    sku="ITM-RICE-DUPLICATE", name="Second claim on the same menu item",
+                    base_unit="KG", direct_sale_menu_item=self.crate_menu,
+                )
+
+        # …and unconfigured items (NULL menu item) stay unconstrained, which is
+        # what the condition used to express.
+        unconfigured_before = StockItem.objects.filter(direct_sale_menu_item__isnull=True).count()
+        StockItem.objects.create(sku="ITM-NULL-1", name="Unconfigured A", base_unit="KG")
+        StockItem.objects.create(sku="ITM-NULL-2", name="Unconfigured B", base_unit="KG")
+        self.assertEqual(
+            StockItem.objects.filter(direct_sale_menu_item__isnull=True).count(),
+            unconfigured_before + 2,
+            "many items may sit without a direct-sale claim",
+        )
