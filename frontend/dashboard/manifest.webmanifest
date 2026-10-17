@@ -1,6 +1,6 @@
 {
   "name": "J-ONE Staff Dashboard",
-  "short_name": "J-ONE Staff",
+  "short_name": "J1 Hotel",
   "description": "J-ONE Hotel & Lodge staff dashboard for authorised hotel operations.",
   "id": "/dashboard/",
   "start_url": "/dashboard/index.html",
