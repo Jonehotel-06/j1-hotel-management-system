@@ -29,6 +29,7 @@ from apps.rooms.models import Room
 from .models import Booking, BookingRoom, Guest
 from .serializers_admin import (
     AdminBookingCreateSerializer,
+    AdminRoomGuestsSerializer,
     AdminBookingDetailSerializer,
     AdminBookingListSerializer,
     AdminBookingModifySerializer,
@@ -49,10 +50,39 @@ from .services.receipt_email import render_receipt_email
 logger = logging.getLogger("apps")
 
 
+def _with_room_arrival_counts(queryset):
+    """Count arrived / still-expected rooms per booking in the SAME query.
+
+    ``distinct=True`` keeps the counts exact on the views that join payments or
+    room occupants for search, where a plain Count would multiply rows.
+    """
+    return queryset.annotate(
+        rooms_checked_in_count=Count(
+            "room_assignments",
+            filter=Q(room_assignments__checked_in_at__isnull=False),
+            distinct=True,
+        ),
+        rooms_awaiting_count=Count(
+            "room_assignments",
+            filter=Q(
+                room_assignments__checked_in_at__isnull=True,
+                room_assignments__not_arrived_at__isnull=True,
+            ),
+            distinct=True,
+        ),
+    )
+
+
 def _admin_booking_queryset():
-    return (
+    return _with_room_arrival_counts(
         Booking.objects.select_related("guest", "room_type", "offer")
-        .prefetch_related(Prefetch("room_assignments", queryset=BookingRoom.objects.select_related("room"), to_attr="_assignments"))
+        .prefetch_related(
+            Prefetch(
+                "room_assignments",
+                queryset=BookingRoom.objects.select_related("room").prefetch_related("occupants"),
+                to_attr="_assignments",
+            )
+        )
         .order_by("-created_at")
     )
 
@@ -82,6 +112,9 @@ def apply_booking_search(queryset, search):
         | Q(guest__last_name__icontains=term)
         | Q(guest__email__icontains=term)
         | Q(guest__phone__icontains=term)
+        # The desk often knows only the email of the person in room 3.
+        | Q(room_assignments__occupants__email__icontains=term)
+        | Q(room_assignments__occupants__full_name__icontains=term)
         | Q(room_type__name__icontains=term)
         | Q(room_type__slug__icontains=term)
         | Q(room_assignments__room__room_number__icontains=term)
@@ -181,6 +214,7 @@ class AdminBookingListCreateView(generics.ListCreateAPIView):
             actor=request.user,
             request=request,
             room_id=data.get("room_id"),
+            room_guests=data.get("room_guests") or None,
         )
         if data.get("internal_notes"):
             booking.internal_notes = data["internal_notes"]
@@ -540,6 +574,76 @@ def _folio_clearance_payload(booking, *, user=None):
 
 
 @extend_schema(tags=["Admin · Bookings"], summary="Check-out folio and gate clearance for a booking")
+@extend_schema(
+    tags=["Admin · Bookings"],
+    summary="Record the guests staying in each room of a multi-room booking",
+)
+class AdminBookingRoomGuestsView(APIView):
+    """GET/PUT the per-room guest list.
+
+    The booking contact is the guest of the reservation; this endpoint records
+    the people in the other rooms so each of them can sign in to the guest
+    portal with their own address and raise their own service requests. It is
+    also the record the desk uses to answer "who was supposed to be in Room 3?".
+    """
+
+    permission_classes = [BookingManageAccess]
+    serializer_class = AdminRoomGuestsSerializer
+
+    def get(self, request, lookup):
+        booking = _get_admin_booking(lookup)
+        return success_response(
+            AdminBookingDetailSerializer(booking, context=_booking_detail_context(request, booking)).data
+        )
+
+    def put(self, request, lookup):
+        booking = _get_admin_booking(lookup)
+        serializer = AdminRoomGuestsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        booking_service.set_room_guests(
+            booking,
+            rooms_payload=serializer.validated_data["rooms"],
+            staff_user=request.user,
+            request=request,
+        )
+        booking = _get_admin_booking(booking.booking_reference)
+        return success_response(
+            AdminBookingDetailSerializer(booking, context=_booking_detail_context(request, booking)).data,
+            message="Room guests updated.",
+        )
+
+
+@extend_schema(
+    tags=["Admin · Bookings"],
+    summary="Check in ONE room of a multi-room booking",
+)
+class AdminBookingRoomCheckInView(APIView):
+    """Record the arrival of a single room.
+
+    The whole-booking check-in remains the fast path for a party that arrives
+    together; this is for the case the desk actually faces — room 1 is here,
+    rooms 2 and 3 are still travelling.
+    """
+
+    permission_classes = [BookingManageAccess]
+    serializer_class = EmptySerializer
+
+    def post(self, request, lookup, assignment_id):
+        booking = _get_admin_booking(lookup)
+        booking, assignment, changed = booking_service.check_in_booking_room(
+            booking, assignment_id=assignment_id, staff_user=request.user, request=request
+        )
+        booking = _get_admin_booking(booking.booking_reference)
+        return success_response(
+            AdminBookingDetailSerializer(booking, context=_booking_detail_context(request, booking)).data,
+            message=(
+                f"Room {assignment.room.room_number} checked in."
+                if changed
+                else f"Room {assignment.room.room_number} was already checked in."
+            ),
+        )
+
+
 class AdminBookingFolioClearanceView(APIView):
     """Checkout-desk clearance read: what the guest consumed, what was paid,
     whether anything is still owed, and what has not been billed yet — the
@@ -1013,7 +1117,7 @@ class AdminMissedBookingListView(generics.ListAPIView):
 
     def get_queryset(self):
         booking_service.maybe_expire_stale_pending_bookings()
-        qs = booking_service.missed_bookings_queryset()
+        qs = _with_room_arrival_counts(booking_service.missed_bookings_queryset())
         params = self.request.query_params
         if status_param := params.get("status"):
             qs = qs.filter(status=status_param.upper())
@@ -1037,7 +1141,7 @@ class AdminLateArrivalBookingListView(generics.ListAPIView):
 
     def get_queryset(self):
         booking_service.maybe_expire_stale_pending_bookings()
-        qs = booking_service.late_arrival_bookings_queryset()
+        qs = _with_room_arrival_counts(booking_service.late_arrival_bookings_queryset())
         params = self.request.query_params
         if date_from := params.get("date_from"):
             qs = qs.filter(check_in__gte=date_from)

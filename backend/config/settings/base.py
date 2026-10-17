@@ -201,6 +201,10 @@ REST_FRAMEWORK = {
         "booking_create": "30/hour",
         "availability": "240/hour",
         "payment_init": "20/hour",
+        # Emailed booking links: the exchange mints a session token, so it is
+        # throttled like a login; the resend sends mail, so it is tighter.
+        "booking_access_exchange": "30/hour",
+        "booking_access_resend": "6/hour",
         "payment_verify": "60/hour",
         "paystack_webhook": "300/min",
         "review_verify": "20/hour",
@@ -438,13 +442,20 @@ CORS_ALLOW_HEADERS = (
 # forge — so it is read only when the connection arrived from one of these
 # trusted proxy networks. See apps/core/client_ip.py.
 #
-# The default (private + loopback ranges) is correct for the hosts above and
-# cannot be abused from outside: a public client cannot make its connection
-# appear to come from 10.0.0.0/8. A deployment whose proxy uses PUBLIC
-# addresses must list them here, or every client will look like the proxy.
+# The default (private + shared + loopback ranges) is correct for the hosts
+# above and cannot be abused from outside: a public client cannot make its
+# connection appear to come from 10.0.0.0/8. A deployment whose proxy uses
+# PUBLIC addresses must list them here, or every client will look like the
+# proxy.
+#
+# 100.64.0.0/10 (RFC 6598, carrier-grade NAT) is included because Railway —
+# the host this project deploys to — reaches the container from that range.
+# Without it, REMOTE_ADDR is the platform's own proxy and the address it
+# reports changes on every request, so no desk address could ever be
+# registered. Keep this list in sync with apps/core/client_ip.py.
 TRUSTED_PROXY_CIDRS = config(
     "TRUSTED_PROXY_CIDRS",
-    default="127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1/128,fc00::/7,fe80::/10",
+    default="127.0.0.0/8,10.0.0.0/8,100.64.0.0/10,172.16.0.0/12,192.168.0.0/16,::1/128,fc00::/7,fe80::/10",
     cast=Csv(),
 )
 
@@ -458,9 +469,15 @@ TRUSTED_PROXY_CIDRS = config(
 # override. A deployment with its own front end names its header here instead
 # (e.g. "x-real-ip" behind nginx with proxy_set_header X-Real-IP $remote_addr).
 # An empty value disables the preference and falls back to the forwarding chain.
+#
+# ``x-real-ip`` is included because Railway's edge OVERWRITES it with the client
+# it saw (their documented contract), and because an nginx front end sets it
+# with ``proxy_set_header X-Real-IP $remote_addr``. Only list headers your edge
+# rewrites: a proxy that forwards a client-supplied value unchanged would let a
+# caller nominate its own address, so drop that header from the list there.
 TRUSTED_CLIENT_IP_HEADERS = config(
     "TRUSTED_CLIENT_IP_HEADERS",
-    default="true-client-ip,cf-connecting-ip",
+    default="true-client-ip,cf-connecting-ip,x-real-ip",
     cast=Csv(),
 )
 

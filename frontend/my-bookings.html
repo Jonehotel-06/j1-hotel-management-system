@@ -233,9 +233,21 @@
   var urlParams = new URLSearchParams(location.search);
   var urlRef = (urlParams.get("ref") || "").trim();
   var urlToken = (urlParams.get("token") || "").trim();
+  /* Signed value from the emailed link. Unlike the token (which only exists in
+     the browser that made the booking) this works on any device, so every
+     booking email — not just the first — leads somewhere useful. */
+  var urlAccess = (urlParams.get("access") || "").trim();
+  function rememberToken(token, ref) {
+    if (!token) return;
+    try { sessionStorage.setItem("jone.guest_access_token", token); } catch (_) {}
+    try { localStorage.setItem("jone.guest_access_token", token); } catch (_) {}
+    if (ref) {
+      try { sessionStorage.setItem("jone.guest_access_token." + ref, token); } catch (_) {}
+      try { localStorage.setItem("jone.guest_access_token." + ref, token); } catch (_) {}
+    }
+  }
   if (urlToken) {
-    sessionStorage.setItem("jone.guest_access_token", urlToken);
-    if (urlRef) sessionStorage.setItem("jone.guest_access_token." + urlRef, urlToken);
+    rememberToken(urlToken, urlRef);
     try { history.replaceState(null, "", location.pathname + (urlRef ? "?ref=" + encodeURIComponent(urlRef) : "")); } catch (_) {}
   }
 
@@ -357,8 +369,64 @@
   /* Guests cannot directly cancel confirmed/paid bookings. The card action
      above routes them to the structured Contact cancellation/refund request. */
 
-  // Arriving from the secure email link with both credentials? Load at once.
-  if (accessRef && accessToken) load();
+  /* Ask the hotel system for a fresh emailed link — the documented way back in
+     when this device holds no credential for the booking. The reply is the same
+     whether or not the reference exists, so nothing is revealed. */
+  function offerResend(message) {
+    errEl.innerHTML = '<div class="empty-state"><span data-icon="lock" data-size="38"></span>' +
+      '<h3>This device cannot open that booking</h3>' +
+      '<p>' + JONE.esc(message) + '</p>' +
+      '<button class="btn btn-accent" type="button" data-resend-access>Email me a secure link</button></div>';
+    errEl.style.display = "";
+    JONE.icons.inject(errEl);
+  }
+  errEl.addEventListener("click", async function (e) {
+    var btn = e.target.closest("[data-resend-access]");
+    if (!btn || !accessRef) return;
+    if (!JONE.guardSubmit(btn)) return;
+    var label = btn.innerHTML;
+    btn.innerHTML = '<span class="btn-spinner"></span> Sending…';
+    try {
+      await window.API.resendBookingAccessLink(accessRef);
+      JONE.ui.toast("If that booking exists, a secure link is on its way to the address on the reservation.", "success", { duration: 6000 });
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "We could not send the link. Please contact the hotel.", "error");
+    } finally {
+      JONE.releaseGuard(btn);
+      btn.innerHTML = label;
+    }
+  });
+
+  async function claimEmailedLink() {
+    if (!urlAccess || !urlRef) return false;
+    try {
+      var claimed = await window.API.exchangeBookingAccess(urlRef, urlAccess);
+      var data = (claimed && claimed.data) || {};
+      if (!data.guest_access_token) return false;
+      accessRef = data.booking_reference || urlRef;
+      accessToken = data.guest_access_token;
+      rememberToken(accessToken, accessRef);
+      document.getElementById("booking-reference").value = accessRef;
+      document.getElementById("booking-token").value = accessToken;
+      return true;
+    } catch (err) {
+      return false;
+    } finally {
+      try { history.replaceState(null, "", location.pathname + "?ref=" + encodeURIComponent(urlRef)); } catch (_) {}
+    }
+  }
+
+  // Arriving from the secure email link? Trade the signed value for a session
+  // token first, then load. A reference with no credential at all is told so
+  // honestly (with a way to get the link) instead of spinning forever.
+  (async function start() {
+    if (urlAccess) await claimEmailedLink();
+    if (accessRef && accessToken) { load(); return; }
+    if (accessRef) {
+      listEl.innerHTML = "";
+      offerResend("Open the secure link from your confirmation email, or ask us to send a new one to the address on the reservation.");
+    }
+  })();
 
 })();
 </script>

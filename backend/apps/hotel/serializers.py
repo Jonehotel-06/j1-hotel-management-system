@@ -80,15 +80,34 @@ class HotelSettingsAdminSerializer(serializers.ModelSerializer):
         return value
 
     def validate_front_desk_desktop_ip(self, value):
+        """One address, or a network, or several of either (comma-separated).
+
+        A network is the honest registration when the provider reassigns the
+        desk's public address; a hostname is never accepted because it would
+        have to be resolved on every sign-in.
+        """
         value = str(value or "").strip()
         if not value:
             return ""
-        try:
-            return str(ipaddress.ip_address(value))
-        except ValueError as exc:
-            raise serializers.ValidationError(
-                "Enter one exact IPv4 or IPv6 address for the Front Desk desktop (not a range or hostname)."
-            ) from exc
+        cleaned = []
+        for item in (part.strip() for part in value.split(",")):
+            if not item:
+                continue
+            try:
+                parsed = (
+                    ipaddress.ip_network(item, strict=False) if "/" in item
+                    else ipaddress.ip_address(item)
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError(
+                    "Enter an IPv4/IPv6 address or network for the Front Desk "
+                    "desktop (for example 102.89.34.7 or 102.89.34.0/24). "
+                    "Separate several with commas; hostnames are not accepted."
+                ) from exc
+            text = str(parsed)
+            if text not in cleaned:
+                cleaned.append(text)
+        return ", ".join(cleaned)
 
     def validate_pending_booking_minutes(self, value):
         # 0 would expire every new unpaid hold instantly; the model field is a

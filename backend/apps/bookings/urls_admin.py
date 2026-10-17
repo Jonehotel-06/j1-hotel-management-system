@@ -19,6 +19,12 @@ bookings_urlpatterns = [
     path("<str:lookup>/cancel/", views_admin.AdminBookingCancelView.as_view(), name="booking-cancel"),
     path("<str:lookup>/check-in/", views_admin.AdminBookingCheckInView.as_view(), name="booking-check-in"),
     path("<str:lookup>/check-out/", views_admin.AdminBookingCheckOutView.as_view(), name="booking-check-out"),
+    path("<str:lookup>/room-guests/", views_admin.AdminBookingRoomGuestsView.as_view(), name="booking-room-guests"),
+    path(
+        "<str:lookup>/rooms/<int:assignment_id>/check-in/",
+        views_admin.AdminBookingRoomCheckInView.as_view(),
+        name="booking-room-check-in",
+    ),
     path("<str:lookup>/folio-clearance/", views_admin.AdminBookingFolioClearanceView.as_view(), name="booking-folio-clearance"),
     path("<str:lookup>/portal-invitation/", AdminBookingPortalInvitationView.as_view(), name="booking-portal-invitation"),
     path("<str:lookup>/no-show/", views_admin.AdminBookingNoShowView.as_view(), name="booking-no-show"),

@@ -12,7 +12,7 @@ from django.utils import timezone
 from rest_framework.exceptions import AuthenticationFailed
 
 from apps.audit.services import log_action
-from apps.bookings.models import Guest
+from apps.bookings.models import Guest, RoomOccupant
 from apps.core.email_design import render_notice_email
 from apps.core.emails import queue_email
 
@@ -29,6 +29,23 @@ def normalize_portal_email(email: str) -> str:
 
 def hash_secret(value: str) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+
+
+def portal_identity_exists(email: str) -> bool:
+    """Whether this address may hold a portal identity.
+
+    A person staying in a multi-room booking is an identity in their own right
+    even though they are not the booking contact: their email lives on
+    ``RoomOccupant``, not on ``Guest``. That is the whole point of recording
+    it, so both places are checked. The caller still returns the same generic
+    response either way — this only decides whether a challenge is minted.
+    """
+    email = normalize_portal_email(email)
+    if not email:
+        return False
+    if Guest.objects.filter(email__iexact=email).exists():
+        return True
+    return RoomOccupant.objects.filter(email__iexact=email).exists()
 
 
 def _client_ip(request):
@@ -113,9 +130,10 @@ def request_access_challenge(*, email: str, request=None) -> None:
     """
     email = normalize_portal_email(email)
     now = timezone.now()
-    # A verified portal identity is an existing guest email. We deliberately do
-    # not auto-link any User/Guest record here; proof occurs only on consume.
-    if not Guest.objects.filter(email__iexact=email).exists():
+    # A verified portal identity is an existing guest OR room-guest email. We
+    # deliberately do not auto-link any User/Guest record here; proof occurs
+    # only on consume.
+    if not portal_identity_exists(email):
         return
 
     window_start = now - timedelta(hours=1)
@@ -167,7 +185,7 @@ def consume_access_challenge(*, raw_token: str, request=None):
 
         # Do not mint a session if the referenced portal identity has vanished
         # since the email was sent. The externally visible failure stays generic.
-        if not Guest.objects.filter(email__iexact=challenge.email).exists():
+        if not portal_identity_exists(challenge.email):
             challenge.consumed_at = now
             challenge.save(update_fields=["consumed_at", "updated_at"])
             raise AuthenticationFailed(INVALID_PORTAL_CREDENTIAL_MESSAGE)

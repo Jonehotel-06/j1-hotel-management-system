@@ -624,6 +624,27 @@ const API = (() => {
 
   /* Booking detail by id or booking_reference (auth + owner). */
   function guestAccessOpts(token) { return token ? { auth: false, headers: { "X-Guest-Access-Token": token } } : {}; }
+
+  /* Emailed secure links.
+     A guest token lives in one browser's storage. The link in every booking
+     email carries a signed `access` value instead, which this call exchanges
+     for a normal token — so a guest on a phone, or one who cleared site data,
+     can still open and pay for their booking. The value is bound to the
+     reference and expires; it is never stored, only exchanged. */
+  function exchangeBookingAccess(lookup, access, opts = {}) {
+    return post(
+      `/api/bookings/${encodeURIComponent(lookup)}/access/`,
+      { access: String(access || "") },
+      { auth: false, ...opts }
+    );
+  }
+
+  /* Ask the hotel system to email a fresh secure link. The response is
+     deliberately identical whether or not the reference exists, so this can
+     never be used to discover bookings. */
+  function resendBookingAccessLink(lookup, opts = {}) {
+    return post(`/api/bookings/${encodeURIComponent(lookup)}/access-link/`, {}, { auth: false, ...opts });
+  }
   function getBooking(lookup, opts = {}) { return get(`/api/bookings/${encodeURIComponent(lookup)}/`, opts); }
 
   /* Receipt for a booking (auth + owner) — renders the confirmation page. */
@@ -780,6 +801,28 @@ const API = (() => {
     return post(`${base}/${encodeURIComponent(lookup)}/settle-balance/`, payload || {}, opts);
   };
   const noShowBooking    = (lookup, opts = {}) => bookingAction("no-show", lookup, {}, opts);
+  /* Room guests + per-room check-in (multi-room bookings).
+       PUT  /api/admin/bookings/{lookup}/room-guests/
+            { rooms: [{ assignment_id, guests: [{email, full_name?, phone?}] }] }
+       POST /api/admin/bookings/{lookup}/rooms/{assignment_id}/check-in/
+     The PUT is a REPLACE of the whole room list, so callers always send every
+     room they want to keep. Both answer with the refreshed booking detail. */
+  const saveBookingRoomGuests = (lookup, rooms, opts = {}) => {
+    const base = BOOKINGS_EP();
+    if (!base) throw notConfigured("bookings");
+    return put(`${base}/${encodeURIComponent(lookup)}/room-guests/`, { rooms: rooms || [] }, opts);
+  };
+  const checkInBookingRoom = (lookup, assignmentId, opts = {}) => {
+    const base = BOOKINGS_EP();
+    if (!base) throw notConfigured("bookings");
+    const id = Number.parseInt(String(assignmentId ?? ""), 10);
+    if (!Number.isInteger(id) || id < 1) {
+      throw new APIError(0, "A valid room assignment is required to check a room in.", {
+        code: "INVALID_ROOM_ASSIGNMENT",
+      });
+    }
+    return post(`${base}/${encodeURIComponent(lookup)}/rooms/${id}/check-in/`, {}, opts);
+  };
   /* Re-point one existing reservation row at a different physical room.
      Contract (apps/bookings/serializers_admin.py → AssignRoomSerializer):
          { assignment_id, room_id }   → POST /api/admin/bookings/{lookup}/assign-room/
@@ -997,6 +1040,7 @@ const API = (() => {
     verifyReviewStay, submitReview, getReviewStats,
     // Booking flow (guest)
     quoteBooking, createBooking, myBookings, getBooking, guestAccessOpts, getBookingReceipt,
+    exchangeBookingAccess, resendBookingAccessLink,
     // Payments
     initPayment, verifyPayment,
     // Auth
@@ -1008,6 +1052,7 @@ const API = (() => {
     rescheduleBooking, getOccupancyCalendar, listMissedBookings, listLateArrivals,
     listGuestDiscounts, createGuestDiscount, updateGuestDiscount, deactivateGuestDiscount,
     confirmBooking, staffCancelBooking, checkInBooking, checkOutBooking, bookingFolioClearance,
+    saveBookingRoomGuests, checkInBookingRoom,
     settleBookingBalance,
     noShowBooking, assignRoom, recordPayment, listPayrollSalaryPayments,
     recordPayrollSalaryPayment, reversePayrollSalaryPayment, searchBookings, searchCheckout,

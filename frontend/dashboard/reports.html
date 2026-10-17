@@ -394,9 +394,16 @@
     }
     if(latest.occupancy){
       var average=latest.occupancy.average_occupancy_percent;
+      /* Sold room-nights and slept-in room-nights are different numbers since
+         rooms are checked in one at a time. The difference is no-shows the
+         hotel still paid for, so both are stated rather than implied. */
+      var arrivedNights=latest.occupancy.arrived_room_nights;
+      var noShowNights=Number(latest.occupancy.unarrived_room_nights||0);
       occupancyText=(average!=null?average+"% avg occupancy":"Occupancy unavailable")+
         " · "+String(latest.occupancy.active_rooms||0)+" active rooms"+
-        " · "+String(latest.occupancy.occupied_room_nights||0)+" occupied room-nights";
+        " · "+String(latest.occupancy.occupied_room_nights||0)+" room-nights sold"+
+        (arrivedNights!=null?" · "+String(arrivedNights)+" with a guest checked in":"")+
+        (noShowNights?" · "+noShowNights+" never arrived":"");
     }
     setKpi("operational-summary",bookingText+" · "+occupancyText);
   }

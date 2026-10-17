@@ -11,6 +11,7 @@ from apps.rooms.serializers import RoomSerializer
 from .models import Booking, BookingRoom, Guest
 from .serializers import (
     BookingRoomSerializer,
+    RoomGuestInputSerializer,
     GuestReadSerializer,
     serializer_folio_charge_map,
 )
@@ -32,6 +33,12 @@ class AdminBookingListSerializer(serializers.ModelSerializer):
     # The charge balance is batched per page by the view.
     folio_charges = serializers.SerializerMethodField()
     outstanding_balance = serializers.SerializerMethodField()
+    # Per-room arrival state, so a LIST row can say "1 of 3 rooms in house"
+    # without loading every booking's assignments. Views annotate these counts
+    # in one query (see views_admin._with_room_arrival_counts); the method
+    # falls back to the prefetched rows if a caller did not annotate.
+    rooms_checked_in = serializers.SerializerMethodField()
+    rooms_awaiting_arrival = serializers.SerializerMethodField()
 
     def _folio_charge_balance(self, obj):
         # Batched per page by the view's context, or lazily resolved for the
@@ -57,6 +64,7 @@ class AdminBookingListSerializer(serializers.ModelSerializer):
             "room_type_name", "room_numbers", "check_in", "check_out", "nights",
             "number_of_rooms", "number_of_guests", "total_amount", "amount_paid",
             "amount_due", "folio_charges", "outstanding_balance",
+            "rooms_checked_in", "rooms_awaiting_arrival",
             "currency", "status", "payment_status", "source", "created_at",
         ]
 
@@ -65,6 +73,23 @@ class AdminBookingListSerializer(serializers.ModelSerializer):
 
     def get_amount_due(self, obj) -> str:
         return money(obj.amount_due)
+
+    def _arrival_counts(self, obj):
+        annotated = getattr(obj, "rooms_checked_in_count", None)
+        if annotated is not None:
+            return annotated, getattr(obj, "rooms_awaiting_count", 0)
+        assignments = list(getattr(obj, "_assignments", None) or obj.room_assignments.all())
+        checked = sum(1 for a in assignments if a.checked_in_at is not None)
+        awaiting = sum(
+            1 for a in assignments if a.checked_in_at is None and a.not_arrived_at is None
+        )
+        return checked, awaiting
+
+    def get_rooms_checked_in(self, obj) -> int:
+        return self._arrival_counts(obj)[0]
+
+    def get_rooms_awaiting_arrival(self, obj) -> int:
+        return self._arrival_counts(obj)[1]
 
 
 class AdminBookingDetailSerializer(AdminBookingListSerializer):
@@ -75,6 +100,10 @@ class AdminBookingDetailSerializer(AdminBookingListSerializer):
     # instead of letting staff click into a 409.
     can_check_in = serializers.SerializerMethodField()
     check_in_blocked_reason = serializers.SerializerMethodField()
+    # Multi-room record keeping: how many of the booked rooms actually arrived.
+    rooms_checked_in = serializers.SerializerMethodField()
+    rooms_awaiting_arrival = serializers.SerializerMethodField()
+    rooms_not_arrived = serializers.SerializerMethodField()
 
     class Meta(AdminBookingListSerializer.Meta):
         fields = AdminBookingListSerializer.Meta.fields + [
@@ -84,6 +113,7 @@ class AdminBookingDetailSerializer(AdminBookingListSerializer):
             "special_requests", "internal_notes", "cancellation_reason",
             "expires_at", "checked_in_at", "checked_out_at", "cancelled_at", "updated_at",
             "can_check_in", "check_in_blocked_reason",
+            "rooms_checked_in", "rooms_awaiting_arrival", "rooms_not_arrived",
         ]
 
     def get_offer_title(self, obj):
@@ -102,6 +132,30 @@ class AdminBookingDetailSerializer(AdminBookingListSerializer):
 
     def get_check_in_blocked_reason(self, obj) -> str:
         return self._check_in_state(obj)[1]
+
+    def _assignments(self, obj):
+        return getattr(obj, "_assignments", None) or list(obj.room_assignments.all())
+
+    def get_rooms_not_arrived(self, obj) -> int:
+        return sum(1 for assignment in self._assignments(obj) if assignment.not_arrived_at is not None)
+
+
+class RoomGuestsRoomSerializer(serializers.Serializer):
+    """The replacement guest list for ONE room of the booking."""
+
+    assignment_id = serializers.IntegerField(min_value=1)
+    guests = RoomGuestInputSerializer(many=True, required=False, default=list)
+
+
+class AdminRoomGuestsSerializer(serializers.Serializer):
+    """PUT the complete per-room guest list.
+
+    Replace-in-full, not append: the desk edits one dialog, and a half-applied
+    list would misstate who is expected. Removing a room from the payload
+    removes its guests.
+    """
+
+    rooms = RoomGuestsRoomSerializer(many=True)
 
 
 class AdminBookingCreateSerializer(serializers.Serializer):
@@ -123,6 +177,9 @@ class AdminBookingCreateSerializer(serializers.Serializer):
     special_requests = serializers.CharField(required=False, allow_blank=True, default="")
     internal_notes = serializers.CharField(required=False, allow_blank=True, default="")
     guest = serializers.DictField(child=serializers.CharField(allow_blank=True), required=True)
+    # People staying in the additional rooms (same contract as the public
+    # booking form). Optional and only meaningful when rooms > 1.
+    room_guests = RoomGuestInputSerializer(many=True, required=False, default=list)
     # Optional exact physical room ("Room 203") the receptionist promised.
     # Advisory: availability is re-verified server-side and an equivalent room
     # of the same type may be assigned instead (reported as room_substitution).
@@ -155,6 +212,39 @@ class AdminBookingCreateSerializer(serializers.Serializer):
         if missing:
             raise serializers.ValidationError({key: "This field is required." for key in missing})
         return value
+
+    def validate(self, attrs):
+        room_guests = attrs.get("room_guests") or []
+        if not room_guests:
+            return attrs
+        rooms = int(attrs.get("rooms") or 1)
+        if rooms < 2:
+            raise serializers.ValidationError(
+                {"room_guests": ["Room guests can only be added when booking more than one room."]}
+            )
+        contact_email = str((attrs.get("guest") or {}).get("email") or "").strip().lower()
+        seen = set()
+        for entry in room_guests:
+            email = entry["email"]
+            if email == contact_email:
+                raise serializers.ValidationError(
+                    {"room_guests": [f"{email} is the booking contact — the contact does not need a room guest entry."]}
+                )
+            if email in seen:
+                raise serializers.ValidationError(
+                    {"room_guests": [f"{email} is listed twice. Each guest can only be in one room of this booking."]}
+                )
+            seen.add(email)
+            index = entry.get("room_index")
+            if index is not None and index >= rooms:
+                raise serializers.ValidationError(
+                    {"room_guests": [f"Room {index + 1} does not exist on a {rooms}-room booking."]}
+                )
+        if len(room_guests) > rooms:
+            raise serializers.ValidationError(
+                {"room_guests": [f"Only {rooms} room(s) were booked, but {len(room_guests)} room guests were supplied."]}
+            )
+        return attrs
 
 
 class AdminBookingModifySerializer(serializers.Serializer):

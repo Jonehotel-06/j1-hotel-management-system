@@ -138,7 +138,7 @@
   var arrivals=[];
   function renderInHouse(list){
     if(!list.length){ DATA.empty(inhouseBody,"bed","No guests currently in-house","Checked-in guests will remain visible here.",6); return; }
-    inhouseBody.innerHTML=list.map(function(b){ var ref=refOf(b); return '<tr><td>'+JONE.esc(ref)+'</td><td>'+JONE.esc(b.guest_name||"—")+'</td><td>'+JONE.esc(roomLabel(b))+'</td><td>'+JONE.esc(b.check_out?JONE.formatDate(b.check_out,"mid"):"—")+'</td><td>'+JONE.dashboard.statusPill(b.status)+'</td><td><a class="btn btn-sm btn-outline" href="booking-details.html?ref='+encodeURIComponent(ref)+'">View</a></td></tr>'; }).join("");
+    inhouseBody.innerHTML=list.map(function(b){ var ref=refOf(b); return '<tr><td>'+JONE.esc(ref)+'</td><td>'+JONE.esc(b.guest_name||"—")+'</td><td>'+roomCell(b)+'</td><td>'+JONE.esc(b.check_out?JONE.formatDate(b.check_out,"mid"):"—")+'</td><td>'+JONE.dashboard.statusPill(b.status)+'</td><td><a class="btn btn-sm btn-outline" href="booking-details.html?ref='+encodeURIComponent(ref)+'">View</a>'+roomsLink(b)+'</td></tr>'; }).join("");
     JONE.icons.inject(inhouseBody);
   }
 
@@ -147,11 +147,30 @@
   function refOf(b){ return b.booking_reference || b.id; }
   function roomLabel(b){ return (b.room_numbers && b.room_numbers.length) ? b.room_numbers.join(", ") : (b.room_type_name || "—"); }
 
+  /* A multi-room party arrives one room at a time. The booking says CHECKED_IN
+     as soon as the FIRST room is handed over, so the list must state how many
+     of the booked rooms are actually in house — otherwise the desk sees
+     "checked in" for three rooms when only one guest is here. */
+  function roomCell(b){
+    var label=JONE.esc(roomLabel(b));
+    var expected=Number(b.number_of_rooms||0);
+    var arrived=Number(b.rooms_checked_in||0);
+    var awaiting=Number(b.rooms_awaiting_arrival||0);
+    if(expected<2) return label;
+    var detail=arrived+" of "+expected+" room(s) in house"+(awaiting?" · "+awaiting+" awaiting arrival":"");
+    return label+'<div class="caption">'+JONE.esc(detail)+'</div>';
+  }
+  function roomsLink(b){
+    var expected=Number(b.number_of_rooms||0);
+    if(expected<2) return "";
+    return ' <a class="btn btn-sm btn-outline" href="booking-details.html?ref='+encodeURIComponent(refOf(b))+'#rooms-panel">Rooms</a>';
+  }
+
   function render(list){
     tbody.innerHTML=list.map(function(b){
       var ref=refOf(b);
       var due=b.amount_due!=null?Number(b.amount_due):null;
-      return '<tr><td>'+JONE.esc(ref)+'</td><td>'+JONE.esc(b.guest_name||"—")+'</td><td class="hide-sm">'+JONE.esc(roomLabel(b))+'</td><td>'+JONE.esc(b.check_in?JONE.formatDate(b.check_in,"mid"):b.status||"—")+'</td><td class="hide-sm num">'+(due!=null?(due>0?JONE.formatNaira(due):"<span class='text-success'>Settled</span>"):"—")+'</td><td><button class="btn btn-sm btn-accent" data-checkin-btn="'+encodeURIComponent(ref)+'">Check in</button></td></tr>';
+      return '<tr><td>'+JONE.esc(ref)+'</td><td>'+JONE.esc(b.guest_name||"—")+'</td><td class="hide-sm">'+roomCell(b)+'</td><td>'+JONE.esc(b.check_in?JONE.formatDate(b.check_in,"mid"):b.status||"—")+'</td><td class="hide-sm num">'+(due!=null?(due>0?JONE.formatNaira(due):"<span class='text-success'>Settled</span>"):"—")+'</td><td><button class="btn btn-sm btn-accent" data-checkin-btn="'+encodeURIComponent(ref)+'">Check in</button>'+roomsLink(b)+'</td></tr>';
     }).join("") || '<tr><td colspan="6"><div class="empty-state"><span data-icon="logOut"></span><h3>No arrivals today</h3></div></td></tr>';
     JONE.icons.inject(tbody);
   }

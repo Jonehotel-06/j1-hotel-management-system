@@ -174,6 +174,7 @@ def create_service_request(
     due_at=None,
     actor=None,
     portal_email="",
+    occupant=None,
     table_number="",
     qr_link=None,
     idempotency_key: str | None = None,
@@ -245,6 +246,7 @@ def create_service_request(
         due_at=due_at or (now + _SLA[priority]),
         created_by=actor,
         portal_email=(portal_email or "")[:254],
+        occupant=occupant,
     )
     if not created:
         if request.guest_id != getattr(guest, "pk", None):
@@ -264,6 +266,7 @@ def create_service_request(
             "priority": priority,
             "qr_link_reference": qr_link.reference if qr_link else "",
             "table_number": table_number,
+            "raised_by_room_guest": bool(occupant),
         },
     )
     if assigned_to:

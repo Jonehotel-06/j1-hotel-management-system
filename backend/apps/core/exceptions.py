@@ -158,20 +158,37 @@ class StaffSignInRestrictedError(JOneAPIError):
         "Sign in from the front desk, or ask an administrator to update it."
     )
 
-    def __init__(self, detail=None, *, client_ip="", network_mismatch=False):
+    def __init__(self, detail=None, *, client_ip="", network_mismatch=False,
+                 unusable_saved_addresses=()):
         if detail is None and network_mismatch:
             detail = self.network_mismatch_detail
         super().__init__(detail)
         self.client_ip = str(client_ip or "")
         self.network_mismatch = bool(network_mismatch)
+        self.unusable_saved_addresses = [str(v) for v in (unusable_saved_addresses or []) if str(v).strip()]
 
     @property
     def errors_payload(self):
         payload = {}
         if self.client_ip:
             payload["client_ip"] = self.client_ip
+            # An address from a private/shared range is the hosting platform's
+            # own proxy, not the desk: telling an administrator to register it
+            # sends them in a circle, because it changes per request and no
+            # browser can ever arrive from it. The UI uses this flag to say so.
+            from apps.core.client_ip import is_infrastructure_address
+
+            if is_infrastructure_address(self.client_ip):
+                payload["client_ip_is_infrastructure"] = True
         if self.network_mismatch:
             payload["reason"] = "front_desk_ip_mismatch"
+        if self.unusable_saved_addresses:
+            # The SAVED value (hotel settings and/or a workstation) is a hosting
+            # or private address, so no public browser can ever match it.
+            # Editing that value is the fix; widening it is not. The value
+            # travels back so the person fixing it sees what to replace.
+            payload["configured_address_unusable"] = True
+            payload["configured_front_desk_address"] = ", ".join(self.unusable_saved_addresses)
         return payload or None
 
 

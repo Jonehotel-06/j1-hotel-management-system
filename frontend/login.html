@@ -194,10 +194,22 @@
       var lines = [];
       lines.push("Staff sign-in is limited to the Receptionist Desktop. This browser reached the server from "
         + (ip ? ip + "." : "an address the server could not determine."));
-      if (meta.reason === "front_desk_ip_mismatch") {
-        lines.push("The front desk is pinned to a fixed network address in hotel settings and this browser is outside it.");
+      if (meta.client_ip_is_infrastructure) {
+        // The address is the hosting platform's own proxy, not the desk. Saying
+        // "register it" would send the administrator in a circle: it changes on
+        // every request and no browser can ever arrive from it.
+        lines.push("That address belongs to the hosting network, not to this computer, so it cannot be registered \u2014 it changes from request to request. This deployment is not seeing the desk's real address: its proxy settings (TRUSTED_PROXY_CIDRS and TRUSTED_CLIENT_IP_HEADERS) need to cover the hosting edge before the address here becomes usable. Until then, sign in from a browser enrolled with a desktop key, or use the 6-digit code below.");
+      } else if (meta.configured_address_unusable) {
+        // The value an administrator SAVED is a hosting/private address, so it
+        // can never match a browser. Widening it is not the fix; replacing it is.
+        lines.push("The address saved for the front desk"
+          + (meta.configured_front_desk_address ? " (" + meta.configured_front_desk_address + ")" : "")
+          + " is a hosting or private address that no browser can arrive from, so sign-in cannot match it. "
+          + "An administrator should replace it in Settings \u2192 Front Desk desktop, or on the workstation, with the address the server reports when this page is opened on the desk itself \u2014 or paste a desktop key into this browser instead.");
+      } else if (meta.reason === "front_desk_ip_mismatch") {
+        lines.push("The front desk is pinned to a fixed address or network in hotel settings and this browser is outside it. An administrator can widen that entry to the network the desk sits on (for example 102.89.34.0/24).");
       } else if (ip) {
-        lines.push("An administrator can register that address for the front desk workstation so front desk staff sign in here with just their email and password.");
+        lines.push("An administrator can register that address (or the network it belongs to) for the front desk workstation so front desk staff sign in here with just their email and password.");
       }
       lines.push("You can also sign in with the 6-digit code issued at the Reception Attendance Workstation after clock-in.");
       box.textContent = lines.join(" ");

@@ -32,7 +32,7 @@ const CONFIG = read("js/config.js");
 
 /* Run the shipped desk helpers in a vm with a stub API, so the assertions
    cannot drift from what the page actually does. */
-function loadTerminalHelpers({ address = "102.89.34.7", source = "peer", fail = null } = {}) {
+function loadTerminalHelpers({ address = "102.89.34.7", source = "peer", infrastructure = false, fail = null } = {}) {
   const ctx = makeContext();
   const calls = { update: [], confirm: 0, confirmPayload: null, toasts: [] };
   const notice = makeElement("p");
@@ -48,7 +48,7 @@ function loadTerminalHelpers({ address = "102.89.34.7", source = "peer", fail = 
   ctx.window.API = {
     getClientAddress: async () => {
       if (fail) throw fail;
-      return { data: { client_ip: address, source: source } };
+      return { data: { client_ip: address, source: source, client_ip_is_infrastructure: infrastructure } };
     },
     update: async (name, id, payload) => { calls.update.push({ name, id, payload }); return { data: {} }; },
   };
@@ -123,6 +123,34 @@ test("without a server-reported address nothing is registered", async () => {
   assert.ok(calls.toasts.some((t) => t.kind === "error"), "the refusal is surfaced to the administrator");
 });
 
+test("the platform's own proxy address is never offered for registration", async () => {
+  // Railway reaches the container from 100.64.0.0/10 and that peer is a
+  // different number on nearly every request. An administrator who registers
+  // it locks every front desk out, so the page must say what it is instead.
+  const { ctx, calls, notice } = loadTerminalHelpers({
+    address: "100.64.0.18", source: "peer", infrastructure: true,
+  });
+  await ctx.loadDetectedAddress();
+  assert.match(notice.textContent, /hosting platform/i);
+  assert.match(notice.textContent, /100\.64\.0\.18/);
+  assert.match(notice.textContent, /desktop key/, "the route that does work is offered");
+
+  await ctx.registerTerminalAddress(7, "Front desk 1");
+  assert.equal(calls.update.length, 0, "the proxy address is not written to the workstation");
+  assert.equal(calls.confirm, 0, "nothing is even proposed for confirmation");
+  const refusal = calls.toasts.find((t) => t.kind === "error");
+  assert.ok(refusal, "the administrator is told why it was refused");
+  assert.match(refusal.message, /never let staff sign in/);
+});
+
+test("a real desk address is still registered as before", async () => {
+  const { ctx, calls } = loadTerminalHelpers({ address: "102.89.34.7", infrastructure: false });
+  await ctx.loadDetectedAddress();
+  await ctx.registerTerminalAddress(7, "Front desk 1");
+  assert.equal(calls.update.length, 1);
+  assert.equal(calls.update[0].payload.ip_address, "102.89.34.7");
+});
+
 test("clearing the registered address warns that the desk then needs the key", async () => {
   const { ctx, calls } = loadTerminalHelpers();
   await ctx.clearTerminalAddress(7, "Front desk 1", "102.89.34.7");
@@ -176,6 +204,26 @@ test("a refused sign-in shows the address back so an administrator can register 
   assert.match(LOGIN, /onRestricted: desktopRefusalNotice/, "the page wires the handler into the shared sign-in form");
 });
 
+test("a refusal reporting the platform's own address never asks for it to be registered", () => {
+  // The address changes with every request, so "register this address" would
+  // send the administrator in a circle. Say what it is, and what actually works.
+  const start = LOGIN.indexOf("function desktopRefusalNotice(err)");
+  const end = LOGIN.indexOf('window.Auth.bindLoginForm("#login-form"');
+  const ctx = makeContext({ pathname: "/login.html" });
+  const box = makeElement("div");
+  ctx.window.document.querySelector = (sel) => (sel === "[data-desktop-notice]" ? box : null);
+  vm.runInContext(LOGIN.slice(start, end), ctx, { filename: "login.html#refusal" });
+  ctx.window.desktopRefusalNotice({
+    data: { errors: { client_ip: "100.64.0.18", client_ip_is_infrastructure: true } },
+  });
+  assert.match(box.textContent, /100\.64\.0\.18/);
+  assert.match(box.textContent, /hosting network/, "the address is named for what it is");
+  assert.match(box.textContent, /cannot be registered/);
+  assert.ok(!/An administrator can register that address/.test(box.textContent),
+    "the dead-end instruction is not given");
+  assert.match(box.textContent, /desktop key/, "the route that works is offered");
+});
+
 test("the network-pinned refusal says so instead of blaming the address", () => {
   const start = LOGIN.indexOf("function desktopRefusalNotice(err)");
   const end = LOGIN.indexOf('window.Auth.bindLoginForm("#login-form"');
@@ -186,7 +234,7 @@ test("the network-pinned refusal says so instead of blaming the address", () => 
   ctx.window.desktopRefusalNotice({
     data: { errors: { client_ip: "203.0.113.9", reason: "front_desk_ip_mismatch" } },
   });
-  assert.match(box.textContent, /pinned to a fixed network address/);
+  assert.match(box.textContent, /pinned to a fixed address or network/);
   assert.ok(!/register that address/.test(box.textContent), "registering the address is not the fix for a pinned front desk");
 });
 

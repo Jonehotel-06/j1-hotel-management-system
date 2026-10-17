@@ -19,7 +19,10 @@ from apps.core.exceptions import CancellationNotAllowedError
 from apps.core.responses import success_response
 from apps.hotel.models import HotelSettings
 
+from django.core.cache import cache
+
 from .access import can_access_booking
+from .access_links import read_access_link_token
 from .models import Booking
 from .serializers import (
     AvailabilityQuerySerializer,
@@ -27,6 +30,7 @@ from .serializers import (
     BookingDetailSerializer,
     BookingListSerializer,
     CancelBookingSerializer,
+    GuestAccessExchangeSerializer,
     QuoteRequestSerializer,
     ReceiptSerializer,
 )
@@ -247,6 +251,7 @@ class MyBookingsView(generics.ListCreateAPIView):
                 request=request,
                 room_id=data.get("room_id"),
                 idempotency_key=idempotency_key,
+                room_guests=data.get("room_guests") or None,
             )
         except IntegrityError:
             # Another request with the SAME idempotency key committed first
@@ -327,3 +332,136 @@ class BookingReceiptView(_OwnedBookingMixin, APIView):
         # ReceiptSerializer includes only SUCCESS payments. Before verification
         # this endpoint is an explicitly UNPAID booking folio, never a paid receipt.
         return success_response(ReceiptSerializer().to_representation(booking))
+
+@extend_schema(
+    tags=["Bookings"],
+    summary="Exchange a signed emailed link for a guest access token",
+    request=GuestAccessExchangeSerializer,
+)
+class BookingAccessExchangeView(APIView):
+    """Turn the ``access`` value in an emailed link into a normal guest token.
+
+    The guest-session token is a bearer secret that lives in one browser. The
+    emailed link carries a signed, expiring value instead, so a guest can open
+    their booking on a phone or after clearing site data and still pay. The
+    exchange never widens access: the signature is bound to this booking
+    reference and expires, and the response contains only what the booking's
+    own guest could already read.
+    """
+
+    permission_classes = [AllowAny]
+    serializer_class = GuestAccessExchangeSerializer
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_access_exchange"
+
+    def post(self, request, lookup):
+        serializer = GuestAccessExchangeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        booking = booking_service.get_booking_by_reference_or_id(lookup)
+        if booking is None or not read_access_link_token(
+            serializer.validated_data["access"], booking.booking_reference
+        ):
+            # Same 404 as every other booking endpoint: a wrong or expired link
+            # must not reveal whether the reference exists.
+            logger.warning(
+                "Guest access link rejected (reference=%s, booking_found=%s)",
+                lookup,
+                booking is not None,
+            )
+            raise NotFound("Booking not found.")
+        booking = booking_service.refresh_expired_pending(booking)
+        token = booking.issue_guest_access_token()
+        logger.info(
+            "Guest access link exchanged for a session token (booking=%s)",
+            booking.booking_reference,
+        )
+        return success_response(
+            {
+                "booking_reference": booking.booking_reference,
+                "guest_access_token": token,
+                "guest_access_expires_at": (
+                    booking.guest_access_expires_at.isoformat()
+                    if booking.guest_access_expires_at
+                    else None
+                ),
+            },
+            message="Booking access restored.",
+        )
+
+
+@extend_schema(
+    tags=["Bookings"],
+    summary="Email a fresh secure link for a booking (non-enumerating)",
+)
+class BookingAccessLinkResendView(APIView):
+    """Send the guest a new signed link for this booking.
+
+    Always answers 200 with the same body, whether or not the reference exists,
+    so the endpoint cannot be used to discover reservations. A booking-scoped
+    cache counter caps how often one reference can trigger an email.
+    """
+
+    permission_classes = [AllowAny]
+    serializer_class = GuestAccessExchangeSerializer
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "booking_access_resend"
+
+    MAX_PER_HOUR = 3
+
+    def post(self, request, lookup):
+        booking = booking_service.get_booking_by_reference_or_id(lookup)
+        delivered = False
+        if booking is not None and booking.guest.email:
+            key = f"booking.access_resend.{booking.pk}"
+            sent = cache.get(key, 0) or 0
+            if sent < self.MAX_PER_HOUR:
+                cache.set(key, sent + 1, 60 * 60)
+                self._send_link(booking)
+                delivered = True
+            else:
+                logger.warning(
+                    "Access-link resend cap reached for booking %s", booking.booking_reference
+                )
+        return success_response(
+            {"sent": True},
+            message=(
+                "If that booking exists, a secure link is on its way to the "
+                "email address on the reservation."
+            ),
+        )
+
+    @staticmethod
+    def _send_link(booking):
+        from apps.core.email_design import render_notice_email
+        from apps.core.emails import queue_email
+        from apps.hotel.models import HotelSettings
+
+        hotel = HotelSettings.get_settings()
+        text_body, html_body = render_notice_email(
+            category="Booking access",
+            title="Your secure booking link",
+            greeting=f"Hello {booking.guest.first_name},",
+            paragraphs=[
+                "Use the link below to open your booking. It works on this device "
+                "or any other, and expires in a few days for your security.",
+            ],
+            details=[
+                {"label": "Booking reference", "value": booking.booking_reference},
+                {"label": "Check-in", "value": str(booking.check_in)},
+            ],
+            cta_label="Open My Booking",
+            cta_url=booking_service.guest_booking_link(booking),
+            footnote="If you did not ask for this link, you can ignore this email.",
+            preheader=f"Secure access to booking {booking.booking_reference}.",
+        )
+        queue_email(
+            kind="BOOKING_ACCESS_LINK",
+            booking_reference=booking.booking_reference,
+            booking_id=booking.pk,
+            subject=f"Your secure booking link — {booking.booking_reference}",
+            message=text_body,
+            html_message=html_body,
+            recipients=[booking.guest.email],
+        )
+

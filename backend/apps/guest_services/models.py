@@ -59,6 +59,14 @@ class ServiceRequest(TimeStampedModel):
     guest = models.ForeignKey(
         "bookings.Guest", null=True, blank=True, on_delete=models.PROTECT, related_name="service_requests"
     )
+    # When the person asking is a recorded room guest (not the booking contact),
+    # this points at THEIR row. The request still belongs to the booking's guest
+    # for folio/billing purposes, but the desk and the audit trail can name the
+    # person who actually raised it.
+    occupant = models.ForeignKey(
+        "bookings.RoomOccupant", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="service_requests",
+    )
     stay = models.ForeignKey(
         "stays.Stay", null=True, blank=True, on_delete=models.PROTECT, related_name="service_requests"
     )

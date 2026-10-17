@@ -54,11 +54,11 @@ value is the best answer available and is preferred over the chain. Deployments
 with a different front end name their own header in
 ``TRUSTED_CLIENT_IP_HEADERS`` (for example ``x-real-ip`` for nginx).
 
-The trusted set defaults to the private and loopback ranges. That is
-deliberate: an address like ``10.0.0.5`` can only be the peer when the
-connection came from inside the deployment's own network, which a client on
-the public internet cannot arrange. A deployment whose proxy uses public
-addresses adds them through ``TRUSTED_PROXY_CIDRS``.
+The trusted set defaults to the private, shared (RFC 6598) and loopback
+ranges. That is deliberate: an address like ``10.0.0.5`` or ``100.64.0.18`` can
+only be the peer when the connection came from inside the deployment's own
+network, which a client on the public internet cannot arrange. A deployment
+whose proxy uses public addresses adds them through ``TRUSTED_PROXY_CIDRS``.
 """
 from __future__ import annotations
 
@@ -74,6 +74,14 @@ DEFAULT_TRUSTED_PROXY_CIDRS = (
     "10.0.0.0/8",
     "172.16.0.0/12",
     "192.168.0.0/16",
+    # 100.64.0.0/10 is the shared address space (RFC 6598, "carrier-grade NAT").
+    # It is not routable on the public internet, so an address from it can only
+    # be a hop inside the hosting platform — Railway's edge proxy reaches the
+    # container from here, and the peer address changes per request, which is
+    # why a desk address registered from it "changed on every refresh".
+    # Without this entry every proxied request looks like it came from the
+    # platform itself and no browser can ever prove it is the front desk.
+    "100.64.0.0/10",
     "::1/128",
     "fc00::/7",
     "fe80::/10",
@@ -86,7 +94,10 @@ FORWARDED_FOR_HEADER = "HTTP_X_FORWARDED_FOR"
 #: about its own address if it is already inside the deployment's network.
 #: ``true-client-ip`` is what Render/Cloudflare write; ``cf-connecting-ip`` is
 #: Cloudflare's own. A forged value of either is overwritten at the edge.
-DEFAULT_CLIENT_IP_HEADERS = ("HTTP_TRUE_CLIENT_IP", "HTTP_CF_CONNECTING_IP")
+# ``x-real-ip`` last: Railway's edge rewrites it with the client it saw, and
+# an nginx front end sets it with proxy_set_header X-Real-IP $remote_addr.
+# Keep in sync with TRUSTED_CLIENT_IP_HEADERS in config/settings/base.py.
+DEFAULT_CLIENT_IP_HEADERS = ("HTTP_TRUE_CLIENT_IP", "HTTP_CF_CONNECTING_IP", "HTTP_X_REAL_IP")
 
 
 def _header_setting_to_meta(value) -> tuple[str, ...]:
@@ -240,17 +251,21 @@ def resolve_client_ip(request) -> str:
         return ""
     meta = getattr(request, "META", {}) or {}
     peer = normalize_ip(meta.get("REMOTE_ADDR", ""))
-    addresses = forwarded_addresses(meta.get(FORWARDED_FOR_HEADER, ""))
-    if not addresses:
-        return peer
     if not is_trusted_proxy(peer):
         # Directly exposed (or an untrusted peer): the peer IS the client and
         # its forwarding headers are only claims.
         return peer
+    # The edge's own single-value header is consulted FIRST and on its own: a
+    # proxy may rewrite X-Real-IP without ever sending X-Forwarded-For, and
+    # returning the peer just because the chain is absent would throw away the
+    # only address the edge did provide.
     if trusted_client_ip_headers():
         edge_address, _header = _edge_header_address(meta)
         if edge_address:
             return edge_address
+    addresses = forwarded_addresses(meta.get(FORWARDED_FOR_HEADER, ""))
+    if not addresses:
+        return peer
     # Walk from the right, stepping over our own proxies. The last hop the
     # trusted proxy actually observed is the first address that is not ours.
     for candidate in reversed(addresses):
@@ -288,3 +303,47 @@ def address_in_network(address: str, network_value: str) -> bool:
     CIDR range. A blank or malformed value never matches.
     """
     return _network_contains(parse_network(network_value), parse_address(address))
+
+
+#: Ranges that can only be infrastructure, never a device on the internet.
+_INFRASTRUCTURE_NETWORKS = tuple(
+    ipaddress.ip_network(value) for value in (
+        "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+        "172.16.0.0/12", "192.168.0.0/16",
+        "::1/128", "fc00::/7", "fe80::/10",
+    )
+)
+
+
+def is_infrastructure_network(value) -> bool:
+    """True when EVERY address in this network can only be infrastructure.
+
+    A configured desk binding like ``100.64.0.18`` (an address becomes a /32)
+    is useless: no browser can arrive from it. The same holds for a whole
+    private range registered on a deployment whose visitors arrive from public
+    addresses. A network that merely OVERLAPS an infrastructure range (a /8
+    containing 10.0.0.0/8, say) is not covered, because most of it is public.
+    """
+    parsed = parse_network(value)
+    if parsed is None:
+        return False
+    return any(
+        network.version == parsed.version and parsed.subnet_of(network)
+        for network in _INFRASTRUCTURE_NETWORKS
+    )
+
+
+def is_infrastructure_address(value) -> bool:
+    """True when the address can only belong to the hosting network.
+
+    Used for honest messaging: telling an administrator to "register this
+    address for the desk" is wrong when the address is the platform's own
+    proxy, because no device can ever sign in from it a second time.
+    """
+    parsed = parse_address(value)
+    if parsed is None:
+        return False
+    return any(
+        network.version == parsed.version and parsed in network
+        for network in _INFRASTRUCTURE_NETWORKS
+    )

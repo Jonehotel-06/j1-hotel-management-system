@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 from apps.accounts.capabilities import has_capability
 from apps.accounts.models import User
 from apps.audit.services import log_action
-from apps.bookings.models import Guest
+from apps.bookings.models import Guest, RoomOccupant
 from apps.core.pagination import StandardPagination
 from apps.core.exceptions import ServiceQRExpiredError
 from apps.core.permissions import HasCapability
@@ -83,7 +83,14 @@ def _staff_request_or_404(*, actor, reference, detail=False):
 
 
 def _portal_base_queryset(email, *, detail=False):
-    queryset = ServiceRequest.objects.filter(guest__email__iexact=email).select_related("stay", "room")
+    # A room guest's address is stored on the request as ``portal_email`` and on
+    # the occupant row; it is not the booking contact's address, so matching
+    # only ``guest__email`` would hide a guest's OWN request from them.
+    queryset = (
+        ServiceRequest.objects
+        .filter(Q(guest__email__iexact=email) | Q(portal_email__iexact=email))
+        .select_related("stay", "room")
+    )
     if detail:
         queryset = queryset.prefetch_related(
             Prefetch(
@@ -402,31 +409,67 @@ class PortalServiceRequestListCreateView(_PortalServiceRequestBase):
         serializer = PortalServiceRequestCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        email = request.portal_session.email
+        email = str(request.portal_session.email or "").strip().lower()
+
+        # The stay is looked up by reference and in-house status ONLY; whose
+        # email may act on it is decided next, so an occupant and the booking
+        # contact take the identical path from here on.
         stay = (
             Stay.objects.select_related("guest")
-            .filter(reference=data["stay_reference"], guest__email__iexact=email, status=Stay.Status.IN_HOUSE)
+            .filter(reference=data["stay_reference"], status=Stay.Status.IN_HOUSE)
             .first()
         )
         if stay is None:
             # Do not reveal whether an arbitrary reference belongs to somebody
             # else or merely is not an active in-house stay.
             raise NotFound("An active stay matching this portal session was not found.")
+
+        is_contact = str(stay.guest.email or "").strip().lower() == email
+        occupant = None
+        occupant_room_ids = set()
+        if not is_contact:
+            occupant_rows = list(
+                RoomOccupant.objects.filter(
+                    booking_room__booking_id=stay.booking_id, email__iexact=email,
+                ).select_related("booking_room__room")
+            )
+            occupant_room_ids = {row.booking_room.room_id for row in occupant_rows}
+            # A room whose guest has not been handed over is not yet theirs to
+            # make requests for; the address is still recognised, the stay is not.
+            occupant = next(
+                (row for row in occupant_rows if row.booking_room.checked_in_at is not None),
+                occupant_rows[0] if occupant_rows else None,
+            )
+        if not is_contact and occupant is None:
+            raise NotFound("An active stay matching this portal session was not found.")
+
+        from rest_framework.exceptions import ValidationError
+
         room = None
         if room_id := data.get("room_id"):
             room = Room.objects.filter(pk=room_id).first()
             if room is None:
                 raise NotFound("Room not found.")
             if not StayRoom.objects.filter(stay=stay, room=room, released_at__isnull=True).exists():
-                from rest_framework.exceptions import ValidationError
                 raise ValidationError({"room_id": "Room must be actively assigned to the selected in-house stay."})
+            if not is_contact and room.pk not in occupant_room_ids:
+                raise ValidationError({"room_id": "You can raise a request for your own room only."})
         else:
             active_rooms = list(
                 StayRoom.objects.filter(stay=stay, released_at__isnull=True).select_related("room")[:2]
             )
-            if len(active_rooms) == 1:
+            if not is_contact:
+                # A room guest with exactly one room always gets that room;
+                # nobody else has to be asked which door is theirs.
+                mine = [sr for sr in active_rooms if sr.room_id in occupant_room_ids]
+                if len(mine) == 1:
+                    room = mine[0].room
+                elif mine:
+                    room = mine[0].room
+            elif len(active_rooms) == 1:
                 room = active_rooms[0].room
-        key = scoped_idempotency_key(scope=f"portal:{email.strip().lower()}", raw_key=data.get("idempotency_key"))
+
+        key = scoped_idempotency_key(scope=f"portal:{email}", raw_key=data.get("idempotency_key"))
         service_request, created = create_service_request(
             guest=stay.guest,
             stay=stay,
@@ -437,6 +480,7 @@ class PortalServiceRequestListCreateView(_PortalServiceRequestBase):
             summary=data["summary"],
             detail=data.get("detail", ""),
             portal_email=email,
+            occupant=occupant,
             idempotency_key=key,
         )
         service_request = _portal_request_or_404(email=email, reference=service_request.reference, detail=True)

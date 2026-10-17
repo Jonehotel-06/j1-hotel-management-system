@@ -152,11 +152,12 @@
 
       <h3 style="font-size:var(--fs-md);margin:1.4rem 0 0.9rem;">Front Desk desktop &amp; attendance security</h3>
       <div class="form-grid fg-2">
-        <div class="field"><label class="field-label" for="st-frontdesk-ip">Front Desk desktop IP address</label><input class="input" id="st-frontdesk-ip" name="front_desk_desktop_ip" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="e.g. 192.168.1.25">
-          <div class="hint">When set, staff who must use the Receptionist Desktop must also sign in, refresh, and clock attendance from this exact server-seen IP address — in addition to the existing desktop key or registered workstation address. Leave blank unless you are pinning the front desk to one network; management accounts (administrator, manager, general manager) are exempt and keep working from anywhere. If the Front Desk desktop is replaced, an Admin changes this value here; no code change is needed. Prefer registering the desk's address on the workstation (Staff &rarr; Workstations) when you only need to identify that one PC.</div></div>
+        <div class="field"><label class="field-label" for="st-frontdesk-ip">Front Desk desktop address or network</label><input class="input" id="st-frontdesk-ip" name="front_desk_desktop_ip" autocomplete="off" spellcheck="false" placeholder="e.g. 102.89.34.7 or 102.89.34.0/24">
+          <div class="hint">When set, staff who must use the Receptionist Desktop must also sign in, refresh, and clock attendance from this address — in addition to the existing desktop key or registered workstation address. Enter one address (<code>102.89.34.7</code>), a whole network (<code>102.89.34.0/24</code>) when the provider keeps reassigning the desk's public address, or several separated by commas. Leave blank unless you are pinning the front desk to one network; management accounts (administrator, manager, general manager) are exempt and keep working from anywhere. Prefer registering the desk's address on the workstation (Staff &rarr; Workstations) when you only need to identify that one PC. Changing this value is an administrator settings change &mdash; no code change is needed.</div></div>
         <div class="field"><label class="field-label" for="st-request-ip">IP address seen by the server for this browser</label><input class="input" id="st-request-ip" type="text" readonly tabindex="-1" placeholder="Not available">
-          <div class="hint">Read this ON the Front Desk desktop and use that value: it is the address the server saw for the browser you are reading this in, right now. It legitimately changes &mdash; a phone on mobile data gets a new address as the network changes, and some carriers share one address between many devices &mdash; so a value read on a phone is not a desk address. The desk PC behind a fixed router or a registered workstation address (Staff &rarr; Workstations) is the stable answer.</div>
-          <div style="margin-top:0.5rem;"><button class="btn btn-sm btn-outline" type="button" id="st-use-request-ip">Use this IP for Front Desk desktop</button></div></div>
+          <div class="hint">Read this ON the Front Desk desktop and use that value: it is the address the server saw for the browser you are reading this in, right now. A phone on mobile data gets a new address as the network changes, and some carriers share one address between many devices &mdash; so a value read on a phone is not a desk address. If the address changes every time you reload this page, it is the hosting platform's proxy rather than the desk, and registering it will never work.</div>
+          <div id="st-request-ip-warning" class="notice" style="display:none;margin-top:0.5rem;"></div>
+          <div style="margin-top:0.5rem;"><button class="btn btn-sm btn-outline" type="button" id="st-use-request-ip">Use this address for Front Desk desktop</button></div></div>
       </div>
 
       <h3 style="font-size:var(--fs-md);margin:1.4rem 0 0.9rem;">Hotel policy</h3>
@@ -268,8 +269,12 @@
   if(useIpBtn) useIpBtn.addEventListener("click", function(){
     var ip = ($("st-request-ip").value || "").trim();
     if(!ip){ JONE.ui.toast("The server did not report an IP address for this browser.", "warning"); return; }
+    if(current && current.request_ip_is_infrastructure){
+      JONE.ui.toast("That address belongs to the hosting proxy, not the Front Desk desktop.", "error");
+      return;
+    }
     $("st-frontdesk-ip").value = ip;
-    JONE.ui.toast("Front Desk desktop IP filled. Save settings to apply it.", "info");
+    JONE.ui.toast("Front Desk desktop address filled. Save settings to apply it.", "info");
   });
 
   function fill(){
@@ -284,6 +289,33 @@
     });
     var requestIpEl = $("st-request-ip");
     if(requestIpEl) requestIpEl.value = current.request_ip || "";
+    /* An address from the hosting network is a proxy, not the desk: it changes
+       per request and no browser can arrive from it, so using it would create a
+       binding that never matches. Say that instead of offering the button. */
+    var ipWarning = $("st-request-ip-warning");
+    var ipIsInfrastructure = !!current.request_ip_is_infrastructure;
+    var savedIpUnusable = !!current.front_desk_desktop_ip_unusable;
+    var ipNotices = [];
+    if(ipIsInfrastructure){
+      ipNotices.push("<strong>This is the hosting network\u2019s address, not the Front Desk desktop.</strong> " +
+        "The server is reporting its own proxy, so registering this value cannot work \u2014 it changes on every request. " +
+        "Set <code>TRUSTED_PROXY_CIDRS</code> / <code>TRUSTED_CLIENT_IP_HEADERS</code> on the server (the defaults already cover Railway), " +
+        "then reload this page: the real address of this browser will appear here.");
+    }
+    if(savedIpUnusable){
+      ipNotices.push("<strong>The address already saved for the Front Desk desktop cannot match any browser.</strong> " +
+        "\u201C" + JONE.esc(current.front_desk_desktop_ip || "") + "\u201D is a hosting or private address, and staff arrive from a public one, " +
+        "so sign-in at the desk will keep being refused until it is replaced. Read this page ON the desk and use the address shown above, " +
+        "or clear the field and register the desk on its workstation instead.");
+    }
+    if(ipWarning){
+      if(ipNotices.length){ ipWarning.innerHTML = ipNotices.join(" "); ipWarning.style.display = ""; }
+      else { ipWarning.style.display = "none"; }
+    }
+    if(useIpBtn){
+      useIpBtn.disabled = ipIsInfrastructure;
+      useIpBtn.title = ipIsInfrastructure ? "This address belongs to the hosting proxy, not the desk." : "";
+    }
     var updatedEl = document.querySelector("[data-updated-at]");
     if(current.updated_at && updatedEl){
       var d = new Date(current.updated_at);

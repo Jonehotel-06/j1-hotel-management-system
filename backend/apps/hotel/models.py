@@ -20,6 +20,36 @@ from apps.core.validators import validate_image_upload
 SETTINGS_CACHE_KEY = "hotel:settings:instance"
 
 
+def _normalize_address_list(value) -> str:
+    """Canonicalise a comma-separated list of addresses and/or networks.
+
+    One exact address is still the tightest binding, but a desk whose public
+    address is reassigned by its provider can be registered as the network it
+    sits on (``102.89.34.0/24``), and a second entry can cover a backup link.
+    Anything that is neither raises, so a typo can never silently disable the
+    check (an empty value means "no IP layer", an invalid one must not).
+    """
+    items = [part.strip() for part in str(value or "").split(",") if part.strip()]
+    cleaned = []
+    for item in items:
+        try:
+            network = (
+                ipaddress.ip_network(item, strict=False) if "/" in item
+                else ipaddress.ip_address(item)
+            )
+        except ValueError as exc:
+            raise ValidationError({
+                "front_desk_desktop_ip": (
+                    "Enter an IPv4/IPv6 address or network (for example "
+                    "102.89.34.7 or 102.89.34.0/24). Separate several with commas."
+                ),
+            }) from exc
+        text = str(network)
+        if text not in cleaned:
+            cleaned.append(text)
+    return ", ".join(cleaned)
+
+
 class HotelSettings(models.Model):
     """Singleton row (pk=1) holding hotel identity and business rules."""
 
@@ -128,14 +158,16 @@ class HotelSettings(models.Model):
 
     # Front Desk desktop / attendance security
     front_desk_desktop_ip = models.CharField(
-        max_length=45, blank=True, default="",
+        max_length=255, blank=True, default="",
         help_text=(
-            "Exact IP address of the Front Desk desktop as seen by this server. "
-            "When set, staff who must use the Receptionist Desktop must also "
-            "sign in, refresh their session, and clock attendance from this IP "
-            "(in addition to the desktop key). Leave blank to use the desktop "
-            "key without the IP layer. Change it here when the desktop or its "
-            "network address changes; no code change is needed."
+            "IP address or network the Front Desk desktop reaches this server "
+            "from, e.g. 102.89.34.7 or 102.89.34.0/24 (several may be listed, "
+            "separated by commas). When set, staff who must use the Receptionist "
+            "Desktop must also sign in, refresh their session, and clock "
+            "attendance from one of these addresses (in addition to the desktop "
+            "key). A network is the practical choice when the desk's public "
+            "address is reassigned by the provider. Leave blank to use the "
+            "desktop key without the IP layer. No code change is needed."
         ),
     )
 
@@ -156,16 +188,7 @@ class HotelSettings(models.Model):
             raise ValidationError({"max_stay_nights": "Maximum stay must be >= minimum stay."})
         if self.social_links and not isinstance(self.social_links, list):
             raise ValidationError({"social_links": "Must be a list of {platform, url} objects."})
-        ip_value = str(self.front_desk_desktop_ip or "").strip()
-        if ip_value:
-            try:
-                self.front_desk_desktop_ip = str(ipaddress.ip_address(ip_value))
-            except ValueError as exc:
-                raise ValidationError({
-                    "front_desk_desktop_ip": "Enter one exact IPv4 or IPv6 address, not a range.",
-                }) from exc
-        else:
-            self.front_desk_desktop_ip = ""
+        self.front_desk_desktop_ip = _normalize_address_list(self.front_desk_desktop_ip)
 
     def save(self, *args, **kwargs):
         self.pk = 1  # enforce singleton

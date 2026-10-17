@@ -127,9 +127,14 @@
       </div>
       <div class="confirm-actions">
         <button class="btn btn-accent" id="retry-pay">Retry payment</button>
+        <button class="btn btn-outline" id="resend-access-link" type="button" style="display:none;">Email me a secure link</button>
         <a class="btn btn-outline" href="contact.html">Contact hotel</a>
         <a class="btn btn-outline" href="index.html">Return home</a>
       </div>
+      <p class="caption" id="resend-access-note" style="display:none;">
+        This device cannot verify the booking. We can email a secure link to the
+        address on the reservation — open it here or on any other device.
+      </p>
     </section>
   </div>
 </main>
@@ -288,6 +293,10 @@
   }
   var savedConfirmed = null;
   try { savedConfirmed = JONE.storage.get(S + ".confirmed", null); } catch (_) {}
+  /* Signed value from an emailed link (?access=…). Exchanged for a real guest
+     token during init, then dropped from the address bar so it is not copied,
+     bookmarked or leaked through a shared screen. */
+  var accessLink = p.get("access") || "";
   var guestToken = (bookingRef && (sessionStorage.getItem(bookingTokenKey(bookingRef)) || localStorage.getItem(bookingTokenKey(bookingRef))))
     || sessionStorage.getItem("jone.guest_access_token")
     || localStorage.getItem("jone.guest_access_token")
@@ -298,7 +307,36 @@
   if (guestToken) {
     saveGuestToken(guestToken, bookingRef, "");
   }
-  function guestOpts() { return window.API.guestAccessOpts(guestToken); }
+  /* Resolve the credential at CALL time, not page-load time: a token may have
+     been written to storage after this script ran (access-link exchange,
+     payment verification, another tab). Reading the variable only was how a
+     valid session was silently dropped and the request left anonymous — the
+     server then answers 404 because it cannot tell who is asking. */
+  function currentGuestToken() {
+    if (guestToken) return guestToken;
+    try { guestToken = (bookingRef && (sessionStorage.getItem(bookingTokenKey(bookingRef)) || localStorage.getItem(bookingTokenKey(bookingRef)))) || ""; } catch (_) {}
+    if (!guestToken) { try { guestToken = sessionStorage.getItem("jone.guest_access_token") || ""; } catch (_) {} }
+    if (!guestToken) { try { guestToken = localStorage.getItem("jone.guest_access_token") || ""; } catch (_) {} }
+    if (!guestToken) guestToken = readCookie("jone_guest_access_token") || "";
+    if (!guestToken) {
+      var saved = null;
+      try { saved = JONE.storage.get(S + ".confirmed", null); } catch (_) {}
+      guestToken = (saved && saved.guest_access_token) || "";
+    }
+    return guestToken;
+  }
+  /* The token stored FOR THIS BOOKING (never the global one): a device can hold
+     a perfectly valid token for a previous reservation, which must not stop an
+     emailed link from claiming this one. */
+  function bookingScopedToken() {
+    if (!bookingRef) return "";
+    try {
+      return sessionStorage.getItem(bookingTokenKey(bookingRef))
+        || localStorage.getItem(bookingTokenKey(bookingRef))
+        || "";
+    } catch (_) { return ""; }
+  }
+  function guestOpts() { return window.API.guestAccessOpts(currentGuestToken()); }
 
   /* ------------------------------ Stepper -------------------------------- */
   // Payment is step 5; confirmation is step 6. Both live on this page.
@@ -508,7 +546,12 @@
         payload.room_type, payload.check_in, payload.check_out,
         payload.rooms || 1, payload.room_id || "",
         payload.adults, payload.children,
-        (payload.guest && payload.guest.email) || ""
+        (payload.guest && payload.guest.email) || "",
+        // Two attempts that differ only in who stays in room 2 are DIFFERENT
+        // bookings, so the room-guest list is part of the retry signature.
+        (payload.room_guests || []).map(function (guest) {
+          return [guest.room_index, guest.email].join(":");
+        }).join("|")
       ]);
     } catch (_) {}
     var saved = null;
@@ -524,7 +567,22 @@
     try { sessionStorage.removeItem(IDEM_KEY); } catch (_) {}
   }
 
+  function signedIn() {
+    try { return !!(window.Auth && window.Auth.isAuthenticated && window.Auth.isAuthenticated()); } catch (_) { return false; }
+  }
+
   async function redirectToPayment() {
+    /* No guest token and no signed-in owner means the backend has nothing to
+       authenticate, so the request could only ever come back 404 — and that is
+       exactly how "payment fails" looked in the server log. Say it plainly and
+       offer the emailed link instead of sending a request that cannot succeed.
+       (A signed-in guest is fine: the backend accepts the account owner.) */
+    if (!currentGuestToken() && !signedIn()) {
+      var missing = new Error("This device cannot verify the booking yet.");
+      missing.status = 404;
+      missing.code = "MISSING_BOOKING_CREDENTIAL";
+      throw missing;
+    }
     // Initialize via the backend; we never build provider URLs ourselves.
     var payRes = await window.API.initPayment(booking.booking_reference, guestOpts());
     var pay = payRes.data || {};
@@ -608,6 +666,11 @@
           offer_code: draft.offer_code || undefined,
           guest: draft.guest || undefined
         };
+        // Emails of the people staying in the other rooms (multi-room bookings
+        // only). Optional: a booking with no room guests is still complete.
+        if (Number(criteria.rooms) > 1 && (draft.room_guests || []).length) {
+          payload.room_guests = draft.room_guests;
+        }
         // "Book this room" — the exact physical room. The backend re-checks
         // availability and may assign an equivalent room instead; when it does
         // it reports `room_substitution` and we tell the guest (never silent).
@@ -676,7 +739,8 @@
         // The booking exists but the backend no longer accepts our guest
         // credential — the booking session (guest access token) is invalid
         // or expired, not a missing booking.
-        msg = "Your booking session has expired or is invalid. Please restart the booking, or open the secure link from your confirmation email.";
+        msg = "This device is no longer recognised for your booking. Request a secure link below — it works here or on any other device.";
+        offerAccessLink(bookingRef);
       } else if (err && (err.code === "PAYMENT_GATEWAY_ERROR" || err.code === "PAYMENT_NOT_CONFIGURED" || err.status === 502 || err.status === 503)) {
         msg = "We could not start your payment. Please try again in a moment — your booking is saved and no money has been taken.";
       } else {
@@ -695,6 +759,35 @@
   document.getElementById("pay-btn").addEventListener("click", pay);
   var retryBtn = document.getElementById("retry-pay");
   if (retryBtn) retryBtn.addEventListener("click", pay);
+
+  /* Shown only when the server refused access to a booking the guest can see
+     they own (wrong device, cleared storage, expired session). Asking for the
+     emailed link is the documented way back in — never a silent dead end. */
+  function offerAccessLink(ref) {
+    var btn = document.getElementById("resend-access-link");
+    var note = document.getElementById("resend-access-note");
+    if (!btn || !ref) return;
+    btn.style.display = "";
+    if (note) note.style.display = "";
+  }
+  var resendBtn = document.getElementById("resend-access-link");
+  if (resendBtn) resendBtn.addEventListener("click", async function () {
+    if (!bookingRef) return;
+    if (!JONE.guardSubmit(resendBtn)) return;
+    var label = resendBtn.innerHTML;
+    resendBtn.innerHTML = '<span class="btn-spinner"></span> Sending…';
+    try {
+      await window.API.resendBookingAccessLink(bookingRef);
+      // Deliberately the same message whether or not the booking exists: the
+      // server does not confirm it and neither do we.
+      JONE.ui.toast("If that booking exists, a secure link is on its way to the address on the reservation.", "success", { duration: 6000 });
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "We could not send the link. Please contact the hotel.", "error");
+    } finally {
+      JONE.releaseGuard(resendBtn);
+      resendBtn.innerHTML = label;
+    }
+  });
 
   async function exportReceipt(button, kind) {
     var sheet = document.getElementById("receipt-sheet");
@@ -730,6 +823,27 @@
   /* ------------------------- entry points ------------------------- */
   (async function init() {
     show("payment-loading");
+    if (accessLink && bookingRef && !bookingScopedToken()) {
+      // The emailed link is the credential on this device: trade it for a
+      // normal session token before asking for the booking.
+      try {
+        var claimed = await window.API.exchangeBookingAccess(bookingRef, accessLink);
+        var claimedData = (claimed && claimed.data) || {};
+        if (claimedData.guest_access_token) {
+          guestToken = claimedData.guest_access_token;
+          saveGuestToken(guestToken, bookingRef, "");
+        }
+      } catch (err) {
+        // Expired or tampered link: fall through. The failure screen offers a
+        // fresh link rather than pretending the booking is gone.
+      }
+      accessLink = "";
+      try {
+        var clean = new URLSearchParams(location.search);
+        clean.delete("access");
+        history.replaceState({}, "", location.pathname + (clean.toString() ? "?" + clean.toString() : ""));
+      } catch (_) {}
+    }
     if (bookingRef) {
       // Viewing an existing booking — entirely backend-authoritative.
       // Guest checkout: no login wall here; guests returning from the
@@ -774,8 +888,9 @@
         document.querySelector("[data-fail-ref]").textContent = "Booking ref: " + bookingRef;
         var p3 = document.querySelector("#failure-screen .confirm-hero p");
         if (p3) p3.textContent = err.status === 404
-          ? "We couldn't find that booking reference. Please check it and try again."
+          ? "We couldn't verify this booking on this device. If this is your reservation, ask us to email you a secure link."
           : (err.message || "We couldn't load this booking.");
+        if (err && err.status === 404) offerAccessLink(bookingRef);
       }
       return;
     }

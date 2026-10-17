@@ -129,6 +129,91 @@ def schedule_portal_invitation(stay_id: int) -> None:
     transaction.on_commit(functools.partial(_create_and_deliver, stay_id, None))
 
 
+# ---------------------------------------------------------------------------
+# Room guests
+#
+# The booking contact receives the stay invitation above. The people staying in
+# the OTHER rooms have their own email address, and that address — not the
+# booker's — is their portal identity, so each of them needs the same one-line
+# note telling them how to sign in. Sending is idempotent per occupant
+# (``portal_invited_at``) and never blocks a check-in.
+# ---------------------------------------------------------------------------
+def room_guest_email_bodies(*, occupant, booking) -> tuple[str, str]:
+    from apps.core.email_design import render_notice_email
+
+    greeting = f"Dear {occupant.full_name}," if occupant.full_name else "Dear guest,"
+    details = [
+        {"label": "Booking reference", "value": booking.booking_reference},
+        {"label": "Room", "value": occupant.booking_room.room.room_number},
+        {"label": "Stay", "value": f"{booking.check_in:%d %b %Y} → {booking.check_out:%d %b %Y}"},
+    ]
+    return render_notice_email(
+        category="Guest portal",
+        title="Your room is ready at J-ONE",
+        greeting=greeting,
+        paragraphs=[
+            f"You are checked in to Room {occupant.booking_room.room.room_number} "
+            f"as part of booking {booking.booking_reference}.",
+            "You can use the guest portal with this email address to request room "
+            "service, housekeeping, maintenance or anything else your room needs, "
+            "and to track the requests you have already raised.",
+            "Sign in with this email address — we will send a one-time sign-in "
+            "link to it, so there is no password to remember.",
+        ],
+        details=details,
+        cta_label="Open the guest portal",
+        cta_url=portal_login_url(),
+        footnote=(
+            "If you are not staying in this room, you can ignore this message — "
+            "no account has been created and no action is required."
+        ),
+        preheader="Your J-ONE room is ready — sign in to request room service.",
+    )
+
+
+def schedule_room_guest_invitations(*, booking, assignment_ids) -> None:
+    """Queue invitations for the guests of the rooms just handed over."""
+    ids = [pk for pk in (assignment_ids or []) if pk]
+    if not ids:
+        return
+    transaction.on_commit(functools.partial(_deliver_room_guest_invitations, booking.pk, ids))
+
+
+def _deliver_room_guest_invitations(booking_id: int, assignment_ids) -> None:
+    """Send one note per occupant. Never raises into the check-in transaction."""
+    from apps.bookings.models import Booking, RoomOccupant
+
+    try:
+        booking = Booking.objects.select_related("guest").get(pk=booking_id)
+    except Booking.DoesNotExist:
+        return
+    occupants = (
+        RoomOccupant.objects.filter(
+            booking_room_id__in=assignment_ids, portal_invited_at__isnull=True,
+        )
+        .exclude(email="")
+        .select_related("booking_room__room")
+    )
+    for occupant in occupants:
+        try:
+            text_body, html_body = room_guest_email_bodies(occupant=occupant, booking=booking)
+            from apps.core.emails import queue_email
+
+            queue_email(
+                subject=f"Your room is ready — {booking.booking_reference}",
+                message=text_body,
+                html_message=html_body,
+                recipients=[occupant.email],
+                kind="GENERIC",
+            )
+            occupant.portal_invited_at = timezone.now()
+            occupant.save(update_fields=["portal_invited_at", "updated_at"])
+        except Exception:  # never fail a check-in because a notification failed
+            logger.exception(
+                "Room guest portal invitation could not be sent to occupant %s", occupant.pk
+            )
+
+
 def _create_and_deliver(stay_id: int, actor_id) -> GuestPortalInvitation | None:
     """Create the invitation once and deliver it. Never raises into the caller."""
     try:

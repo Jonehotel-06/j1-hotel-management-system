@@ -100,6 +100,50 @@ def ensure_stay_for_check_in(*, booking, assignments, actor):
     return stay
 
 
+def _ensure_stay_rooms(*, stay, assignments, actor, checked_in_at):
+    """Add occupancy rows for rooms that arrive after the stay opened.
+
+    A multi-room booking checks in room by room. The Stay (and its folio) opens
+    with the first room; every later room appends its own StayRoom evidence
+    instead of being silently absorbed by a booking-level timestamp.
+    """
+    existing = set(
+        StayRoom.objects.filter(stay=stay, booking_room_id__in=[a.pk for a in assignments])
+        .values_list("booking_room_id", flat=True)
+    )
+    created = []
+    for assignment in assignments:
+        if assignment.pk in existing:
+            continue
+        created.append(
+            StayRoom(
+                stay=stay,
+                room=assignment.room,
+                booking_room=assignment,
+                assigned_at=checked_in_at,
+                actual_check_in_at=checked_in_at,
+                assigned_by=actor,
+                assignment_reason="Additional room checked in",
+            )
+        )
+    if not created:
+        return []
+    StayRoom.objects.bulk_create(created)
+    for stay_room in created:
+        StayEvent.objects.create(
+            stay=stay,
+            type=StayEvent.Type.ROOM_ASSIGNED,
+            occurred_at=checked_in_at,
+            actor=actor,
+            details={
+                "room_number": stay_room.room.room_number,
+                "booking_room_id": stay_room.booking_room_id,
+                "reason": "Additional room checked in",
+            },
+        )
+    return created
+
+
 def _ensure_stay_for_check_in(*, booking, assignments, actor):
     checked_in_at = booking.checked_in_at or timezone.now()
     stay = Stay.objects.select_for_update().filter(booking=booking).first()
@@ -112,6 +156,7 @@ def _ensure_stay_for_check_in(*, booking, assignments, actor):
         )
     if stay.status == Stay.Status.IN_HOUSE:
         _ensure_main_folio(stay=stay, actor=actor)
+        _ensure_stay_rooms(stay=stay, assignments=assignments, actor=actor, checked_in_at=checked_in_at)
         return stay
     # A booking cannot legally transition from CHECKED_OUT back to CHECKED_IN in
     # the legacy state machine. Surface a consistency issue rather than silently

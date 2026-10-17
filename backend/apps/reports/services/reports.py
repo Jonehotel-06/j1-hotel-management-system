@@ -84,7 +84,33 @@ def revenue_report(start_date, end_date):
 # ---------------------------------------------------------------------------
 # Occupancy
 # ---------------------------------------------------------------------------
+def _hotel_local_date(value):
+    """A timestamp as the hotel's calendar date (occupancy is per hotel night)."""
+    if value is None:
+        return None
+    from django.utils import timezone as django_timezone
+
+    return django_timezone.localtime(value).date()
+
+
 def occupancy_report(start_date, end_date):
+    """Rooms sold per night, plus the rooms a guest actually slept in.
+
+    Two different questions, deliberately reported together:
+
+    * ``occupied_rooms`` — rooms sold for that night. This is the commercial
+      definition of occupancy and is unchanged; a paid reservation counts even
+      if the guest has not reached the desk yet.
+    * ``arrived_rooms`` — rooms whose guest had been checked in by that night,
+      from the per-room check-in timestamp. A three-room booking that arrives
+      one room at a time therefore shows one occupied guest room until the
+      others come in.
+    * ``unarrived_rooms`` — rooms whose booking closed without that room ever
+      being handed over. These are the no-shows the hotel still paid for.
+
+    The per-room timestamps are recorded by the front desk, so this is evidence,
+    not an assumption: a room nobody arrived in is never counted as slept-in.
+    """
     _validate_range(start_date, end_date)
     days = (end_date - start_date).days + 1
     active_rooms = Room.objects.filter(is_active=True).count()
@@ -93,38 +119,61 @@ def occupancy_report(start_date, end_date):
         BookingRoom.objects.filter(check_in__lte=end_date, check_out__gt=start_date)
         .filter(blocking_booking_q(prefix="booking"))
         .select_related("room")
-        .values("room_id", "check_in", "check_out")
+        .values("room_id", "check_in", "check_out", "checked_in_at", "not_arrived_at")
     )
-    per_day_occupied = {day: set() for day in (
-        start_date + timedelta(days=i) for i in range(days)
-    )}
+    days_list = [start_date + timedelta(days=i) for i in range(days)]
+    per_day_occupied = {day: set() for day in days_list}
+    per_day_arrived = {day: set() for day in days_list}
+    per_day_unarrived = {day: set() for day in days_list}
     for row in assignments:
+        arrived_on = _hotel_local_date(row["checked_in_at"])
+        never_arrived = row["not_arrived_at"] is not None
         day = max(row["check_in"], start_date)
         stop = min(row["check_out"] - timedelta(days=1), end_date)
         while day <= stop:
             per_day_occupied[day].add(row["room_id"])
+            if never_arrived:
+                per_day_unarrived[day].add(row["room_id"])
+            elif arrived_on is not None and arrived_on <= day:
+                per_day_arrived[day].add(row["room_id"])
             day += timedelta(days=1)
 
-    series, occupied_room_nights = [], 0
-    for day in sorted(per_day_occupied):
+    series, occupied_room_nights, arrived_room_nights, unarrived_room_nights = [], 0, 0, 0
+    for day in days_list:
         count = len(per_day_occupied[day])
+        arrived = len(per_day_arrived[day])
+        unarrived = len(per_day_unarrived[day])
         occupied_room_nights += count
+        arrived_room_nights += arrived
+        unarrived_room_nights += unarrived
         series.append({
             "date": day.isoformat(),
             "occupied_rooms": count,
+            "arrived_rooms": arrived,
+            "unarrived_rooms": unarrived,
             "occupancy_rate_percent": round((count / active_rooms) * 100, 1) if active_rooms else 0.0,
+            "arrival_rate_percent": round((arrived / count) * 100, 1) if count else 0.0,
         })
 
     total_room_nights = active_rooms * days
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
+        "definitions": {
+            "occupied_rooms": "Rooms sold for the night (a paid reservation counts even before the guest reaches the desk).",
+            "arrived_rooms": "Rooms whose guest had been checked in by that night, per the front desk's per-room check-in record.",
+            "unarrived_rooms": "Rooms on a booking that closed without that room ever being handed over (no-show).",
+        },
         "days": days,
         "active_rooms": active_rooms,
         "occupied_room_nights": occupied_room_nights,
+        "arrived_room_nights": arrived_room_nights,
+        "unarrived_room_nights": unarrived_room_nights,
         "available_room_nights": total_room_nights,
         "average_occupancy_percent": round((occupied_room_nights / total_room_nights) * 100, 1)
         if total_room_nights else 0.0,
+        "average_arrival_percent": round((arrived_room_nights / occupied_room_nights) * 100, 1)
+        if occupied_room_nights else 0.0,
         "by_day": series,
     }
 

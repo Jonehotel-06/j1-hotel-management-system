@@ -212,12 +212,28 @@ class BookingRoom(models.Model):
     Two assignments for the same room overlap iff
     ``a.check_in < b.check_out and b.check_in < a.check_out`` — a checkout day
     and a new check-in on that same date do NOT block each other.
+
+    ``checked_in_at`` is PER ROOM, not per booking. A guest who reserves three
+    rooms routinely arrives with one of them while the other guests are still
+    travelling; recording the arrival room by room is what makes "did everyone
+    actually check in?" answerable afterwards. It is NULL until that specific
+    room is handed over at the desk.
     """
 
     booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name="room_assignments")
     room = models.ForeignKey(Room, on_delete=models.PROTECT, related_name="reservations")
     check_in = models.DateField(db_index=True)
     check_out = models.DateField(db_index=True)
+    checked_in_at = models.DateTimeField(null=True, blank=True, db_index=True,
+                                         help_text="When THIS room was handed over at the desk.")
+    checked_in_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="booking_rooms_checked_in",
+    )
+    # Set at checkout for a room nobody ever occupied, so the booking closes
+    # with an honest record instead of silently looking fully occupied.
+    not_arrived_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    arrival_note = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -230,3 +246,61 @@ class BookingRoom(models.Model):
 
     def __str__(self):
         return f"{self.booking.booking_reference} → Room {self.room.room_number}"
+
+    @property
+    def arrival_status(self) -> str:
+        """One of EXPECTED / AWAITING_ARRIVAL / CHECKED_IN / CHECKED_OUT / DID_NOT_ARRIVE.
+
+        Derived from stored timestamps only — never from the booking's single
+        status — so a three-room booking with one room in house reports that
+        room as CHECKED_IN and the others as AWAITING_ARRIVAL.
+        """
+        if self.checked_in_at is None:
+            return "DID_NOT_ARRIVE" if self.not_arrived_at else (
+                "AWAITING_ARRIVAL" if self.booking.status == Booking.Status.CHECKED_IN else "EXPECTED"
+            )
+        if self.booking.status == Booking.Status.CHECKED_OUT:
+            return "CHECKED_OUT"
+        return "CHECKED_IN"
+
+
+class RoomOccupant(TimeStampedModel):
+    """A named guest staying in one reserved room, with their own email.
+
+    Why this is separate from ``Booking.guest``: the booking contact pays and
+    manages the reservation, but the people in the other rooms are different
+    people. Their email is what lets them (a) sign in to the guest portal with
+    their own address and raise/see their own service requests, and (b) gives
+    the front desk a per-room record of who was expected and who arrived.
+
+    Emails are stored lowercase so portal lookups and de-duplication are exact.
+    """
+
+    booking_room = models.ForeignKey(BookingRoom, on_delete=models.CASCADE, related_name="occupants")
+    full_name = models.CharField(max_length=150, blank=True, default="")
+    email = models.EmailField(db_index=True)
+    phone = models.CharField(max_length=20, blank=True, default="")
+    # The occupant who is the contact for THIS room (usually the one who
+    # collected the key). Purely descriptive; it grants nothing extra.
+    is_lead_occupant = models.BooleanField(default=False)
+    notes = models.CharField(max_length=255, blank=True, default="")
+    portal_invited_at = models.DateTimeField(null=True, blank=True,
+                                             help_text="When the guest-portal sign-in note was emailed.")
+
+    class Meta:
+        ordering = ["booking_room_id", "created_at", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["booking_room", "email"], name="room_occupant_unique_email_per_room",
+            ),
+        ]
+        indexes = [models.Index(fields=["email"])]
+
+    def save(self, *args, **kwargs):
+        self.email = str(self.email or "").strip().lower()
+        self.full_name = str(self.full_name or "").strip()
+        self.phone = str(self.phone or "").strip()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.full_name or 'Guest'} <{self.email}> · Room {self.booking_room.room.room_number}"

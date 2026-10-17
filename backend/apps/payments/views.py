@@ -13,7 +13,7 @@ from rest_framework.views import APIView
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
-from apps.bookings.access import can_access_booking
+from apps.bookings.access import GUEST_TOKEN_HEADER, can_access_booking
 from apps.bookings.models import Booking
 from apps.bookings.services import booking_service
 from apps.core.responses import success_response
@@ -23,6 +23,16 @@ from .services import payment_service
 from .serializers import InitializePaymentSerializer
 
 logger = logging.getLogger("apps")
+
+
+def _client_address(request):
+    """Client IP for the refusal log only — never echoed back to the caller."""
+    from apps.core.client_ip import resolve_client_ip
+
+    try:
+        return resolve_client_ip(request) or "-"
+    except Exception:  # pragma: no cover - diagnostics must never raise
+        return "-"
 
 
 @extend_schema(tags=["Payments"], summary="Initialize a Paystack payment for a booking")
@@ -35,12 +45,36 @@ class InitializePaymentView(APIView):
     def post(self, request):
         serializer = InitializePaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        booking = booking_service.get_booking_by_reference_or_id(
-            serializer.validated_data["booking_reference"]
-        )
-        if booking is None or not can_access_booking(
+        reference = serializer.validated_data["booking_reference"]
+        booking = booking_service.get_booking_by_reference_or_id(reference)
+        if booking is None:
+            # A 404 alone cannot tell the difference between "no such booking"
+            # and "the guest's credential was not accepted". Both must stay 404
+            # to the caller (references are not secrets to probe with), so the
+            # REASON is recorded server-side — this is the line to read when a
+            # guest reports "payment fails".
+            logger.warning(
+                "Payment init refused: no booking matches reference %r "
+                "(authenticated=%s, guest_token_present=%s, ip=%s)",
+                reference,
+                request.user.is_authenticated,
+                bool(request.headers.get(GUEST_TOKEN_HEADER)),
+                _client_address(request),
+            )
+            raise NotFound("Booking not found.")
+        if not can_access_booking(
             request, booking, staff_required_capabilities=("booking.manage", "payment.capture")
         ):
+            logger.warning(
+                "Payment init refused: credential rejected for booking %s "
+                "(status=%s, authenticated=%s, staff=%s, guest_token_present=%s, ip=%s)",
+                booking.booking_reference,
+                booking.status,
+                request.user.is_authenticated,
+                bool(getattr(request.user, "is_staff_member", False)),
+                bool(request.headers.get(GUEST_TOKEN_HEADER)),
+                _client_address(request),
+            )
             # 404 (not 403) so references alone cannot probe other bookings.
             raise NotFound("Booking not found.")
         payload = payment_service.initialize_booking_payment(

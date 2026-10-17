@@ -18,7 +18,12 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.audit.services import log_action
-from apps.core.client_ip import client_ip_source, normalize_ip, resolve_client_ip
+from apps.core.client_ip import (
+    client_ip_source,
+    is_infrastructure_address,
+    normalize_ip,
+    resolve_client_ip,
+)
 from apps.core.emails import queue_email
 from apps.core.exceptions import StaffSignInRestrictedError
 from apps.core.responses import success_response
@@ -346,6 +351,11 @@ class ClientAddressView(APIView):
             # True when the answer did not come from the connection itself,
             # i.e. the deployment's proxy had to speak for this client.
             "trusted_proxy_hops": bool(client_ip and client_ip != peer),
+            # True when the resolved address belongs to hosting infrastructure
+            # (the platform's own proxy/CGNAT range) rather than to a desk.
+            # Registering it would describe the server's network, not the
+            # reception desk, and would never match a real sign-in.
+            "client_ip_is_infrastructure": is_infrastructure_address(client_ip),
         })
 
 

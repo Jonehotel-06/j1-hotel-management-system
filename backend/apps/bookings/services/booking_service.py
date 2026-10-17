@@ -28,7 +28,7 @@ from apps.notifications.services import notify_staff, notify_users
 from apps.offers import services as offer_services
 from apps.rooms.models import Room, RoomType, RoomTypeImage
 
-from ..models import Booking, BookingRoom, Guest
+from ..models import Booking, BookingRoom, Guest, RoomOccupant
 from . import availability, pricing
 from .pricing import calculate_quote
 
@@ -66,15 +66,33 @@ def guest_booking_link(booking, token=None):
     """Absolute self-service link for the guest.
 
     Used in emails, so it must be a full URL (a relative path is dead in an
-    email client). The raw access token is only ever available on the instance
-    right after creation — persisted bookings carry only its hash, so links
-    built later are reference-only and the guest supplies their saved token.
+    email client).
+
+    Two credentials can appear in the link:
+
+    * ``token`` — the raw 256-bit session token, available only on the instance
+      right after creation. The browser stores it and every later call presents
+      it as a header.
+    * ``access`` — always present. A signed, expiring value bound to this
+      booking reference (see ``access_links``). The page exchanges it for a
+      normal guest token, which is what lets a guest open the emailed link on a
+      phone or after clearing site data and still pay. Without it, an emailed
+      link is useless on any device but the one that created the booking.
     """
     from django.conf import settings
 
+    from ..access_links import issue_access_link_token
+
     link = f"{settings.FRONTEND_URL}{GUEST_BOOKING_LINK}?ref={booking.booking_reference}"
     token = token or getattr(booking, "guest_access_token", None)
-    return link + (f"&token={token}" if token else "")
+    params = []
+    if token:
+        params.append(f"token={token}")
+    try:
+        params.append(f"access={issue_access_link_token(booking)}")
+    except Exception:  # pragma: no cover - a broken SECRET_KEY must not block an email
+        logger.exception("Could not sign a guest access link for %s", booking.booking_reference)
+    return link + (("&" + "&".join(params)) if params else "")
 
 
 def staff_booking_link(booking):
@@ -230,7 +248,7 @@ def upsert_guest(*, user=None, guest_data=None) -> Guest:
 def create_booking(*, room_type_value, check_in, check_out, rooms, adults, children,
                    offer_code=None, special_requests="", user=None, guest_data=None,
                    source=Booking.Source.WEBSITE, require_payment=True, actor=None,
-                   request=None, room_id=None, idempotency_key=None) -> Booking:
+                   request=None, room_id=None, idempotency_key=None, room_guests=None) -> Booking:
     """Create a reservation.
 
     ``room_id`` requests one EXACT physical room ("Book this room — Room 203").
@@ -239,6 +257,11 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
     deterministic substitute is selected by the availability engine and
     exposed to the caller as ``booking.room_substitution`` so the guest can be
     told — a room is never swapped silently.
+
+    ``room_guests`` optionally records who is staying in the additional rooms
+    (``[{email, full_name?, phone?, room_index?}]``). The booking contact is
+    the guest of the first room; an entry without ``room_index`` fills the next
+    free room in order.
     """
     is_staff = bool(actor and actor.is_staff_member)
     settings_obj = HotelSettings.get_settings()
@@ -385,6 +408,14 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
             for room in free_rooms
         ]
     )
+    if room_guests:
+        assignments = list(booking.room_assignments.select_related("room").order_by("room__room_number"))
+        attach_room_guests(
+            booking=booking,
+            rooms_payload=_map_room_guests_to_assignments(room_guests, assignments),
+            actor=actor or user,
+            request=request,
+        )
     # Immutable snapshot of a personal discount that was applied. Written once,
     # never re-read from the GuestDiscount row, so deactivating or editing the
     # discount later can never change this booking's historical amounts.
@@ -817,6 +848,228 @@ def cancel_booking(
 
 
 # ---------------------------------------------------------------------------
+# Room guests (the people staying in the OTHER rooms of a multi-room booking)
+# ---------------------------------------------------------------------------
+# What the desk is allowed to change, and when. A room list is still part of
+# the reservation while the guest is expected or in house; once the stay is
+# closed (checked out, cancelled, expired) it is history and stays as recorded.
+ROOM_GUEST_EDITABLE_STATUSES = (
+    Booking.Status.PENDING,
+    Booking.Status.CONFIRMED,
+    Booking.Status.CHECKED_IN,
+)
+
+
+def normalise_occupant_email(email) -> str:
+    return str(email or "").strip().lower()
+
+
+def room_guest_validation_error(message: str) -> None:
+    """Raise a field-shaped 400 the dashboard can render on the room list."""
+    from rest_framework.exceptions import ValidationError
+
+    raise ValidationError({"room_guests": [message]})
+
+
+def _validate_room_guests(*, booking, rooms_payload):
+    """Normalise and validate a complete room-guest replacement payload.
+
+    ``rooms_payload`` is ``[{"assignment_id": int, "guests": [{email, ...}]}]``.
+    Returns the same shape with normalised emails. Everything is checked
+    BEFORE a single row is touched so a rejected edit cannot half-apply.
+    """
+    assignments = {a.pk: a for a in booking.room_assignments.select_related("room")}
+    if not assignments:
+        room_guest_validation_error("This booking has no rooms assigned yet.")
+
+    contact_email = normalise_occupant_email(getattr(booking.guest, "email", ""))
+    seen_emails = set()
+    normalised = []
+    for entry in rooms_payload or []:
+        assignment_id = entry.get("assignment_id")
+        assignment = assignments.get(assignment_id)
+        if assignment is None:
+            room_guest_validation_error(
+                f"Room assignment {assignment_id!r} does not belong to this booking."
+            )
+        guests = []
+        for raw in entry.get("guests") or []:
+            email = normalise_occupant_email(raw.get("email"))
+            if not email:
+                room_guest_validation_error("Every room guest needs an email address.")
+            if "@" not in email or email.startswith("@") or email.endswith("@"):
+                room_guest_validation_error(f"{raw.get('email')!r} is not a valid email address.")
+            if email == contact_email:
+                room_guest_validation_error(
+                    f"{email} is the booking contact already — the contact does not need a room guest entry."
+                )
+            if email in seen_emails:
+                room_guest_validation_error(
+                    f"{email} is listed twice. Each guest can only be in one room of this booking."
+                )
+            seen_emails.add(email)
+            guests.append(
+                {
+                    "email": email,
+                    "full_name": str(raw.get("full_name") or "").strip()[:150],
+                    "phone": str(raw.get("phone") or "").strip()[:20],
+                    "is_lead_occupant": bool(raw.get("is_lead_occupant")),
+                    "notes": str(raw.get("notes") or "").strip()[:255],
+                }
+            )
+        if len([g for g in guests if g["is_lead_occupant"]]) > 1:
+            room_guest_validation_error(
+                f"Room {assignment.room.room_number} has more than one lead guest."
+            )
+        normalised.append({"assignment": assignment, "guests": guests})
+    return normalised
+
+
+def _map_room_guests_to_assignments(room_guests, assignments):
+    """Turn a flat room-guest list into the per-room payload.
+
+    Explicit ``room_index`` wins. Entries without one fill the lowest free
+    room from index 1 upwards (the booking contact is the first room), and
+    only fall back to index 0 when every later room is already spoken for —
+    which is what a guest who is not staying at all ends up submitting for a
+    fully-guested multi-room booking.
+    """
+    rooms = len(assignments)
+    by_index = {}
+    unplaced = []
+    for entry in room_guests or []:
+        index = entry.get("room_index")
+        if index is None:
+            unplaced.append(entry)
+        else:
+            by_index.setdefault(index, []).append(entry)
+    for entry in unplaced:
+        candidates = [i for i in range(1, rooms) if i not in by_index]
+        if not candidates:
+            candidates = [i for i in range(rooms) if i not in by_index]
+        if not candidates:
+            # Defensive: more guests than rooms; the extra rows are refused
+            # by the serializers long before this point.
+            break
+        by_index[candidates[0]] = [entry]
+    return [
+        {
+            "assignment_id": assignments[index].pk,
+            "guests": [
+                {
+                    "email": entry.get("email"),
+                    "full_name": entry.get("full_name", ""),
+                    "phone": entry.get("phone", ""),
+                    "is_lead_occupant": bool(entry.get("is_lead_occupant")),
+                }
+                for entry in entries
+            ],
+        }
+        for index, entries in sorted(by_index.items())
+        if 0 <= index < rooms
+    ]
+
+
+def attach_room_guests(*, booking, rooms_payload, actor=None, request=None):
+    """Create the room-guest list for a brand-new booking (called at creation).
+
+    Same validation as the staff edit path; failures roll the whole booking
+    back, which is correct — a booking is never created with half a room list.
+    """
+    if not rooms_payload:
+        return []
+    normalised = _validate_room_guests(booking=booking, rooms_payload=rooms_payload)
+    created = []
+    for entry in normalised:
+        for guest in entry["guests"]:
+            created.append(RoomOccupant.objects.create(booking_room=entry["assignment"], **guest))
+    if created:
+        log_action(
+            actor=actor,
+            action="ROOM_GUESTS_RECORDED",
+            instance=booking,
+            metadata={
+                "reference": booking.booking_reference,
+                "guests": [
+                    {
+                        "email": guest.email,
+                        "room": guest.booking_room.room.room_number,
+                    }
+                    for guest in created
+                ],
+            },
+            request=request,
+            summary=f"Room guests recorded for {booking.booking_reference}",
+        )
+    return created
+
+
+@transaction.atomic
+def set_room_guests(booking: Booking, *, rooms_payload, staff_user, request=None):
+    """Replace the room-guest list of an existing booking.
+
+    Replace-in-full (delete the rows that are gone, update the ones that
+    stayed, insert the new ones) inside one transaction: the desk edits the
+    whole list in one dialog, so a partial apply would be a lie about who is
+    expected. Rows are matched by email within the same room, which keeps a
+    guest's ``portal_invited_at`` when only their name is corrected.
+    """
+    booking.refresh_from_db()
+    if booking.status not in ROOM_GUEST_EDITABLE_STATUSES:
+        raise BookingStateError(
+            f"Room guests cannot be changed once a booking is {booking.get_status_display().lower()}."
+        )
+
+    normalised = _validate_room_guests(booking=booking, rooms_payload=rooms_payload)
+    before = {
+        (occupant.booking_room_id, occupant.email): occupant
+        for occupant in RoomOccupant.objects.filter(booking_room__booking=booking)
+    }
+    kept_keys = set()
+    for entry in normalised:
+        assignment = entry["assignment"]
+        for guest in entry["guests"]:
+            key = (assignment.pk, guest["email"])
+            kept_keys.add(key)
+            occupant = before.get(key)
+            if occupant is None:
+                RoomOccupant.objects.create(booking_room=assignment, **guest)
+                continue
+            changed = []
+            for field in ("full_name", "phone", "notes"):
+                if getattr(occupant, field) != guest[field]:
+                    setattr(occupant, field, guest[field])
+                    changed.append(field)
+            if occupant.is_lead_occupant != guest["is_lead_occupant"]:
+                occupant.is_lead_occupant = guest["is_lead_occupant"]
+                changed.append("is_lead_occupant")
+            if changed:
+                occupant.save(update_fields=[*changed, "email"])
+
+    removed_ids = [occ.pk for key, occ in before.items() if key not in kept_keys]
+    if removed_ids:
+        RoomOccupant.objects.filter(pk__in=removed_ids).delete()
+
+    log_action(
+        actor=staff_user,
+        action="ROOM_GUESTS_UPDATED",
+        instance=booking,
+        metadata={
+            "reference": booking.booking_reference,
+            "guests": [
+                {"email": guest["email"], "room": entry["assignment"].room.room_number}
+                for entry in normalised
+                for guest in entry["guests"]
+            ],
+            "removed": len(removed_ids),
+        },
+        request=request,
+        summary=f"Room guest list updated for {booking.booking_reference}",
+    )
+    return list(RoomOccupant.objects.filter(booking_room__booking=booking).select_related("booking_room__room"))
+
+
+# ---------------------------------------------------------------------------
 # Front-desk operations
 # ---------------------------------------------------------------------------
 def can_check_in_today(booking, *, today=None, settings_obj=None):
@@ -848,11 +1101,58 @@ def can_check_in_today(booking, *, today=None, settings_obj=None):
     return True, ""
 
 
+def _validate_rooms_usable(assignments):
+    """Refuse the whole hand-over if any room is out of service."""
+    for assignment in assignments:
+        room = assignment.room
+        if room.status in (Room.Status.MAINTENANCE, Room.Status.OUT_OF_SERVICE):
+            raise RoomUnavailableError(
+                f"Room {room.room_number} is {room.get_status_display().lower()} and cannot be used."
+            )
+
+
+def _mark_room_checked_in(*, assignment, staff_user, at):
+    """Record ONE room's arrival and occupy its physical room.
+
+    Returns True when this call is the one that recorded it (so audit and
+    notification code never fires twice for an idempotent retry).
+    """
+    if assignment.checked_in_at is not None:
+        return False
+    assignment.checked_in_at = at
+    assignment.checked_in_by = staff_user
+    assignment.save(update_fields=["checked_in_at", "checked_in_by", "updated_at"])
+    room = assignment.room
+    if room.status != Room.Status.OCCUPIED:
+        room.status = Room.Status.OCCUPIED
+        room.save(update_fields=["status", "updated_at"])
+    return True
+
+
+def _schedule_room_guest_invitations(booking, assignments):
+    """Email the people in the rooms that were just handed over (after commit).
+
+    The booking contact already receives the stay invitation; the occupants of
+    the other rooms need their own note because their email, not the
+    booker's, is their portal identity. Imported lazily: the portal app
+    depends on bookings, never the other way round.
+    """
+    from apps.portal.invitations import schedule_room_guest_invitations
+
+    schedule_room_guest_invitations(
+        booking=booking,
+        assignment_ids=[assignment.pk for assignment in assignments],
+    )
+
+
 @transaction.atomic
 def check_in_booking(booking: Booking, *, staff_user, request=None):
+    """Hand over EVERY room of the booking at once (the usual front-desk flow)."""
     booking = refresh_expired_pending(booking)
-    if booking.status == Booking.Status.CHECKED_IN:
-        return booking  # idempotent retry
+    if booking.status == Booking.Status.CHECKED_IN and not booking.room_assignments.filter(
+        checked_in_at__isnull=True
+    ).exists():
+        return booking  # every room is already in house — idempotent retry
     allowed, reason = can_check_in_today(booking)
     if not allowed:
         raise BookingStateError(reason)
@@ -877,17 +1177,16 @@ def check_in_booking(booking: Booking, *, staff_user, request=None):
         )
         assignments = list(booking.room_assignments.select_related("room"))
 
-    for assignment in assignments:
-        room = assignment.room
-        if room.status in (Room.Status.MAINTENANCE, Room.Status.OUT_OF_SERVICE):
-            raise RoomUnavailableError(
-                f"Room {room.room_number} is {room.get_status_display().lower()} and cannot be used."
-            )
-        room.status = Room.Status.OCCUPIED
-        room.save(update_fields=["status", "updated_at"])
+    _validate_rooms_usable(assignments)
+
+    now = timezone.now()
+    newly_checked_in = [
+        assignment for assignment in assignments
+        if _mark_room_checked_in(assignment=assignment, staff_user=staff_user, at=now)
+    ]
 
     booking.status = Booking.Status.CHECKED_IN
-    booking.checked_in_at = timezone.now()
+    booking.checked_in_at = now
     booking.save(update_fields=["status", "checked_in_at", "updated_at"])
 
     # Reservation state remains authoritative for compatibility, while the
@@ -896,6 +1195,7 @@ def check_in_booking(booking: Booking, *, staff_user, request=None):
     from apps.stays.services import ensure_stay_for_check_in
 
     ensure_stay_for_check_in(booking=booking, assignments=assignments, actor=staff_user)
+    _schedule_room_guest_invitations(booking, newly_checked_in)
 
     log_action(
         actor=staff_user, action="CHECK_IN", instance=booking,
@@ -914,11 +1214,105 @@ def check_in_booking(booking: Booking, *, staff_user, request=None):
     return booking
 
 
+@transaction.atomic
+def check_in_booking_room(booking: Booking, *, assignment_id: int, staff_user, request=None):
+    """Hand over ONE room of a multi-room booking.
+
+    Guests rarely arrive together. Checking the whole reservation in when only
+    the first party is at the desk used to mark every room occupied and every
+    guest in house, which made "did they all actually check in?" unanswerable.
+    This records the arrival against the room that is actually being given
+    out; the booking becomes CHECKED_IN (and its stay/folio open) with the
+    FIRST room, and any remaining rooms follow as their guests arrive.
+    """
+    booking = refresh_expired_pending(booking)
+    assignment = (
+        booking.room_assignments.select_related("room").select_for_update()
+        .filter(pk=assignment_id).first()
+    )
+    if assignment is None:
+        from rest_framework.exceptions import NotFound
+
+        raise NotFound("Room assignment not found on this booking.")
+
+    if booking.status == Booking.Status.CHECKED_IN:
+        # Already in house (fully or partially): only the booking-level date
+        # rules no longer apply — the guest is here.
+        allowed, reason = True, ""
+    else:
+        allowed, reason = can_check_in_today(booking)
+    if not allowed:
+        raise BookingStateError(reason)
+
+    if assignment.checked_in_at is not None:
+        return booking, assignment, False  # idempotent retry
+
+    if booking.status not in (Booking.Status.CONFIRMED, Booking.Status.CHECKED_IN):
+        raise BookingStateError(
+            "Only confirmed or already in-house bookings can check a room in."
+        )
+    _validate_rooms_usable([assignment])
+
+    now = timezone.now()
+    first_room_of_stay = booking.status != Booking.Status.CHECKED_IN
+    _mark_room_checked_in(assignment=assignment, staff_user=staff_user, at=now)
+    if first_room_of_stay:
+        booking.status = Booking.Status.CHECKED_IN
+        booking.checked_in_at = now
+        booking.save(update_fields=["status", "checked_in_at", "updated_at"])
+
+    from apps.stays.services import ensure_stay_for_check_in
+
+    ensure_stay_for_check_in(booking=booking, assignments=[assignment], actor=staff_user)
+    _schedule_room_guest_invitations(booking, [assignment])
+
+    remaining = booking.room_assignments.filter(checked_in_at__isnull=True).count()
+    log_action(
+        actor=staff_user, action="CHECK_IN_ROOM", instance=booking,
+        metadata={
+            "reference": booking.booking_reference,
+            "room": assignment.room.room_number,
+            "rooms_awaiting_arrival": remaining,
+        },
+        request=request,
+        summary=f"Room {assignment.room.room_number} checked in on {booking.booking_reference}",
+    )
+    notify_staff(
+        type="CHECK_IN",
+        title=f"Room {assignment.room.room_number} checked in: {booking.booking_reference}",
+        message=(
+            f"{booking.guest.full_name}: room {assignment.room.room_number} is in house"
+            + (f"; {remaining} room(s) still awaiting arrival." if remaining else ".")
+        ),
+        link=staff_booking_link(booking),
+    )
+    logger.info(
+        "Room check-in: %s room %s by staff %s", booking.booking_reference,
+        assignment.room.room_number, staff_user.id,
+    )
+    return booking, assignment, True
+
+
 def _release_rooms_for_checkout(booking):
-    """Release every assigned room back to inventory and flag housekeeping."""
+    """Release every assigned room back to inventory and flag housekeeping.
+
+    A room that was never handed over is NOT treated as a departed stay: it is
+    recorded as ``not_arrived_at`` and its cleanliness is left alone. Marking
+    an untouched room DIRTY told housekeeping to clean a bed nobody slept in,
+    and made a three-room booking look fully occupied on the occupancy report.
+    """
     assignments = list(booking.room_assignments.select_related("room").select_for_update())
+    now = timezone.now()
     for assignment in assignments:
         room = assignment.room
+        if assignment.checked_in_at is None:
+            if assignment.not_arrived_at is None:
+                assignment.not_arrived_at = now
+                assignment.save(update_fields=["not_arrived_at", "updated_at"])
+            if room.status == Room.Status.OCCUPIED:  # defensive: never leave a phantom occupancy
+                room.status = Room.Status.AVAILABLE
+                room.save(update_fields=["status", "updated_at"])
+            continue
         room.status = Room.Status.AVAILABLE
         room.housekeeping_status = Room.HousekeepingStatus.DIRTY
         room.save(update_fields=["status", "housekeeping_status", "updated_at"])

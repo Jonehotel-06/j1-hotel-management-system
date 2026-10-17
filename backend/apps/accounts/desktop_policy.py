@@ -152,14 +152,6 @@ def receptionist_desktop_for_key(raw_key: str) -> Workstation | None:
     )
 
 
-def normalize_ip_address(value) -> str:
-    """Canonical exact IPv4/IPv6 address, or "" when unset/invalid."""
-    try:
-        return str(ipaddress.ip_address(str(value or "").strip()))
-    except (TypeError, ValueError):
-        return ""
-
-
 def request_client_ip(request) -> str:
     """The client IP for this request, resolved by ``apps.core.client_ip``.
 
@@ -173,24 +165,114 @@ def request_client_ip(request) -> str:
 
 
 def configured_front_desk_desktop_ip() -> str:
+    """The configured binding as stored: one address/network, or several."""
     from apps.hotel.models import HotelSettings
 
-    return normalize_ip_address(HotelSettings.get_settings().front_desk_desktop_ip)
+    return str(HotelSettings.get_settings().front_desk_desktop_ip or "").strip()
+
+
+def configured_front_desk_desktop_networks() -> list:
+    """Every configured entry, parsed. An address becomes its own /32 (or /128).
+
+    A desk whose public address is reassigned by its provider is registered as
+    the network it sits on; several entries cover a backup link. Entries that
+    no longer parse are ignored here — the model and serializer refuse to store
+    them, so this only guards against hand-edited rows.
+    """
+    from apps.core.client_ip import parse_network
+
+    networks = []
+    for item in str(configured_front_desk_desktop_ip() or "").split(","):
+        network = parse_network(item)
+        if network is not None:
+            networks.append(network)
+    return networks
 
 
 def front_desk_desktop_ip_allowed(request) -> bool:
-    """True when no desktop IP is configured, or this request uses it.
+    """True when no desktop IP is configured, or this request uses one of them.
 
-    The single hotel-wide address set in Settings is a NETWORK binding: it
-    applies to every request the desktop makes, whichever workstation record
-    identified the browser. Keeping it separate from the per-workstation
+    The hotel-wide value set in Settings is a NETWORK binding: it applies to
+    every request the desktop makes, whichever workstation record identified
+    the browser. Keeping it separate from the per-workstation
     ``Workstation.ip_address`` means an admin can pin the front desk to one
     network while several desks are registered behind it.
     """
-    configured = configured_front_desk_desktop_ip()
-    if not configured:
+    networks = configured_front_desk_desktop_networks()
+    if not networks:
         return True
-    return address_in_network(request_client_ip(request), configured)
+    client_ip = request_client_ip(request)
+    if not client_ip:
+        return False
+    from apps.core.client_ip import parse_address
+
+    address = parse_address(client_ip)
+    if address is None:
+        return False
+    return any(
+        network.version == address.version and address in network
+        for network in networks
+    )
+
+
+def configured_front_desk_desktop_cannot_match(client_ip: str) -> bool:
+    """True when the SAVED front desk binding could never match this visitor.
+
+    The situation this exists for: the address the server used to report for
+    the desk was the hosting platform's own proxy (Railway's ``100.64.0.0/10``
+    peer), an administrator saved it, and after the client address is resolved
+    correctly that saved value can never equal a real browser's address. Saying
+    "this browser is outside the pinned network" would leave the front desk
+    permanently locked out with no indication that the SAVED value is the
+    problem. Only private/shared/loopback ranges qualify, and only when the
+    visitor itself arrived from a public address -- a hotel LAN whose desk
+    really is on 192.168.x is a normal, working setup and must stay silent.
+    """
+    from apps.core.client_ip import is_infrastructure_address, is_infrastructure_network
+
+    if is_infrastructure_address(client_ip):
+        return False
+    networks = configured_front_desk_desktop_networks()
+    if not networks:
+        return False
+    return all(is_infrastructure_network(network) for network in networks)
+
+
+def unusable_saved_desktop_addresses(client_ip: str) -> list[str]:
+    """Saved desk bindings that no browser arriving from this address can match.
+
+    Both places an administrator can save a desk address are covered: the
+    hotel-wide ``HotelSettings.front_desk_desktop_ip`` and each workstation's
+    ``ip_address``. Both may hold an address the server reported while it was
+    still describing its own proxy (``100.64.0.18`` on Railway), which no
+    browser can ever arrive from. Naming the saved values turns "sign-in is
+    refused" into "replace THIS value".
+    """
+    from apps.core.client_ip import is_infrastructure_address, is_infrastructure_network
+
+    if is_infrastructure_address(client_ip):
+        # The visitor is itself behind the platform network: the saved value may
+        # well be the honest answer for this deployment.
+        return []
+    def _label(value) -> str:
+        """An address network reports as 100.64.0.18/32; show it as it was saved."""
+        network = value if hasattr(value, "prefixlen") else None
+        if network is not None and network.prefixlen == network.max_prefixlen:
+            return str(network.network_address)
+        return str(value)
+
+    unusable: list[str] = []
+    for network in configured_front_desk_desktop_networks():
+        if is_infrastructure_network(network):
+            unusable.append(_label(network))
+    for workstation in Workstation.objects.filter(
+        department=Workstation.Department.FRONT_DESK, is_active=True,
+    ).exclude(ip_address=""):
+        if is_infrastructure_network(workstation.ip_address):
+            unusable.append(_label(workstation.ip_address))
+    # Preserve order, drop repeats (the same value is often saved twice).
+    seen = set()
+    return [value for value in unusable if not (value in seen or seen.add(value))]
 
 
 def presented_desktop_key(request) -> str:

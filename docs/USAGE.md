@@ -41,6 +41,92 @@ Choosing N rooms creates one booking with N room assignments. The total is the
 nightly rate × nights × rooms, discounted by the backend. Receipts list every
 room, and cancellation or refund applies to the booking as a whole.
 
+#### Guests in the other rooms
+
+The person making the booking is the contact and occupies the first room. On the
+**Guest** step, a booking of more than one room also asks for the name and email
+of the person staying in each additional room. The provision is optional: a
+booking with no room guests is still complete.
+
+Each recorded email is a portal identity in its own right. That guest signs in
+at `/portal/login.html` with **their own** address, sees the booking, and can
+raise service requests — housekeeping, room service, maintenance — for **their
+room only**. The booking contact keeps seeing every room.
+
+The desk can add, correct or remove these emails at any time before the booking
+is closed, from **Booking → Rooms & guests** on
+`dashboard/booking-details.html`.
+
+#### When the rooms arrive separately
+
+A party rarely reaches the desk together. Each room has its own **Check in this
+room** action, so:
+
+- the first room checked in turns the booking into an in-house stay and opens
+  its folio;
+- later rooms append their own occupancy record when their guests arrive;
+- **Check in** at the top of the booking still checks in every remaining room
+  at once.
+
+The panel states the position at a glance — *“2 of 3 room(s) checked in · 1
+awaiting arrival”*. A room that never receives a guest is recorded as **Did not
+arrive** when the booking checks out, and it is not sent to housekeeping as a
+dirty room: nobody slept in it. This is the record that answers “did they
+really check in to all the rooms they booked?” afterwards.
+
+The **Check-in** queue shows the same count on every multi-room arrival row
+(*“1 of 3 room(s) in house · 2 awaiting arrival”*) with a **Rooms** link that
+opens this panel, so the desk does not have to guess from a booking-level
+status.
+
+#### Occupancy: rooms sold vs rooms actually occupied
+
+The occupancy report counts **rooms sold** per night — a paid reservation
+counts for the night even before the guest reaches the desk — and reports
+**arrived rooms** beside it, taken from the per-room check-in record. The
+difference between the two is not an error: it is the rooms nobody arrived in.
+Those are reported as *never arrived* (no-show) for the nights the hotel still
+held and sold the room.
+
+## Getting back into a booking (and paying) from any device
+
+A booking is protected by a bearer token that the browser receives once, at
+checkout. That is the right model for a session, but it has a consequence worth
+stating plainly: **the token lives in one browser.** A guest who opens the
+reservation from their email on a phone, clears site data, or returns from the
+payment provider on another device has no credential, so the server refuses —
+by design, a booking reference alone must never unlock a booking.
+
+Every booking email therefore links to
+`my-bookings.html?ref=…&access=…`. The `access` value is signed with the site's
+secret key, bound to that one booking reference and expires (14 days by
+default). The page exchanges it for a normal session token, removes it from the
+address bar, and carries on — so **the same link works on any device**.
+
+If a link has expired or the guest cannot find it, the booking page offers
+**Email me a secure link**: the address on the reservation receives a fresh
+signed link. The response is identical whether or not the reference exists, so
+the endpoint cannot be used to discover reservations, and it is capped per
+booking.
+
+### When payment "fails"
+
+`POST /api/payments/initialize/` answers **404** for two different situations,
+deliberately indistinguishable to the caller:
+
+| What happened | What the log says |
+|---|---|
+| No booking has that reference | `Payment init refused: no booking matches reference …` |
+| The booking exists but the caller has no valid credential | `Payment init refused: credential rejected for booking … guest_token_present=False …` |
+
+Both return the same 404 body so references cannot be probed. The `apps` log
+line is what tells them apart. In practice the second line means the browser is
+not holding the guest token — open the emailed link (it now always works) or use
+**Email me a secure link**.
+
+Finally, a booking page with no credential at all no longer sends a request that
+can only fail: it says the device cannot verify the booking and offers the link.
+
 ## Verified-email guest portal
 
 The public footer's **Guest portal** link opens `/portal/login.html`. It is

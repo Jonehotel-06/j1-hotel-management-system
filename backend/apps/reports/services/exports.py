@@ -21,11 +21,18 @@ def occupancy_xlsx_bytes(report: dict) -> bytes:
     sheet.append(["Occupied room-nights", report.get("occupied_room_nights")])
     sheet.append(["Available room-nights", report.get("available_room_nights")])
     sheet.append(["Average occupancy %", report.get("average_occupancy_percent")])
+    # Rooms SOLD vs rooms a guest actually took possession of. The difference is
+    # exactly the no-shows the hotel still paid for, so both are exported.
+    sheet.append(["Arrived room-nights", report.get("arrived_room_nights")])
+    sheet.append(["Rooms not arrived (no-show)", report.get("unarrived_room_nights")])
     sheet.append([])
-    sheet.append(["Date", "Occupied rooms", "Available rooms", "Occupancy %"])
+    sheet.append(["Date", "Occupied rooms", "Arrived rooms", "Not arrived", "Available rooms", "Occupancy %"])
     for row in report.get("by_day", []):
-        sheet.append([row.get("date"), row.get("occupied_rooms"), report.get("active_rooms"), row.get("occupancy_rate_percent")])
-    for column, width in (("A", 16), ("B", 18), ("C", 18), ("D", 14)):
+        sheet.append([
+            row.get("date"), row.get("occupied_rooms"), row.get("arrived_rooms"),
+            row.get("unarrived_rooms"), report.get("active_rooms"), row.get("occupancy_rate_percent"),
+        ])
+    for column, width in (("A", 16), ("B", 18), ("C", 18), ("D", 14), ("E", 18), ("F", 14)):
         sheet.column_dimensions[column].width = width
     output = BytesIO()
     book.save(output)
@@ -48,19 +55,22 @@ def occupancy_pdf_bytes(report: dict) -> bytes:
         Paragraph(
             f"Period {report.get('start_date')} to {report.get('end_date')} · "
             f"{report.get('active_rooms')} active rooms · "
-            f"{report.get('occupied_room_nights')} occupied of {report.get('available_room_nights')} available room-nights · "
-            f"average occupancy {report.get('average_occupancy_percent')}%",
+            f"{report.get('occupied_room_nights')} sold of {report.get('available_room_nights')} available room-nights · "
+            f"average occupancy {report.get('average_occupancy_percent')}% · "
+            f"{report.get('arrived_room_nights')} room-nights with a guest checked in "
+            f"({report.get('unarrived_room_nights')} never arrived)",
             styles["Normal"],
         ),
         Spacer(1, 12),
     ]
-    rows = [["Date", "Occupied rooms", "Available rooms", "Occupancy %"]]
+    rows = [["Date", "Sold", "Arrived", "Not arrived", "Occupancy %"]]
     for row in report.get("by_day", []):
         rows.append([
             str(row.get("date") or ""), str(row.get("occupied_rooms") or 0),
-            str(report.get("active_rooms") or 0), str(row.get("occupancy_rate_percent") or 0),
+            str(row.get("arrived_rooms") or 0), str(row.get("unarrived_rooms") or 0),
+            str(row.get("occupancy_rate_percent") or 0),
         ])
-    table = Table(rows, colWidths=[120, 130, 130, 110])
+    table = Table(rows, colWidths=[120, 80, 80, 90, 110])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#373435")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),

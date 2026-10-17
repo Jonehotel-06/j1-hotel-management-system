@@ -119,6 +119,18 @@
     </section>
 
     <div style="display:grid;gap:1.5rem;">
+      <!-- ROOMS & GUESTS ------------------------------------------------------
+           One row per reserved physical room. This is the desk's answer to
+           "who is in room 3?" and "did all three rooms actually arrive?" —
+           the booking's single status alone cannot answer either question. -->
+      <section class="panel" id="rooms-panel">
+        <div class="panel-head">
+          <h2>Rooms &amp; guests</h2>
+          <div class="panel-actions"><span class="caption" data-bd-room-summary></span></div>
+        </div>
+        <div class="panel-body" data-bd-rooms></div>
+      </section>
+
       <section class="panel">
         <div class="panel-head"><h2>Payment history</h2></div>
         <div class="panel-body no-pad">
@@ -204,7 +216,194 @@
       }).join("") : '<div class="empty-state" style="margin:1rem;"><span data-icon="fileText"></span><h3>No lifecycle events yet</h3></div>';
       JONE.icons.inject(act);
     }
+    renderRooms();
     syncActions();
+  }
+
+  /* ---------------------------- Rooms & guests ---------------------------- */
+  /* The booking contact is the guest of room 1; everybody else is a recorded
+     room guest with their own email. That email is a portal identity, so it is
+     shown in full to the desk (it is the record, not a secret) but never sent
+     anywhere it is not needed. */
+  var ARRIVAL_LABELS = {
+    EXPECTED: "Expected",
+    AWAITING_ARRIVAL: "Awaiting arrival",
+    CHECKED_IN: "Checked in",
+    CHECKED_OUT: "Checked out",
+    DID_NOT_ARRIVE: "Did not arrive"
+  };
+
+  function roomGuestsEditable(status) {
+    return ["PENDING", "CONFIRMED", "CHECKED_IN"].indexOf(String(status || "").toUpperCase()) !== -1;
+  }
+
+  function roomCanBeCheckedIn(assignment) {
+    var st = String((book && book.status) || "").toUpperCase();
+    if (!assignment || assignment.checked_in_at) return false;
+    if (assignment.not_arrived_at) return false;
+    return st === "CONFIRMED" || st === "CHECKED_IN";
+  }
+
+  function renderRooms() {
+    var host = document.querySelector("[data-bd-rooms]");
+    if (!host) return;
+    var rooms = (book && book.room_assignments) || [];
+    var editable = roomGuestsEditable(book && book.status);
+    var checked = Number(book && book.rooms_checked_in || 0);
+    var awaiting = Number(book && book.rooms_awaiting_arrival || 0);
+    var notArrived = Number(book && book.rooms_not_arrived || 0);
+
+    var summary = document.querySelector("[data-bd-room-summary]");
+    if (summary) {
+      summary.textContent = rooms.length
+        ? checked + " of " + rooms.length + " room(s) checked in"
+          + (awaiting ? " · " + awaiting + " awaiting arrival" : "")
+          + (notArrived ? " · " + notArrived + " did not arrive" : "")
+        : "";
+    }
+
+    if (!rooms.length) {
+      host.innerHTML = '<div class="empty-state"><span data-icon="bed"></span><h3>No physical room assigned yet</h3><p>The rooms appear here as soon as the reservation holds one.</p></div>';
+      JONE.icons.inject(host);
+      return;
+    }
+
+    host.innerHTML = rooms.map(function (assignment) {
+      var guests = assignment.occupants || [];
+      var status = String(assignment.arrival_status || "EXPECTED");
+      var guestRows = guests.length
+        ? guests.map(function (guest) {
+            return '<li class="room-guest"><span><strong>' + JONE.esc(guest.full_name || "Room guest") + '</strong>'
+              + '<br><span class="caption">' + JONE.esc(guest.email) + '</span>'
+              + (guest.portal_invited_at ? ' <span class="caption">· portal invite sent</span>' : "")
+              + '</span></li>';
+          }).join("")
+        : '<li class="room-guest"><span class="caption">No named guest recorded for this room — the booking contact is the room-1 guest by default.</span></li>';
+      var actions = [];
+      if (editable) {
+        actions.push('<button class="btn btn-sm btn-outline" type="button" data-room-guests="' + assignment.id + '">'
+          + (guests.length ? "Edit guests" : "Add guest email") + '</button>');
+      }
+      if (roomCanBeCheckedIn(assignment)) {
+        actions.push('<button class="btn btn-sm" type="button" data-room-checkin="' + assignment.id + '">Check in this room</button>');
+      }
+      return '<div class="room-card" data-room="' + assignment.id + '">'
+        + '<div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;flex-wrap:wrap;">'
+        + '<div><h3 class="h4" style="margin:0">Room ' + JONE.esc(assignment.room_number) + '</h3>'
+        + '<div class="caption">' + JONE.esc(JONE.formatDate(assignment.check_in, "mid")) + " → "
+        + JONE.esc(JONE.formatDate(assignment.check_out, "mid"))
+        + (assignment.checked_in_at ? " · arrived " + JONE.esc(JONE.formatDateTime(assignment.checked_in_at)) : "")
+        + '</div></div>'
+        + '<div style="text-align:right">' + JONE.dashboard.statusPill(status, ARRIVAL_LABELS[status] || status)
+        + (assignment.checked_in_by_name ? '<div class="caption">by ' + JONE.esc(assignment.checked_in_by_name) + '</div>' : "")
+        + '</div></div>'
+        + '<ul class="room-guest-list">' + guestRows + '</ul>'
+        + (actions.length ? '<div class="room-actions">' + actions.join("") + '</div>' : "")
+        + '</div>';
+    }).join("");
+    JONE.icons.inject(host);
+  }
+
+  /* The PUT replaces the WHOLE room list, so every save re-sends every room.
+     Anything the desk did not touch is sent back exactly as the server gave it. */
+  function roomGuestPayload(editedAssignmentId, guests) {
+    return ((book && book.room_assignments) || []).map(function (assignment) {
+      var list = assignment.id === editedAssignmentId
+        ? guests
+        : (assignment.occupants || []).map(function (guest) {
+            return { email: guest.email, full_name: guest.full_name, phone: guest.phone };
+          });
+      return { assignment_id: assignment.id, guests: list };
+    });
+  }
+
+  function openRoomGuests(assignmentId) {
+    var assignment = ((book && book.room_assignments) || []).filter(function (row) {
+      return String(row.id) === String(assignmentId);
+    })[0];
+    if (!assignment) return;
+
+    var draft = (assignment.occupants || []).map(function (guest) {
+      return { email: guest.email, full_name: guest.full_name || "", phone: guest.phone || "" };
+    });
+
+    var list = JONE.el("div", { class: "room-guest-editor" });
+    function paint() {
+      list.innerHTML = draft.length
+        ? draft.map(function (guest, index) {
+            return '<div class="room-guest-row" data-index="' + index + '">'
+              + '<div><strong>' + JONE.esc(guest.full_name || "Room guest") + '</strong>'
+              + '<br><span class="caption">' + JONE.esc(guest.email) + '</span></div>'
+              + '<button class="btn btn-sm btn-ghost" type="button" data-remove="' + index + '">Remove</button>'
+              + '</div>';
+          }).join("")
+        : '<p class="caption">No guest recorded for this room yet.</p>';
+      Array.prototype.forEach.call(list.querySelectorAll("[data-remove]"), function (btn) {
+        btn.addEventListener("click", function () {
+          draft.splice(Number(btn.getAttribute("data-remove")), 1);
+          paint();
+        });
+      });
+    }
+    paint();
+
+    var nameInput = JONE.el("input", { class: "input", "data-rg-name": "", placeholder: "e.g. Ada Obiora (optional)" });
+    var emailInput = JONE.el("input", { class: "input", type: "email", "data-rg-email": "", placeholder: "guest@example.com" });
+    var body = JONE.el("div", {},
+      JONE.el("p", { class: "caption", textContent: "Room " + assignment.room_number + " · booking " + (book.booking_reference || ref || "") }),
+      list,
+      JONE.el("div", { class: "form-grid fg-2", style: "margin-top:1rem" },
+        JONE.el("div", { class: "field" }, JONE.el("label", { class: "field-label", textContent: "Guest name" }), nameInput),
+        JONE.el("div", { class: "field" }, JONE.el("label", { class: "field-label", textContent: "Guest email" }), emailInput)
+      ),
+      JONE.el("div", { class: "notice info", style: "margin-top:0.75rem" },
+        JONE.el("span", { textContent: "This email lets the guest sign in to the guest portal themselves, raise requests for this room, and gives the desk a record of who was expected." })
+      )
+    );
+
+    var addBtn = JONE.el("button", { class: "btn btn-outline", type: "button", textContent: "Add to list" });
+    addBtn.addEventListener("click", function () {
+      var email = String(emailInput.value || "").trim().toLowerCase();
+      if (!email) { JONE.ui.toast("Enter the guest's email address.", "warning"); emailInput.focus(); return; }
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { JONE.ui.toast("That email address doesn't look right.", "warning"); emailInput.focus(); return; }
+      if (draft.some(function (guest) { return guest.email.toLowerCase() === email; })) {
+        JONE.ui.toast("That guest is already in this room's list.", "warning"); return;
+      }
+      draft.push({ email: email, full_name: String(nameInput.value || "").trim(), phone: "" });
+      nameInput.value = ""; emailInput.value = "";
+      paint();
+      emailInput.focus();
+    });
+
+    var saveBtn = JONE.el("button", { class: "btn", type: "button", textContent: "Save room guests" });
+    saveBtn.addEventListener("click", async function () {
+      if (!JONE.guardSubmit(saveBtn)) return;
+      saveBtn.disabled = true;
+      try {
+        var res = await window.API.saveBookingRoomGuests(ref, roomGuestPayload(assignment.id, draft));
+        book = res.data || book;
+        JONE.ui.modal.close();
+        renderBookings();
+        JONE.ui.toast("Room guests saved.", "success");
+      } catch (err) {
+        JONE.ui.toast(err.message || "Couldn't save the room guests.", "error");
+      } finally {
+        saveBtn.disabled = false;
+        JONE.releaseGuard(saveBtn);
+      }
+    });
+
+    JONE.ui.modal.open({
+      title: "Guests in Room " + assignment.room_number,
+      body: body,
+      footer: JONE.el("div", { style: "display:flex;justify-content:space-between;gap:0.75rem;flex-wrap:wrap" },
+        addBtn, JONE.el("div", { style: "display:flex;gap:0.75rem" },
+          JONE.el("button", { class: "btn btn-outline", type: "button", textContent: "Cancel", onclick: function () { JONE.ui.modal.close(); } }),
+          saveBtn
+        )
+      )
+    });
+    emailInput.focus();
   }
 
   function renderPayments(payments){
@@ -286,6 +485,30 @@
   }
   load();
 
+  /* Rooms are re-rendered after every save, so their controls are handled by
+     delegation on the container rather than by per-button listeners. */
+  var roomsHost=document.querySelector("[data-bd-rooms]");
+  if(roomsHost) roomsHost.addEventListener("click", async function(event){
+    var guestBtn=event.target.closest("[data-room-guests]");
+    if(guestBtn){ openRoomGuests(guestBtn.getAttribute("data-room-guests")); return; }
+    var checkBtn=event.target.closest("[data-room-checkin]");
+    if(!checkBtn) return;
+    if(!JONE.guardSubmit(checkBtn)) return;
+    var assignmentId=checkBtn.getAttribute("data-room-checkin");
+    checkBtn.disabled=true;
+    try{
+      var res=await window.API.checkInBookingRoom(ref, assignmentId);
+      book=res.data||book;
+      renderBookings();
+      JONE.ui.toast(res.message||"Room checked in.","success");
+    }catch(err){
+      JONE.ui.toast(err.message||"Couldn't check that room in.","error");
+    }finally{
+      checkBtn.disabled=false;
+      JONE.releaseGuard(checkBtn);
+    }
+  });
+
   var printBtn=document.getElementById("print-booking");
   if(printBtn) printBtn.addEventListener("click",function(){ window.print(); });
 
@@ -339,7 +562,14 @@
       checkin.disabled=true;
       if(st==="CHECKED_IN"){
         var due=Number(book.amount_due||0);
-        var allow=due>0 ? window.confirm("This booking still has a balance of "+JONE.formatNaira(due)+". Check out anyway?") : true;
+        var awaiting=Number(book.rooms_awaiting_arrival||0);
+        /* A multi-room party checks in room by room, so "checked in" no longer
+           implies every room arrived. Closing the booking now records the
+           missing rooms as "did not arrive" — say so before it happens. */
+        var lines=[];
+        if(awaiting) lines.push(awaiting+" room(s) have not arrived yet; they will be recorded as \"did not arrive\".");
+        if(due>0) lines.push("This booking still has a balance of "+JONE.formatNaira(due)+".");
+        var allow=lines.length ? window.confirm(lines.join("\n\n")+"\n\nCheck out anyway?") : true;
         if(!allow) return;
         await window.API.checkOutBooking(ref, due>0?{allow_balance_due:true}:{});
         JONE.ui.toast("Guest checked out.","success");

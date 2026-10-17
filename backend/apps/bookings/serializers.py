@@ -10,7 +10,7 @@ from rest_framework import serializers
 
 from apps.core.utils import money
 
-from .models import Booking, BookingRoom, Guest
+from .models import Booking, BookingRoom, Guest, RoomOccupant
 
 
 # ---------------------------------------------------------------------------
@@ -46,13 +46,36 @@ class GuestReadSerializer(serializers.ModelSerializer):
         ]
 
 
+class RoomOccupantSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RoomOccupant
+        fields = [
+            "id", "full_name", "email", "phone", "is_lead_occupant", "notes",
+            "portal_invited_at", "created_at",
+        ]
+        read_only_fields = fields
+
+
 class BookingRoomSerializer(serializers.ModelSerializer):
     room_number = serializers.CharField(source="room.room_number", read_only=True)
     floor = serializers.IntegerField(source="room.floor", read_only=True)
+    occupants = RoomOccupantSerializer(many=True, read_only=True)
+    arrival_status = serializers.CharField(read_only=True)
+    checked_in_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = BookingRoom
-        fields = ["id", "room_number", "floor", "check_in", "check_out"]
+        fields = [
+            "id", "room_number", "floor", "check_in", "check_out",
+            "checked_in_at", "not_arrived_at", "arrival_status",
+            "checked_in_by_name", "arrival_note", "occupants",
+        ]
+
+    def get_checked_in_by_name(self, obj) -> str:
+        user = obj.checked_in_by
+        if not user:
+            return ""
+        return getattr(user, "full_name", "") or getattr(user, "email", "") or ""
 
 
 def serializer_folio_charge_map(serializer) -> dict:
@@ -255,22 +278,73 @@ class QuoteRequestSerializer(StayDetailsSerializer):
     pass
 
 
+class RoomGuestInputSerializer(serializers.Serializer):
+    """One person staying in one of the other rooms of a multi-room booking.
+
+    ``room_index`` is 0-based and matches the order rooms are listed in on the
+    booking (room number order). It is optional: when omitted the entries fill
+    the rooms in order, which is what the guest-facing form sends.
+    """
+
+    email = serializers.EmailField()
+    full_name = serializers.CharField(required=False, allow_blank=True, default="", max_length=150)
+    phone = serializers.CharField(required=False, allow_blank=True, default="", max_length=20)
+    room_index = serializers.IntegerField(required=False, min_value=0, max_value=49)
+    is_lead_occupant = serializers.BooleanField(required=False, default=False)
+
+    def validate_email(self, value):
+        return value.strip().lower()
+
+
 class BookingCreateSerializer(StayDetailsSerializer):
     guest = GuestWriteSerializer(required=False)
     special_requests = serializers.CharField(required=False, allow_blank=True, default="")
+    # People staying in the OTHER rooms. Optional; max one per additional room
+    # is enforced in validate() so the message names the real problem.
+    room_guests = RoomGuestInputSerializer(many=True, required=False, default=list)
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
         request = self.context.get("request")
         authenticated = bool(request and request.user and request.user.is_authenticated)
+        guest = attrs.get("guest") or {}
         if not authenticated:
-            guest = attrs.get("guest") or {}
             errors = {}
             for field in ("first_name", "last_name", "email", "phone"):
                 if not str(guest.get(field) or "").strip():
                     errors[field] = ["This field is required for guest checkout."]
             if errors:
                 raise serializers.ValidationError({"guest": errors})
+
+        room_guests = attrs.get("room_guests") or []
+        if room_guests:
+            rooms = int(attrs.get("rooms") or 1)
+            if rooms < 2:
+                raise serializers.ValidationError(
+                    {"room_guests": ["Room guests can only be added when booking more than one room."]}
+                )
+            contact_email = str(guest.get("email") or getattr(request.user, "email", "") or "").strip().lower()
+            seen = set()
+            for entry in room_guests:
+                email = entry["email"]
+                if email == contact_email:
+                    raise serializers.ValidationError(
+                        {"room_guests": [f"{email} is the booking contact — the contact does not need a room guest entry."]}
+                    )
+                if email in seen:
+                    raise serializers.ValidationError(
+                        {"room_guests": [f"{email} is listed twice. Each guest can only be in one room of this booking."]}
+                    )
+                seen.add(email)
+                index = entry.get("room_index")
+                if index is not None and index >= rooms:
+                    raise serializers.ValidationError(
+                        {"room_guests": [f"Room {index + 1} does not exist on a {rooms}-room booking."]}
+                    )
+            if len(room_guests) > rooms:
+                raise serializers.ValidationError(
+                    {"room_guests": [f"Only {rooms} room(s) were booked, but {len(room_guests)} room guests were supplied."]}
+                )
         return attrs
     # "Book this room" — the id of one EXACT physical room the guest picked.
     # Advisory only: the server re-checks availability and may substitute an
@@ -285,6 +359,12 @@ class BookingCreateSerializer(StayDetailsSerializer):
         if not Room.objects.filter(pk=value, is_active=True).exists():
             raise serializers.ValidationError("That room is not available for booking.")
         return value
+
+
+class GuestAccessExchangeSerializer(serializers.Serializer):
+    """The signed ``access`` value carried by an emailed booking link."""
+
+    access = serializers.CharField(max_length=2048)
 
 
 class CancelBookingSerializer(serializers.Serializer):

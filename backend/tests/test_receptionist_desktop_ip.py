@@ -39,6 +39,7 @@ RENDER_HEADERS = {
     "HTTP_CF_CONNECTING_IP": DESK_ON_INTERNET,
 }
 LOGIN_URL = "/api/auth/login/"
+SETTINGS_URL = "/api/admin/settings/"
 REFRESH_URL = "/api/auth/token/refresh/"
 WORKSTATIONS_URL = "/api/admin/users/terminals/"
 
@@ -324,6 +325,26 @@ class RegisteredDesktopIpTests(BaseAPITestCase):
         self.assertEqual(behind_proxy.json()["data"]["source"], "forwarded")
         self.assertTrue(behind_proxy.json()["data"]["trusted_proxy_hops"])
 
+    def test_a_browser_can_tell_that_the_reported_address_is_the_platform(self):
+        """Registration screens must not offer the hosting proxy as the desk.
+
+        The front desk browser asks the API what address it arrives on. When no
+        forwarding header survived, the honest answer is the platform's own
+        proxy address — it changes per request and can never identify a desk.
+        """
+        self.auth(self.receptionist)
+        platform = self.client.get(
+            "/api/auth/client-address/", REMOTE_ADDR="100.64.0.18",
+        )
+        self.assertEqual(platform.status_code, 200, platform.content)
+        data = platform.json()["data"]
+        self.assertEqual(data["client_ip"], "100.64.0.18")
+        self.assertTrue(data["client_ip_is_infrastructure"])
+        self.assertFalse(data["trusted_proxy_hops"])
+
+        real = self.client.get("/api/auth/client-address/", REMOTE_ADDR=DESK_IP)
+        self.assertFalse(real.json()["data"]["client_ip_is_infrastructure"])
+
 
 class ClientIpResolutionTests(BaseAPITestCase):
     """The resolver itself, independent of the desk policy."""
@@ -374,3 +395,203 @@ class ClientIpResolutionTests(BaseAPITestCase):
 
     def test_an_empty_request_has_no_address(self):
         self.assertEqual(resolve_client_ip(None), "")
+
+
+class RailwayProxyTests(BaseAPITestCase):
+    """Railway reaches the container from 100.64.0.0/10 — a CGNAT address.
+
+    That range was missing from the trusted proxies, so every proxied request
+    looked like it came from the platform itself. The address shown to the front
+    desk changed on every request (a different proxy instance each time), and no
+    desk could ever be registered — the exact "the IP changes on every refresh"
+    report.
+    """
+
+    RAILWAY_PEER = "100.64.0.18"
+    DESK = "102.89.34.7"
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        self.receptionist = make_user(
+            "railway-reception@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST
+        )
+        Workstation.objects.create(
+            name="Lobby desk", department=Workstation.Department.FRONT_DESK,
+            location="Lobby", ip_address=self.DESK,
+        )
+
+    def _request(self, **meta):
+        return self.client.post(
+            LOGIN_URL,
+            {"email": self.receptionist.email, "password": PASSWORD},
+            REMOTE_ADDR=self.RAILWAY_PEER,
+            **meta,
+        )
+
+    def test_the_edge_address_is_trusted_so_the_desk_is_recognised(self):
+        # Railway's edge rewrites X-Real-IP (and X-Forwarded-For) with the
+        # client it saw.
+        response = self._request(
+            HTTP_X_REAL_IP=self.DESK, HTTP_X_FORWARDED_FOR=self.DESK,
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+    def test_the_resolved_address_is_the_visitor_not_the_platform(self):
+        from django.test import RequestFactory
+
+        from apps.core.client_ip import client_ip_source, resolve_client_ip
+
+        request = RequestFactory().post(
+            LOGIN_URL, REMOTE_ADDR=self.RAILWAY_PEER,
+            HTTP_X_REAL_IP=self.DESK, HTTP_X_FORWARDED_FOR=f"203.0.113.9, {self.DESK}",
+        )
+        self.assertEqual(resolve_client_ip(request), self.DESK)
+        self.assertEqual(client_ip_source(request), "x-real-ip")
+
+    def test_an_appended_forwarding_chain_still_yields_the_client(self):
+        from django.test import RequestFactory
+
+        from apps.core.client_ip import resolve_client_ip
+
+        request = RequestFactory().post(
+            LOGIN_URL, REMOTE_ADDR=self.RAILWAY_PEER,
+            HTTP_X_FORWARDED_FOR=f"{self.DESK}, {self.RAILWAY_PEER}",
+        )
+        self.assertEqual(resolve_client_ip(request), self.DESK)
+
+    def test_a_refusal_names_the_real_address_not_the_proxy(self):
+        response = self._request(
+            HTTP_X_REAL_IP=OTHER_IP, HTTP_X_FORWARDED_FOR=OTHER_IP,
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        reported = response.json()["errors"]["client_ip"]
+        self.assertEqual(reported, OTHER_IP)
+        self.assertNotEqual(reported, self.RAILWAY_PEER)
+
+    def test_a_proxy_address_is_flagged_so_the_ui_does_not_suggest_registering_it(self):
+        """With no forwarding header at all, the honest answer is "this is the platform"."""
+        response = self._request()
+        self.assertEqual(response.status_code, 403, response.content)
+        errors = response.json()["errors"]
+        self.assertEqual(errors["client_ip"], self.RAILWAY_PEER)
+        self.assertTrue(errors["client_ip_is_infrastructure"])
+
+    def test_a_public_peer_is_still_never_believed_about_a_forwarded_address(self):
+        """Trusting the platform hop must not make every hop trusted."""
+        from django.test import RequestFactory
+
+        from apps.core.client_ip import resolve_client_ip
+
+        request = RequestFactory().post(
+            LOGIN_URL, REMOTE_ADDR=OTHER_IP,
+            HTTP_X_FORWARDED_FOR=self.DESK, HTTP_X_REAL_IP=self.DESK,
+        )
+        self.assertEqual(resolve_client_ip(request), OTHER_IP)
+
+
+class UnusableSavedBindingTests(BaseAPITestCase):
+    """A saved binding that can never match must be named, not silently enforced.
+
+    Before the proxy fix the API reported its own proxy address for every
+    request, and an administrator could save that value in Settings. Once the
+    address is resolved correctly the saved value can never equal a desk's
+    address, so the front desk stays locked out. The refusal has to say that the
+    SAVED value is the problem — otherwise the only advice it can give
+    ("widen the entry") is wrong.
+    """
+
+    SAVED_PROXY = "100.64.0.18"
+    DESK = "102.89.34.7"
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        self.admin = make_user("saved-admin@jone.test", password=PASSWORD, role=User.Role.ADMIN)
+        self.receptionist = make_user(
+            "saved-reception@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST
+        )
+        self.settings_obj = HotelSettings.get_settings()
+        self.settings_obj.front_desk_desktop_ip = self.SAVED_PROXY
+        self.settings_obj.save(update_fields=["front_desk_desktop_ip"])
+        desk = Workstation.objects.create(
+            name="Lobby desk", department=Workstation.Department.FRONT_DESK,
+        )
+        self.key = issue_desktop_key(desk)
+        desk.save()
+
+    def test_the_refusal_names_the_unusable_saved_value(self):
+        response = self.client.post(
+            LOGIN_URL,
+            {"email": self.receptionist.email, "password": PASSWORD},
+            REMOTE_ADDR=self.DESK, **{DESKTOP_HEADER: self.key},
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        errors = response.json()["errors"]
+        self.assertEqual(errors["reason"], "front_desk_ip_mismatch")
+        self.assertTrue(errors["configured_address_unusable"])
+        self.assertEqual(errors["configured_front_desk_address"], self.SAVED_PROXY)
+        # The visitor itself is a real public address, so it is NOT flagged.
+        self.assertNotIn("client_ip_is_infrastructure", errors)
+
+    def test_a_private_saved_binding_is_usable_on_a_private_network(self):
+        """A hotel LAN whose desk really is on 192.168.x must not be called broken."""
+        self.settings_obj.front_desk_desktop_ip = "192.168.1.0/24"
+        self.settings_obj.save(update_fields=["front_desk_desktop_ip"])
+        response = self.client.post(
+            LOGIN_URL,
+            {"email": self.receptionist.email, "password": PASSWORD},
+            REMOTE_ADDR="192.168.1.55", **{DESKTOP_HEADER: self.key},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+    def test_the_settings_payload_flags_the_saved_value_too(self):
+        self.auth(self.admin)
+        response = self.client.get(SETTINGS_URL, REMOTE_ADDR=self.DESK)
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()["data"]
+        self.assertTrue(data["front_desk_desktop_ip_unusable"])
+        self.assertFalse(data["request_ip_is_infrastructure"])
+
+    def test_a_public_saved_binding_is_not_flagged(self):
+        self.settings_obj.front_desk_desktop_ip = self.DESK
+        self.settings_obj.save(update_fields=["front_desk_desktop_ip"])
+        self.auth(self.admin)
+        response = self.client.get(SETTINGS_URL, REMOTE_ADDR=self.DESK)
+        self.assertFalse(response.json()["data"]["front_desk_desktop_ip_unusable"])
+
+    def test_a_workstation_registered_with_the_proxy_address_is_named_too(self):
+        """The sign-in refusal must cover the workstation route, not just settings.
+
+        Most administrators register the desk from the Workstations page
+        ("Register this address"), so a proxy address saved THERE is the more
+        likely stale value.
+        """
+        self.settings_obj.front_desk_desktop_ip = ""
+        self.settings_obj.save(update_fields=["front_desk_desktop_ip"])
+        Workstation.objects.filter(department=Workstation.Department.FRONT_DESK).update(
+            ip_address=self.SAVED_PROXY
+        )
+        # No desktop key: this is the desk that relies on its registered address
+        # alone, which is the route the stale value breaks.
+        response = self.client.post(
+            LOGIN_URL,
+            {"email": self.receptionist.email, "password": PASSWORD},
+            REMOTE_ADDR=self.DESK,
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+        errors = response.json()["errors"]
+        self.assertTrue(errors["configured_address_unusable"])
+        self.assertEqual(errors["configured_front_desk_address"], self.SAVED_PROXY)
+        # The refusal reason is the plain one: the address simply did not match.
+        self.assertNotIn("reason", errors)
+
+    def test_the_network_test_is_about_the_whole_range(self):
+        from apps.core.client_ip import is_infrastructure_network
+
+        self.assertTrue(is_infrastructure_network("100.64.0.18"))
+        self.assertTrue(is_infrastructure_network("100.64.0.0/10"))
+        self.assertTrue(is_infrastructure_network("192.168.1.0/24"))
+        self.assertFalse(is_infrastructure_network("102.89.34.0/24"))
+        self.assertFalse(is_infrastructure_network("0.0.0.0/0"), "a range that merely contains a private block is routable")
+        self.assertFalse(is_infrastructure_network("not-an-address"))

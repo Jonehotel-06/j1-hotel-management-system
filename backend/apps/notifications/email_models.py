@@ -67,6 +67,7 @@ class EmailLog(models.Model):
         PASSWORD_RESET = "PASSWORD_RESET", "Password reset"
         ENQUIRY = "ENQUIRY", "Enquiry / staff alert"
         PORTAL_INVITATION = "PORTAL_INVITATION", "Guest portal invitation"
+        BOOKING_ACCESS_LINK = "BOOKING_ACCESS_LINK", "Booking access link"
         REVIEW_INVITE = "REVIEW_INVITE", "Review invitation"
         GENERIC = "GENERIC", "Generic"
 

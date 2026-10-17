@@ -2342,3 +2342,50 @@ details[open] > summary .acc-chevron { transform: rotate(180deg); }
   .ss-tabs { flex-wrap: nowrap; overflow-x: auto; }
   .ss-tabs .btn { flex: 0 0 auto; }
 }
+
+/* ---------------------------------------------------------------------------
+   Rooms & guests (booking-details.html)
+
+   One card per reserved room so the desk can see, at a glance, which rooms are
+   in house, which are still expected, and who is recorded in each. Emails are
+   the portal identity of each room guest, so they must never be truncated
+   mid-address or wrapped onto a second line.
+--------------------------------------------------------------------------- */
+.room-card {
+  border: 1px solid var(--color-border, #E5E1DC);
+  border-radius: var(--radius-md, 10px);
+  padding: 1rem 1.15rem;
+  display: grid;
+  gap: 0.7rem;
+}
+.room-card + .room-card { margin-top: 0.85rem; }
+.room-guest-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.room-guest {
+  padding: 0.45rem 0.6rem;
+  background: var(--color-surface-alt, #FAF8F6);
+  border-radius: 8px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+.room-guest .caption { font-size: var(--fs-xs, 0.75rem); }
+.room-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.room-guest-editor { display: grid; gap: 0.5rem; margin-top: 0.5rem; }
+.room-guest-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--color-border, #E5E1DC);
+  border-radius: 8px;
+}

@@ -40,8 +40,10 @@ class FrontDeskDesktopIpTests(BaseAPITestCase):
         self.auth(self.manager)
         self.assertEqual(self.client.get(SETTINGS_URL).status_code, 403)
         self.auth(self.admin)
+        # A hostname can never be registered: it would have to be resolved on
+        # every sign-in, so the check would follow a DNS answer, not the desk.
         invalid = self.client.patch(
-            SETTINGS_URL, {"front_desk_desktop_ip": "192.0.2.0/24"}, format="json",
+            SETTINGS_URL, {"front_desk_desktop_ip": "frontdesk.local"}, format="json",
         )
         self.assertEqual(invalid.status_code, 400, invalid.content)
         saved = self.client.patch(
@@ -108,3 +110,88 @@ class FrontDeskDesktopIpTests(BaseAPITestCase):
         self.assertEqual(HotelSettings.get_settings().front_desk_desktop_ip, "")
         response = self.login(self.receptionist, ip=OTHER_IP, key=self.desk_key)
         self.assertEqual(response.status_code, 200, response.content)
+
+
+class FrontDeskNetworkBindingTests(BaseAPITestCase):
+    """The hotel-wide binding accepts a network, so a reassigned address still works.
+
+    A single public address is the tightest binding, but consumer/small-office
+    links are routinely renumbered (and many Nigerian ISPs put customers behind
+    carrier-grade NAT). Registering the network the desk sits on is the honest
+    way to keep the front desk restricted without re-editing Settings every
+    morning — and it must never widen to the whole internet by accident.
+    """
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+        self.admin = make_user("net-admin@jone.test", password=PASSWORD, role=User.Role.ADMIN)
+        self.receptionist = make_user("net-reception@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST)
+
+    def _bind(self, value):
+        self.auth(self.admin)
+        response = self.client.patch(
+            SETTINGS_URL, {"front_desk_desktop_ip": value}, format="json",
+        )
+        self.auth(None)
+        return response
+
+    def _login(self, ip):
+        return self.client.post(
+            LOGIN_URL, {"email": self.receptionist.email, "password": PASSWORD},
+            REMOTE_ADDR=ip,
+            **{DESKTOP_HEADER: self._desk_key()},
+        )
+
+    def _desk_key(self):
+        desk, _ = Workstation.objects.get_or_create(
+            name="Network desk", defaults={"department": Workstation.Department.FRONT_DESK},
+        )
+        raw = issue_desktop_key(desk)
+        desk.save()
+        return raw
+
+    def test_a_network_is_accepted_and_normalised(self):
+        response = self._bind("102.89.34.77/24")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["data"]["front_desk_desktop_ip"], "102.89.34.0/24")
+
+    def test_any_address_inside_the_registered_network_is_the_desk(self):
+        self._bind("102.89.34.0/24")
+        allowed = self._login("102.89.34.55")
+        self.assertEqual(allowed.status_code, 200, allowed.content)
+        refused = self._login("102.89.35.55")
+        self.assertEqual(refused.status_code, 403, refused.content)
+        self.assertEqual(refused.json()["code"], "STAFF_SIGN_IN_RESTRICTED")
+
+    def test_several_entries_can_be_registered(self):
+        response = self._bind("102.89.34.7, 41.58.10.0/24")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["data"]["front_desk_desktop_ip"], "102.89.34.7, 41.58.10.0/24")
+        self.assertEqual(self._login("102.89.34.7").status_code, 200)
+        self.assertEqual(self._login("41.58.10.99").status_code, 200)
+        self.assertEqual(self._login("41.58.11.1").status_code, 403)
+
+    def test_a_malformed_entry_is_refused_rather_than_silently_ignored(self):
+        response = self._bind("102.89.34.7, not-an-address")
+        self.assertEqual(response.status_code, 400, response.content)
+
+    def test_the_model_normalises_direct_writes_too(self):
+        settings_obj = HotelSettings.get_settings()
+        settings_obj.front_desk_desktop_ip = " 102.89.34.7 ,102.89.34.7 "
+        settings_obj.full_clean()
+        self.assertEqual(settings_obj.front_desk_desktop_ip, "102.89.34.7")
+
+    def test_the_settings_payload_flags_a_hosting_proxy_address(self):
+        """An admin must not be invited to register the platform's own proxy."""
+        self.auth(self.admin)
+        response = self.client.get(SETTINGS_URL, REMOTE_ADDR="100.64.0.18")
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()["data"]
+        self.assertEqual(data["request_ip"], "100.64.0.18")
+        self.assertTrue(data["request_ip_is_infrastructure"])
+
+    def test_the_settings_payload_does_not_flag_a_public_desk_address(self):
+        self.auth(self.admin)
+        response = self.client.get(SETTINGS_URL, REMOTE_ADDR="102.89.34.7")
+        self.assertFalse(response.json()["data"]["request_ip_is_infrastructure"])

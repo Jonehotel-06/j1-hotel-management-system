@@ -102,6 +102,20 @@
               <div class="field-error">This offer code couldn't be applied.</div>
             </div>
 
+            <!-- OTHER ROOMS -------------------------------------------------
+                 Only shown when more than one room is booked. Each room guest
+                 gets their own email so they can sign in to the guest portal
+                 themselves and request room service for their own room. -->
+            <div id="other-rooms" hidden>
+              <h3 class="h4" style="margin:1.5rem 0 0.35rem;">Who is staying in the other rooms?</h3>
+              <p class="muted" style="margin-bottom:1rem;font-size:var(--fs-sm);">
+                Optional. Add the email of the person staying in each additional room — they can then
+                sign in to the guest portal themselves to request room service, housekeeping or
+                anything else, and the hotel has a record of who was expected in each room.
+              </p>
+              <div id="other-room-rows"></div>
+            </div>
+
             <div class="notice info" style="margin-bottom:0.5rem;">
               <span data-icon="shield" data-size="18"></span>
               <span>We only collect the information needed to confirm your stay. Your details are never shared.</span>
@@ -154,6 +168,7 @@
                 <div class="summary-row"><span class="label">Name</span><span class="value" data-r-guest-name>--</span></div>
                 <div class="summary-row"><span class="label">Phone</span><span class="value" data-r-guest-phone>--</span></div>
                 <div class="summary-row"><span class="label">Email</span><span class="value" data-r-guest-email>--</span></div>
+                <div class="summary-row" data-r-room-guests-row hidden><span class="label">Other rooms</span><span class="value" data-r-room-guests>--</span></div>
               </div>
             </div>
 
@@ -338,6 +353,85 @@
   var offerInput = document.getElementById("g-offer");
   if (offerParam && offerInput && !offerInput.value) offerInput.value = offerParam;
 
+  /* ------------------------ Other rooms (room guests) ---------------------
+     One row per ADDITIONAL room: room 1 is the person filling this form. The
+     row count follows the number of rooms booked, so a 3-room booking asks
+     for rooms 2 and 3 only. */
+  var otherRoomsWrap = document.getElementById("other-room-rows");
+  var otherRoomsBlock = document.getElementById("other-rooms");
+  var roomCount = Math.max(1, Number(data.rooms) || 1);
+
+  /* Room 1 is the person filling this form, so only indexes 1..n-1 are asked
+     for. Kept as its own function because it is the rule the whole block
+     depends on: ask for one row too many and the guest is invited to invent a
+     room that does not exist. */
+  function additionalRoomIndexes(count) {
+    var total = Math.max(1, Number(count) || 1);
+    var indexes = [];
+    for (var index = 1; index < total; index += 1) indexes.push(index);
+    return indexes;
+  }
+
+  function buildOtherRoomRows(previous) {
+    if (!otherRoomsWrap || !otherRoomsBlock) return;
+    if (roomCount < 2) { otherRoomsBlock.hidden = true; otherRoomsWrap.innerHTML = ""; return; }
+    otherRoomsBlock.hidden = false;
+    var byRoom = {};
+    (previous || []).forEach(function (guest) {
+      if (!guest) return;
+      var index = Number(guest.room_index);
+      if (Number.isInteger(index)) byRoom[index] = guest;
+    });
+    var html = "";
+    additionalRoomIndexes(roomCount).forEach(function (index) {
+      var saved = byRoom[index] || {};
+      html += '<div class="form-grid fg-2" data-room-row="' + index + '" style="margin-bottom:0.35rem">'
+        + '<div class="field">'
+        + '<label class="field-label" for="rg-name-' + index + '">Room ' + (index + 1) + ' guest name <span class="muted">(optional)</span></label>'
+        + '<input class="input" id="rg-name-' + index + '" data-rg-name="' + index + '" autocomplete="off" value="' + JONE.esc(saved.full_name || "") + '">'
+        + '</div>'
+        + '<div class="field">'
+        + '<label class="field-label" for="rg-email-' + index + '">Room ' + (index + 1) + ' guest email</label>'
+        + '<input class="input" id="rg-email-' + index + '" data-rg-email="' + index + '" type="email" autocomplete="off" placeholder="guest@example.com" value="' + JONE.esc(saved.email || "") + '">'
+        + '<div class="field-error">Please enter a valid email address.</div>'
+        + '</div>'
+        + '</div>';
+    });
+    otherRoomsWrap.innerHTML = html;
+  }
+
+  function readOtherRoomGuests() {
+    if (roomCount < 2 || !otherRoomsWrap) return [];
+    var guests = [];
+    for (var index = 1; index < roomCount; index += 1) {
+      var emailEl = otherRoomsWrap.querySelector('[data-rg-email="' + index + '"]');
+      var nameEl = otherRoomsWrap.querySelector('[data-rg-name="' + index + '"]');
+      if (!emailEl) continue;
+      var email = String(emailEl.value || "").trim().toLowerCase();
+      if (!email) continue;
+      guests.push({ email: email, full_name: String((nameEl && nameEl.value) || "").trim(), room_index: index });
+    }
+    return guests;
+  }
+
+  function validateOtherRoomGuests(guests) {
+    var bad = false;
+    var seen = {};
+    for (var index = 1; index < roomCount; index += 1) {
+      var emailEl = otherRoomsWrap && otherRoomsWrap.querySelector('[data-rg-email="' + index + '"]');
+      if (!emailEl) continue;
+      var field = emailEl.closest(".field");
+      var email = String(emailEl.value || "").trim().toLowerCase();
+      var valid = !email || (emailEl.checkValidity() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && !seen[email]);
+      if (field) field.classList.toggle("has-error", !valid);
+      if (!valid) bad = true;
+      seen[email] = true;
+    }
+    return !bad;
+  }
+
+  buildOtherRoomRows(savedDraft.room_guests || []);
+
   // Restore any previously entered guest details (Back navigation / refresh).
   if (savedDraft.guest) {
     var g = savedDraft.guest;
@@ -511,6 +605,9 @@
       phone: document.getElementById("g-phone").value.trim(),
       email: document.getElementById("g-email").value.trim()
     };
+    var roomGuests = readOtherRoomGuests();
+    if (roomGuests.length) draft.room_guests = roomGuests;
+    else delete draft.room_guests;
     JONE.storage.set(S, draft);
     return draft;
   }
@@ -520,6 +617,14 @@
     setColl("[data-r-guest-name]", ((g.first_name || "") + " " + (g.last_name || "")).trim() || "--");
     setColl("[data-r-guest-phone]", g.phone || "--");
     setColl("[data-r-guest-email]", g.email || "--");
+    var roomGuests = draft.room_guests || [];
+    var row = document.querySelector("[data-r-room-guests-row]");
+    if (row) {
+      row.hidden = !roomGuests.length;
+      setColl("[data-r-room-guests]", roomGuests.map(function (guest) {
+        return "Room " + (Number(guest.room_index) + 1) + ": " + guest.email;
+      }).join(" · ") || "--");
+    }
   }
 
   /* --------------------------- Guest -> Review --------------------------- */
@@ -527,7 +632,8 @@
   guestForm.addEventListener("submit", function (e) {
     e.preventDefault();
     var valid = guestForm.checkValidity();
-    if (!valid) {
+    var roomsValid = validateOtherRoomGuests(readOtherRoomGuests());
+    if (!valid || !roomsValid) {
       ["g-first", "g-last", "g-phone", "g-email"].forEach(function (id) {
         var el = document.getElementById(id);
         if (el) setError(id, !el.checkValidity());

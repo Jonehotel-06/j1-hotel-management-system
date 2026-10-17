@@ -38,13 +38,33 @@ class HotelSettingsAdminView(generics.RetrieveUpdateAPIView):
         return success_response(self._settings_payload(request, self.get_object()))
 
     def _settings_payload(self, request, instance):
-        from apps.accounts.desktop_policy import request_client_ip
+        from apps.accounts.desktop_policy import (
+            configured_front_desk_desktop_cannot_match,
+            request_client_ip,
+        )
+        from apps.core.client_ip import is_infrastructure_address
 
         data = self.get_serializer(instance).data
         # The address the server actually sees for this browser. An Admin can
         # open Settings on the Front Desk desktop and copy this value into
         # ``front_desk_desktop_ip`` without guessing the network address.
-        data["request_ip"] = request_client_ip(request)
+        client_ip = request_client_ip(request)
+        data["request_ip"] = client_ip
+        # False when the address is the hosting platform's own proxy: it is not
+        # the desk, it changes per request, and copying it into the setting can
+        # only produce a binding that never matches. The page says so instead of
+        # letting an administrator save it.
+        data["request_ip_is_infrastructure"] = bool(
+            client_ip and is_infrastructure_address(client_ip)
+        )
+        # False when the value ALREADY SAVED could never match this deployment:
+        # the administrator saved the hosting proxy's address (or a private
+        # range on a public-facing host) before the client address was resolved
+        # correctly. Shown as a warning on the field so the stale value is
+        # replaced rather than trusted.
+        data["front_desk_desktop_ip_unusable"] = configured_front_desk_desktop_cannot_match(
+            client_ip
+        )
         return data
 
     def update(self, request, *args, **kwargs):

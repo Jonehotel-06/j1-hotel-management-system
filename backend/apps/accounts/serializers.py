@@ -17,8 +17,11 @@ from apps.core.storage import absolute_media_url
 
 from .capabilities import capability_codes_for_user, has_capability
 from .desktop_policy import (
-    front_desk_desktop_ip_allowed, request_client_ip, resolve_receptionist_desktop,
+    front_desk_desktop_ip_allowed,
+    request_client_ip,
+    resolve_receptionist_desktop,
     sign_in_policy_applies,
+    unusable_saved_desktop_addresses,
 )
 from .models import User, Workstation
 
@@ -120,7 +123,11 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
                 log_staff_sign_in_rejected(
                     self.user, request, client_ip=request_client_ip(request),
                 )
-                raise StaffSignInRestrictedError(client_ip=request_client_ip(request))
+                unusable = unusable_saved_desktop_addresses(request_client_ip(request))
+                raise StaffSignInRestrictedError(
+                    client_ip=request_client_ip(request),
+                    unusable_saved_addresses=unusable,
+                )
             if not front_desk_desktop_ip_allowed(request):
                 log_staff_sign_in_rejected(
                     self.user, request, reason="front_desk_ip_mismatch",
@@ -128,6 +135,9 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
                 )
                 raise StaffSignInRestrictedError(
                     client_ip=request_client_ip(request), network_mismatch=True,
+                    unusable_saved_addresses=unusable_saved_desktop_addresses(
+                        request_client_ip(request)
+                    ),
                 )
         if request is not None and getattr(self.user, "is_staff_member", False):
             target_dept = (

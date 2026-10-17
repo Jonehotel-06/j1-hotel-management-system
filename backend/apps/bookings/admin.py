@@ -1,7 +1,7 @@
 # apps/bookings/admin.py
 from django.contrib import admin
 
-from .models import Booking, BookingRoom, Guest
+from .models import Booking, BookingRoom, Guest, RoomOccupant
 
 
 @admin.register(Guest)
@@ -10,10 +10,20 @@ class GuestAdmin(admin.ModelAdmin):
     search_fields = ("first_name", "last_name", "email", "phone")
 
 
+class RoomOccupantInline(admin.TabularInline):
+    model = RoomOccupant
+    fk_name = "booking_room"
+    extra = 0
+    fields = ("full_name", "email", "phone", "is_lead_occupant", "notes")
+    readonly_fields = ("portal_invited_at",)
+    verbose_name = "Room guest"
+    verbose_name_plural = "Room guests (people staying in this room)"
+
+
 class BookingRoomInline(admin.TabularInline):
     model = BookingRoom
     extra = 0
-    readonly_fields = ("room", "check_in", "check_out")
+    readonly_fields = ("room", "check_in", "check_out", "checked_in_at", "checked_in_by", "not_arrived_at")
     can_delete = False
 
 
@@ -32,3 +42,30 @@ class BookingAdmin(admin.ModelAdmin):
         "checked_in_at", "checked_out_at", "cancelled_at",
     )
     inlines = [BookingRoomInline]
+
+
+@admin.register(RoomOccupant)
+class RoomOccupantAdmin(admin.ModelAdmin):
+    """Look up "which room is this email staying in?" from one place.
+
+    This is the record that gives a guest in the second or third room of a
+    booking their own portal identity, so it is searchable by email.
+    """
+
+    list_display = ("email", "full_name", "room_number", "booking_reference", "portal_invited_at", "created_at")
+    list_select_related = ("booking_room__room", "booking_room__booking")
+    search_fields = (
+        "email", "full_name", "phone",
+        "booking_room__room__room_number",
+        "booking_room__booking__booking_reference",
+    )
+    list_filter = ("is_lead_occupant",)
+    readonly_fields = ("created_at", "updated_at", "portal_invited_at")
+
+    @admin.display(description="Room")
+    def room_number(self, obj):
+        return obj.booking_room.room.room_number
+
+    @admin.display(description="Booking")
+    def booking_reference(self, obj):
+        return obj.booking_room.booking.booking_reference
