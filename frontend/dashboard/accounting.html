@@ -856,6 +856,7 @@
        document, and the transfer receipt (file and/or link) filed against the
        payment. An expense with none of them says so. */
     var attachmentLinks = [];
+    if (detail.receipt_file_url) attachmentLinks.push({ label: "Supplier invoice / receipt file", href: detail.receipt_file_url });
     if (detail.receipt_url) attachmentLinks.push({ label: "Supplier document", href: detail.receipt_url });
     if (detail.payment_receipt_file_url) attachmentLinks.push({ label: "Payment receipt file", href: detail.payment_receipt_file_url });
     if (detail.payment_receipt_url) attachmentLinks.push({ label: "Payment receipt link", href: detail.payment_receipt_url });
@@ -1136,15 +1137,16 @@
         { value: "PAYABLE", label: "On account / not paid yet (waiting to be paid)" }
       ], help: "Pick an already-paid method only when the money has actually left. For a supplier bill you will pay later choose the on-account method: it appears under Supplier accounts and payables, where you record the payment and file the transfer receipt. Cash paid out requires the cash-session reference below." },
       { name: "receipt_url", label: "Supplier invoice / receipt link (optional)", type: "text", placeholder: "https://…", help: "Link the supplier's invoice or delivery note if it is online. The transfer receipt is filed later from the expense row." },
+      { name: "receipt_file", label: "Supplier invoice / receipt file (optional)", type: "file", accept: "application/pdf,image/jpeg,image/png,image/webp", help: "Attach a PDF or a photo of the invoice/receipt. Optional — you can also file it later from the expense row." },
       { name: "cash_session_reference", label: "Cash session reference (cash only)", type: "text" },
       { name: "incurred_on", label: "Incurred on", type: "date" },
       { name: "description", label: "Description", type: "textarea", rows: 2 },
       { name: "notes", label: "Notes", type: "textarea", rows: 2 }
     ];
     var result = await JONE.dashboard.formModal({
-      title: "Create expense", submitText: "Save expense draft", wide: true, fields: fields,
+      title: "Create expense", submitText: "Save expense draft", wide: true, fields: fields, multipart: true,
       values: { category: "Inventory purchase", payment_method: "BANK_TRANSFER" },
-      onSubmit: async function (values) {
+      onSubmit: async function (values, formData) {
         var supplier = supplierById[String(values.supplier_id || "")];
         var item = itemById[String(values.item_id || "")];
         var payload = {
@@ -1167,7 +1169,17 @@
           if (!values.cash_session_reference) throw new Error("Cash expenses require a cash-session reference.");
           payload.cash_session_reference = values.cash_session_reference;
         }
-        await window.API.create("financeExpenses", payload);
+        // The receipt is optional. When one is attached the whole draft is sent
+        // as multipart so the file and its fields arrive in a single request;
+        // otherwise the plain JSON contract is unchanged.
+        if (values.receipt_file) {
+          var body = new FormData();
+          Object.keys(payload).forEach(function (key) { body.append(key, payload[key]); });
+          body.append("receipt_file", values.receipt_file, values.receipt_file.name);
+          await window.API.create("financeExpenses", body);
+        } else {
+          await window.API.create("financeExpenses", payload);
+        }
         return { message: "Expense draft created." };
       }
     });

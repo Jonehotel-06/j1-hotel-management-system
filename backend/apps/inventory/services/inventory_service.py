@@ -274,6 +274,123 @@ def create_purchase_order(*, supplier, delivery_location, lines, requested_by, e
     return po, True
 
 
+def _write_approval_receipt(purchase_order, upload, actor):
+    """Validate and store an invoice/receipt on a purchase order.
+
+    The write happens through the configured storage backend (Backblaze B2 in
+    production); a storage failure is turned into a clean, honest API error
+    instead of a purchase order that points at a file nobody can open.
+    """
+    from apps.core.storage import delete_quietly, save_upload
+    from apps.core.validators import validate_document_upload
+
+    validate_document_upload(upload)
+    previous = purchase_order.approval_receipt.name if purchase_order.approval_receipt else ""
+
+    def _write():
+        # ``save=False`` only assigns the name; the single UPDATE below persists
+        # the file name together with its uploader/timestamp, so the row never
+        # briefly points at a half-recorded receipt.
+        purchase_order.approval_receipt.save(upload.name, upload, save=False)
+
+    save_upload(_write, context=f"purchase order {purchase_order.reference} receipt")
+    purchase_order.approval_receipt_uploaded_by = actor
+    purchase_order.approval_receipt_uploaded_at = timezone.now()
+    purchase_order.save(update_fields=[
+        "approval_receipt", "approval_receipt_uploaded_by",
+        "approval_receipt_uploaded_at", "updated_at",
+    ])
+    if previous and previous != purchase_order.approval_receipt.name:
+        delete_quietly(_PreviousFile(previous, purchase_order.approval_receipt.storage))
+    return purchase_order
+
+
+class _PreviousFile:
+    """Minimal FileField stand-in for delete_quietly()."""
+
+    def __init__(self, name, storage):
+        self.name = name
+        self.storage = storage
+
+    def __bool__(self):
+        return True
+
+
+@transaction.atomic
+def update_purchase_order(*, purchase_order, actor, changes=None, lines=None):
+    """Edit a draft/submitted purchase order before it is approved.
+
+    Approval freezes the commercial terms: once the maker-checker step has
+    happened the record must not be silently re-priced or re-scoped, so the
+    service refuses any edit from APPROVED onwards. The dashboard hides the
+    Edit action at the same boundary.
+    """
+    po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
+    if po.status not in {PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.SUBMITTED}:
+        raise ValidationError(
+            "This purchase order has already been approved and can no longer be edited. "
+            "Raise a new order or a controlled correction instead."
+        )
+    if GoodsReceipt.objects.filter(purchase_order=po).exists():
+        raise ValidationError("Goods have already been received against this order, so it can no longer be edited.")
+
+    changes = dict(changes or {})
+    supplier = changes.pop("supplier", None)
+    location = changes.pop("delivery_location", None)
+    if supplier is not None:
+        if supplier.status != Supplier.Status.ACTIVE:
+            raise ValidationError({"supplier_id": "Purchase orders require an active supplier."})
+        po.supplier = supplier
+    if location is not None:
+        if not location.is_active:
+            raise ValidationError({"delivery_location_id": "Purchase orders require an active delivery location."})
+        po.delivery_location = location
+    if "expected_on" in changes:
+        po.expected_on = changes.pop("expected_on")
+    if "supplier_reference" in changes:
+        po.supplier_reference = str(changes.pop("supplier_reference") or "")[:120]
+    if "notes" in changes:
+        po.notes = str(changes.pop("notes") or "")
+    if "currency" in changes:
+        raise ValidationError({"currency": "The order currency cannot be changed after creation."})
+    if changes:
+        raise ValidationError({key: "This field cannot be edited on a purchase order." for key in changes})
+
+    if lines is not None:
+        normalized = _validate_po_lines(lines)
+        existing = list(PurchaseOrderLine.objects.select_for_update().filter(purchase_order=po))
+        if any(Decimal(line.quantity_received or 0) > 0 for line in existing):
+            raise ValidationError("A line already has received stock, so the order can no longer be edited.")
+        PurchaseOrderLine.objects.filter(purchase_order=po).delete()
+        PurchaseOrderLine.objects.bulk_create([
+            PurchaseOrderLine(
+                purchase_order=po, item=row["item"], item_sku=row["item"].sku,
+                item_name=row["item"].name, quantity_ordered=row["quantity_ordered"],
+                unit_cost=row["unit_cost"], notes=row["notes"],
+            )
+            for row in normalized
+        ])
+    po.save()
+    return po
+
+
+@transaction.atomic
+def attach_purchase_order_receipt(*, purchase_order, actor, upload, payment_reference=None):
+    """Attach/replace the invoice or payment receipt on an approved order."""
+    po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
+    if po.status not in {
+        PurchaseOrder.Status.APPROVED, PurchaseOrder.Status.ORDERED,
+        PurchaseOrder.Status.PARTIALLY_RECEIVED, PurchaseOrder.Status.RECEIVED,
+    }:
+        raise ValidationError("Approve the purchase order before attaching a payment receipt or invoice.")
+    if upload is not None:
+        _write_approval_receipt(po, upload, actor)
+    if payment_reference is not None:
+        po.payment_reference = str(payment_reference or "")[:160]
+        po.save(update_fields=["payment_reference", "updated_at"])
+    return po
+
+
 @transaction.atomic
 def submit_purchase_order(*, purchase_order, actor):
     po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
@@ -285,7 +402,7 @@ def submit_purchase_order(*, purchase_order, actor):
 
 
 @transaction.atomic
-def approve_purchase_order(*, purchase_order, actor):
+def approve_purchase_order(*, purchase_order, actor, receipt_file=None, payment_reference=None):
     if not has_capability(actor, "procurement.approve"):
         raise PermissionDenied("This user cannot approve purchase orders.")
     po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
@@ -308,8 +425,15 @@ def approve_purchase_order(*, purchase_order, actor):
             summary=f"Purchase order {po.reference} approved by its requester under administrator override",
             metadata={"reference": po.reference, **override},
         )
-        return po
-    po.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+    else:
+        po.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+    if payment_reference:
+        po.payment_reference = str(payment_reference or "")[:160]
+        po.save(update_fields=["payment_reference", "updated_at"])
+    if receipt_file is not None:
+        # Approval is the point the advance is normally paid, so the approver
+        # can file the supplier invoice/payment slip in the same action.
+        _write_approval_receipt(po, receipt_file, actor)
     return po
 
 

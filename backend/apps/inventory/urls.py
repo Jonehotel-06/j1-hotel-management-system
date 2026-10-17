@@ -33,6 +33,7 @@ urlpatterns = [
     path("purchase-orders/<str:reference>/", views.PurchaseOrderDetailView.as_view(), name="purchase-order-detail"),
     path("purchase-orders/<str:reference>/submit/", views.PurchaseOrderSubmitView.as_view(), name="purchase-order-submit"),
     path("purchase-orders/<str:reference>/approve/", views.PurchaseOrderApproveView.as_view(), name="purchase-order-approve"),
+    path("purchase-orders/<str:reference>/approval-receipt/", views.PurchaseOrderReceiptUploadView.as_view(), name="purchase-order-approval-receipt"),
     path("purchase-orders/<str:reference>/ordered/", views.PurchaseOrderOrderedView.as_view(), name="purchase-order-ordered"),
     path("purchase-orders/<str:reference>/receipts/", views.GoodsReceiptCreateView.as_view(), name="goods-receipt-create"),
 ]

@@ -216,6 +216,16 @@ python manage.py email_check --send you@example.com
 For production media, configure the Backblaze B2/S3-compatible variables in
 `.env.example` and verify them with `python manage.py check_media_storage`.
 
+Two rules make B2 uploads succeed:
+
+* **Do not send an object ACL.** B2 has bucket-level ACLs only; an object ACL
+  that differs from the bucket returns `400 InvalidArgument`. The project
+  defaults to no ACL (`BACKBLAZE_OBJECT_ACL` empty) so each object inherits the
+  bucket.
+* **Make the bucket readable, or set `MEDIA_CUSTOM_DOMAIN`.** Unsigned media
+  URLs only open when the bucket is public or is served through its friendly
+  URL / CDN host; that host also removes the bucket name from every URL.
+
 ## 4. Provider-independent deployment
 
 The API and static frontend may be deployed to any compatible host. The

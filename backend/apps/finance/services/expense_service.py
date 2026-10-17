@@ -37,7 +37,8 @@ def _event(*, expense, event_type, actor=None, details=None):
 def create_expense(
     *, actor, category, amount, incurred_on=None, payment_method=Expense.PaymentMethod.BANK_TRANSFER,
     accounting_class=Expense.AccountingClass.OPERATING, currency="NGN", payee="", supplier_reference="",
-    description="", receipt_url="", notes="", idempotency_key=None, cash_session=None, department="",
+    description="", receipt_url="", receipt_file=None, notes="", idempotency_key=None, cash_session=None,
+    department="",
 ) -> tuple[Expense, bool]:
     """Create or return a source-keyed draft expense without posting money."""
     if not has_capability(actor, "expense.manage"):
@@ -71,6 +72,12 @@ def create_expense(
         raise ValidationError({"currency": "Use a three-letter ISO currency code."})
     if (incurred_on or hotel_today()) > hotel_today():
         raise ValidationError({"incurred_on": "An expense cannot be incurred in the future."})
+    if receipt_file is not None:
+        # Validate BEFORE the row exists: a rejected attachment must never leave
+        # an expense that claims a document it does not have.
+        from apps.core.validators import validate_document_upload
+
+        validate_document_upload(receipt_file)
     for _ in range(8):
         try:
             with transaction.atomic():
@@ -88,8 +95,19 @@ def create_expense(
                 return existing, False
     else:
         raise ValidationError("Could not allocate an expense reference; please retry.")
+    if receipt_file is not None:
+        from apps.core.storage import save_upload
+
+        def _write():
+            expense.receipt_file.save(receipt_file.name, receipt_file, save=False)
+
+        save_upload(_write, context=f"expense {expense.reference} receipt")
+        expense.save(update_fields=["receipt_file", "updated_at"])
     _event(expense=expense, event_type=ExpenseEvent.Type.CREATED, actor=actor,
-           details={"amount": str(amount), "payment_method": payment_method, "accounting_class": accounting_class})
+           details={
+               "amount": str(amount), "payment_method": payment_method,
+               "accounting_class": accounting_class, "has_receipt_file": bool(expense.receipt_file),
+           })
     return expense, True
 
 

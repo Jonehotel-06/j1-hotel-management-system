@@ -307,6 +307,9 @@ class ExpenseListCreateView(APIView):
     permission_classes = [HasCapability]
     required_capabilities = ("expense.manage", "expense.approve")
     require_any_capability = True
+    # Creation accepts an optional invoice/receipt file alongside the JSON
+    # fields, so the front end can send one multipart request.
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get(self, request):
         queryset = _expense_queryset()
@@ -357,6 +360,7 @@ class ExpenseListCreateView(APIView):
             supplier_reference=data.get("supplier_reference", ""),
             description=data.get("description", ""),
             receipt_url=data.get("receipt_url", ""),
+            receipt_file=request.FILES.get("receipt_file") or request.FILES.get("receipt"),
             notes=data.get("notes", ""),
             idempotency_key=key,
             cash_session=cash_session,

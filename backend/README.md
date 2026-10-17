@@ -220,11 +220,37 @@ a booking unless the backend verifies the transaction with Paystack.
 
 ## 8. Media / Backblaze B2 (production)
 
-When `BACKBLAZE_KEY_ID/APPLICATION_KEY/BUCKET_NAME/ENDPOINT` are set
-(and DEBUG=False), uploads (room images, gallery, etc.) go to B2 via
-django-storages. Make the bucket **public** (or provide `MEDIA_CUSTOM_DOMAIN`)
-so `--` URLs render in browsers. Uploads are validated for extension, size
-(`MAX_UPLOAD_MB`) and real image content.
+When `BACKBLAZE_KEY_ID/APPLICATION_KEY/BUCKET_NAME/ENDPOINT` are set, uploads
+(room images, gallery, receipts, invoices) go to B2 via django-storages.
+
+**Bucket ACL is the one setting that must match.** B2 supports canned ACLs at
+the *bucket* level only; an object ACL that differs from its bucket is rejected
+with `400 InvalidArgument: Unsupported value for canned acl`. The project
+therefore sends **no** object ACL (`AWS_DEFAULT_ACL = None`) and every object
+inherits the bucket. Do not set `BACKBLAZE_OBJECT_ACL=public-read` unless the
+bucket itself is public *and* you deliberately want the legacy per-object
+header.
+
+For the stored URLs to open in a browser, either:
+
+1. make the bucket **public** in the Backblaze console (simplest), or
+2. set `MEDIA_CUSTOM_DOMAIN` to the bucket's friendly URL / CDN host
+   (`f004.backblazeb2.com` or `media.example.com`); every media URL is then
+   built from that host, and uploads still go to the S3 endpoint.
+
+Verify the live configuration with:
+
+```bash
+python manage.py check_media_storage          # config + write/read/delete probe
+```
+
+It prints the backend actually in use, the endpoint, region, bucket, object ACL
+mode and `MEDIA_URL`, then uploads a small probe file and deletes it again. A
+failure there is a storage/credential problem, not an application one.
+
+Uploads are validated for extension, size (`MAX_UPLOAD_MB` for images,
+`MAX_DOCUMENT_UPLOAD_MB` for receipts/invoices) and real content: images must
+decode with Pillow, PDFs must start with the `%PDF-` signature.
 
 ## 9. Background tasks & email
 

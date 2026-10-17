@@ -46,7 +46,10 @@
      contract and emits no key at all while an optional picker is blank. */
   function searchPicker(options) {
     options = options || {};
-    var selected = null;
+    // `initial` preselects an existing record (edit dialogs). It must be the
+    // same shape as a search result — {id, name} is enough — so the selected
+    // label renders exactly as if it had just been chosen.
+    var selected = options.initial || null;
     var currentRows = [];
     var mount;
     var input;
@@ -166,6 +169,7 @@
         wrap.appendChild(chosen);
         wrap.appendChild(results);
         mount.appendChild(wrap);
+        paintSelection();
       },
       getValue: function () {
         if (!selected) return {};
@@ -269,7 +273,12 @@
      validation and workflow state. */
   function linePicker(options) {
     options = options || {};
-    var lines = [], currentRows = [], input, results, lineList;
+    var lines = (options.initialLines || []).map(function (line) {
+      var values = {};
+      Object.keys(line.values || {}).forEach(function (key) { values[key] = line.values[key]; });
+      return { record: line.record, values: values };
+    });
+    var currentRows = [], input, results, lineList;
     var minChars = options.minChars == null ? 2 : Math.max(1, Number(options.minChars) || 2);
     var fields = options.lineFields || [];
     function display(row) {
@@ -277,6 +286,9 @@
       return row && (row.name || row.full_name || row.sku || row.reference || String(row.id));
     }
     function value(row) { return typeof options.value === "function" ? options.value(row) : row && row.id; }
+    function fieldOptions(field, record) {
+      return typeof field.options === "function" ? field.options(record) : (field.options || []);
+    }
     function paintLines() {
       if (!lineList) return;
       lineList.innerHTML = "";
@@ -284,18 +296,53 @@
         var row = document.createElement("div"); row.className = "op-line-picker-row";
         var title = document.createElement("strong"); title.textContent = display(line.record); row.appendChild(title);
         var controls = document.createElement("div"); controls.className = "op-line-picker-controls";
+        var parts = [];
+        // `when(record, values)` hides a control the current choice makes
+        // irrelevant (a "pieces per pack" box while pieces are being typed).
+        // Visibility is toggled in place so typing never loses focus.
+        function refreshHint() {
+          parts.forEach(function (part) {
+            if (typeof part.field.when === "function") {
+              part.wrap.hidden = !part.field.when(line.record, line.values);
+            }
+            if (part.hint) part.hint.textContent = part.field.hint(line.record, line.values) || "";
+          });
+        }
         fields.forEach(function (field) {
+          if (!field) return;
           var wrap = document.createElement("label"); wrap.className = "field";
           var labelNode = document.createElement("span"); labelNode.className = "field-label"; labelNode.textContent = field.label || field.name;
-          var control = document.createElement("input"); control.className = "input"; control.type = field.type || "number";
-          control.name = field.name; if (field.step) control.step = field.step; if (field.min != null) control.min = field.min;
+          var control;
+          if (field.type === "select") {
+            control = document.createElement("select"); control.className = "select";
+            fieldOptions(field, line.record).forEach(function (option) {
+              var node = document.createElement("option");
+              node.value = String(option.value == null ? "" : option.value);
+              node.textContent = option.label == null ? String(option.value) : option.label;
+              control.appendChild(node);
+            });
+            control.addEventListener("change", function () { line.values[field.name] = control.value; refreshHint(); });
+          } else {
+            control = document.createElement("input"); control.className = "input"; control.type = field.type || "number";
+            if (field.step) control.step = field.step; if (field.min != null) control.min = field.min;
+            if (field.placeholder) control.placeholder = field.placeholder;
+            control.addEventListener("input", function () { line.values[field.name] = control.value; refreshHint(); });
+          }
+          control.name = field.name;
           control.value = line.values[field.name] == null ? "" : line.values[field.name];
-          control.addEventListener("input", function () { line.values[field.name] = control.value; });
           wrap.appendChild(labelNode); wrap.appendChild(control); controls.appendChild(wrap);
+          var hint = null;
+          if (typeof field.hint === "function") {
+            hint = document.createElement("div"); hint.className = "caption op-line-picker-hint";
+            wrap.appendChild(hint);
+          }
+          parts.push({ wrap: wrap, field: field, hint: hint });
         });
+        row.appendChild(controls);
+        if (parts.length) refreshHint();
         var remove = document.createElement("button"); remove.type = "button"; remove.className = "btn btn-sm btn-ghost"; remove.textContent = "Remove";
         remove.addEventListener("click", function () { lines.splice(index, 1); paintLines(); });
-        row.appendChild(controls); row.appendChild(remove); lineList.appendChild(row);
+        row.appendChild(remove); lineList.appendChild(row);
       });
       lineList.hidden = !lines.length;
     }
@@ -328,10 +375,16 @@
           var button = event.target.closest && event.target.closest("[data-op-line-picker-index]"); if (!button) return;
           var record = currentRows[Number(button.dataset.opLinePickerIndex)]; if (!record) return;
           if (lines.some(function (line) { return String(value(line.record)) === String(value(record)); })) return;
-          var values = {}; fields.forEach(function (field) { values[field.name] = field.defaultValue == null ? "" : String(field.defaultValue); });
+          var values = {};
+          fields.forEach(function (field) {
+            if (!field) return;
+            var initial = typeof field.defaultValue === "function" ? field.defaultValue(record) : field.defaultValue;
+            values[field.name] = initial == null ? "" : String(initial);
+          });
           lines.push({ record: record, values: values }); paintLines(); results.innerHTML = ""; input.value = "";
         });
         wrap.appendChild(input); wrap.appendChild(lineList); wrap.appendChild(results); mount.appendChild(wrap);
+        paintLines();
       },
       getValue: function () {
         if (!lines.length) return {};

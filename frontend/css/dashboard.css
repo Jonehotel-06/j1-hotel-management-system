@@ -2030,6 +2030,18 @@ body.receipt-view-page .receipt-utility-actions .btn-outline:hover {
 
 /* The projection table is deliberately wider than a generic list; it scrolls
    inside its own container so the page itself never scrolls sideways. */
+/* ------------------------- Goods-receipt input grid -----------------------
+   The "record receipt" dialog is an input grid, not a report: every column
+   holds one control and its heading is a label. Headings folding into two
+   lines ("Pieces per / pack/bag") and values splitting mid-number was the
+   reported "data breaks to the next line" on the receipt screens. Each cell is
+   therefore one line, the inputs share a usable minimum width, and the whole
+   grid scrolls inside .table-wrap like every other staff table. */
+.table-receipt th, .table-receipt td { white-space: nowrap; vertical-align: middle; }
+.table-receipt td.cell-clamp { white-space: normal; max-width: 26ch; }
+.table-receipt input, .table-receipt select { min-width: 8.5ch; width: 100%; }
+.table-receipt td.num { font-variant-numeric: tabular-nums; }
+
 .table-wrap.table-scroll { overflow-x: auto; }
 .table-wrap.table-scroll .table { min-width: 1080px; }
 @media (max-width: 720px) {

@@ -37,9 +37,13 @@ def build_dashboard(user):
         occupied=Count("id", filter=Q(status=Room.Status.OCCUPIED)),
         maintenance=Count("id", filter=Q(status=Room.Status.MAINTENANCE)),
         out_of_service=Count("id", filter=Q(status=Room.Status.OUT_OF_SERVICE)),
+        # Counted in the same pass as the rest of the room state: the alert
+        # used to run its own COUNT(*) over the whole room table.
+        dirty=Count("id", filter=Q(housekeeping_status=Room.HousekeepingStatus.DIRTY)),
     )
     total_rooms = room_stats["total"] or 0
     occupied_rooms = room_stats["occupied"] or 0
+    dirty_rooms = room_stats["dirty"] or 0
     unavailable_ops = (room_stats["maintenance"] or 0) + (room_stats["out_of_service"] or 0)
 
     # "Available tonight" uses the SAME inventory truth as booking allocation:
@@ -221,34 +225,43 @@ def build_dashboard(user):
             }
             for p in recent_payments
         ]
-        data["alerts"] = _operational_alerts(today, now)
+        data["alerts"] = _operational_alerts(today, now, dirty_rooms=dirty_rooms)
     else:
-        data["alerts"] = _operational_alerts(today, now, include_financial=False)
+        data["alerts"] = _operational_alerts(today, now, include_financial=False, dirty_rooms=dirty_rooms)
 
     return data
 
 
-def _operational_alerts(today, now, include_financial=True):
+def _operational_alerts(today, now, include_financial=True, dirty_rooms=None):
     alerts = []
-    overdue_checkins = Booking.objects.filter(
-        status=Booking.Status.CONFIRMED, check_in__lt=today
-    ).count()
+    # One aggregate instead of one COUNT per alert: both are filters on the
+    # same booking table, and this runs on every dashboard page load.
+    booking_exceptions = Booking.objects.aggregate(
+        overdue_checkins=Count("id", filter=Q(
+            status=Booking.Status.CONFIRMED, check_in__lt=today,
+        )),
+        late_checkouts=Count("id", filter=Q(
+            status=Booking.Status.CHECKED_IN, check_out__lt=today,
+        )),
+    )
+    overdue_checkins = booking_exceptions["overdue_checkins"] or 0
     if overdue_checkins:
         alerts.append({
             "type": "OVERDUE_CHECKIN",
             "message": f"{overdue_checkins} confirmed booking(s) have not checked in yet.",
         })
-    late_checkouts = Booking.objects.filter(
-        status=Booking.Status.CHECKED_IN, check_out__lt=today
-    ).count()
+    late_checkouts = booking_exceptions["late_checkouts"] or 0
     if late_checkouts:
         alerts.append({
             "type": "LATE_CHECKOUT",
             "message": f"{late_checkouts} in-house booking(s) are past their check-out date.",
         })
-    dirty_rooms = Room.objects.filter(
-        is_active=True, housekeeping_status=Room.HousekeepingStatus.DIRTY
-    ).count()
+    if dirty_rooms is None:
+        # Standalone caller (a test or another report) still gets the honest
+        # count; the dashboard passes the one it already computed.
+        dirty_rooms = Room.objects.filter(
+            is_active=True, housekeeping_status=Room.HousekeepingStatus.DIRTY
+        ).count()
     if dirty_rooms:
         alerts.append({
             "type": "HOUSEKEEPING",

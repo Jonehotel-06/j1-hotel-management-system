@@ -177,6 +177,11 @@ class FinancialTransaction(TimeStampedModel, ImmutableFinancialModel):
             models.Index(fields=["status", "currency", "business_date"]),
             models.Index(fields=["status", "posted_at"]),
             models.Index(fields=["source_reference", "type"]),
+            # Admin and reporting lists walk the default ordering
+            # (``-business_date, -created_at``); without this the planner sorts
+            # the whole ledger.  Composite, so the leading column still serves
+            # plain business-date range scans.
+            models.Index(fields=["-business_date", "-created_at"]),
         ]
 
     def save(self, *args, **kwargs):
@@ -213,6 +218,10 @@ class FinancialLine(ImmutableFinancialModel):
         indexes = [
             models.Index(fields=["folio", "created_at"]),
             models.Index(fields=["account_code", "created_at"]),
+            # Revenue-by-department report filters direction=CREDIT and then
+            # scans REVENUE.* account codes; leading direction keeps that
+            # aggregate off a full ledger scan.
+            models.Index(fields=["direction", "account_code"]),
         ]
 
     def save(self, *args, **kwargs):
@@ -553,6 +562,10 @@ class Expense(TimeStampedModel):
     supplier_reference = models.CharField(max_length=120, blank=True, default="")
     description = models.TextField(blank=True, default="")
     receipt_url = models.URLField(blank=True, default="")
+    #: Optional supplier invoice / receipt file captured WITH the expense.
+    #: ``payment_receipt_file`` (below) is the later proof that the supplier was
+    #: actually paid; this one is the document the expense was recorded from.
+    receipt_file = models.FileField(upload_to="expense_receipts/%Y/%m/", null=True, blank=True)
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="expenses_requested"
     )

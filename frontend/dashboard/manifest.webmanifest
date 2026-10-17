@@ -1,6 +1,6 @@
 {
   "name": "J-ONE Staff Dashboard",
-  "short_name": "J1 Hotel",
+  "short_name": "J-ONE Staff",
   "description": "J-ONE Hotel & Lodge staff dashboard for authorised hotel operations.",
   "id": "/dashboard/",
   "start_url": "/dashboard/index.html",
@@ -11,7 +11,10 @@
   "theme_color": "#373435",
   "lang": "en",
   "dir": "ltr",
-  "categories": ["business", "productivity"],
+  "categories": [
+    "business",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "/favicon/favicon-192.png",

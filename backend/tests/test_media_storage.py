@@ -149,6 +149,29 @@ class B2ClientConfigTests(SimpleTestCase):
         _, result = self._configure(BACKBLAZE_ENDPOINT="s3.us-west-004.backblazeb2.com")
         self.assertEqual(result["settings"]["AWS_S3_ENDPOINT_URL"], "https://s3.us-west-004.backblazeb2.com")
 
+    def test_no_object_acl_is_sent_by_default(self):
+        """The actual cause of the failed uploads.
+
+        Backblaze B2 accepts canned ACLs only at the BUCKET level, and an object
+        ACL must equal the bucket's. Sending ``public-read`` on every PUT made a
+        private bucket reject the write with ``400 InvalidArgument`` — so the
+        default must be "send no ACL at all and inherit the bucket".
+        """
+        _, result = self._configure()
+        self.assertIsNone(result["settings"]["AWS_DEFAULT_ACL"])
+
+    def test_an_explicit_public_acl_remains_available(self):
+        _, result = self._configure(BACKBLAZE_OBJECT_ACL="public-read")
+        self.assertEqual(result["settings"]["AWS_DEFAULT_ACL"], "public-read")
+
+    def test_a_friendly_media_domain_is_normalised(self):
+        _, result = self._configure(MEDIA_CUSTOM_DOMAIN="https://media.j-one.test/")
+        self.assertEqual(result["settings"]["AWS_S3_CUSTOM_DOMAIN"], "media.j-one.test")
+
+    def test_objects_are_stored_with_a_cache_header(self):
+        _, result = self._configure()
+        self.assertIn("CacheControl", result["settings"]["AWS_S3_OBJECT_PARAMETERS"])
+
     def test_incomplete_b2_configuration_is_not_silently_accepted(self):
         """Missing credentials must leave the default backend untouched."""
         storages_map, result = self._configure(BACKBLAZE_KEY_ID="")

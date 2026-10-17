@@ -10,6 +10,7 @@ from apps.core.utils import hotel_date_bounds
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.views import APIView
 
 from apps.audit.services import log_action
@@ -20,7 +21,8 @@ from apps.core.responses import success_response
 from .models import GoodsReceipt, PurchaseOrder, StockBalance, StockConsumptionRequest, StockCount, StockItem, StockLocation, StockMovement, StockRecipe, Supplier
 from .serializers import (
     GoodsReceiptCreateSerializer, GoodsReceiptSerializer, IssueStockSerializer, OpeningStockSerializer,
-    PurchaseOrderCreateSerializer, PurchaseOrderDetailSerializer, PurchaseOrderListSerializer, ReturnStockSerializer,
+    PurchaseOrderCreateSerializer, PurchaseOrderDetailSerializer, PurchaseOrderListSerializer,
+    PurchaseOrderUpdateSerializer, ReturnStockSerializer,
     StockBalanceSerializer, StockConsumptionRequestSerializer,
     StockCountCreateSerializer, StockCountSerializer, StockCountSubmitSerializer, StockItemSerializer,
     InventoryMenuItemDirectorySerializer,
@@ -32,10 +34,11 @@ from .services.valuation_service import (
     SORT_KEYS, product_profitability_projection, projection_filter_choices, projection_summary, sort_projection,
 )
 from .services.inventory_service import (
-    approve_purchase_order, approve_stock_count, create_purchase_order, create_stock_recipe, issue_stock, mark_purchase_order_ordered,
+    approve_purchase_order, approve_stock_count, attach_purchase_order_receipt, create_purchase_order,
+    create_stock_recipe, issue_stock, mark_purchase_order_ordered,
     process_pending_pos_consumption, process_pos_stock_consumption, receive_goods, record_opening_stock,
     record_stock_return, retire_stock_recipe, reverse_pos_stock_consumption, scoped_key, start_stock_count,
-    submit_purchase_order, submit_stock_count, transfer_stock,
+    submit_purchase_order, submit_stock_count, transfer_stock, update_purchase_order,
 )
 
 
@@ -497,10 +500,50 @@ class PurchaseOrderListCreateView(APIView):
                                 message="Purchase order created." if created else "Existing purchase order returned.", status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
-@extend_schema(tags=["Admin · Procurement"], summary="Read a purchase order and snapshot lines")
+@extend_schema(tags=["Admin · Procurement"], summary="Read or edit a purchase order and its lines")
 class PurchaseOrderDetailView(APIView):
     permission_classes = [HasCapability]; required_capability = "procurement.manage"
-    def get(self, request, reference): return success_response(PurchaseOrderDetailSerializer(_po_or_404(reference, detail=True)).data)
+
+    def get(self, request, reference):
+        return success_response(PurchaseOrderDetailSerializer(_po_or_404(reference, detail=True)).data)
+
+    def patch(self, request, reference):
+        """Edit an order only while it is still DRAFT or SUBMITTED.
+
+        The service enforces the APPROVED boundary; the dashboard removes the
+        Edit action at the same point so the two can never disagree.
+        """
+        po = _po_or_404(reference)
+        serializer = PurchaseOrderUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = dict(serializer.validated_data)
+
+        supplier = None
+        if "supplier_id" in data:
+            supplier = Supplier.objects.filter(pk=data.pop("supplier_id")).first()
+            if supplier is None:
+                raise NotFound("Supplier not found.")
+        location = None
+        if "delivery_location_id" in data:
+            location = StockLocation.objects.filter(pk=data.pop("delivery_location_id")).first()
+            if location is None:
+                raise NotFound("Stock location not found.")
+        lines = data.pop("lines", None)
+        changes = dict(data)
+        if supplier is not None:
+            changes["supplier"] = supplier
+        if location is not None:
+            changes["delivery_location"] = location
+
+        po = update_purchase_order(purchase_order=po, actor=request.user, changes=changes, lines=lines)
+        log_action(
+            actor=request.user, action="PURCHASE_ORDER_UPDATED", instance=po, request=request,
+            metadata={"reference": po.reference, "status": po.status, "lines_replaced": lines is not None},
+        )
+        return success_response(
+            PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data,
+            message="Purchase order updated.",
+        )
 
 
 class PurchaseOrderSubmitView(APIView):
@@ -512,10 +555,49 @@ class PurchaseOrderSubmitView(APIView):
 
 class PurchaseOrderApproveView(APIView):
     permission_classes = [HasCapability]; required_capability = "procurement.approve"
+    # Approval accepts the optional invoice/payment receipt in the same action.
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
     def post(self, request, reference):
-        po=approve_purchase_order(purchase_order=_po_or_404(reference), actor=request.user)
-        log_action(actor=request.user, action="PURCHASE_ORDER_APPROVED", instance=po, request=request, metadata={"reference": po.reference})
+        po = approve_purchase_order(
+            purchase_order=_po_or_404(reference), actor=request.user,
+            receipt_file=request.FILES.get("approval_receipt"),
+            payment_reference=(request.data.get("payment_reference") or "").strip()[:160],
+        )
+        log_action(
+            actor=request.user, action="PURCHASE_ORDER_APPROVED", instance=po, request=request,
+            metadata={
+                "reference": po.reference,
+                "payment_reference": po.payment_reference,
+                "has_receipt": bool(po.approval_receipt),
+            },
+        )
         return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data, message="Purchase order approved.")
+
+
+class PurchaseOrderReceiptUploadView(APIView):
+    """Attach or replace the supplier invoice/payment receipt after approval."""
+
+    permission_classes = [HasCapability]; required_capability = "procurement.approve"
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, reference):
+        upload = request.FILES.get("approval_receipt") or request.FILES.get("receipt")
+        payment_reference = request.data.get("payment_reference")
+        if upload is None and payment_reference is None:
+            raise ValidationError({"approval_receipt": "Attach a receipt/invoice file or enter a payment reference."})
+        po = attach_purchase_order_receipt(
+            purchase_order=_po_or_404(reference), actor=request.user,
+            upload=upload, payment_reference=payment_reference,
+        )
+        log_action(
+            actor=request.user, action="PURCHASE_ORDER_RECEIPT_ATTACHED", instance=po, request=request,
+            metadata={"reference": po.reference, "has_receipt": bool(po.approval_receipt)},
+        )
+        return success_response(
+            PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data,
+            message="Purchase-order receipt saved.",
+        )
 
 
 class PurchaseOrderOrderedView(APIView):

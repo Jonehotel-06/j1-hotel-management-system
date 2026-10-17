@@ -116,6 +116,15 @@ class StockItemSerializer(serializers.ModelSerializer):
             return str((obj.standard_cost * obj.units_per_pack).quantize(Decimal("0.01")))
         return None
 
+    #: Words that describe a supplier container rather than a countable unit.
+    #: Once an item states how many pieces a container holds, the ledger must
+    #: count PIECES: recording 12 pieces as "1 PACK" is what made receipts look
+    #: like they arrived in packs while the physical count was in pieces.
+    PACKAGING_UNITS = {"PACK", "PACKET", "BAG", "CRATE", "CARTON", "CASE", "SACK", "BOX"}
+
+    def validate_base_unit(self, value):
+        return str(value or "").strip().upper()
+
     def validate(self, attrs):
         # Staff may record the actual pack price and the pieces it contains
         # instead of doing the division themselves: when no per-piece cost was
@@ -125,6 +134,15 @@ class StockItemSerializer(serializers.ModelSerializer):
         pack_price = attrs.get("pack_price", getattr(self.instance, "pack_price", None))
         units_per_pack = attrs.get("units_per_pack", getattr(self.instance, "units_per_pack", None))
         standard_cost = attrs.get("standard_cost", getattr(self.instance, "standard_cost", None))
+        base_unit = str(attrs.get("base_unit", getattr(self.instance, "base_unit", "")) or "").strip().upper()
+        if base_unit in self.PACKAGING_UNITS and units_per_pack:
+            raise serializers.ValidationError({
+                "base_unit": (
+                    "Count this item in PIECE, not in a pack/bag. A pack contains "
+                    f"{units_per_pack} pieces, so the stock ledger must count pieces; "
+                    "enter the pack size under 'Pieces in one pack/bag' instead."
+                )
+            })
         if pack_price and units_per_pack and not standard_cost:
             attrs["standard_cost"] = (pack_price / units_per_pack).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         self._validate_direct_sale(attrs)
@@ -306,16 +324,24 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
     delivery_location_code = serializers.CharField(source="delivery_location.code", read_only=True)
     requested_by_email = serializers.EmailField(source="requested_by.email", read_only=True)
     approved_by_email = serializers.EmailField(source="approved_by.email", read_only=True, allow_null=True)
+    approval_receipt_url = serializers.SerializerMethodField()
     line_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = PurchaseOrder
         fields = [
-            "reference", "supplier_name", "delivery_location_code", "status", "currency", "supplier_reference",
+            "reference", "supplier", "supplier_name", "delivery_location", "delivery_location_code",
+            "status", "currency", "supplier_reference",
             "requested_by_email", "approved_by_email", "approved_at", "ordered_at", "expected_on", "line_count",
+            "payment_reference", "approval_receipt_url", "approval_receipt_uploaded_at",
             "created_at", "updated_at",
         ]
         read_only_fields = fields
+
+    def get_approval_receipt_url(self, obj):
+        from apps.core.storage import absolute_media_url
+
+        return absolute_media_url(obj.approval_receipt, self.context.get("request"))
 
 
 class PurchaseOrderDetailSerializer(PurchaseOrderListSerializer):
@@ -341,6 +367,22 @@ class PurchaseOrderCreateSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True, max_length=5000)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
     lines = PurchaseOrderCreateLineSerializer(many=True, min_length=1, max_length=200)
+
+
+class PurchaseOrderUpdateSerializer(serializers.Serializer):
+    """Partial edit of an unapproved order.
+
+    Every field is optional; supplying ``lines`` replaces the whole line set
+    (the pre-approval UI always submits the complete table, so a partial line
+    merge would be ambiguous). The service enforces the APPROVED boundary.
+    """
+
+    supplier_id = serializers.IntegerField(min_value=1, required=False)
+    delivery_location_id = serializers.IntegerField(min_value=1, required=False)
+    expected_on = serializers.DateField(required=False, allow_null=True)
+    supplier_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+    lines = PurchaseOrderCreateLineSerializer(many=True, min_length=1, max_length=200, required=False)
 
 
 class GoodsReceiptInputLineSerializer(serializers.Serializer):

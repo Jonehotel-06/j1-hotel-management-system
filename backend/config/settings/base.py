@@ -305,6 +305,16 @@ def configure_b2_media_storage(storages_map):
     region = ((os.environ.get("BACKBLAZE_REGION", "") or "").strip()
               or b2_region_from_endpoint(endpoint) or DEFAULT_B2_REGION)
 
+    # Backblaze B2 supports canned ACLs at the BUCKET level only, and an object
+    # ACL must equal the bucket's. django-storages' default `public-read` header
+    # therefore makes a private bucket answer `400 InvalidArgument: Unsupported
+    # value for canned acl`, which is one of the two ways uploads silently
+    # failed. `None` sends no ACL at all and lets every object inherit the
+    # bucket, which is correct for both private and public buckets.
+    # Operators on an explicitly public bucket may set BACKBLAZE_OBJECT_ACL=
+    # public-read to keep the old header, but it is not required.
+    object_acl = (os.environ.get("BACKBLAZE_OBJECT_ACL", "") or "").strip() or None
+
     settings_out = {
         "AWS_ACCESS_KEY_ID": key_id,
         "AWS_SECRET_ACCESS_KEY": app_key,
@@ -314,8 +324,9 @@ def configure_b2_media_storage(storages_map):
         "AWS_S3_ADDRESSING_STYLE": "virtual",
         "AWS_S3_SIGNATURE_VERSION": "s3v4",
         "AWS_QUERYSTRING_AUTH": False,          # public media bucket — never sign URLs
-        "AWS_DEFAULT_ACL": "public-read",
+        "AWS_DEFAULT_ACL": object_acl,
         "AWS_S3_FILE_OVERWRITE": True,
+        "AWS_S3_OBJECT_PARAMETERS": {"CacheControl": "public, max-age=86400"},
         "AWS_S3_CLIENT_CONFIG": BotocoreConfig(
             signature_version="s3v4",
             s3={"addressing_style": "virtual"},
@@ -323,6 +334,15 @@ def configure_b2_media_storage(storages_map):
             response_checksum_validation="when_required",
         ),
     }
+    # A Backblaze "friendly URL" / CDN host (e.g. media.example.com or
+    # f004.backblazeb2.com). Without it every image URL points at the raw
+    # bucket host — workable, but it bypasses the CDN and breaks when the
+    # bucket is fronted by Cloudflare.
+    custom_domain = (os.environ.get("MEDIA_CUSTOM_DOMAIN", "") or "").strip()
+    if custom_domain:
+        custom_domain = re.sub(r"^https?://", "", custom_domain).rstrip("/")
+        if custom_domain:
+            settings_out["AWS_S3_CUSTOM_DOMAIN"] = custom_domain
     storages_map.setdefault("default", {})["BACKEND"] = B2_S3_BACKEND
     return {"enabled": True, "settings": settings_out}
 
@@ -351,8 +371,15 @@ AWS_S3_ENDPOINT_URL = _B2_SETTINGS.get("AWS_S3_ENDPOINT_URL") or config(
 AWS_S3_ADDRESSING_STYLE = "virtual"
 AWS_S3_SIGNATURE_VERSION = "s3v4"
 AWS_QUERYSTRING_AUTH = False
-AWS_DEFAULT_ACL = "public-read"
+# Inherit the bucket's ACL (B2 has no per-object ACLs). See
+# configure_b2_media_storage() above — sending "public-read" to a private
+# bucket is rejected outright by Backblaze.
+AWS_DEFAULT_ACL = _B2_SETTINGS.get("AWS_DEFAULT_ACL")
 AWS_S3_FILE_OVERWRITE = True
+AWS_S3_CUSTOM_DOMAIN = _B2_SETTINGS.get("AWS_S3_CUSTOM_DOMAIN", "")
+AWS_S3_OBJECT_PARAMETERS = _B2_SETTINGS.get(
+    "AWS_S3_OBJECT_PARAMETERS", {"CacheControl": "public, max-age=86400"}
+)
 # The botocore client config computed above (falls back to the same safe
 # defaults when B2 is not configured in this environment).
 AWS_S3_CLIENT_CONFIG = _B2_SETTINGS.get("AWS_S3_CLIENT_CONFIG") or BotocoreConfig(
@@ -362,10 +389,16 @@ AWS_S3_CLIENT_CONFIG = _B2_SETTINGS.get("AWS_S3_CLIENT_CONFIG") or BotocoreConfi
     response_checksum_validation="when_required",
 )
 
-# Media URL
+# Media URL. A configured friendly/CDN domain wins; otherwise the bucket's own
+# virtual-host endpoint is used. B2 serves these URLs publicly only when the
+# bucket is public (the default this project expects for media).
 MEDIA_URL = (
-    f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.backblazeb2.com/"
-    if _B2_MEDIA["enabled"] else "/media/"
+    f"https://{AWS_S3_CUSTOM_DOMAIN}/"
+    if _B2_MEDIA["enabled"] and AWS_S3_CUSTOM_DOMAIN
+    else (
+        f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.backblazeb2.com/"
+        if _B2_MEDIA["enabled"] else "/media/"
+    )
 )
 MEDIA_ROOT = BASE_DIR / "media"
 
@@ -472,6 +505,9 @@ PAYSTACK_PUBLIC_KEY = config("PAYSTACK_PUBLIC_KEY", default="")
 # Webhook signature validation uses the secret key per Paystack documentation.
 
 MAX_UPLOAD_MB = config("MAX_UPLOAD_MB", default=5, cast=int)
+# Receipts and invoices are often multi-page scans; they get a larger ceiling
+# than gallery images (the server still validates the real content).
+MAX_DOCUMENT_UPLOAD_MB = config("MAX_DOCUMENT_UPLOAD_MB", default=10, cast=int)
 
 # --- Email -----------------------------------------------------------------
 EMAIL_HOST = config("EMAIL_HOST", default="")

@@ -277,10 +277,32 @@ class PurchaseOrder(TimeStampedModel):
     ordered_at = models.DateTimeField(null=True, blank=True)
     expected_on = models.DateField(null=True, blank=True, db_index=True)
     notes = models.TextField(blank=True, default="")
+    # Payment/approval evidence. The approver can attach the supplier invoice
+    # or the payment receipt at the moment the order is approved (and replace
+    # or add it later from the order), because approval is when the advance is
+    # normally paid. It is optional: an order may be approved before its
+    # invoice arrives, and the file field stays empty rather than storing a
+    # fake reference.
+    payment_reference = models.CharField(max_length=160, blank=True, default="")
+    approval_receipt = models.FileField(
+        upload_to="purchase_orders/receipts/%Y/%m/", null=True, blank=True,
+        help_text="Supplier invoice or payment receipt attached at approval.",
+    )
+    approval_receipt_uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="purchase_order_receipts_uploaded",
+    )
+    approval_receipt_uploaded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at", "-pk"]
-        indexes = [models.Index(fields=["status", "expected_on"]), models.Index(fields=["supplier", "status"])]
+        indexes = [
+            models.Index(fields=["status", "expected_on"]),
+            models.Index(fields=["supplier", "status"]),
+            # Every procurement list is ordered newest-first; without this the
+            # database sorts the whole table just to return page one.
+            models.Index(fields=["-created_at"]),
+        ]
 
     def __str__(self):
         return f"{self.reference} · {self.supplier.name}"

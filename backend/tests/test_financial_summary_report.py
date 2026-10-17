@@ -101,16 +101,22 @@ class FinancialSummaryReportTests(BaseAPITestCase):
         )
 
     def test_summary_uses_posted_ledger_lines_without_conflating_measures(self):
-        # The bounded plan is: one transaction count, one conditional aggregate
-        # across ledger lines, one conditional aggregate by business date, one
-        # grouped revenue aggregate — plus exactly TWO statements for the supplier
-        # payment block: an opening payable balance and the expense-approval
-        # counts. Every supplier-payment measure itself rides inside the existing
-        # conditional aggregate (see settlement_measure_filters), so adding the
-        # block did not multiply the per-measure query count. This number is a
-        # tight budget, not an observation: raising it needs a new documented
-        # aggregate here.
-        with self.assertNumQueries(6):
+        # The bounded plan is seven statements, and each one is named so the
+        # budget cannot drift silently:
+        #   1. one transaction count (`ledger_transactions`);
+        #   2. one conditional aggregate across ledger lines (every measure);
+        #   3. one conditional aggregate grouped by business date;
+        #   4. one grouped revenue aggregate (by department);
+        #   5. one goods-receipt aggregate (supplier stock received, which is an
+        #      inventory fact and deliberately NOT a posted-money measure);
+        #   6. the opening payable balance for the supplier-payment block;
+        #   7. the expense-approval counts for the same block.
+        # Every supplier-payment measure itself rides inside the existing
+        # conditional aggregate (see settlement_measure_filters), so the block
+        # added exactly two statements and did not multiply the per-measure
+        # query count. This number is a tight budget, not an observation:
+        # raising it needs a new documented aggregate here.
+        with self.assertNumQueries(7):
             report = financial_summary(start_date=self.today, end_date=self.today)
 
         self.assertEqual(report["basis"], "posted_immutable_ledger_business_date")

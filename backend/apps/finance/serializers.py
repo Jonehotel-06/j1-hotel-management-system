@@ -139,12 +139,17 @@ class ExpenseListSerializer(serializers.ModelSerializer):
     paid_by_email = serializers.EmailField(source="paid_by.email", read_only=True, allow_null=True)
     settlement_reference = serializers.CharField(source="settlement_transaction.reference", read_only=True, allow_null=True)
     payment_receipt_file_url = serializers.SerializerMethodField()
+    receipt_file_url = serializers.SerializerMethodField()
 
     def get_payment_receipt_file_url(self, obj):
-        try:
-            return obj.payment_receipt_file.url if obj.payment_receipt_file else ""
-        except ValueError:
-            return ""
+        from apps.core.storage import absolute_media_url
+
+        return absolute_media_url(obj.payment_receipt_file, self.context.get("request")) or ""
+
+    def get_receipt_file_url(self, obj):
+        from apps.core.storage import absolute_media_url
+
+        return absolute_media_url(obj.receipt_file, self.context.get("request")) or ""
     approval_reference = serializers.CharField(source="approval_request.reference", read_only=True, allow_null=True)
     financial_reference = serializers.CharField(source="financial_transaction.reference", read_only=True, allow_null=True)
     cash_session_reference = serializers.CharField(source="cash_session.reference", read_only=True, allow_null=True)
@@ -153,7 +158,7 @@ class ExpenseListSerializer(serializers.ModelSerializer):
         model = Expense
         fields = [
             "reference", "status", "category", "accounting_class", "payment_method", "amount", "currency", "incurred_on",
-            "payee", "department", "supplier_reference", "description", "receipt_url", "requested_by_email", "approved_by_email", "approved_at",
+            "payee", "department", "supplier_reference", "description", "receipt_url", "receipt_file_url", "requested_by_email", "approved_by_email", "approved_at",
             "approval_reference", "cash_session_reference", "financial_reference", "posted_by_email", "posted_at", "created_at",
             "paid_at", "paid_by_email", "payment_reference", "payment_receipt_url", "payment_receipt_file_url", "settlement_reference",
         ]
@@ -221,6 +226,9 @@ class ExpenseCreateSerializer(serializers.Serializer):
     supplier_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
     description = serializers.CharField(required=False, allow_blank=True, max_length=5000)
     receipt_url = serializers.URLField(required=False, allow_blank=True, max_length=200)
+    #: Optional scan/photo of the supplier invoice or receipt, accepted as
+    #: multipart. The file is validated before the draft row is written.
+    receipt_file = serializers.FileField(required=False, allow_null=True)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=5000)
     cash_session_reference = serializers.CharField(required=False, allow_blank=True, max_length=64)
     idempotency_key = serializers.CharField(max_length=128)

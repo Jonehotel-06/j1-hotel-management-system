@@ -26,6 +26,11 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--keep", action="store_true", help="Do not delete the probe object.")
+        parser.add_argument(
+            "--skip-url-check", action="store_true",
+            help="Do not fetch the probe's public URL. On B2 this is the only way to "
+                 "prove an image will actually display for staff and guests.",
+        )
 
     def handle(self, *args, **options):
         backend = storage_backend_label()
@@ -43,6 +48,8 @@ class Command(BaseCommand):
             self.stdout.write(f"  endpoint        : {getattr(settings, 'AWS_S3_ENDPOINT_URL', '')}")
             self.stdout.write(f"  region          : {getattr(settings, 'AWS_S3_REGION_NAME', '')}")
             self.stdout.write(f"  custom domain   : {getattr(settings, 'AWS_S3_CUSTOM_DOMAIN', '') or '(none)'}")
+            self.stdout.write(f"  object ACL      : {getattr(settings, 'AWS_DEFAULT_ACL', None) or '(inherit bucket)'}")
+            self.stdout.write(f"  MEDIA_URL       : {settings.MEDIA_URL}")
             self.stdout.write(
                 f"  credentials     : key_id={'set' if getattr(settings, 'AWS_ACCESS_KEY_ID', '') else 'MISSING'}, "
                 f"app_key={'set' if getattr(settings, 'AWS_SECRET_ACCESS_KEY', '') else 'MISSING'}"
@@ -75,7 +82,10 @@ class Command(BaseCommand):
             if content != payload:
                 raise CommandError("Read-back content does not match what was written.")
             self.stdout.write(self.style.SUCCESS("  read   OK (content matches)"))
-            self.stdout.write(f"  url       : {default_storage.url(saved_name)}")
+            public_url = default_storage.url(saved_name)
+            self.stdout.write(f"  url       : {public_url}")
+            if remote and not options.get("skip_url_check"):
+                self._check_public_url(public_url)
         finally:
             if not options["keep"]:
                 try:
@@ -86,3 +96,33 @@ class Command(BaseCommand):
 
         target = "Backblaze B2 / S3-compatible bucket" if remote else "local filesystem"
         self.stdout.write(self.style.SUCCESS(f"\nMedia storage verified: files are stored in the {target}."))
+
+    def _check_public_url(self, public_url):
+        """Prove that the stored object can be fetched anonymously.
+
+        An upload can succeed while every image still shows nothing, because a
+        private B2 bucket answers the download with 401/403. Staff only ever see
+        a broken image, so this is reported explicitly instead of being buried
+        in a bucket setting.
+        """
+        import urllib.error
+        import urllib.request
+
+        self.stdout.write(self.style.MIGRATE_HEADING("Public read test"))
+        try:
+            with urllib.request.urlopen(public_url, timeout=5) as response:
+                status = getattr(response, "status", 200)
+            self.stdout.write(self.style.SUCCESS(f"  fetch  OK (HTTP {status}) — media URLs are publicly readable"))
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                self.stdout.write(self.style.ERROR(
+                    f"  fetch  FAILED (HTTP {exc.code}) — the bucket is not publicly readable, so "
+                    "images will not display in the browser. Either make the bucket public in the "
+                    "Backblaze console or set MEDIA_CUSTOM_DOMAIN to a host that serves the bucket."
+                ))
+            else:
+                self.stdout.write(self.style.WARNING(f"  fetch  failed (HTTP {exc.code}) — check the bucket/CDN"))
+        except Exception as exc:  # noqa: BLE001 - diagnostics must never raise
+            self.stdout.write(self.style.WARNING(
+                f"  fetch  skipped ({type(exc).__name__}: {exc}) — network or DNS unavailable here"
+            ))
