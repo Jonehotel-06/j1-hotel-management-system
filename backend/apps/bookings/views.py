@@ -1,6 +1,7 @@
 # apps/bookings/views.py
 """Guest-facing booking endpoints: availability, quotes, booking lifecycle."""
 import logging
+import secrets
 from datetime import datetime
 
 from django.db import IntegrityError
@@ -14,6 +15,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from apps.core.authentication import LenientJWTAuthentication
 from apps.core.exceptions import InvalidDatesError
 from apps.core.exceptions import CancellationNotAllowedError
 from apps.core.responses import success_response
@@ -282,6 +284,10 @@ class _OwnedBookingMixin:
     """Resolve a booking by pk or reference + enforce object ownership."""
 
     permission_classes = [AllowAny]
+    # Guests prove the booking with their booking token, not an account. A
+    # leftover/expired dashboard JWT in the same browser must be ignored rather
+    # than answered with 401 before the token is checked.
+    authentication_classes = [LenientJWTAuthentication]
 
     def get_booking(self):
         lookup = self.kwargs["lookup"]
@@ -350,6 +356,7 @@ class BookingAccessExchangeView(APIView):
     """
 
     permission_classes = [AllowAny]
+    authentication_classes = [LenientJWTAuthentication]
     serializer_class = GuestAccessExchangeSerializer
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "booking_access_exchange"
@@ -357,23 +364,36 @@ class BookingAccessExchangeView(APIView):
     def post(self, request, lookup):
         serializer = GuestAccessExchangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
         booking = booking_service.get_booking_by_reference_or_id(lookup)
-        if booking is None or not read_access_link_token(
-            serializer.validated_data["access"], booking.booking_reference
-        ):
+        link_ok = booking is not None and read_access_link_token(
+            data.get("access"), booking.booking_reference
+        )
+        # The browser that CREATED the booking may reclaim it with the random
+        # idempotency key it generated — no email needed. This grants nothing
+        # new: presenting that key to POST /bookings/ already replays the
+        # creation and returns a fresh token. It only makes recovery explicit.
+        origin_ok = booking is not None and _idempotency_key_matches(
+            booking, data.get("idempotency_key")
+        )
+        if not (link_ok or origin_ok):
             # Same 404 as every other booking endpoint: a wrong or expired link
             # must not reveal whether the reference exists.
             logger.warning(
-                "Guest access link rejected (reference=%s, booking_found=%s)",
+                "Guest access exchange rejected (reference=%s, booking_found=%s, "
+                "link_present=%s, idempotency_key_present=%s)",
                 lookup,
                 booking is not None,
+                bool((data.get("access") or "").strip()),
+                bool((data.get("idempotency_key") or "").strip()),
             )
             raise NotFound("Booking not found.")
         booking = booking_service.refresh_expired_pending(booking)
         token = booking.issue_guest_access_token()
         logger.info(
-            "Guest access link exchanged for a session token (booking=%s)",
+            "Guest access exchanged for a session token (booking=%s, via=%s)",
             booking.booking_reference,
+            "link" if link_ok else "idempotency_key",
         )
         return success_response(
             {
@@ -387,6 +407,15 @@ class BookingAccessExchangeView(APIView):
             },
             message="Booking access restored.",
         )
+
+
+def _idempotency_key_matches(booking, presented) -> bool:
+    """Constant-time check of the browser's own booking-creation key."""
+    stored = str(getattr(booking, "idempotency_key", "") or "")
+    presented = str(presented or "").strip()
+    if not stored or not presented:
+        return False
+    return secrets.compare_digest(stored, presented)
 
 
 @extend_schema(

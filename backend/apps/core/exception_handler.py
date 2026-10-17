@@ -22,6 +22,27 @@ from apps.core.storage import StorageUploadError
 
 logger = logging.getLogger("apps")
 
+def _detail_text(detail, fallback):
+    """Turn a DRF detail (often a dict) into one human sentence.
+
+    simplejwt rejects a token with ``AuthenticationFailed({"detail": ...,
+    "code": "token_not_valid"})``. ``str()`` on that mapping produced a Python
+    dict repr in the envelope message ("{'detail': ErrorDetail(string='Given
+    token not valid…', code='token_not_valid')}"), which the booking screen then
+    showed to the guest verbatim. Pull the sentence out instead.
+    """
+    if isinstance(detail, dict):
+        for key in ("detail", "message", "error"):
+            if detail.get(key) is not None:
+                return _detail_text(detail[key], fallback)
+        return fallback
+    if isinstance(detail, (list, tuple)):
+        parts = [_detail_text(item, "") for item in detail]
+        joined = "; ".join(part for part in parts if part)
+        return joined or fallback
+    text = str(detail).strip() if detail is not None else ""
+    return text or fallback
+
 
 def _envelope(code, message, errors, status_code, headers=None):
     """Build the uniform error body, preserving any header DRF attached.
@@ -93,12 +114,24 @@ def jone_exception_handler(exc, context):
         )
 
     if isinstance(exc, drf_exceptions.AuthenticationFailed):
-        return _envelope("UNAUTHORIZED", str(exc.detail), None, response.status_code, response.headers)
+        return _envelope(
+            "UNAUTHORIZED",
+            _detail_text(
+                getattr(exc, "detail", None),
+                "Your session has expired. Please sign in again.",
+            ),
+            None,
+            response.status_code,
+            response.headers,
+        )
 
     if isinstance(exc, drf_exceptions.PermissionDenied):
         return _envelope(
             "FORBIDDEN",
-            str(exc.detail) if exc.detail else "You do not have permission to perform this action.",
+            _detail_text(
+                getattr(exc, "detail", None),
+                "You do not have permission to perform this action.",
+            ),
             None,
             response.status_code,
             response.headers,

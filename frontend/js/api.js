@@ -623,7 +623,16 @@ const API = (() => {
   function myBookings(params, opts = {}) { return get("/api/bookings/", { params, ...opts }); }
 
   /* Booking detail by id or booking_reference (auth + owner). */
-  function guestAccessOpts(token) { return token ? { auth: false, headers: { "X-Guest-Access-Token": token } } : {}; }
+  /* A guest request must NEVER carry an account session. Without this, a stale
+     dashboard JWT left in the same browser (a receptionist's phone, a guest who
+     also has a staff login) is attached to a public booking/payment call and the
+     API answers 401 before the booking token is even read — which the page can
+     only report as "this device is no longer recognised". `auth:false` is set
+     even when there is no token, so the outcome cannot depend on one. */
+  function guestAccessOpts(token) {
+    token = token ? String(token) : "";
+    return token ? { auth: false, headers: { "X-Guest-Access-Token": token } } : { auth: false };
+  }
 
   /* Emailed secure links.
      A guest token lives in one browser's storage. The link in every booking
@@ -631,6 +640,16 @@ const API = (() => {
      for a normal token — so a guest on a phone, or one who cleared site data,
      can still open and pay for their booking. The value is bound to the
      reference and expires; it is never stored, only exchanged. */
+  /* Reclaim a booking this browser created, using the random key it generated
+     for that creation (no email round-trip). Same endpoint, same 404. */
+  function reclaimBookingAccess(lookup, idempotencyKey, opts = {}) {
+    return post(
+      `/api/bookings/${encodeURIComponent(lookup)}/access/`,
+      { idempotency_key: String(idempotencyKey || "") },
+      { auth: false, ...opts }
+    );
+  }
+
   function exchangeBookingAccess(lookup, access, opts = {}) {
     return post(
       `/api/bookings/${encodeURIComponent(lookup)}/access/`,
@@ -1040,7 +1059,7 @@ const API = (() => {
     verifyReviewStay, submitReview, getReviewStats,
     // Booking flow (guest)
     quoteBooking, createBooking, myBookings, getBooking, guestAccessOpts, getBookingReceipt,
-    exchangeBookingAccess, resendBookingAccessLink,
+    exchangeBookingAccess, reclaimBookingAccess, resendBookingAccessLink,
     // Payments
     initPayment, verifyPayment,
     // Auth

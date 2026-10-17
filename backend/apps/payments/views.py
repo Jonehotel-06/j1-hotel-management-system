@@ -16,6 +16,7 @@ from django.utils.decorators import method_decorator
 from apps.bookings.access import GUEST_TOKEN_HEADER, can_access_booking
 from apps.bookings.models import Booking
 from apps.bookings.services import booking_service
+from apps.core.authentication import LenientJWTAuthentication
 from apps.core.responses import success_response
 from apps.core.serializers import EmptySerializer
 
@@ -38,6 +39,10 @@ def _client_address(request):
 @extend_schema(tags=["Payments"], summary="Initialize a Paystack payment for a booking")
 class InitializePaymentView(APIView):
     permission_classes = [AllowAny]
+    # This view is open to anonymous callers and authorizes with the booking
+    # token, so an expired dashboard session must not turn a guest's payment
+    # into 401 "this device is not recognised".
+    authentication_classes = [LenientJWTAuthentication]
     serializer_class = InitializePaymentSerializer
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "payment_init"
@@ -87,6 +92,7 @@ class InitializePaymentView(APIView):
 @extend_schema(tags=["Payments"], summary="Verify a transaction server-side (idempotent)")
 class VerifyPaymentView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = [LenientJWTAuthentication]
     serializer_class = InitializePaymentSerializer  # response shape documented in contract
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "payment_verify"

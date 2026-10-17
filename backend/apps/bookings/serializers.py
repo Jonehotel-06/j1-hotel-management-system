@@ -362,9 +362,28 @@ class BookingCreateSerializer(StayDetailsSerializer):
 
 
 class GuestAccessExchangeSerializer(serializers.Serializer):
-    """The signed ``access`` value carried by an emailed booking link."""
+    """How a browser proves it may (re)claim a booking.
 
-    access = serializers.CharField(max_length=2048)
+    Exactly one of:
+
+    * ``access`` — the signed value carried by an emailed booking link (works
+      from any device, expires, bound to the reference); or
+    * ``idempotency_key`` — the random key the browser itself generated when it
+      created this booking. It is never emailed and never placed in a URL, and
+      presenting it is no more powerful than replaying the original create
+      request (which already returns a fresh guest token to whoever holds the
+      key). It exists so the SAME browser can recover after its token was lost
+      — a cleared session, a backgrounded tab, a rotated token — without an
+      email round-trip.
+    """
+
+    access = serializers.CharField(max_length=2048, required=False, allow_blank=True)
+    idempotency_key = serializers.CharField(max_length=128, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if not (attrs.get("access") or "").strip() and not (attrs.get("idempotency_key") or "").strip():
+            raise serializers.ValidationError("Provide a booking access link or the booking's idempotency key.")
+        return attrs
 
 
 class CancelBookingSerializer(serializers.Serializer):

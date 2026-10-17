@@ -563,12 +563,53 @@
     try { sessionStorage.setItem(IDEM_KEY, JSON.stringify({ key: key, sig: sig })); } catch (_) {}
     return key;
   }
+  /* The creation key is kept for THIS booking so the same browser can reclaim
+     the reservation if its guest token is later lost (cleared storage, a
+     backgrounded tab, a rotated token). It is a random value this browser made
+     up; the server already trades it for a fresh token when it is replayed
+     against POST /bookings/, so keeping it adds no capability — it only avoids
+     a dead end that previously required an email round-trip. */
+  function rememberBookingIdemKey(bookingReference) {
+    if (!bookingReference) return;
+    var saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem(IDEM_KEY) || "null"); } catch (_) {}
+    if (!saved || !saved.key) return;
+    try { sessionStorage.setItem("jone.booking.idem." + bookingReference, saved.key); } catch (_) {}
+    try { localStorage.setItem("jone.booking.idem." + bookingReference, saved.key); } catch (_) {}
+  }
+  function bookingIdemKeyFor(bookingReference) {
+    if (!bookingReference) return "";
+    try {
+      return localStorage.getItem("jone.booking.idem." + bookingReference)
+        || sessionStorage.getItem("jone.booking.idem." + bookingReference)
+        || "";
+    } catch (_) { return ""; }
+  }
   function clearBookingIdemKey() {
     try { sessionStorage.removeItem(IDEM_KEY); } catch (_) {}
   }
 
   function signedIn() {
     try { return !!(window.Auth && window.Auth.isAuthenticated && window.Auth.isAuthenticated()); } catch (_) { return false; }
+  }
+
+  /* Rebuild this browser's guest credential from the key it used to create the
+     booking. Returns true only when a new token was stored. */
+  async function reclaimBookingCredential() {
+    var ref = bookingRef || (booking && booking.booking_reference) || "";
+    var key = ref ? bookingIdemKeyFor(ref) : "";
+    if (!ref || !key) return false;
+    try {
+      var restored = await window.API.reclaimBookingAccess(ref, key);
+      var token = (restored && restored.data && restored.data.guest_access_token) || "";
+      if (!token) return false;
+      guestToken = token;
+      if (booking) booking.guest_access_token = token;
+      saveGuestToken(token, ref, "");
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   async function redirectToPayment() {
@@ -578,13 +619,32 @@
        offer the emailed link instead of sending a request that cannot succeed.
        (A signed-in guest is fine: the backend accepts the account owner.) */
     if (!currentGuestToken() && !signedIn()) {
-      var missing = new Error("This device cannot verify the booking yet.");
-      missing.status = 404;
-      missing.code = "MISSING_BOOKING_CREDENTIAL";
-      throw missing;
+      // Before giving up: this browser may have CREATED the booking and simply
+      // lost its token (cleared storage, a reloaded tab, a rotated token).
+      // The creation key it still holds is exactly what the server needs to
+      // issue a new one — no email, no duplicate reservation.
+      await reclaimBookingCredential();
+      if (!currentGuestToken() && !signedIn()) {
+        var missing = new Error("This browser no longer holds the key for this booking.");
+        missing.status = 404;
+        missing.code = "MISSING_BOOKING_CREDENTIAL";
+        throw missing;
+      }
     }
     // Initialize via the backend; we never build provider URLs ourselves.
-    var payRes = await window.API.initPayment(booking.booking_reference, guestOpts());
+    var payRes;
+    try {
+      payRes = await window.API.initPayment(booking.booking_reference, guestOpts());
+    } catch (initErr) {
+      /* The token may have been rotated by a replay or an exchange from another
+         tab. Reclaim once and retry — a credential we can rebuild should never
+         be reported to the guest as an unusable booking. */
+      if ((initErr && (initErr.status === 401 || initErr.status === 404)) && await reclaimBookingCredential()) {
+        payRes = await window.API.initPayment(booking.booking_reference, guestOpts());
+      } else {
+        throw initErr;
+      }
+    }
     var pay = payRes.data || {};
     var authUrl = pay.authorization_url || pay.payment_url;
     if (!authUrl || !pay.reference) {
@@ -695,6 +755,7 @@
         }
         booking = res.data || {};
         createdThisAttempt = true;
+        rememberBookingIdemKey(booking.booking_reference);
         clearBookingIdemKey();  // creation confirmed — a future booking gets a fresh key
         if (booking.guest_access_token) {
           guestToken = booking.guest_access_token;
@@ -736,11 +797,20 @@
           ? "We lost contact while starting your payment — your booking is saved. Press Retry to continue safely."
           : "We lost contact with the booking service, so your request may already have gone through. Press Retry — it will resume your booking without creating a duplicate.";
       } else if (err && (err.status === 401 || (err.status === 404 && booking))) {
-        // The booking exists but the backend no longer accepts our guest
-        // credential — the booking session (guest access token) is invalid
-        // or expired, not a missing booking.
-        msg = "This device is no longer recognised for your booking. Request a secure link below — it works here or on any other device.";
+        /* The booking exists but this browser cannot prove it. Recovery was
+           already attempted (the creation key, then any signed link), so this
+           is the honest remaining state — and an emailed link is the way back,
+           not Retry. */
+        msg = (err.code === "MISSING_BOOKING_CREDENTIAL")
+          ? "This browser no longer holds the key for this booking, so it cannot start the payment. Your reservation is still saved — request a secure link below; it works here or on any other device."
+          : "This browser can no longer confirm the booking, so payment could not be started. Your reservation is still saved — request a secure link below; it works here or on any other device.";
         offerAccessLink(bookingRef);
+        var retryForCredential = document.getElementById("retry-pay");
+        if (retryForCredential) retryForCredential.style.display = "none";
+        var linkCta = document.getElementById("resend-access-link");
+        if (linkCta) linkCta.className = "btn btn-accent";
+        var noteEl = document.getElementById("resend-access-note");
+        if (noteEl) noteEl.style.display = "";
       } else if (err && err.code === "PAYMENT_NOT_CONFIGURED") {
         // The hotel's own configuration, not the guest's request: retrying
         // cannot work until staff fix it, so do not invite another attempt.

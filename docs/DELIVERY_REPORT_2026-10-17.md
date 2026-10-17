@@ -582,3 +582,112 @@ not.
 - **Full backend suite: 1466 tests, OK** (15 skipped); `makemigrations --check`
   clean; `manage.py check` 0 issues.
 - Frontend `node --test tests-js/` → **521 tests, 520 pass, 1 skipped, 0 fail**.
+
+# Follow-up (same day): "This device is no longer recognised" — a guest could not pay for a booking it had just made
+
+Screenshot: booking `J1-20261017-DFA924D7`, payment step.
+
+    Payment not completed
+    This device is no longer recognised for your booking. Request a secure link below…
+    [ Retry payment ]
+
+The guest was on the phone that had made the booking minutes earlier. Two
+different defects could produce that sentence, and the screen could not tell
+them apart.
+
+## Why it happened
+
+**1. A stale dashboard session outvoted the booking.** `/api/payments/initialize/`
+is open to anonymous guests and authorises on the *booking* token
+(`X-Guest-Access-Token`), but Django REST Framework runs authentication
+*before* the view. An expired — or malformed — `Authorization: Bearer` JWT left
+in the same browser (someone signed into the staff dashboard on that phone, or
+a token that expired while the tab was open) made DRF answer `401` before the
+booking token was ever read. Reproduced exactly, not inferred:
+
+    POST /api/payments/initialize/  with a valid X-Guest-Access-Token
+    + an access token that expired 10 seconds earlier   -> 401 UNAUTHORIZED
+    + Authorization: Bearer not-a-jwt                   -> 401 UNAUTHORIZED
+    same request with no Authorization header           -> reaches the view
+
+The guest's credential was fine the whole time. The *account* credential was
+stale, and a credential that cannot be used means "not signed in", not
+"denied".
+
+**2. A browser that lost its booking token had no way back.** The guest token
+lives in `sessionStorage`/`localStorage`; a cleared cache, a second tab, a
+browser "storage clean-up" or a rotated token left the page with no credential
+at all. The only recovery offered was an email round-trip — and the screen led
+with a **Retry** button that re-sent the same unauthenticated request and could
+therefore never succeed.
+
+## What changed
+
+| Area | Change |
+|---|---|
+| `apps/core/authentication.py` | New `LenientJWTAuthentication`: a bearer token that is expired, malformed or signed with the wrong key is treated as **anonymous** instead of aborting the request. Applied only to views that are already anonymous-open and authorise with the booking token or a staff capability — a *valid* staff JWT is still authenticated and still works |
+| `apps/payments/views.py` | `InitializePaymentView` and `VerifyPaymentView` use it, so a stale dashboard session can no longer block a guest payment |
+| `apps/bookings/views.py` | `_OwnedBookingMixin`, `BookingAccessExchangeView` and the detail/list views use it for the same reason |
+| `apps/bookings/views.py` | `POST /api/bookings/<ref>/access/` also accepts the **creation key** the browser generated for that booking (`idempotency_key`), compared with `secrets.compare_digest`; success issues a fresh guest token and logs `via=link` or `via=idempotency_key`. Wrong key, another booking's key, or a booking created without one is the same `404` as every other booking endpoint — no oracle |
+| `booking-confirmation.html` | Keeps `jone.booking.idem.<ref>` (session + local storage) when creation is confirmed; if the payment step finds itself tokenless it reclaims the credential from that key *before* declaring anything, and retries `initPayment` once on `401`/`404` (a token rotated by a race) |
+| `booking-confirmation.html` | If recovery still fails, the copy is honest — "This browser no longer holds the key for this booking… your reservation is still saved" — **Retry is hidden** (it cannot succeed) and **"Email me a secure link" is promoted to the primary button** |
+| `js/api.js` | `guestAccessOpts()` always returns `{auth: false}` for guest calls (no account session is ever attached), even when a booking token is present; new `reclaimBookingAccess(ref, key)` |
+| `apps/core/exception_handler.py` | `AuthenticationFailed`/`PermissionDenied` messages are extracted from DRF's detail mapping instead of `str()`-ing it, so the envelope reads `"Given token not valid for any token type"` rather than a Python dict repr (`{'detail': ErrorDetail(string=…)}`) |
+
+No migration.
+
+## What the guest sees now
+
+- The payment simply works: no message, no email, because the browser that made
+  the booking rebuilds its own credential.
+- If the browser genuinely has nothing left, the page says the reservation is
+  saved and asks the guest to request a secure link — and does not offer Retry.
+- A hotel-side outage (`PAYMENT_NOT_CONFIGURED`) and a stale account session are
+  now separate, differently-worded states; neither is described as the guest's
+  device being unrecognised.
+
+## Is keeping the creation key safe?
+
+The key is a random value the browser invented. Replaying it against
+`POST /api/bookings/` was *already* an accepted capability — it returns the
+same reservation plus a fresh token. Storing it per booking adds no capability
+the guest did not have at the moment of booking: it is only useful with the
+booking reference, which is stored beside it. It is per-origin storage, never
+sent to a third party, and only ever exchanged for a token for **that** booking.
+
+## Deploy
+
+- Backend: redeploy (no migration). The lenient authenticator and the wider
+  `access/` body take effect immediately.
+- Frontend: redeploy Vercel. `booking-confirmation.html` and `js/api.js` are
+  served `must-revalidate`, so returning guests pick the fix up on the next load
+  with no cache busting.
+- No configuration change, no new environment variable.
+
+## Verification
+
+- `backend/tests/test_guest_access_recovery.py` — **15 tests**: reclaim with the
+  creation key; the reclaimed token opens the booking and starts a payment;
+  wrong / foreign / absent key → 404; empty body → 400; reclaim rotates (the
+  superseded token becomes 404); a booking created through the *real*
+  `POST /api/bookings/` path carries its key and can be reclaimed; expired and
+  garbage bearers are honoured as anonymous on both the booking detail and
+  payment initialization; a valid staff JWT is still authenticated; a bad bearer
+  with no booking token is still refused; and a `401` now carries a readable
+  sentence rather than a dict repr.
+- `frontend/tests-js/test-payment-credential-recovery-ui.js` — **6 tests** on the
+  shipped page and client: guest calls never attach an account session, the
+  reclaim call sends `{idempotency_key}` without an `Authorization` header, the
+  key is remembered per booking, the reclaim runs before any failure is raised,
+  the retry-once path exists, and the final branch hides Retry and promotes the
+  link.
+- Live end-to-end against a real `runserver` (13 checks, booking
+  `J1-20261017-A2EBB007`): create with an `Idempotency-Key` → discard the 201 →
+  reclaim → detail `200` → `payments/initialize/` reaches the view (`503
+  PAYMENT_NOT_CONFIGURED`, i.e. past authentication) → the same calls behind an
+  expired Bearer still `200`/`503` instead of `401` → wrong key `404` → empty
+  body `400` → emailed link `200` → reclaim again rotates and the first token is
+  refused → payment retry after rotation still reaches the view.
+- **Full backend suite: 1481 tests, OK** (15 skipped); `manage.py check` 0
+  issues; `makemigrations --check` no changes.
+- **Frontend:** `node --test tests-js/` → **527 tests, 526 pass, 1 skipped, 0 fail**.
