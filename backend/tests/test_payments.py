@@ -59,6 +59,15 @@ class PaymentFlowTests(BaseAPITestCase):
         self.assertEqual(response.json()["code"], "PAYMENT_NOT_CONFIGURED")
         self.assertEqual(Payment.objects.count(), 0)  # rolled back, no orphan record
 
+    def test_initialize_with_a_public_key_in_the_secret_slot_returns_503(self):
+        """pk_… can never authorize a charge: refuse it as configuration, not as a gateway fault."""
+        with override_settings(PAYSTACK_SECRET_KEY="pk_test_abc"):
+            response = self.client.post("/api/payments/initialize/",
+                                        {"booking_reference": self.booking_ref})
+        self.assertEqual(response.status_code, 503, response.content)
+        self.assertEqual(response.json()["code"], "PAYMENT_NOT_CONFIGURED")
+        self.assertEqual(Payment.objects.count(), 0)
+
     @override_settings(PAYSTACK_SECRET_KEY="sk_test_mock")
     @patch("apps.payments.services.paystack.initialize_transaction")
     def test_initialize_creates_payment_and_returns_checkout_payload(self, mock_init):

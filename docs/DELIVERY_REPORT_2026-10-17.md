@@ -498,3 +498,87 @@ is not involved.
   `makemigrations --check` clean; `manage.py check` 0 issues.
 - **Full backend suite: 1451 tests, OK** (15 skipped).
 - **Frontend: `node --test tests-js/` → 514 tests, 513 pass, 1 skipped, 0 fail.**
+# Follow-up (same day): payments now fail with 503 `PAYMENT_NOT_CONFIGURED`
+
+Symptom (from the production log):
+
+```
+INFO  [apps] EmailLog#6 SENT kind=BOOKING_PENDING booking=J1-20261017-0F9464F8 ...
+ERROR [django.request] Service Unavailable: /api/payments/initialize/
+ERROR [django.server] "POST /api/payments/initialize/ HTTP/1.1" 503 123
+```
+
+The booking was created, the confirmation email went out, and the payment call
+answered **503 with a 123-byte body** — `PAYMENT_NOT_CONFIGURED`.
+
+## What that means
+
+The 404 from the earlier report is gone: the guest credential is accepted and
+the request now reaches the gateway step. It stops there because **the backend
+has no usable Paystack secret key** — `PAYSTACK_SECRET_KEY` is unset, blank, or
+holds a public key (`pk_…`) in the secret slot. `initialize_booking_payment()`
+refuses before any network call, by design: sending a charge request with no key
+would fail at the provider in a way the guest cannot act on.
+
+Confirmed against the live API: an unknown booking reference still answers
+`404 RESOURCE_NOT_FOUND` (route healthy), and a locally created, genuinely
+payable booking with a valid guest token answers exactly the reported 503 —
+same code, same 123-byte body. With a (bogus) secret key set, the same call
+becomes `502 PAYMENT_GATEWAY_ERROR` instead, which proves the 503 is
+specifically the missing configuration, not a gateway fault.
+
+## Why it went unnoticed
+
+Nothing in the product said "this hotel cannot take card payments". The state
+existed only in a server log, discovered after a guest had already tried and
+failed to pay.
+
+## What changed
+
+| Area | Change |
+|---|---|
+| `apps/payments/services/paystack.py` | New `secret_key_status()` → `(configured, "live"/"test"/"")`. Treats blank, whitespace, a public `pk_…` key and anything unrecognisable as **not configured**; `_secret_key()` and `initialize_booking_payment()` both use it |
+| `apps/hotel/views_admin.py` | Settings payload now returns `online_payments_configured` and `online_payments_mode` (`live`/`test`/empty). The key itself is never returned |
+| `dashboard/settings.html` | Banner when online payments are off (what to set, where, how to confirm) and a distinct warning when a **test** key is live — checkouts succeed but no money moves |
+| `booking-confirmation.html` | A hotel-side outage is no longer described as "try again in a moment". The guest is told the booking is saved, nothing was charged, to contact the hotel / pay at reception, and **Retry is withdrawn** — it cannot succeed until the hotel fixes the key. Genuine gateway errors still offer Retry |
+| `apps/core/management/commands/check_payment_config.py` | `python manage.py check_payment_config` reports present/missing, live/test, the callback URL, and why a value is unusable; `--verify` makes one authenticated call to Paystack. Never prints the key |
+
+## What the hotel has to do
+
+1. Railway → the **API service** → Variables → set `PAYSTACK_SECRET_KEY` to the
+   **secret** key: `sk_live_…` (real payments) or `sk_test_…` (rehearsal). It is
+   never exposed to the browser.
+2. Redeploy. Then confirm on the host:
+   ```bash
+   python manage.py check_payment_config --verify
+   ```
+   Expected: `online payments : ON`, `secret key : set — LIVE`, `Paystack : key accepted`.
+3. In **Settings → Hotel settings**, the payments banner disappears. If it says
+   the key is a TEST key, the checkout works but no money is taken.
+4. Paystack dashboard → set the webhook to
+   `https://<api-host>/api/payments/webhook/` with the events listed in
+   `backend/.env.example` (`charge.success` and the `refund.*` set). Without the
+   webhook, a guest who abandons the redirect after paying is reconciled only by
+   staff.
+
+`PAYMENT_CALLBACK_URL` must be a public HTTPS page (it defaults to
+`{FRONTEND_URL}/payment-verify.html`); `check_payment_config` warns when it is
+not.
+
+## Verification
+
+- `backend/tests/test_payment_config_visibility.py` — **14 tests**: status for
+  blank / whitespace / public key / junk / test / live keys; the settings payload
+  reports each state and never contains the key; the command explains a missing
+  key, a public key and a test key, flags a non-HTTPS callback, and skips
+  `--verify` without a key.
+- `backend/tests/test_payments.py` — new test that a `pk_…` value in the secret
+  slot returns 503 (not 502) and writes no orphan `Payment`.
+- `frontend/tests-js/test-payment-not-configured-ui.js` — **7 tests**, driving
+  the shipped Settings banner and pinning the guest copy.
+- Live reproduction (real HTTP): booking created → `payments/initialize/` with
+  the guest token → `503 PAYMENT_NOT_CONFIGURED`, identical to the reported log;
+  with a key present → `502 PAYMENT_GATEWAY_ERROR`.
+- **Full backend suite: 1466 tests, OK** (15 skipped); `makemigrations --check`
+  clean; `manage.py check` 0 issues.
+- Frontend `node --test tests-js/` → **521 tests, 520 pass, 1 skipped, 0 fail**.

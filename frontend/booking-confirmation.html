@@ -113,7 +113,7 @@
         <button class="btn btn-outline" id="receipt-download-pdf" type="button"><span data-icon="download" data-size="16"></span> Save PDF</button>
         <button class="btn btn-outline" id="receipt-print" type="button"><span data-icon="printer" data-size="16"></span> Print receipt</button>
         <a class="btn btn-outline" href="index.html">Return home</a>
-        <a class="btn btn-outline" href="contact.html">Contact hotel</a>
+        <a class="btn btn-outline" id="failure-contact" href="contact.html">Contact hotel</a>
       </div>
     </section>
 
@@ -741,7 +741,17 @@
         // or expired, not a missing booking.
         msg = "This device is no longer recognised for your booking. Request a secure link below — it works here or on any other device.";
         offerAccessLink(bookingRef);
-      } else if (err && (err.code === "PAYMENT_GATEWAY_ERROR" || err.code === "PAYMENT_NOT_CONFIGURED" || err.status === 502 || err.status === 503)) {
+      } else if (err && err.code === "PAYMENT_NOT_CONFIGURED") {
+        // The hotel's own configuration, not the guest's request: retrying
+        // cannot work until staff fix it, so do not invite another attempt.
+        msg = "Online card payment is not available at the moment, so your booking has been saved without payment. "
+          + "Nothing has been charged. Please contact the hotel to complete payment or settle it at reception when you arrive — "
+          + "quote the booking reference above so the room is held for you.";
+        var retryCtrl = document.getElementById("retry-pay");
+        if (retryCtrl) retryCtrl.style.display = "none";
+        var contactCta = document.getElementById("failure-contact");
+        if (contactCta) contactCta.className = "btn btn-accent";
+      } else if (err && (err.code === "PAYMENT_GATEWAY_ERROR" || err.status === 502 || err.status === 503)) {
         msg = "We could not start your payment. Please try again in a moment — your booking is saved and no money has been taken.";
       } else {
         msg = (booking ? "Your booking is saved but payment couldn't be initialized. " : "") + (err.message || "Something went wrong. Please try again.");

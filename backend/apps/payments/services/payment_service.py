@@ -158,7 +158,12 @@ def _reserve_initialization(*, booking, user):
 
 def initialize_booking_payment(*, booking: Booking, user, request=None):
     """Initialize one idempotent Paystack attempt without a long DB lock."""
-    if not getattr(settings, "PAYSTACK_SECRET_KEY", "").strip():
+    # One predicate decides "can we take money online": a blank value, a public
+    # key in the secret slot and an unrecognisable value are all the same
+    # guest-visible failure, so they are answered the same way up front.
+    from apps.payments.services.paystack import secret_key_status
+
+    if not secret_key_status()[0]:
         raise PaymentNotConfiguredError()
     booking, payment, should_call_gateway = _reserve_initialization(booking=booking, user=user)
     if not should_call_gateway:

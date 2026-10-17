@@ -19,9 +19,43 @@ BASE_URL = "https://api.paystack.co"
 TIMEOUT = (5, 25)  # connect, read
 
 
-def _secret_key():
-    key = getattr(settings, "PAYSTACK_SECRET_KEY", "").strip()
+#: What a configured key would be used for. ``test`` keys never move real
+#: money, so a deployment running on one must say so before it takes a booking.
+KEY_MODE_LIVE = "live"
+KEY_MODE_TEST = "test"
+KEY_MODE_NONE = ""
+
+
+def secret_key_status():
+    """``(configured, mode)`` for the Paystack secret key. Never returns it.
+
+    Exists so the state that turns every guest payment into HTTP 503 can be
+    seen from the admin UI and from a management command, instead of only from
+    a server log after a guest has already failed to pay:
+
+    * ``(False, "")``      — nothing is set, or only whitespace;
+    * ``(False, "")``      — a PUBLIC key (``pk_…``) was set in the secret slot;
+    * ``(True, "test")``   — a test key: the checkout works but charges nothing;
+    * ``(True, "live")``   — a live key.
+    """
+    key = str(getattr(settings, "PAYSTACK_SECRET_KEY", "") or "").strip()
     if not key:
+        return False, KEY_MODE_NONE
+    if key.startswith(("pk_", "pk_test_")):
+        return False, KEY_MODE_NONE
+    if key.startswith("sk_test_"):
+        return True, KEY_MODE_TEST
+    if key.startswith("sk_"):
+        return True, KEY_MODE_LIVE
+    # Anything else cannot be sent to Paystack as a bearer token; treat it as
+    # not configured rather than as a gateway error the guest cannot act on.
+    return False, KEY_MODE_NONE
+
+
+def _secret_key():
+    key = str(getattr(settings, "PAYSTACK_SECRET_KEY", "") or "").strip()
+    configured, _mode = secret_key_status()
+    if not configured:
         raise PaymentNotConfiguredError()
     # A Paystack PUBLIC key (pk_…) can never authorize server-side API calls.
     # Treating it as "configured" would send authenticated requests that

@@ -94,6 +94,8 @@
     <div id="st-error" style="display:none;"></div>
     <form id="st-form" style="display:none;" novalidate>
 
+      <div id="st-payments-status" class="notice" role="status" aria-live="polite" style="display:none;margin-bottom:1.1rem;"></div>
+
       <h3 style="font-size:var(--fs-md);margin-bottom:0.9rem;">Identity</h3>
       <div class="form-grid fg-2">
         <div class="field"><label class="field-label" for="st-name">Hotel name</label><input class="input" id="st-name" name="hotel_name" required></div>
@@ -292,6 +294,25 @@
     /* An address from the hosting network is a proxy, not the desk: it changes
        per request and no browser can arrive from it, so using it would create a
        binding that never matches. Say that instead of offering the button. */
+    /* Whether the hotel can take card payments at all. This state used to be
+       visible only in a server log, after a guest had already been told the
+       payment failed. The key itself never leaves the server. */
+    var payNotice = $("st-payments-status");
+    if(payNotice){
+      if(current.online_payments_configured === false){
+        payNotice.innerHTML = "<strong>Online card payments are switched OFF on this server.</strong> " +
+          "Every guest who reaches the payment step is told the payment could not be started, even though their booking is saved. " +
+          "Set <code>PAYSTACK_SECRET_KEY</code> (the <strong>secret</strong> key, <code>sk_live_…</code> or <code>sk_test_…</code>) on the backend host and redeploy. " +
+          "Run <code>python manage.py check_payment_config</code> there to confirm.";
+        payNotice.style.display = "";
+      } else if(current.online_payments_mode === "test"){
+        payNotice.innerHTML = "<strong>Online payments are running on a TEST key.</strong> " +
+          "Checkout completes, but no real money is taken. Switch <code>PAYSTACK_SECRET_KEY</code> to the live key (<code>sk_live_…</code>) when the hotel is ready to accept card payments.";
+        payNotice.style.display = "";
+      } else {
+        payNotice.style.display = "none";
+      }
+    }
     var ipWarning = $("st-request-ip-warning");
     var ipIsInfrastructure = !!current.request_ip_is_infrastructure;
     var savedIpUnusable = !!current.front_desk_desktop_ip_unusable;

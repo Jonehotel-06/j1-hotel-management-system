@@ -65,6 +65,16 @@ class HotelSettingsAdminView(generics.RetrieveUpdateAPIView):
         data["front_desk_desktop_ip_unusable"] = configured_front_desk_desktop_cannot_match(
             client_ip
         )
+        # Whether the hotel can actually take money online. A missing, public or
+        # malformed Paystack key turns EVERY guest payment into HTTP 503 while
+        # the rest of the booking flow keeps working — the failure surfaces only
+        # in a server log a hotelier never reads. The key itself never leaves
+        # the server; only its absence and live/test mode are reported.
+        from apps.payments.services.paystack import secret_key_status
+
+        payments_configured, payments_mode = secret_key_status()
+        data["online_payments_configured"] = payments_configured
+        data["online_payments_mode"] = payments_mode
         return data
 
     def update(self, request, *args, **kwargs):
