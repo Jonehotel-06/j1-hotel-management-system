@@ -1,5 +1,5 @@
 """Authoritative stock ledger, balance projection, suppliers, and procurement records."""
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -262,6 +262,7 @@ class PurchaseOrder(TimeStampedModel):
         ORDERED = "ORDERED", "Ordered"
         PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED", "Partially received"
         RECEIVED = "RECEIVED", "Received"
+        PAID = "PAID", "Paid"
         CANCELLED = "CANCELLED", "Cancelled"
 
     reference = models.CharField(max_length=64, unique=True, db_index=True)
@@ -293,6 +294,37 @@ class PurchaseOrder(TimeStampedModel):
         related_name="purchase_order_receipts_uploaded",
     )
     approval_receipt_uploaded_at = models.DateTimeField(null=True, blank=True)
+    # Supplier-payment settlement. ``approval_receipt`` above only proves
+    # what was filed when the order was authorised (often an advance); the
+    # ``payments`` relation is where every real money-out to the supplier
+    # is recorded, with its own receipt/invoice evidence. ``paid_at`` is
+    # stamped only when the recorded payments cover the order total.
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="purchase_orders_paid",
+    )
+
+    @property
+    def total_amount(self) -> Decimal:
+        total = sum(
+            (Decimal(line.quantity_ordered or 0) * Decimal(line.unit_cost or 0)
+             for line in self.lines.all()),
+            Decimal("0.00"),
+        )
+        # Lines carry four-decimal quantities; the order total is money.
+        return total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    @property
+    def total_paid(self) -> Decimal:
+        return sum(
+            (Decimal(payment.amount or 0) for payment in self.payments.all()),
+            Decimal("0.00"),
+        )
+
+    @property
+    def outstanding_amount(self) -> Decimal:
+        return max(self.total_amount - self.total_paid, Decimal("0.00"))
 
     class Meta:
         ordering = ["-created_at", "-pk"]
@@ -355,6 +387,61 @@ class GoodsReceiptLine(models.Model):
 
     class Meta:
         ordering = ["pk"]
+
+
+class PurchaseOrderPayment(TimeStampedModel):
+    """One real money-out to a supplier against a purchase order.
+
+    A purchase order can be paid in instalments (an advance at approval,
+    the balance on delivery), so payments are append-only rows rather
+    than fields on the order: each carries its own amount, method,
+    bank/cheque reference and receipt or invoice evidence. When the
+    payments cover the order total the order itself moves to ``PAID``.
+    """
+
+    class PaymentMethod(models.TextChoices):
+        BANK_TRANSFER = "BANK_TRANSFER", "Bank transfer"
+        CARD = "CARD", "Card / terminal"
+        CHEQUE = "CHEQUE", "Cheque"
+        CASH = "CASH", "Cash"
+
+    purchase_order = models.ForeignKey(
+        PurchaseOrder, on_delete=models.PROTECT, related_name="payments"
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))])
+    method = models.CharField(max_length=16, choices=PaymentMethod.choices, default=PaymentMethod.BANK_TRANSFER)
+    #: Bank transfer, card terminal or cheque reference. Required for
+    #: everything except cash, which is its own receipt trail.
+    reference = models.CharField(max_length=160, blank=True, default="")
+    paid_on = models.DateField(default=hotel_today, db_index=True)
+    #: The supplier's invoice or the payment receipt itself — the
+    #: evidence the money actually left the hotel.
+    evidence_file = models.FileField(
+        upload_to="purchase_orders/payments/%Y/%m/", null=True, blank=True,
+        help_text="Supplier invoice or payment receipt for this payment.",
+    )
+    evidence_uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="purchase_order_payments_uploaded",
+    )
+    evidence_uploaded_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["paid_on", "pk"]
+        indexes = [models.Index(fields=["purchase_order", "paid_on"])]
+        verbose_name_plural = "Purchase order payments"
+
+    def __str__(self):
+        return f"{self.purchase_order.reference} payment · {self.amount} {self.purchase_order.currency}"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Supplier payments are append-only and cannot be updated.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Supplier payments are append-only and cannot be deleted.")
 
 
 class StockRecipe(TimeStampedModel):

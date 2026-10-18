@@ -6,9 +6,9 @@ from rest_framework import serializers
 from apps.pos.models import MenuItem
 
 from .models import (
-    GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, StockBalance,
-    StockConsumptionRequest, StockCount, StockCountLine, StockDepartment, StockItem, StockLocation,
-    StockMovement, StockRecipe, StockRecipeLine, Supplier,
+    GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderPayment,
+    StockBalance, StockConsumptionRequest, StockCount, StockCountLine, StockDepartment, StockItem,
+    StockLocation, StockMovement, StockRecipe, StockRecipeLine, Supplier,
 )
 
 
@@ -319,13 +319,57 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
         return str(outstanding if outstanding > 0 else Decimal("0.0000"))
 
 
+class PurchaseOrderPaymentSerializer(serializers.ModelSerializer):
+    """One recorded money-out to a supplier, with its evidence."""
+
+    evidence_url = serializers.SerializerMethodField()
+    uploaded_by_email = serializers.EmailField(source="evidence_uploaded_by.email", read_only=True, allow_null=True)
+
+    class Meta:
+        model = PurchaseOrderPayment
+        fields = [
+            "id", "amount", "method", "reference", "paid_on",
+            "evidence_url", "evidence_uploaded_at", "uploaded_by_email",
+            "notes", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_evidence_url(self, obj):
+        from apps.core.storage import absolute_media_url
+
+        return absolute_media_url(obj.evidence_file, self.context.get("request"))
+
+
+class PurchaseOrderPaymentInputSerializer(serializers.Serializer):
+    """Record a supplier payment against an approved order.
+
+    ``amount`` defaults to the outstanding balance server-side, so a
+    full settlement is a one-field submission.
+    """
+
+    amount = serializers.DecimalField(
+        max_digits=12, decimal_places=2, min_value=Decimal("0.01"), required=False,
+    )
+    method = serializers.ChoiceField(choices=PurchaseOrderPayment.PaymentMethod.choices)
+    reference = serializers.CharField(required=False, allow_blank=True, max_length=160)
+    paid_on = serializers.DateField(required=False)
+    evidence_file = serializers.FileField(required=False, allow_null=True)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+
+
 class PurchaseOrderListSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source="supplier.name", read_only=True)
     delivery_location_code = serializers.CharField(source="delivery_location.code", read_only=True)
     requested_by_email = serializers.EmailField(source="requested_by.email", read_only=True)
     approved_by_email = serializers.EmailField(source="approved_by.email", read_only=True, allow_null=True)
+    paid_by_email = serializers.EmailField(source="paid_by.email", read_only=True, allow_null=True)
     approval_receipt_url = serializers.SerializerMethodField()
     line_count = serializers.IntegerField(read_only=True)
+    # Money fields come from the related managers (the views prefetch
+    # them) so lists and detail agree on the order's arithmetic.
+    total_amount = serializers.SerializerMethodField()
+    total_paid = serializers.SerializerMethodField()
+    outstanding_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = PurchaseOrder
@@ -334,6 +378,8 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
             "status", "currency", "supplier_reference",
             "requested_by_email", "approved_by_email", "approved_at", "ordered_at", "expected_on", "line_count",
             "payment_reference", "approval_receipt_url", "approval_receipt_uploaded_at",
+            "total_amount", "total_paid", "outstanding_amount",
+            "paid_at", "paid_by", "paid_by_email",
             "created_at", "updated_at",
         ]
         read_only_fields = fields
@@ -343,13 +389,23 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
 
         return absolute_media_url(obj.approval_receipt, self.context.get("request"))
 
+    def get_total_amount(self, obj):
+        return str(obj.total_amount)
+
+    def get_total_paid(self, obj):
+        return str(obj.total_paid)
+
+    def get_outstanding_amount(self, obj):
+        return str(obj.outstanding_amount)
+
 
 class PurchaseOrderDetailSerializer(PurchaseOrderListSerializer):
     lines = PurchaseOrderLineSerializer(many=True, read_only=True)
+    payments = PurchaseOrderPaymentSerializer(many=True, read_only=True)
     notes = serializers.CharField(read_only=True)
 
     class Meta(PurchaseOrderListSerializer.Meta):
-        fields = PurchaseOrderListSerializer.Meta.fields + ["notes", "lines"]
+        fields = PurchaseOrderListSerializer.Meta.fields + ["notes", "lines", "payments"]
 
 
 class PurchaseOrderCreateLineSerializer(serializers.Serializer):

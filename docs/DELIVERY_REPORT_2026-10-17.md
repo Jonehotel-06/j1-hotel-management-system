@@ -691,3 +691,96 @@ sent to a third party, and only ever exchanged for a token for **that** booking.
 - **Full backend suite: 1481 tests, OK** (15 skipped); `manage.py check` 0
   issues; `makemigrations --check` no changes.
 - **Frontend:** `node --test tests-js/` → **527 tests, 526 pass, 1 skipped, 0 fail**.
+
+# Follow-up (same day): "there's no place to record that money has been paid to suppliers"
+
+The procurement flow stopped at **Received**. The only money-related
+evidence on a purchase order was the receipt filed *at approval*
+(often an advance). The actual payment — the money leaving the hotel
+to the supplier, possibly weeks later, possibly in instalments — had
+nowhere to go, and nothing showed whether an order was still owed.
+
+## What was added
+
+**A payment record per money-out, with its own evidence.**
+
+- `PurchaseOrderPayment` (new, append-only): amount, method
+  (bank transfer / card / cheque / cash), payment reference, date
+  paid, and the **supplier invoice or payment receipt** as an
+  uploaded file, plus who recorded it. Updating or deleting a
+  payment is rejected at the model level — a payment is a fact,
+  not a draft.
+- `PurchaseOrder` gains a `PAID` status plus `paid_at`/`paid_by`,
+  stamped only when the recorded payments cover the order total.
+  Partial payments accumulate (advance at approval, balance on
+  delivery) and the order stays at its goods status until the
+  last instalment.
+- New endpoint:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/admin/inventory/purchase-orders/<ref>/pay/` | Record a supplier payment with receipt/invoice evidence |
+
+  Requires `procurement.approve` (the same right that approves
+  orders and files their receipts). Multipart: `amount` (defaults
+  to the outstanding balance), `method`, `reference` (required
+  for transfer/card/cheque, cash is its own trail), `paid_on`
+  (never future-dated), `evidence_file`, `notes`.
+
+- The order list and detail now carry `total_amount`,
+  `total_paid`, `outstanding_amount`, `paid_at`/`paid_by_email`,
+  and the detail lists every payment with its evidence URL.
+- Dashboard **Procurement** page: a *Paid* filter, the order
+  total / paid / outstanding in the order dialog, a payments
+  table with a link to each receipt, and a **Record supplier
+  payment** action (managers, on approved/ordered/received
+  orders) that pre-fills the outstanding balance.
+
+Deliberate boundary: this records the payment and its evidence on
+the procurement record. It does **not** post to the finance ledger —
+a purchase order never created a payable entry, so there is nothing
+to settle here. Ledger-tracked supplier spend should keep going
+through the expenses flow (posted as accounts payable, settled by
+`POST /api/finance/expenses/<ref>/settle-payment/`, which already
+records its own receipt evidence).
+
+Migration: `inventory/0011_purchaseorder_paid_at_purchaseorder_paid_by_and_more`
+(adds `paid_at`/`paid_by`, the `PAID` status, and the
+`PurchaseOrderPayment` table).
+
+## Rules the server enforces
+
+- Only approved-and-not-cancelled orders can be paid; drafts and
+  submissions are refused with the reason.
+- A payment cannot exceed the outstanding balance; a fully paid
+  order cannot be paid again.
+- Transfer/card/cheque payments require the bank/terminal/cheque
+  reference; cash does not.
+- The evidence file passes the same document validation as every
+  other upload (PDF/JPG/PNG/WebP); a rejected file records nothing.
+
+## Verification
+
+- `backend/tests/test_purchase_order_payments.py` — **16 tests**:
+  full payment moves the order to PAID, the amount defaults to the
+  balance, two instalments accumulate and only the last one pays it
+  off, overpayment/zero/negative/future-dated/reference-less
+  transfers are refused, drafts and cancelled orders are refused,
+  a clerk is refused (403), evidence is stored and URL-exposed, an
+  invalid file records nothing, payments are append-only, and the
+  list/detail endpoints report the money.
+- `frontend/tests-js/test-procurement-payment-ui.js` — **7 tests**.
+- Live end-to-end over HTTP (15 checks, real server): create→submit→
+  approve as two different accounts (the maker-checker rule), pay in
+  full with the default amount → PAID, pay a second order in two
+  instalments → PAID on the last, and every refusal above — including
+  the clerk without `procurement.approve` and a card payment with the
+  receipt PDF attached. **0 failures.**
+- **Full backend suite: 1497 tests, OK** (15 skipped).
+- **Frontend:** `node --test tests-js/` → **534 tests, 533 pass,
+  1 skipped, 0 fail**.
+
+## Deploy
+
+Backend and frontend redeploy; run migrations (`inventory.0011`).
+No new environment variable or setting.

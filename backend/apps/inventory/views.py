@@ -22,7 +22,7 @@ from .models import GoodsReceipt, PurchaseOrder, StockBalance, StockConsumptionR
 from .serializers import (
     GoodsReceiptCreateSerializer, GoodsReceiptSerializer, IssueStockSerializer, OpeningStockSerializer,
     PurchaseOrderCreateSerializer, PurchaseOrderDetailSerializer, PurchaseOrderListSerializer,
-    PurchaseOrderUpdateSerializer, ReturnStockSerializer,
+    PurchaseOrderPaymentInputSerializer, PurchaseOrderUpdateSerializer, ReturnStockSerializer,
     StockBalanceSerializer, StockConsumptionRequestSerializer,
     StockCountCreateSerializer, StockCountSerializer, StockCountSubmitSerializer, StockItemSerializer,
     InventoryMenuItemDirectorySerializer,
@@ -37,7 +37,8 @@ from .services.inventory_service import (
     approve_purchase_order, approve_stock_count, attach_purchase_order_receipt, create_purchase_order,
     create_stock_recipe, issue_stock, mark_purchase_order_ordered,
     process_pending_pos_consumption, process_pos_stock_consumption, receive_goods, record_opening_stock,
-    record_stock_return, retire_stock_recipe, reverse_pos_stock_consumption, scoped_key, start_stock_count,
+    record_purchase_order_payment, record_stock_return, retire_stock_recipe,
+    reverse_pos_stock_consumption, scoped_key, start_stock_count,
     submit_purchase_order, submit_stock_count, transfer_stock, update_purchase_order,
 )
 
@@ -52,8 +53,10 @@ def _supplier_reference():
 
 
 def _po_or_404(reference, *, detail=False):
-    queryset = PurchaseOrder.objects.select_related("supplier", "delivery_location", "requested_by", "approved_by").annotate(line_count=Count("lines"))
-    if detail: queryset = queryset.prefetch_related("lines")
+    queryset = PurchaseOrder.objects.select_related(
+        "supplier", "delivery_location", "requested_by", "approved_by", "paid_by",
+    ).annotate(line_count=Count("lines"))
+    if detail: queryset = queryset.prefetch_related("lines", "payments")
     po = queryset.filter(reference=reference).first()
     if po is None: raise NotFound("Purchase order not found.")
     return po
@@ -605,6 +608,55 @@ class PurchaseOrderOrderedView(APIView):
     def post(self, request, reference):
         po=mark_purchase_order_ordered(purchase_order=_po_or_404(reference), actor=request.user)
         return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data, message="Purchase order marked ordered.")
+
+
+@extend_schema(
+    tags=["Admin · Procurement"],
+    summary="Record money paid to the supplier, with receipt or invoice evidence",
+)
+class PurchaseOrderPayView(APIView):
+    """Append a real payment to an approved order.
+
+    The order's approval receipt only proves what was filed at
+    approval; this endpoint is the money-out itself — amount, how it
+    was paid, the bank/cheque reference, the date, and the supplier
+    invoice or payment slip as evidence. The order moves to PAID
+    once the payments cover its total.
+    """
+
+    permission_classes = [HasCapability]; required_capability = "procurement.approve"
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def post(self, request, reference):
+        serializer = PurchaseOrderPaymentInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        po = _po_or_404(reference)
+        payment = record_purchase_order_payment(
+            purchase_order=po, actor=request.user,
+            method=data["method"],
+            amount=data.get("amount"),
+            reference=data.get("reference", ""),
+            paid_on=data.get("paid_on"),
+            evidence_file=request.FILES.get("evidence_file") or request.FILES.get("receipt"),
+            notes=data.get("notes", ""),
+        )
+        po = _po_or_404(po.reference, detail=True)
+        log_action(
+            actor=request.user, action="SUPPLIER_PAYMENT_RECORDED", instance=po, request=request,
+            metadata={
+                "reference": po.reference, "payment_id": payment.pk,
+                "amount": str(payment.amount), "method": payment.method,
+                "payment_reference": payment.reference,
+                "has_evidence": bool(payment.evidence_file),
+            },
+        )
+        return success_response(
+            PurchaseOrderDetailSerializer(po).data,
+            message="Supplier payment recorded."
+            if po.status != PurchaseOrder.Status.PAID
+            else "Supplier payment recorded; the purchase order is fully paid.",
+        )
 
 
 class GoodsReceiptCreateView(APIView):

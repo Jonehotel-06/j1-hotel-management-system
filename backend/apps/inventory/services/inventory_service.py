@@ -17,9 +17,10 @@ from apps.core.approvals import override_event_details, require_independent_appr
 from apps.core.utils import hotel_today
 
 from ..models import (
-    GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, StockBalance,
-    StockConsumptionRequest, StockConsumptionRequestEvent, StockCount, StockCountEvent, StockCountLine,
-    StockDepartment, StockItem, StockLocation, StockMovement, StockRecipe, StockRecipeLine, Supplier,
+    GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderPayment,
+    StockBalance, StockConsumptionRequest, StockConsumptionRequestEvent, StockCount, StockCountEvent,
+    StockCountLine, StockDepartment, StockItem, StockLocation, StockMovement, StockRecipe,
+    StockRecipeLine, Supplier,
 )
 
 logger = logging.getLogger("apps")
@@ -389,6 +390,83 @@ def attach_purchase_order_receipt(*, purchase_order, actor, upload, payment_refe
         po.payment_reference = str(payment_reference or "")[:160]
         po.save(update_fields=["payment_reference", "updated_at"])
     return po
+
+
+@transaction.atomic
+def record_purchase_order_payment(
+    *, purchase_order, actor, method, amount=None, reference="",
+    paid_on=None, evidence_file=None, notes="",
+):
+    """Record real money paid to the supplier against a purchase order.
+
+    Approval receipts only prove what was filed when the order was
+    authorised; this is the money-out itself, one append-only row per
+    payment, each with its own receipt or invoice evidence. The order
+    moves to ``PAID`` once the recorded payments cover its total.
+    """
+    from apps.core.storage import delete_quietly, save_upload
+    from apps.core.validators import validate_document_upload
+
+    if not has_capability(actor, "procurement.approve"):
+        raise PermissionDenied("This user cannot record supplier payments.")
+    po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
+    if po.status in {PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.SUBMITTED}:
+        raise ValidationError("Approve the purchase order before recording a supplier payment.")
+    if po.status == PurchaseOrder.Status.CANCELLED:
+        raise ValidationError("A cancelled purchase order cannot be paid.")
+
+    method = str(method or "").upper()
+    if method not in dict(PurchaseOrderPayment.PaymentMethod.choices):
+        raise ValidationError({
+            "method": "Choose how the supplier was paid: BANK_TRANSFER, CARD, CHEQUE, or CASH.",
+        })
+    reference = str(reference or "").strip()[:160]
+    if method != PurchaseOrderPayment.PaymentMethod.CASH and not reference:
+        raise ValidationError({"reference": "Enter the bank, card or cheque reference for this payment."})
+
+    paid_on = paid_on or hotel_today()
+    if paid_on > hotel_today():
+        raise ValidationError({"paid_on": "A supplier payment cannot be dated in the future."})
+
+    total = po.total_amount
+    outstanding = po.outstanding_amount
+    if outstanding <= 0:
+        raise ValidationError("This purchase order is already fully paid.")
+    if amount is None:
+        amount = outstanding
+    amount = Decimal(amount)
+    if amount is None or not amount.is_finite() or amount <= 0:
+        raise ValidationError({"amount": "Enter a payment amount greater than zero."})
+    amount = amount.quantize(MONEY, rounding=ROUND_HALF_UP)
+    if amount > outstanding:
+        raise ValidationError({
+            "amount": f"The payment cannot exceed the outstanding balance of {outstanding} {po.currency}.",
+        })
+
+    payment = PurchaseOrderPayment(
+        purchase_order=po, amount=amount, method=method, reference=reference,
+        paid_on=paid_on, notes=str(notes or "")[:2000],
+    )
+    if evidence_file is not None:
+        validate_document_upload(evidence_file)
+
+        def _write():
+            # ``save=False`` only assigns the name; the single INSERT
+            # below persists it together with its uploader, so the row
+            # never exists pointing at a half-recorded receipt.
+            payment.evidence_file.save(evidence_file.name, evidence_file, save=False)
+
+        save_upload(_write, context=f"purchase order {po.reference} payment evidence")
+        payment.evidence_uploaded_by = actor
+        payment.evidence_uploaded_at = timezone.now()
+    payment.save()
+
+    if (po.total_paid + amount) >= total:
+        po.status = PurchaseOrder.Status.PAID
+        po.paid_at = timezone.now()
+        po.paid_by = actor
+        po.save(update_fields=["status", "paid_at", "paid_by", "updated_at"])
+    return payment
 
 
 @transaction.atomic

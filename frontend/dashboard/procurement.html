@@ -41,7 +41,7 @@
       nav.setAttribute("data-nav-snapshot","1");
     })();
     </script><div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,.2);"><span data-icon="logOut" data-size="16"></span> Sign out</button></div></aside><div class="dash-main"><header class="dash-topbar"><div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title" data-dash-title><h1>Procurement</h1><p>Supplier records, controlled purchase orders, approvals, and receipts.</p></div></div><div class="dash-topbar-right"><div class="dash-topbar-actions" data-topbar-actions></div><button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false"><span class="icon-moon" data-icon="moon" data-size="18"></span><span class="icon-sun" data-icon="sun" data-size="18"></span></button></div></header><main class="dash-content"><div class="op-tabs" role="tablist" aria-label="Procurement views"><button class="btn btn-sm is-active" type="button" role="tab" aria-selected="true" data-proc-tab="orders">Purchase orders</button><button class="btn btn-sm btn-outline" type="button" role="tab" aria-selected="false" data-proc-tab="suppliers">Suppliers</button></div>
-<section class="panel" data-proc-panel="orders"><div class="panel-head"><h2>Purchase orders</h2><div class="panel-actions"><button class="btn btn-sm" type="button" data-proc-new-order><span data-icon="plus" data-size="15"></span> New purchase order</button></div></div><div class="filter-bar"><div class="field"><label class="field-label" for="proc-order-status">Status</label><select class="select" id="proc-order-status"><option value="">All statuses</option><option value="DRAFT">Draft</option><option value="SUBMITTED">Awaiting approval</option><option value="APPROVED">Approved</option><option value="ORDERED">Ordered</option><option value="PARTIALLY_RECEIVED">Partially received</option><option value="RECEIVED">Received</option><option value="CANCELLED">Cancelled</option></select></div><div class="field"><button class="btn btn-sm btn-outline" type="button" data-proc-order-apply>Apply</button></div></div><div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Purchase orders"><table class="table"><thead><tr><th>Purchase order</th><th>Supplier</th><th>Deliver to</th><th>Status</th><th class="hide-sm">Expected</th><th class="hide-sm">Lines</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-proc-order-rows></tbody></table></div><div class="pagination" data-proc-order-pagination></div></div></section>
+<section class="panel" data-proc-panel="orders"><div class="panel-head"><h2>Purchase orders</h2><div class="panel-actions"><button class="btn btn-sm" type="button" data-proc-new-order><span data-icon="plus" data-size="15"></span> New purchase order</button></div></div><div class="filter-bar"><div class="field"><label class="field-label" for="proc-order-status">Status</label><select class="select" id="proc-order-status"><option value="">All statuses</option><option value="DRAFT">Draft</option><option value="SUBMITTED">Awaiting approval</option><option value="APPROVED">Approved</option><option value="ORDERED">Ordered</option><option value="PARTIALLY_RECEIVED">Partially received</option><option value="RECEIVED">Received</option><option value="PAID">Paid</option><option value="CANCELLED">Cancelled</option></select></div><div class="field"><button class="btn btn-sm btn-outline" type="button" data-proc-order-apply>Apply</button></div></div><div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Purchase orders"><table class="table"><thead><tr><th>Purchase order</th><th>Supplier</th><th>Deliver to</th><th>Status</th><th class="hide-sm">Expected</th><th class="hide-sm">Lines</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-proc-order-rows></tbody></table></div><div class="pagination" data-proc-order-pagination></div></div></section>
 <section class="panel" data-proc-panel="suppliers" hidden><div class="panel-head"><h2>Suppliers</h2><div class="panel-actions"><button class="btn btn-sm" type="button" data-proc-new-supplier><span data-icon="plus" data-size="15"></span> Add supplier</button></div></div><div class="filter-bar"><div class="field"><label class="field-label" for="proc-supplier-status">Status</label><select class="select" id="proc-supplier-status"><option value="">All statuses</option><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option></select></div><div class="field"><label class="field-label" for="proc-supplier-search">Search</label><input class="input" id="proc-supplier-search" type="search" placeholder="Name, email, or phone"></div><div class="field"><button class="btn btn-sm btn-outline" type="button" data-proc-supplier-apply>Apply</button></div></div><div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Suppliers"><table class="table"><thead><tr><th>Supplier</th><th>Contact</th><th>Terms</th><th>Status</th><th class="hide-sm">Reference</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-proc-supplier-rows></tbody></table></div><div class="pagination" data-proc-supplier-pagination></div></div></section>
 </main></div></div>
 <script src="../js/runtime-config.js?v=1.1.23"></script><script src="../js/config.js?v=1.1.23"></script><script src="../js/utils.js?v=1.1.23"></script><script src="../js/icons.js?v=1.1.23"></script><script src="../js/api.js?v=1.1.23"></script><script src="../js/theme.js?v=1.1.23"></script><script src="../js/ui.js?v=1.1.23"></script><script src="../js/auth.js?v=1.1.23"></script><script src="../js/navigation.js?v=1.1.23"></script><script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script><script src="../js/operations.js?v=1.1.23"></script>
@@ -144,6 +144,9 @@ function linesToBaseUnits(lines){
 --------------------------------------------------------------------------- */
 function canEdit(status){return status==="DRAFT"||status==="SUBMITTED";}
 function canAttachReceipt(status){return ["APPROVED","ORDERED","PARTIALLY_RECEIVED","RECEIVED"].indexOf(status)!==-1;}
+/* Payment is recorded once the order is authorised; a cancelled order
+   can no longer be paid and a fully paid one has nothing left to pay. */
+function canPay(status){return ["APPROVED","ORDERED","PARTIALLY_RECEIVED","RECEIVED"].indexOf(status)!==-1;}
 
 async function loadOrders(page){
   if(page!=null)setPage("orders",page);
@@ -306,8 +309,12 @@ async function viewOrder(reference){
       '<div><dt>Expected</dt><dd>'+JONE.esc(date(order.expected_on))+'</dd></div>'+
       '<div><dt>Requested by</dt><dd>'+JONE.esc(order.requested_by_email||"—")+'</dd></div>'+
       '<div><dt>Approved by</dt><dd>'+JONE.esc(order.approved_by_email||"—")+'</dd></div>'+
+      '<div><dt>Order total</dt><dd class="num">'+JONE.esc(money(order.total_amount,order.currency))+'</dd></div>'+
+      '<div><dt>Paid to supplier</dt><dd class="num">'+JONE.esc(money(order.total_paid,order.currency))+'</dd></div>'+
+      '<div><dt>Outstanding</dt><dd class="num">'+JONE.esc(money(order.outstanding_amount,order.currency))+'</dd></div>'+
       (order.payment_reference?'<div><dt>Payment reference</dt><dd>'+JONE.esc(order.payment_reference)+'</dd></div>':'')+
-      '</dl>'+orderLinesHtml(lines)+receiptLink(order)+
+      (order.status==="PAID"?'<div><dt>Paid at</dt><dd>'+JONE.esc(dateTime(order.paid_at))+' by '+JONE.esc(order.paid_by_email||"—")+'</dd></div>':'')+
+      '</dl>'+orderLinesHtml(lines)+receiptLink(order)+paymentHistoryHtml(order)+
       '<p class="hint" style="margin-top:.75rem">'+JONE.esc(order.notes||"No notes recorded.")+'</p>';
     function action(label,cls,handler){var button=JONE.el("button",{class:"btn btn-sm "+(cls||""),type:"button",textContent:label});button.addEventListener("click",handler);footer.appendChild(button);}
     if(canEdit(order.status))action("Edit","btn-outline",function(){JONE.ui.modal.close();editOrder(reference,order);});
@@ -316,6 +323,7 @@ async function viewOrder(reference){
     if(order.status==="APPROVED")action("Mark ordered","",function(){JONE.ui.modal.close();transitionOrder(reference,"ordered");});
     if(["ORDERED","PARTIALLY_RECEIVED"].indexOf(order.status)!==-1)action("Record receipt","",function(){JONE.ui.modal.close();recordReceipt(reference,order);});
     if(canAttachReceipt(order.status)&&manager())action("Upload invoice / receipt","btn-outline",function(){JONE.ui.modal.close();uploadApprovalReceipt(reference,order);});
+    if(canPay(order.status)&&manager())action("Record supplier payment","btn-accent",function(){JONE.ui.modal.close();recordPayment(reference,order);});
   }catch(err){
     body.innerHTML='<div class="empty-state"><h3>Purchase order unavailable</h3><p>'+JONE.esc((err&&err.message)||"Please try again.")+'</p></div>';
   }
@@ -402,6 +410,58 @@ async function uploadApprovalReceipt(reference,known){
       return{message:"Purchase-order receipt saved."};
     }});
   if(result){JONE.ui.toast("Receipt saved on the purchase order.","success");loadOrders();}
+}
+
+/* ---------------------------------------------------------------------------
+   Supplier payments — every money-out, each with its own receipt or
+   invoice evidence. Append-only: a payment is a fact, not a draft.
+--------------------------------------------------------------------------- */
+function paymentHistoryHtml(order){
+  var payments=order.payments||[];
+  if(!payments.length)return "";
+  var rows=payments.map(function(payment){
+    return '<tr><td class="cell-nowrap">'+JONE.esc(date(payment.paid_on))+'</td>'+
+      '<td class="cell-clamp">'+JONE.esc(payment.method||"—")+'</td>'+
+      '<td class="num cell-nowrap">'+JONE.esc(money(payment.amount,order.currency))+'</td>'+
+      '<td class="cell-clamp">'+JONE.esc(payment.reference||"—")+'</td>'+
+      '<td class="cell-clamp">'+(payment.evidence_url?'<a href="'+JONE.esc(payment.evidence_url)+'" target="_blank" rel="noopener">Receipt / invoice</a>':"—")+'</td>'+
+      '<td class="hide-sm cell-clamp">'+JONE.esc(payment.uploaded_by_email||"—")+'</td></tr>';
+  }).join("");
+  return '<details open style="margin-top:.75rem"><summary>Payments to this supplier ('+payments.length+')</summary>'+
+    '<div class="table-wrap" style="margin-top:.5rem"><table class="table table-receipt"><thead><tr><th>Paid on</th><th>Method</th><th>Amount</th><th>Reference</th><th>Evidence</th><th class="hide-sm">Recorded by</th></tr></thead><tbody>'+
+    rows+'</tbody></table></div></details>';
+}
+
+async function recordPayment(reference,known){
+  var order=known;
+  try{if(!order||order.total_amount==null)order=await getOrder(reference);}
+  catch(err){JONE.ui.toast((err&&err.message)||"The purchase order couldn't be loaded.","error");return;}
+  var outstanding=Number(order.outstanding_amount||0);
+  var result=await JONE.dashboard.formModal({title:"Record supplier payment · "+reference,submitText:"Record payment",wide:true,multipart:true,fields:[
+    {name:"amount",label:"Amount paid ("+JONE.esc(order.currency||"NGN")+")",type:"number",step:"0.01",
+     value:String(outstanding||""),required:true,
+     help:"Defaults to the outstanding balance of "+JONE.esc(money(order.outstanding_amount,order.currency))+". Partial payments are allowed; the order is marked paid once the payments cover the total."},
+    {name:"method",label:"How was it paid",type:"select",required:true,options:[
+      {value:"BANK_TRANSFER",label:"Bank transfer"},{value:"CARD",label:"Card / terminal"},
+      {value:"CHEQUE",label:"Cheque"},{value:"CASH",label:"Cash"}]},
+    {name:"reference",label:"Payment reference",type:"text",
+     help:"Bank transfer, card terminal or cheque reference. Required for anything other than cash."},
+    {name:"paid_on",label:"Date paid",type:"date",required:true},
+    {name:"evidence_file",label:"Supplier invoice / payment receipt",type:"file",accept:"application/pdf,image/jpeg,image/png,image/webp",
+     help:"Attach the supplier's invoice or the payment slip (PDF, JPG, PNG or WebP)."},
+    {name:"notes",label:"Notes",type:"textarea",rows:2}],
+    values:{paid_on:new Date().toISOString().slice(0,10)},
+    onSubmit:async function(values){
+      // Cross-field rules the native constraints cannot express;
+      // the server enforces exactly the same ones.
+      if(!(Number(values.amount)||0)>0)throw new Error("Enter a payment amount greater than zero.");
+      if(Number(values.amount||0)>outstanding)throw new Error("The payment cannot exceed the outstanding balance of "+JONE.esc(money(order.outstanding_amount,order.currency))+".");
+      if(values.method!=="CASH"&&!(values.reference||"").trim())throw new Error("Enter the bank, card or cheque reference for this payment.");
+      var fd=formData||new FormData();
+      await window.API.resourceAction("purchaseOrders",reference,"pay",fd);
+      return{message:"Supplier payment recorded."};
+    }});
+  if(result){JONE.ui.toast("Supplier payment recorded.","success");loadOrders();}
 }
 
 /* ---------------------------------------------------------------------------

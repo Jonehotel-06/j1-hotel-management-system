@@ -13,6 +13,7 @@ from .models import (
     GoodsReceiptLine,
     PurchaseOrder,
     PurchaseOrderLine,
+    PurchaseOrderPayment,
     StockBalance,
     StockConsumptionRequest,
     StockConsumptionRequestEvent,
@@ -98,6 +99,15 @@ class PurchaseOrderLineInline(admin.TabularInline):
     readonly_fields = ("item_sku", "item_name")
 
 
+class PurchaseOrderPaymentInline(admin.TabularInline):
+    model = PurchaseOrderPayment
+    extra = 0
+    readonly_fields = ("amount", "method", "reference", "paid_on", "evidence_file", "notes")
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(PurchaseOrder)
 class PurchaseOrderAdmin(admin.ModelAdmin):
     list_display = (
@@ -107,8 +117,8 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     list_filter = ("status", "delivery_location")
     search_fields = ("reference", "supplier__name", "supplier_reference")
     date_hierarchy = "created_at"
-    inlines = [PurchaseOrderLineInline]
-    readonly_fields = ("approved_at", "ordered_at", "approval_receipt_uploaded_at")
+    inlines = [PurchaseOrderLineInline, PurchaseOrderPaymentInline]
+    readonly_fields = ("approved_at", "ordered_at", "approval_receipt_uploaded_at", "paid_at", "paid_by")
 
 
 class GoodsReceiptLineInline(admin.TabularInline):
