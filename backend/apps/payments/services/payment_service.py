@@ -1099,6 +1099,23 @@ def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
     secret = str(getattr(settings, "PAYSTACK_SECRET_KEY", "") or "").strip()
     if not secret or not signature:
         return False
+    # A signature is only evidence when it was produced with the SECRET key.
+    # A Paystack PUBLIC key (pk_…) is public BY DESIGN — it is embedded in
+    # frontend checkout code — so a signature computed with it proves
+    # nothing, yet it would still satisfy the HMAC below. Fail closed on
+    # exactly the same predicate the initialization path uses, so one bad
+    # deployment variable can never weaken both sides of the integration:
+    # a forged event must be rejected outright instead of being accepted at
+    # the signature layer and forwarded to a provider call.
+    configured, _mode = paystack.secret_key_status()
+    if not configured:
+        logger.error(
+            "Rejected a Paystack webhook: the configured key is not a usable "
+            "secret key (%s). Set PAYSTACK_SECRET_KEY to the secret key "
+            "(sk_live_… / sk_test_…) on the backend service.",
+            paystack.secret_key_problem(),
+        )
+        return False
     calculated = hmac.new(secret.encode(), msg=raw_body, digestmod=hashlib.sha512).hexdigest()
     return hmac.compare_digest(calculated, signature)
 
