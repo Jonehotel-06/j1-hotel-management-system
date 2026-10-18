@@ -515,6 +515,35 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
     # (queue_email uses transaction.on_commit) and are sent SYNCHRONOUSLY in
     # this same request — no Celery, no Redis, no worker. A rolled-back
     # booking sends nothing.
+    # The email is a non-critical post-creation side effect: a render or
+    # queueing failure must never roll back (or misreport) a booking that
+    # has already been validated and written. queue_email still defers the
+    # actual send to on_commit; this guard covers preparing it.
+    try:
+        _queue_booking_created_email(
+            booking, pending=pending, room_type=room_type
+        )
+    except Exception:
+        logger.exception(
+            "Booking %s was created but its guest email could not be prepared",
+            booking.booking_reference,
+        )
+
+    # Log success only once the transaction has actually COMMITTED: this
+    # line previously ran inside the atomic block, so production logs
+    # showed "Booking ... created" for a booking that a later rollback
+    # then erased — which made payment lookups for it inexplicable.
+    transaction.on_commit(
+        lambda: logger.info(
+            "Booking %s created: %s x%s %s→%s total=%s source=%s",
+            booking.booking_reference, room_type.slug, rooms, check_in, check_out,
+            booking.total_amount, source,
+        )
+    )
+    return booking
+
+
+def _queue_booking_created_email(booking, *, pending, room_type):
     if booking.guest.email:
         if pending:
             from apps.core.email_design import render_notice_email
@@ -559,13 +588,6 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
             )
         else:
             _send_confirmation_email(booking)
-
-    logger.info(
-        "Booking %s created: %s x%s %s→%s total=%s source=%s",
-        booking.booking_reference, room_type.slug, rooms, check_in, check_out,
-        booking.total_amount, source,
-    )
-    return booking
 
 
 def _send_confirmation_email(booking, hotel=None):

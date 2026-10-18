@@ -439,8 +439,20 @@ def bill_unbilled_order_charge(*, order, actor):
     return _post_order_charge(order=order, actor=actor)
 
 
+@transaction.atomic
 def transition_order(*, order, target_status: str, actor) -> PosOrder:
-    """Advance kitchen/fulfilment workflow; delivery posts the immutable charge."""
+    """Advance kitchen/fulfilment workflow; delivery posts the immutable charge.
+
+    This function OWNS its transaction (the same contract as
+    ``create_order``/``submit_order``/``capture_direct_tender``): the row
+    lock below, the kitchen-ticket update, the folio charge posting, the
+    inventory stock consumption on delivery and the order event must all
+    commit or roll back together, and concurrent transitions of the same
+    order must serialize on the locked row. Callers must NOT need to open
+    a transaction for it — production raised
+    ``TransactionManagementError: select_for_update cannot be used outside
+    of a transaction`` (HTTP 500) when this decorator was missing.
+    """
     order = PosOrder.objects.select_for_update().get(pk=order.pk)
     target_status = str(target_status or "").upper()
     if target_status == order.status:

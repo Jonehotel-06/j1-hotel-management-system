@@ -45,6 +45,45 @@ def _raise_django(exc):
     raise exc
 
 
+def _first_present(data, *names):
+    """First non-empty request value among documented compatibility aliases."""
+    for name in names:
+        value = data.get(name)
+        if value is not None and str(value).strip() != "":
+            return value
+    return None
+
+
+def _positive_int(value):
+    text = str(value or "").strip()
+    return int(text) if text.isdigit() and int(text) > 0 else None
+
+
+def _terminal_identifier_kwargs(data):
+    """Normalise terminal staff identifiers from current and older clients.
+
+    ``staff_id`` is the account/User id used throughout attendance APIs.
+    The workforce profiles API separately exposes a StaffProfile row id;
+    accepting it only under ``staff_profile_id``/``profile_id`` prevents the
+    two numeric namespaces from being silently conflated.
+    """
+    return {
+        "email": str(_first_present(data, "email", "staff_email") or "").strip(),
+        "employee_code": str(
+            _first_present(data, "employee_code", "staff_employee_code") or ""
+        ).strip(),
+        "staff_id": _positive_int(
+            _first_present(data, "staff_id", "user_id", "staff_user_id", "account_id")
+        ),
+        "staff_profile_id": _positive_int(
+            _first_present(data, "staff_profile_id", "profile_id")
+        ),
+        "identifier": str(
+            _first_present(data, "identifier", "staff_identifier") or ""
+        ).strip(),
+    }
+
+
 class FingerprintEnrollmentView(APIView):
     """Self-service: check own fingerprint enrollment status or request enrollment."""
     permission_classes = [HasCapability]; required_capability = "attendance.clock"
@@ -127,20 +166,13 @@ class TemporaryWorkstationCredentialIssueView(APIView):
         # no account to hold that authority, and the resolver refuses it.
         ws_reference, workstation = _resolve_reception_terminal(request)
 
-        from apps.accounts.models import User
-        email = (request.data.get("email") or "").strip().lower()
-        employee_code = (request.data.get("employee_code") or "").strip()
+        identifiers = _terminal_identifier_kwargs(request.data)
         probe = request.data.get("fingerprint_probe") or request.data.get("probe")
-        user = None
-        if email:
-            user = User.objects.select_related("staff_profile").filter(email__iexact=email, is_active=True).first()
-        elif employee_code:
-            user = (
-                User.objects.select_related("staff_profile")
-                .filter(staff_profile__employee_code__iexact=employee_code, is_active=True)
-                .first()
-            )
-        if not user:
+        # One shared identifier lookup for every terminal endpoint, so an
+        # email / STF code / numeric id / displayed EMP code names the
+        # same account here as at the reception terminal.
+        user = fingerprint_service.lookup_staff_by_identifier(**identifiers)
+        if not user or not user.is_active:
             raise ValidationError({"email": "Staff account not found or inactive."})
 
         try:
@@ -392,9 +424,7 @@ class ReceptionAttendanceTerminalView(APIView):
             request.data.get("failure_classification") or request.data.get("classification") or ""
         )
         failure_note = str(request.data.get("note") or "")
-        email = (request.data.get("email") or "").strip()
-        employee_code = (request.data.get("employee_code") or "").strip()
-        staff_id = request.data.get("staff_id")
+        identifiers = _terminal_identifier_kwargs(request.data)
         target_ws_ref = (request.data.get("workstation_reference") or ws_reference).strip()
 
         try:
@@ -402,9 +432,7 @@ class ReceptionAttendanceTerminalView(APIView):
                 action=action,
                 probe=probe,
                 workstation_reference=target_ws_ref,
-                email=email,
-                employee_code=employee_code,
-                staff_id=int(staff_id) if staff_id else None,
+                **identifiers,
                 actor=request.user if getattr(request.user, "is_authenticated", False) else None,
                 manual_override_reason=manual_override_reason,
                 classification=failure_classification,

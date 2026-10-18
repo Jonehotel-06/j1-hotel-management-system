@@ -183,6 +183,25 @@
     return res && res.data;
   }
 
+  /* Bucket a free-text terminal identifier into the request field the
+     server resolves it from: an "@" means the account email, all digits
+     means the numeric staff id, anything else is the employee code
+     (STF-... or the displayed EMP-... form). The pages used to send
+     every non-email value as employee_code, so a numeric staff id —
+     an advertised identifier — could never be recognised. The server
+     additionally cross-resolves identifiers between fields, so an older
+     cached page still works; this keeps newly built pages explicit. */
+  function identifierPayload(raw) {
+    var value = String(raw || "")
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .replace(/[\u2010-\u2014\u2212]/g, "-")
+      .trim();
+    if (!value) return {};
+    if (value.indexOf("@") !== -1) return { email: value.replace(/\s+/g, "") };
+    if (/^\d+$/.test(value)) return { staff_id: Number(value) };
+    return { employee_code: value };
+  }
+
   async function executeReceptionTerminalAction(payload) {
     var data = Object.assign({}, payload || {});
     // MANUAL_FALLBACK exists precisely BECAUSE no probe could be captured: the
@@ -229,6 +248,7 @@
     issueTemporaryWorkstationToken: issueTemporaryWorkstationToken,
     getReceptionTerminalStatus: getReceptionTerminalStatus,
     executeReceptionTerminalAction: executeReceptionTerminalAction,
+    identifierPayload: identifierPayload,
     attendanceNote: attendanceNote
   };
 })(window);

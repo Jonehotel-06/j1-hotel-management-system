@@ -23,6 +23,20 @@ if _database_url:
             conn_health_checks=True,
         )
     }
+    # Railway/managed MySQL is reached via DATABASE_URL, and dj-database-url
+    # only sets a charset when the URL itself carries one. Without this the
+    # connection silently uses the server default (often latin1/utf8mb3),
+    # so storing ordinary Unicode in a notification ("2026-10-21 → ...")
+    # fails with MySQL 1366 — the start of the 2026-10-18 booking-loss
+    # chain. The DATABASE_URL path must get exactly the utf8mb4 + strict
+    # mode options the DB_* path below already had. Explicit options in
+    # the URL itself still win (setdefault).
+    if "mysql" in DATABASES["default"].get("ENGINE", ""):
+        _mysql_options = DATABASES["default"].setdefault("OPTIONS", {})
+        _mysql_options.setdefault("charset", "utf8mb4")
+        _mysql_options.setdefault(
+            "init_command", "SET sql_mode='STRICT_TRANS_TABLES'"
+        )
 else:
     DATABASES = {
         "default": {

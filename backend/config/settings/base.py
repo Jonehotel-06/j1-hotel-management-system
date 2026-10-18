@@ -119,9 +119,13 @@ if DATABASE_URL:
         )
     }
 
-    # Apply strict SQL mode for MySQL connections.
+    # Apply strict SQL mode and a utf8mb4 connection charset for MySQL.
+    # dj-database-url sets neither unless the URL carries them, so a
+    # DATABASE_URL deployment would otherwise inherit the server default
+    # charset and fail to store ordinary Unicode (MySQL 1366).
     if "mysql" in DATABASES["default"]["ENGINE"]:
         DATABASES["default"].setdefault("OPTIONS", {})
+        DATABASES["default"]["OPTIONS"].setdefault("charset", "utf8mb4")
         DATABASES["default"]["OPTIONS"].setdefault(
             "init_command",
             "SET sql_mode='STRICT_TRANS_TABLES'",
@@ -145,7 +149,8 @@ else:
 
     if "mysql" in _DEFAULT_DB["ENGINE"]:
         _DEFAULT_DB["OPTIONS"] = {
-            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'"
+            "charset": "utf8mb4",
+            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
         }
 
     DATABASES = {"default": _DEFAULT_DB}

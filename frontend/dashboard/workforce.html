@@ -13,7 +13,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-  <link rel="stylesheet" href="../css/main.css?v=1.1.23">
+  <link rel="stylesheet" href="../css/main.css?v=1.1.26">
   <style>
     .op-tabs{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}.op-tabs .is-active{background:var(--color-primary);color:var(--color-primary-ink);border-color:var(--color-primary)}
     .wf-summary{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;margin-bottom:1rem;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface-alt)}
@@ -76,8 +76,8 @@
       <div class="grid grid-2" style="gap:1.25rem;align-items:start;">
         <div class="card card-pad">
           <div class="field">
-            <label class="field-label" for="wf-rt-identifier">Employee Code or Email (optional for 1:N fingerprint match)</label>
-            <input class="input" id="wf-rt-identifier" type="text" placeholder="e.g. STF-... or staff@jonehotel.com">
+            <label class="field-label" for="wf-rt-identifier">Staff email, employee code or staff ID (optional for 1:N fingerprint match)</label>
+            <input class="input" id="wf-rt-identifier" type="text" placeholder="e.g. staff@jonehotel.com, STF-..., EMP-... or 12">
           </div>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
             <button class="btn btn-sm" type="button" data-wf-rt-action="CLOCK_IN">Clock In &amp; Issue 6-Digit Code</button>
@@ -95,15 +95,21 @@
       <div class="card card-pad" data-wf-rt-fallback hidden style="margin-top:1.25rem;">
         <h3 style="font-size:var(--fs-md);margin:0 0 0.35rem;">Supervised fallback (manager / administrator)</h3>
         <p class="caption muted">Use only when the scanner or the employee's finger genuinely cannot be read. A manager fallback needs the recorded failure from the failed scan above; an administrator may authorise one without a prior attempt. This card works away from the front desk for management accounts &mdash; which is how a supervisor covers a reader outage on a non-reception device &mdash; and every fallback is audited with your account, this reason and the authority used. The issued code is single-use and expires when the employee clocks out. Ordinary staff can never issue one.</p>
-        <div class="form-grid fg-2" style="margin-top:0.75rem;align-items:end;">
+        <div class="form-grid fg-2" style="margin-top:0.75rem;align-items:start;">
           <div class="field">
-            <label class="field-label" for="wf-rt-fallback-identifier">Employee code or email</label>
-            <input class="input" id="wf-rt-fallback-identifier" type="text" placeholder="e.g. STF-... or staff@jonehotel.com">
+            <span class="field-label" id="wf-rt-fallback-picker-label">Select staff member (recommended)</span>
+            <div data-wf-rt-fallback-picker role="group" aria-labelledby="wf-rt-fallback-picker-label"></div>
+            <p class="caption muted" style="margin-top:0.35rem;">Search the staff directory by name, account email or employee code, then select the exact person. This sends the account staff ID directly.</p>
           </div>
           <div class="field">
-            <label class="field-label" for="wf-rt-fallback-reason">Reason (at least 10 characters)</label>
-            <input class="input" id="wf-rt-fallback-reason" type="text" maxlength="200" placeholder="e.g. scanner faulty at front desk, supervisor approved">
+            <label class="field-label" for="wf-rt-fallback-identifier">Or enter staff email, employee code or staff ID</label>
+            <input class="input" id="wf-rt-fallback-identifier" type="text" placeholder="e.g. staff@jonehotel.com, STF-..., EMP-... or 12">
+            <p class="caption muted" style="margin-top:0.35rem;">If this is blank, a staff member selected in the staff search—or the identifier in the biometric terminal field—will be used.</p>
           </div>
+        </div>
+        <div class="field" style="margin-top:0.75rem;">
+          <label class="field-label" for="wf-rt-fallback-reason">Reason (at least 10 characters)</label>
+          <input class="input" id="wf-rt-fallback-reason" type="text" maxlength="200" placeholder="e.g. scanner faulty at front desk, supervisor approved">
         </div>
         <div class="row-actions" style="margin-top:0.75rem;">
           <button class="btn btn-sm btn-accent" type="button" data-wf-rt-fallback-issue>Issue fallback code</button>
@@ -144,7 +150,7 @@
     <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Operational staff profiles"><table class="table"><thead><tr><th>Staff</th><th>Employee code</th><th>Department</th><th>Title</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-wf-profile-rows></tbody></table></div><div class="pagination" data-wf-profile-pagination></div></div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.23"></script><script src="../js/config.js?v=1.1.23"></script><script src="../js/utils.js?v=1.1.23"></script><script src="../js/icons.js?v=1.1.23"></script><script src="../js/api.js?v=1.1.23"></script><script src="../js/theme.js?v=1.1.23"></script><script src="../js/ui.js?v=1.1.23"></script><script src="../js/auth.js?v=1.1.23"></script><script src="../js/navigation.js?v=1.1.23"></script><script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script><script src="../js/operations.js?v=1.1.23"></script><script src="../js/biometrics.js?v=1.1.23"></script>
+<script src="../js/runtime-config.js?v=1.1.26"></script><script src="../js/config.js?v=1.1.26"></script><script src="../js/utils.js?v=1.1.26"></script><script src="../js/icons.js?v=1.1.26"></script><script src="../js/api.js?v=1.1.26"></script><script src="../js/theme.js?v=1.1.26"></script><script src="../js/ui.js?v=1.1.26"></script><script src="../js/auth.js?v=1.1.26"></script><script src="../js/navigation.js?v=1.1.26"></script><script src="../js/dashboard.js?v=1.1.26"></script><script src="../js/table-fit.js?v=1.1.26"></script><script src="../js/operations.js?v=1.1.26"></script><script src="../js/biometrics.js?v=1.1.26"></script>
 <script>
 JONE.ui.initChrome();
 var __workforceAllowed=JONE.dashboard.boot(["admin","manager","general_manager","front_desk_supervisor","receptionist","cashier","housekeeping","maintenance","inventory_clerk","restaurant_manager","waiter","bar_manager","bartender","kitchen_manager","chef","kitchen_assistant","housekeeping_manager","housekeeper","porter","maintenance_technician","accounts_manager","accountant","hr_manager","security","procurement_officer","storekeeper","staff"]);
@@ -172,6 +178,7 @@ var allManagerEls=document.querySelectorAll("[data-wf-manager]");allManagerEls.f
 function hotelToday(){try{var parts=new Intl.DateTimeFormat("en-US",{timeZone:"Africa/Lagos",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date()),out={};parts.forEach(function(part){out[part.type]=part.value;});return out.year+"-"+out.month+"-"+out.day;}catch(_){return new Date().toISOString().slice(0,10);}}
 function date(value){return value?JONE.formatDate(value):"—";}function dateTime(value){return value?JONE.formatDateTime(value):"—";}function human(value){return OPS.label(value);}function currentPage(key){return state.pages[key]||1;}function setPage(key,page){state.pages[key]=Math.max(1,page||1);}function renderPager(selector,items,response,loader,key){JONE.dashboard.renderPagination(document.querySelector(selector),items.length?response.pagination:null,{onPage:function(next){setPage(key,next);loader(next);}});}
 function userPicker(name,label,required){return OPS.searchPicker({name:name,label:label,required:!!required,resource:"staffDirectory",placeholder:"Search active staff",display:function(row){return (row.full_name||row.email)+" · "+human(row.role);}});}
+function terminalStaffPicker(){return OPS.searchPicker({name:"staff_id",label:"Staff member",required:false,resource:"staffDirectory",placeholder:"Search by name, email or employee code",display:function(row){return (row.full_name||row.email||("Staff #"+row.id))+(row.email?" · "+row.email:"")+" · Staff ID "+row.id+" · "+human(row.role);}});}
 function templatePicker(){return OPS.searchPicker({name:"template_id",label:"Shift template",required:false,resource:"shiftTemplates",params:{active:"true"},placeholder:"Search active shift templates",display:function(row){return row.code+" · "+row.name;}});}
 function activeRecord(){if(state.myOpenRecord)return state.myOpenRecord;return state.attendanceItems.filter(function(row){return String(row.staff)===String(me.id)&&["ON_DUTY","ON_BREAK"].includes(row.status);})[0]||null;}
 async function loadMyOpenRecord(){if(!me.id){state.myOpenRecord=null;renderClockSummary();return;}try{var response=await window.API.list("attendance",{open:"true",staff_id:me.id,page_size:1});state.myOpenRecord=OPS.listItems(response)[0]||null;}catch(err){state.myOpenRecord=null;}renderClockSummary();}
@@ -252,15 +259,27 @@ document.getElementById("wf-attendance-date").value=hotelToday();loadAttendance(
   var fallbackState=document.querySelector("[data-wf-rt-fallback-state]");
   var issue=document.querySelector("[data-wf-rt-fallback-issue]");
   if(!issue)return;
+  var fallbackPicker=null;
+  var fallbackPickerMount=document.querySelector("[data-wf-rt-fallback-picker]");
+  if(management&&fallbackPickerMount){
+    try{fallbackPicker=terminalStaffPicker();fallbackPicker.render(fallbackPickerMount);}catch(_){fallbackPicker=null;}
+  }
+  var fallbackIdentifierInput=document.getElementById("wf-rt-fallback-identifier");
+  if(fallbackIdentifierInput)fallbackIdentifierInput.addEventListener("input",function(){
+    if(fallbackIdentifierInput.value.trim()&&fallbackPicker&&fallbackPicker.clear)fallbackPicker.clear();
+  });
   issue.addEventListener("click",async function(){
     var idVal=(document.getElementById("wf-rt-fallback-identifier").value||"").trim();
+    var picked=(fallbackPicker&&fallbackPicker.getValue)?fallbackPicker.getValue():{};
+    var pickedStaffId=Number(picked.staff_id||0);
+    if(!idVal&&!pickedStaffId)idVal=(document.getElementById("wf-rt-identifier").value||"").trim();
     var reason=(document.getElementById("wf-rt-fallback-reason").value||"").trim();
-    if(!idVal){JONE.ui.toast("Enter the employee code or email address of the staff member.","warning");return;}
+    if(!idVal&&!pickedStaffId){JONE.ui.toast("Select the staff member from the staff search, or enter their email, employee code or numeric staff ID.","warning");return;}
     if(reason.length<10){JONE.ui.toast("Give a reason of at least 10 characters.","warning");return;}
     if(!JONE.guardSubmit(issue))return;
     try{
       var payload={action:"MANUAL_FALLBACK",manual_override_reason:reason};
-      if(idVal.indexOf("@")!==-1)payload.email=idVal;else payload.employee_code=idVal;
+      if(idVal)Object.assign(payload,JONE.biometrics.identifierPayload(idVal));else payload.staff_id=pickedStaffId;
       var res=await JONE.biometrics.executeReceptionTerminalAction(payload);
       var box=document.getElementById("wf-rt-result");
       if(box&&res){
@@ -285,7 +304,7 @@ document.querySelectorAll("button[data-wf-rt-action]").forEach(function(btn){
     var action=btn.getAttribute("data-wf-rt-action");
     var idVal=(document.getElementById("wf-rt-identifier").value||"").trim();
     var payload={action:action};
-    if(idVal){if(idVal.indexOf("@")!==-1)payload.email=idVal;else payload.employee_code=idVal;}
+    Object.assign(payload,JONE.biometrics.identifierPayload(idVal));
     if(!JONE.guardSubmit(btn))return;
     try{
       var res=await JONE.biometrics.executeReceptionTerminalAction(payload);
@@ -308,5 +327,5 @@ document.querySelectorAll("button[data-wf-rt-action]").forEach(function(btn){
   });
 });
 })();
-</script><script src="../js/pwa.js?v=1.1.23"></script><script src="../js/version.js?v=1.1.23"></script><script src="../js/update-checker.js?v=1.1.23"></script>
+</script><script src="../js/pwa.js?v=1.1.26"></script><script src="../js/version.js?v=1.1.26"></script><script src="../js/update-checker.js?v=1.1.26"></script>
 </body></html>

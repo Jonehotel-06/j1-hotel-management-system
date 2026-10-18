@@ -34,6 +34,22 @@ test("the module still exports the bindings the pages use", () => {
   assert.equal(typeof bio.issueTemporaryWorkstationToken, "function");
   assert.equal(typeof bio.getReceptionTerminalStatus, "function");
   assert.equal(typeof bio.executeReceptionTerminalAction, "function");
+  assert.equal(typeof bio.identifierPayload, "function");
+});
+
+test("identifierPayload buckets email, numeric staff id and employee code", () => {
+  const ctx = makeBio();
+  const classifyRaw = ctx.window.JONE.biometrics.identifierPayload;
+  const classify = (v) => JSON.parse(JSON.stringify(classifyRaw(v)));  // plain object across vm realms
+  assert.deepEqual(classify("  worker@jonehotel.com "), { email: "worker@jonehotel.com" });
+  assert.deepEqual(classify("worker\u200b @ jonehotel.com"), { email: "worker@jonehotel.com" }, "copied formatting must not turn an exact email into a non-match");
+  assert.deepEqual(classify("12"), { staff_id: 12 }, "a numeric id must travel as staff_id, not as a (never-matching) employee_code");
+  assert.deepEqual(classify("STF-20261018-ABC123"), { employee_code: "STF-20261018-ABC123" });
+  assert.deepEqual(classify("STF\u201320261018\u2013ABC123"), { employee_code: "STF-20261018-ABC123" }, "typographic dashes copied from a document still name the stored code");
+  assert.deepEqual(classify("EMP-0012"), { employee_code: "EMP-0012" }, "the displayed EMP code travels as a code; the server cross-resolves it to the id");
+  assert.deepEqual(classify(""), {});
+  assert.deepEqual(classify(null), {});
+  disposeAll();
 });
 
 test("with no reader and no simulation opt-in the client refuses to fabricate a fingerprint", async () => {

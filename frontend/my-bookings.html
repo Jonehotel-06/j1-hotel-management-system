@@ -13,7 +13,7 @@
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="favicon/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="favicon/apple-touch-icon.png">
-<link rel="stylesheet" href="css/main.css?v=1.1.24">
+<link rel="stylesheet" href="css/main.css?v=1.1.26">
 <script>(function(){var t;try{t=JSON.parse(localStorage.getItem("jone.theme"))}catch(e){}if(t!=="dark"&&t!=="light"){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"}document.documentElement.setAttribute("data-theme",t);})();</script>
 
 
@@ -198,16 +198,16 @@
   </div>
 </div>
 
-<script src="js/runtime-config.js?v=1.1.24"></script>
-<script src="js/config.js?v=1.1.24"></script>
-<script src="js/utils.js?v=1.1.24"></script>
-<script src="js/icons.js?v=1.1.24"></script>
-<script src="js/api.js?v=1.1.24"></script>
-<script src="js/theme.js?v=1.1.24"></script>
-<script src="js/ui.js?v=1.1.24"></script>
-<script src="js/auth.js?v=1.1.24"></script>
-<script src="js/hotel-data.js?v=1.1.24"></script>
-<script src="js/navigation.js?v=1.1.24"></script>
+<script src="js/runtime-config.js?v=1.1.26"></script>
+<script src="js/config.js?v=1.1.26"></script>
+<script src="js/utils.js?v=1.1.26"></script>
+<script src="js/icons.js?v=1.1.26"></script>
+<script src="js/api.js?v=1.1.26"></script>
+<script src="js/theme.js?v=1.1.26"></script>
+<script src="js/ui.js?v=1.1.26"></script>
+<script src="js/auth.js?v=1.1.26"></script>
+<script src="js/hotel-data.js?v=1.1.26"></script>
+<script src="js/navigation.js?v=1.1.26"></script>
 <script>
   JONE.ui.initChrome();
   JONE.nav.init();
@@ -360,7 +360,11 @@
     e.preventDefault();
     accessRef = document.getElementById("booking-reference").value.trim();
     accessToken = document.getElementById("booking-token").value.trim();
-    if (accessToken) sessionStorage.setItem("jone.guest_access_token", accessToken);
+    // Remember the token scoped to THIS booking (and as the most-recent
+    // convenience token), exactly as emailed-link claims do — writing
+    // only the global key let a manual lookup for one booking become
+    // the credential later tried first for a different booking.
+    if (accessToken) rememberToken(accessToken, accessRef);
     load();
   });
 
@@ -441,8 +445,8 @@
 
 })();
 </script>
-<script src="js/pwa.js?v=1.1.24"></script>
-<script src="js/version.js?v=1.1.24"></script>
-<script src="js/update-checker.js?v=1.1.24"></script>
+<script src="js/pwa.js?v=1.1.26"></script>
+<script src="js/version.js?v=1.1.26"></script>
+<script src="js/update-checker.js?v=1.1.26"></script>
 </body>
 </html>

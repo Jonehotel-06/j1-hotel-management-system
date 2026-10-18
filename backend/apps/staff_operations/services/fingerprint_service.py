@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import secrets
+import unicodedata
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -19,6 +21,8 @@ from typing import Any
 from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import F
+from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
@@ -816,29 +820,192 @@ def record_failed_attempt(
     return attempt
 
 
-def lookup_staff_by_identifier(*, staff: User | None = None, staff_id=None, email: str = "", employee_code: str = "") -> User | None:
-    """Resolve an active staff account from an explicit terminal identifier.
+# Terminal and fingerprint responses display ``EMP-{pk:04d}`` for staff
+# without an operational profile (see e.g. the reception terminal's
+# on-duty list). That code exists nowhere in the database — real
+# employee codes are ``STF-...`` on the profile — so an operator typing
+# the code shown on screen must still reach the same person.
+_EMP_DISPLAY_CODE_RE = re.compile(r"^EMP-?0*(\d+)$", re.IGNORECASE)
+_IDENTIFIER_DASH_TRANSLATION = str.maketrans({
+    "\u2010": "-",
+    "\u2011": "-",
+    "\u2012": "-",
+    "\u2013": "-",
+    "\u2014": "-",
+    "\u2212": "-",
+})
+
+
+def _identifier_staff_queryset():
+    return User.objects.select_related("staff_profile", "staff_profile__department_ref")
+
+
+def _normalise_identifier(value) -> str:
+    """Canonicalise an operator-entered identifier without changing its meaning.
+
+    Staff details are routinely copied from tables, documents and mobile
+    browsers. Those copies can contain non-breaking spaces, zero-width
+    formatting characters or typographic dashes even though the account
+    email/employee code itself is plain ASCII. NFKC normalisation plus the
+    removal of Unicode format characters makes those copies resolve to the
+    same identifier; it never performs a fuzzy or partial match.
+    """
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    return text.translate(_IDENTIFIER_DASH_TRANSLATION).strip()
+
+
+def _positive_identifier_int(value) -> int | None:
+    text = _normalise_identifier(value)
+    if not text.isdigit():
+        return None
+    candidate = int(text)
+    # Keep arbitrary operator input inside the signed BIGINT key range; a
+    # longer all-digit string is not a plausible account/profile id and must
+    # be a clean no-match rather than a database overflow error.
+    return candidate if 0 < candidate <= 9_223_372_036_854_775_807 else None
+
+
+def _resolve_identifier_value(value, *, primary: str) -> User | None:
+    """Resolve ONE presented identifier value to a staff account.
+
+    ``primary`` is the request field it arrived in ("email" or
+    "employee_code") and only decides which interpretation is tried
+    first. Every advertised interpretation is then tried, because the
+    workforce/terminals pages bucket a free-text identifier by the
+    presence of "@" — a numeric staff id typed there arrives as
+    ``employee_code="12"`` and could never match a real (``STF-...``)
+    employee code, even though ids are an advertised identifier.
+
+    Email and employee-code comparisons also have a trimmed/lower-cased
+    database fallback. Current serializers normalise new records, but
+    legacy/imported rows can carry outer whitespace; without this fallback
+    the exact visible email/code would be rejected for an invisible reason.
+
+    An identifier is a NAME, never a credential: resolving it grants
+    nothing by itself (biometric actions still require a matching
+    fingerprint; a supervised fallback still requires a signed-in
+    supervisor, a reason and, for managers, recorded failure evidence).
+    """
+    text = _normalise_identifier(value)
+    compact = re.sub(r"\s+", "", text)
+    if not compact:
+        return None
+    qs = _identifier_staff_queryset()
+
+    def by_email():
+        if "@" not in compact:
+            return None
+        found = qs.filter(email__iexact=compact).first()
+        if found is not None:
+            return found
+        return (
+            qs.annotate(_terminal_email=Lower(Trim(F("email"))))
+            .filter(_terminal_email=compact.lower())
+            .first()
+        )
+
+    def by_employee_code():
+        if "@" in compact:
+            return None
+        found = qs.filter(staff_profile__employee_code__iexact=compact).first()
+        if found is not None:
+            return found
+        return (
+            qs.annotate(
+                _terminal_employee_code=Lower(Trim(F("staff_profile__employee_code")))
+            )
+            .filter(_terminal_employee_code=compact.lower())
+            .first()
+        )
+
+    def by_staff_id():
+        candidate = None
+        bare_numeric = compact.isdigit()
+        if bare_numeric:
+            candidate = _positive_identifier_int(compact)
+        else:
+            match = _EMP_DISPLAY_CODE_RE.match(compact)
+            if match:
+                candidate = _positive_identifier_int(match.group(1))
+        if not candidate:
+            return None
+        found = qs.filter(pk=candidate).first()
+        if found is not None or not bare_numeric:
+            return found
+        # ``staff_id`` in the API is, and remains, the User/account id. Only
+        # when no such account exists may a bare number be the distinct
+        # StaffProfile row id exposed by the workforce profiles API. The
+        # explicit ``staff_profile_id`` field below is the unambiguous route
+        # when both numbers happen to exist for different people.
+        return qs.filter(staff_profile__pk=candidate).first()
+
+    attempts = (
+        (by_employee_code, by_staff_id, by_email)
+        if primary == "employee_code"
+        else (by_email, by_employee_code, by_staff_id)
+    )
+    for attempt in attempts:
+        resolved = attempt()
+        if resolved is not None:
+            return resolved
+    return None
+
+
+def presented_staff_identifier(
+    *,
+    staff_id=None,
+    staff_profile_id=None,
+    identifier: str = "",
+    email: str = "",
+    employee_code: str = "",
+) -> str:
+    """The identifier an operator actually presented (for error messages)."""
+    for value in (identifier, email, employee_code, staff_id, staff_profile_id):
+        text = _normalise_identifier(value)
+        if text:
+            return text
+    return ""
+
+
+def lookup_staff_by_identifier(
+    *,
+    staff: User | None = None,
+    staff_id=None,
+    staff_profile_id=None,
+    identifier: str = "",
+    email: str = "",
+    employee_code: str = "",
+) -> User | None:
+    """Resolve a staff account from an explicit terminal identifier.
 
     The shared lookup for every terminal action: one implementation, so the
     biometric path and the supervised fallback path can never disagree about
-    which account an identifier names.
+    which account an identifier names. Accepts the account email, the
+    ``STF-...`` employee code, the numeric account/staff id, an explicit
+    StaffProfile id, and the displayed ``EMP-{id}`` code — in whichever
+    request field the client sent them.
     """
-    resolved = staff
-    if resolved is None and staff_id:
-        resolved = User.objects.select_related("staff_profile", "staff_profile__department_ref").filter(pk=staff_id).first()
-    if resolved is None and (email or "").strip():
-        resolved = (
-            User.objects.select_related("staff_profile", "staff_profile__department_ref")
-            .filter(email__iexact=email.strip())
-            .first()
-        )
-    if resolved is None and (employee_code or "").strip():
-        resolved = (
-            User.objects.select_related("staff_profile", "staff_profile__department_ref")
-            .filter(staff_profile__employee_code__iexact=employee_code.strip())
-            .first()
-        )
-    return resolved
+    if staff is not None:
+        return staff
+
+    profile_id = _positive_identifier_int(staff_profile_id)
+    if profile_id:
+        resolved = _identifier_staff_queryset().filter(staff_profile__pk=profile_id).first()
+        if resolved is not None:
+            return resolved
+
+    account_id = _positive_identifier_int(staff_id)
+    if account_id:
+        resolved = _identifier_staff_queryset().filter(pk=account_id).first()
+        if resolved is not None:
+            return resolved
+
+    return (
+        _resolve_identifier_value(identifier, primary="identifier")
+        or _resolve_identifier_value(email, primary="email")
+        or _resolve_identifier_value(employee_code, primary="employee_code")
+    )
 
 
 def _manual_fallback_terminal_action(
@@ -848,6 +1015,8 @@ def _manual_fallback_terminal_action(
     reason: str,
     staff: User | None = None,
     staff_id=None,
+    staff_profile_id=None,
+    identifier: str = "",
     email: str = "",
     employee_code: str = "",
 ) -> dict:
@@ -861,10 +1030,34 @@ def _manual_fallback_terminal_action(
     """
     from .attendance_fallback_service import issue_manual_fallback_code
 
-    resolved_staff = lookup_staff_by_identifier(staff=staff, staff_id=staff_id, email=email, employee_code=employee_code)
+    resolved_staff = lookup_staff_by_identifier(
+        staff=staff,
+        staff_id=staff_id,
+        staff_profile_id=staff_profile_id,
+        identifier=identifier,
+        email=email,
+        employee_code=employee_code,
+    )
     if resolved_staff is None:
+        presented = presented_staff_identifier(
+            staff_id=staff_id,
+            staff_profile_id=staff_profile_id,
+            identifier=identifier,
+            email=email,
+            employee_code=employee_code,
+        )
+        if not presented:
+            raise ValidationError(
+                {"staff": "Identify the staff member (email, employee code or id) for a supervised fallback."}
+            )
+        # The operator here is a signed-in supervisor who can already see
+        # the staff directory, so naming what did not match (their own
+        # input) is safe and turns a dead end into a correctable typo.
         raise ValidationError(
-            {"staff": "Identify the staff member (email, employee code or id) for a supervised fallback."}
+            {"staff": (
+                f"No staff account matches '{presented[:80]}'. Select the staff member from "
+                "the staff search, or use their account email, STF employee code, or numeric staff id."
+            )}
         )
     return issue_manual_fallback_code(
         staff=resolved_staff,
@@ -884,6 +1077,8 @@ def reception_attendance_workstation_action(
     email: str = "",
     employee_code: str = "",
     staff_id: int | None = None,
+    staff_profile_id: int | None = None,
+    identifier: str = "",
     actor: User | None = None,
     manual_override_reason: str = "",
     classification: str = "",
@@ -912,10 +1107,31 @@ def reception_attendance_workstation_action(
     # A supervised fallback never carries a probe: it is the recorded failure of
     # the probe path. It is handled before probe validation for that reason.
     if action_norm == "RECORD_FAILURE":
-        failed_staff = lookup_staff_by_identifier(staff=staff, staff_id=staff_id, email=email, employee_code=employee_code)
+        failed_staff = lookup_staff_by_identifier(
+            staff=staff,
+            staff_id=staff_id,
+            staff_profile_id=staff_profile_id,
+            identifier=identifier,
+            email=email,
+            employee_code=employee_code,
+        )
         if failed_staff is None:
+            presented = presented_staff_identifier(
+                staff_id=staff_id,
+                staff_profile_id=staff_profile_id,
+                identifier=identifier,
+                email=email,
+                employee_code=employee_code,
+            )
+            if not presented:
+                raise ValidationError(
+                    {"staff": "Identify the staff member (email, employee code or id) whose capture failed."}
+                )
             raise ValidationError(
-                {"staff": "Identify the staff member (email, employee code or id) whose capture failed."}
+                {"staff": (
+                    f"No staff account matches '{presented[:80]}'. Select the staff member from "
+                    "the staff search, or use their account email, STF employee code, or numeric staff id."
+                )}
             )
         attempt = record_failed_attempt(
             staff=failed_staff,
@@ -942,6 +1158,8 @@ def reception_attendance_workstation_action(
             reason=manual_override_reason,
             staff=staff,
             staff_id=staff_id,
+            staff_profile_id=staff_profile_id,
+            identifier=identifier,
             email=email,
             employee_code=employee_code,
         )
@@ -949,7 +1167,14 @@ def reception_attendance_workstation_action(
     probe_data = validate_minutiae_data(probe)
 
     # Resolve staff by explicit identifier or 1:N biometric template matching
-    resolved_staff = lookup_staff_by_identifier(staff=staff, staff_id=staff_id, email=email, employee_code=employee_code)
+    resolved_staff = lookup_staff_by_identifier(
+        staff=staff,
+        staff_id=staff_id,
+        staff_profile_id=staff_profile_id,
+        identifier=identifier,
+        email=email,
+        employee_code=employee_code,
+    )
     if resolved_staff is None:
         best_score = 0.0
         best_template = None

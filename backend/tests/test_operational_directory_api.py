@@ -2,6 +2,7 @@
 
 from apps.accounts.capabilities import has_capability
 from apps.accounts.models import User
+from apps.staff_operations.services.staff_operations_service import ensure_staff_profile
 
 from .base import BaseAPITestCase
 from .factories import make_staff
@@ -64,6 +65,19 @@ class OperationalStaffDirectoryApiTests(BaseAPITestCase):
         emails = {row["email"] for row in response.json()["data"]}
         self.assertIn(self.housekeeper.email, emails)
         self.assertNotIn(None, emails)
+
+    def test_supervisor_terminal_picker_can_find_staff_by_employee_code(self):
+        """The reception-terminal fallback selector is backed by this endpoint."""
+        profile, _ = ensure_staff_profile(staff=self.housekeeper)
+        manager = make_staff("directory-terminal-manager@staff.dev", role=User.Role.MANAGER)
+        self.auth(manager)
+        response = self.client.get(
+            "/api/admin/users/directory/", {"search": profile.employee_code}
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        rows = response.json()["data"]
+        self.assertEqual([row["id"] for row in rows], [self.housekeeper.pk])
+        self.assertEqual(rows[0]["email"], self.housekeeper.email)
 
     def test_non_dispatching_or_payroll_role_cannot_list_operational_staff(self):
         cashier = make_staff("directory-cashier@staff.dev", role=User.Role.CASHIER)

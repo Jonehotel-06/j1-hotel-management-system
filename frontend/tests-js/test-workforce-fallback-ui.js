@@ -23,10 +23,16 @@ test("the fallback control is management-only and starts hidden", () => {
 });
 
 test("the fallback needs an identifier and a substantive reason", () => {
-  assert.match(WORKFORCE, /if\(!idVal\)\{JONE\.ui\.toast\("Enter the employee code or email address of the staff member\.","warning"\);return;\}/);
+  assert.match(WORKFORCE, /if\(!idVal&&!pickedStaffId\)\{JONE\.ui\.toast\("Select the staff member from the staff search, or enter their email, employee code or numeric staff ID\.","warning"\);return;\}/);
   assert.match(WORKFORCE, /if\(reason\.length<10\)\{JONE\.ui\.toast\("Give a reason of at least 10 characters\.","warning"\);return;\}/);
   assert.match(WORKFORCE, /payload=\{action:"MANUAL_FALLBACK",manual_override_reason:reason\}/);
   assert.match(WORKFORCE, /manual_override_reason/, "the reason travels with the request");
+  assert.match(WORKFORCE, /JONE\.biometrics\.identifierPayload\(idVal\)/, "the identifier is bucketed by the shared classifier (email / staff_id / employee_code)");
+  assert.match(WORKFORCE, /data-wf-rt-fallback-picker/, "the fallback offers a directory-backed staff selector");
+  assert.match(WORKFORCE, /function terminalStaffPicker\(\)/, "the terminal selector uses the staff directory");
+  assert.match(WORKFORCE, /resource:"staffDirectory"/, "the selector is backed by the authoritative account directory");
+  assert.match(WORKFORCE, /payload\.staff_id=pickedStaffId/, "a selected staff member travels by exact account staff_id");
+  assert.match(WORKFORCE, /document\.getElementById\("wf-rt-identifier"\)/, "an identifier already entered for the failed biometric attempt can be reused");
 });
 
 test("the failure path explains itself and never claims success", () => {
