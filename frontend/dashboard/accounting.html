@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.23">
+<link rel="stylesheet" href="../css/main.css?v=1.1.24">
 
 </head>
 <body>
@@ -301,17 +301,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.23"></script>
-<script src="../js/config.js?v=1.1.23"></script>
-<script src="../js/utils.js?v=1.1.23"></script>
-<script src="../js/icons.js?v=1.1.23"></script>
-<script src="../js/api.js?v=1.1.23"></script>
-<script src="../js/theme.js?v=1.1.23"></script>
-<script src="../js/ui.js?v=1.1.23"></script>
-<script src="../js/auth.js?v=1.1.23"></script>
-<script src="../js/hotel-data.js?v=1.1.23"></script>
-<script src="../js/navigation.js?v=1.1.23"></script>
-<script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script>
+<script src="../js/runtime-config.js?v=1.1.24"></script>
+<script src="../js/config.js?v=1.1.24"></script>
+<script src="../js/utils.js?v=1.1.24"></script>
+<script src="../js/icons.js?v=1.1.24"></script>
+<script src="../js/api.js?v=1.1.24"></script>
+<script src="../js/theme.js?v=1.1.24"></script>
+<script src="../js/ui.js?v=1.1.24"></script>
+<script src="../js/auth.js?v=1.1.24"></script>
+<script src="../js/hotel-data.js?v=1.1.24"></script>
+<script src="../js/navigation.js?v=1.1.24"></script>
+<script src="../js/dashboard.js?v=1.1.24"></script><script src="../js/table-fit.js?v=1.1.24"></script>
 <script>
   JONE.ui.initChrome();
   // boot() redirects receptionists to 403.html. If a navigation is ever
@@ -620,6 +620,45 @@
     return [];
   }
 
+  // Accepts either the shared API envelope ({data,pagination}) or the bare array.
+  function rowsOf(payload){return listRows(payload&&!Array.isArray(payload)&&payload.data!==undefined?payload.data:payload);}
+
+  function rowActions(row) {
+    var html = "";
+    var reference = JONE.esc(row.reference || "");
+    if (row.status === "DRAFT") {
+      html += "<button class=\"btn btn-sm\" type=\"button\" data-expense-submit=\"" + reference + "\">Submit</button>";
+    }
+    /* The controlled expense workflow is submit -> approve -> post -> pay.
+       Approve and post were reachable only through the API, so an expense sat
+       at SUBMITTED (or APPROVED) on this screen with no way forward. Each
+       decision keeps its own capability: approving needs expense.approve,
+       posting the ledger entry needs expense.manage. */
+    if (row.status === "SUBMITTED" && CAN.approveExpense) {
+      html += "<button class=\"btn btn-sm\" type=\"button\" data-expense-approve=\"" + reference + "\">Approve</button>";
+      html += "<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-reject=\"" + reference + "\">Reject</button>";
+    }
+    if (row.status === "APPROVED") {
+      html += "<button class=\"btn btn-sm\" type=\"button\" data-expense-post=\"" + reference + "\">Post to ledger</button>";
+    }
+    var awaitsSettlement = row.status === "POSTED" && row.payment_method === "PAYABLE" && !row.paid_at;
+    if (awaitsSettlement) {
+      /* On-account bill: the payment has NOT happened, so recording it here
+         releases the payable (Dr accounts payable / Cr the tender used). */
+      html += "<button class=\"btn btn-sm btn-accent\" type=\"button\" data-expense-settle=\"" + reference + "\">Record supplier payment</button>";
+    } else if (row.status === "POSTED") {
+      /* Money already left (bank transfer / cash / card) or the on-account bill
+         is already settled: there is no posting left to make, but the transfer
+         receipt can still be filed against the expense. */
+      html += "<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-receipt=\"" + reference + "\">Payment receipt</button>";
+    }
+    if (row.paid_at) {
+      html += "<span class=\"badge\">Paid " + JONE.esc(String(row.paid_at).slice(0, 10)) + "</span>";
+    }
+    return html;
+  }
+
+
   function renderTransactions(payload){
     if(!tx) return;
     var rows=listRows(payload);
@@ -669,42 +708,6 @@
     },function(err){
       if(requestId===loadSequence && tx) DATA.error(tx,"Ledger transactions couldn't be loaded",financeErrorMessage(err,"posted transactions"),5);
     });
-    // Accepts either the shared API envelope ({data,pagination}) or the bare array.
-    function rowsOf(payload){return listRows(payload&&!Array.isArray(payload)&&payload.data!==undefined?payload.data:payload);}
-  function rowActions(row) {
-    var html = "";
-    var reference = JONE.esc(row.reference || "");
-    if (row.status === "DRAFT") {
-      html += "<button class=\"btn btn-sm\" type=\"button\" data-expense-submit=\"" + reference + "\">Submit</button>";
-    }
-    /* The controlled expense workflow is submit -> approve -> post -> pay.
-       Approve and post were reachable only through the API, so an expense sat
-       at SUBMITTED (or APPROVED) on this screen with no way forward. Each
-       decision keeps its own capability: approving needs expense.approve,
-       posting the ledger entry needs expense.manage. */
-    if (row.status === "SUBMITTED" && CAN.approveExpense) {
-      html += "<button class=\"btn btn-sm\" type=\"button\" data-expense-approve=\"" + reference + "\">Approve</button>";
-      html += "<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-reject=\"" + reference + "\">Reject</button>";
-    }
-    if (row.status === "APPROVED") {
-      html += "<button class=\"btn btn-sm\" type=\"button\" data-expense-post=\"" + reference + "\">Post to ledger</button>";
-    }
-    var awaitsSettlement = row.status === "POSTED" && row.payment_method === "PAYABLE" && !row.paid_at;
-    if (awaitsSettlement) {
-      /* On-account bill: the payment has NOT happened, so recording it here
-         releases the payable (Dr accounts payable / Cr the tender used). */
-      html += "<button class=\"btn btn-sm btn-accent\" type=\"button\" data-expense-settle=\"" + reference + "\">Record supplier payment</button>";
-    } else if (row.status === "POSTED") {
-      /* Money already left (bank transfer / cash / card) or the on-account bill
-         is already settled: there is no posting left to make, but the transfer
-         receipt can still be filed against the expense. */
-      html += "<button class=\"btn btn-sm btn-outline\" type=\"button\" data-expense-receipt=\"" + reference + "\">Payment receipt</button>";
-    }
-    if (row.paid_at) {
-      html += "<span class=\"badge\">Paid " + JONE.esc(String(row.paid_at).slice(0, 10)) + "</span>";
-    }
-    return html;
-  }
   /* Decide a material drawer variance. Accepting the physical count closes the
      session and completes the cash reconciliation; rejecting it closes the
      session with the variance on the record instead. Either way the reason is
@@ -1759,8 +1762,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.23"></script>
-<script src="../js/version.js?v=1.1.23"></script>
-<script src="../js/update-checker.js?v=1.1.23"></script>
+<script src="../js/pwa.js?v=1.1.24"></script>
+<script src="../js/version.js?v=1.1.24"></script>
+<script src="../js/update-checker.js?v=1.1.24"></script>
 </body>
 </html>

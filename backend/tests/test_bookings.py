@@ -290,3 +290,120 @@ class WalkInBookingLifecycleTests(BaseAPITestCase):
         self.assertEqual(response.status_code, 201, response.content)
         self.assertTrue(response.json()["data"]["booking_reference"].startswith("J1-"))
 
+
+
+class PublicBookingPhoneNormalisationTests(BaseAPITestCase):
+    """Regression pin for the PUBLIC checkout phone contract (2026-10-18 audit).
+
+    The public booking form (booking-review.html) explicitly accepts formatted
+    numbers — ``pattern="[0-9+\\(\\)\\s\\-]{7,}"`` — and sends them trimmed but
+    NOT compacted. The staff walk-in serializer and ``upsert_guest`` already
+    compact spaces and enforce the Guest.phone 20-char column, but the public
+    ``GuestWriteSerializer`` / ``RoomGuestInputSerializer`` used to hit the raw
+    model MaxLengthValidator first, so a guest typing the very common
+    "+234 (0) 803 123 4567" (21 chars) had the online booking rejected with
+    "Ensure this field has no more than 20 characters." — the reported
+    "online bookings are not completing successfully" failure.
+    """
+
+    def setUp(self):
+        super().setUp()
+        hotel_settings(tax_rate="0.00", service_fee="0.00", pending_booking_minutes=30)
+        self.room_type = make_room_type("Public Standard", price="15000.00", max_guests=2)
+        self.room_a = make_room(self.room_type, "201")
+        self.room_b = make_room(self.room_type, "202")
+        self.today = hotel_today()
+        self.unauth()
+
+    def _public_payload(self, **overrides):
+        payload = {
+            "room_type": self.room_type.slug,
+            "check_in": (self.today + timedelta(days=5)).isoformat(),
+            "check_out": (self.today + timedelta(days=7)).isoformat(),
+            "rooms": 1, "adults": 2, "children": 0,
+            "guest": {
+                "first_name": "Amaka",
+                "last_name": "Testguest",
+                "email": "amaka.public@example.test",
+                "phone": "+234 (0) 803 123 4567",
+            },
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_public_booking_compacts_formatted_guest_phone(self):
+        response = self.client.post("/api/bookings/", self._public_payload(), format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        data = response.json()["data"]
+        self.assertEqual(data["guest"]["phone"], "+234(0)8031234567")
+        booking = Booking.objects.get(booking_reference=data["booking_reference"])
+        self.assertEqual(booking.guest.phone, "+234(0)8031234567")
+
+    def test_public_booking_rejects_phone_still_over_column_limit_after_compaction(self):
+        payload = self._public_payload()
+        payload["guest"]["phone"] = "+234-803-123-4567-9988-77"  # 25 chars, no spaces to compact
+        response = self.client.post("/api/bookings/", payload, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        errors = response.json()["errors"]
+        self.assertEqual(
+            errors["guest"]["phone"], ["Phone number must be 20 characters or fewer."]
+        )
+        self.assertEqual(Booking.objects.count(), 0)
+
+    def test_public_booking_rejects_phone_with_too_few_digits(self):
+        payload = self._public_payload()
+        payload["guest"]["phone"] = "12345"
+        response = self.client.post("/api/bookings/", payload, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        errors = response.json()["errors"]
+        self.assertEqual(
+            errors["guest"]["phone"], ["Enter a valid phone number (at least 7 digits)."]
+        )
+
+    def test_multi_room_booking_compacts_room_guest_phone(self):
+        from apps.bookings.models import RoomOccupant
+
+        payload = self._public_payload(rooms=2, adults=3)
+        payload["room_guests"] = [{
+            "email": "sister.occupant@example.test",
+            "full_name": "Sister Test",
+            "phone": "+234 (0) 805 987 6543",
+        }]
+        response = self.client.post("/api/bookings/", payload, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        occupant = RoomOccupant.objects.get(email="sister.occupant@example.test")
+        self.assertEqual(occupant.phone, "+234(0)8059876543")
+
+    def test_room_guest_phone_over_limit_after_compaction_is_rejected_with_field_error(self):
+        payload = self._public_payload(rooms=2, adults=3)
+        payload["room_guests"] = [{
+            "email": "sister.occupant@example.test",
+            "full_name": "Sister Test",
+            "phone": "+234-805-987-6543-1122-33",
+        }]
+        response = self.client.post("/api/bookings/", payload, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        errors = response.json()["errors"]
+        self.assertEqual(
+            errors["room_guests"]["0"]["phone"],
+            ["Phone number must be 20 characters or fewer."],
+        )
+        self.assertEqual(Booking.objects.count(), 0)
+
+    def test_admin_guest_update_compacts_formatted_phone(self):
+        from apps.bookings.models import Guest
+
+        guest = Guest.objects.create(
+            first_name="Chidi", last_name="Existing", email="chidi.guest@example.test",
+            phone="08031230000",
+        )
+        staff = make_staff("guest-desk@jone.dev")
+        self.auth(staff)
+        response = self.client.patch(
+            f"/api/admin/guests/{guest.pk}/",
+            {"phone": "+234 (0) 803 555 1234"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        guest.refresh_from_db()
+        self.assertEqual(guest.phone, "+234(0)8035551234")

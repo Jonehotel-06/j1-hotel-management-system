@@ -456,6 +456,13 @@ class AdminGuestDetailSerializer(serializers.ModelSerializer):
 
 
 class AdminGuestUpdateSerializer(serializers.ModelSerializer):
+    # Same guest-phone contract as the public checkout and walk-in creation:
+    # compact formatted numbers before the 20-char column limit is enforced.
+    # required/blank semantics are unchanged from the model-derived field
+    # (Guest.phone is a non-blank column); only the raw max-length parse
+    # validator is replaced by validate_phone's clear, normalising check.
+    phone = serializers.CharField()
+
     class Meta:
         model = Guest
         fields = [
@@ -463,6 +470,11 @@ class AdminGuestUpdateSerializer(serializers.ModelSerializer):
             "state", "country", "identification_type", "identification_number",
             "special_requests",
         ]
+
+    def validate_phone(self, value):
+        from .serializers import validate_guest_phone
+
+        return validate_guest_phone(value)
 
 
 class RescheduleBookingSerializer(serializers.Serializer):

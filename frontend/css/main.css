@@ -18,6 +18,12 @@
 /* ------------------------------- Reset ---------------------------------- */
 *, *::before, *::after { box-sizing: border-box; }
 
+/* The hidden attribute must always win. Author rules that set display (for
+   example .btn { display: inline-flex }) override the UA's [hidden] rule,
+   which would render — and keep focusable — controls that JS has hidden
+   (e.g. the PWA install button before an install is actually possible). */
+[hidden] { display: none !important; }
+
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;

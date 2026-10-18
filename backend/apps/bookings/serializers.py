@@ -16,7 +16,39 @@ from .models import Booking, BookingRoom, Guest, RoomOccupant
 # ---------------------------------------------------------------------------
 # Shared nested shapes
 # ---------------------------------------------------------------------------
+def validate_guest_phone(value):
+    """Compact and validate a guest-typed phone number.
+
+    Mirrors the staff walk-in normalisation (``AdminBookingCreateSerializer.
+    validate_guest``) and ``booking_service.upsert_guest`` so the public
+    checkout accepts the same formatted numbers the reception desk accepts:
+    the public form (booking-review.html ``pattern="[0-9+()\\s-]{7,}"``) lets
+    guests type spaces, parentheses and dashes, spaces are compacted away, at
+    least 7 digits are required, and the stored value never exceeds the
+    20-character ``Guest.phone`` / ``RoomOccupant.phone`` column. Without this
+    the raw model MaxLengthValidator rejects e.g. "+234 (0) 803 123 4567"
+    (21 chars) with "Ensure this field has no more than 20 characters." and
+    the online booking never completes.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return raw
+    compact = "".join(ch for ch in raw if not ch.isspace())
+    digits_only = "".join(ch for ch in compact if ch.isdigit())
+    if len(digits_only) < 7:
+        raise serializers.ValidationError("Enter a valid phone number (at least 7 digits).")
+    if len(compact) > 20:
+        raise serializers.ValidationError("Phone number must be 20 characters or fewer.")
+    return compact if (" " in raw or len(raw) > 20) else raw
+
+
 class GuestWriteSerializer(serializers.ModelSerializer):
+    # Declared without the model-derived max_length validator so formatted
+    # numbers are compacted by validate_phone BEFORE the 20-char column limit
+    # is enforced (see validate_guest_phone). required/blank semantics match
+    # the previous extra_kwargs declaration.
+    phone = serializers.CharField(required=False)
+
     class Meta:
         model = Guest
         fields = [
@@ -27,8 +59,10 @@ class GuestWriteSerializer(serializers.ModelSerializer):
             "first_name": {"required": False},
             "last_name": {"required": False},
             "email": {"required": False},
-            "phone": {"required": False},
         }
+
+    def validate_phone(self, value):
+        return validate_guest_phone(value)
 
     def validate_identification_number(self, value):
         # Stored only if the hotel collects it; basic sanitation.
@@ -288,12 +322,18 @@ class RoomGuestInputSerializer(serializers.Serializer):
 
     email = serializers.EmailField()
     full_name = serializers.CharField(required=False, allow_blank=True, default="", max_length=150)
-    phone = serializers.CharField(required=False, allow_blank=True, default="", max_length=20)
+    # No max_length here: validate_phone compacts formatted numbers first and
+    # then enforces the 20-char RoomOccupant.phone column with a clear message
+    # (the raw MaxLengthValidator used to reject "+234 (0) 805 987 6543").
+    phone = serializers.CharField(required=False, allow_blank=True, default="")
     room_index = serializers.IntegerField(required=False, min_value=0, max_value=49)
     is_lead_occupant = serializers.BooleanField(required=False, default=False)
 
     def validate_email(self, value):
         return value.strip().lower()
+
+    def validate_phone(self, value):
+        return validate_guest_phone(value)
 
 
 class BookingCreateSerializer(StayDetailsSerializer):
