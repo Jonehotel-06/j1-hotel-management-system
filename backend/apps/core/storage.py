@@ -32,6 +32,8 @@ __all__ = [
     "storage_backend_label",
     "is_remote_storage",
     "verify_stored_upload",
+    "serve_media_file",
+    "save_upload",
 ]
 
 
@@ -161,12 +163,71 @@ def verify_stored_upload(file_field) -> tuple[bool, str]:
             "media storage writable and public before photos will appear."
         )
     try:
+        with storage.open(name, "rb") as stored_fh:
+            head = stored_fh.read(32)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Could not read back stored media '%s' using %s: %s: %s",
+            name, storage_backend_label(storage), type(exc).__name__, exc,
+        )
+        return False, (
+            "The photo was written to storage, but could not be read back "
+            f"({type(exc).__name__}). Ask an administrator to check image storage "
+            f"({storage_backend_label(storage)})."
+        )
+    if not head:
+        return False, (
+            "The stored photo file is empty (0 bytes) and cannot be displayed."
+        )
+    try:
         url = file_field.url
     except (ValueError, NotImplementedError):
         return False, "The stored photo has no public address (MEDIA_URL is not configured)."
     if not url:
         return False, "The stored photo has no public address (MEDIA_URL is not configured)."
     return True, ""
+
+
+def serve_media_file(request, path: str):
+    """Serve stored media through Django in all environments (local & production).
+
+    Works transparently whether ``default_storage`` is ``FileSystemStorage`` or
+    remote ``S3Boto3Storage`` (Backblaze B2, public or private bucket), and is
+    mounted at both ``/media/<path>`` and ``/api/media/<path>`` so same-origin
+    Vercel ``/api/*`` rewrites and direct backend URLs both resolve cleanly.
+    """
+    import mimetypes
+    import posixpath
+    from django.http import Http404, HttpResponse
+
+    raw = str(path or "").strip().replace("\\", "/").lstrip("/")
+    if not raw:
+        raise Http404("Media path is empty.")
+    norm = posixpath.normpath(raw)
+    if norm in (".", "..") or norm.startswith("../") or "/../" in f"/{norm}/":
+        raise Http404("Invalid media path.")
+
+    try:
+        if not default_storage.exists(norm):
+            raise Http404("Media file not found.")
+        with default_storage.open(norm, "rb") as fh:
+            data = fh.read()
+    except Http404:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not serve media '%s': %s: %s", norm, type(exc).__name__, exc)
+        raise Http404("Media file not found.") from exc
+
+    if not data:
+        raise Http404("Media file is empty.")
+
+    content_type, _ = mimetypes.guess_type(norm)
+    response = HttpResponse(data, content_type=content_type or "application/octet-stream")
+    response["Cache-Control"] = "public, max-age=86400"
+    response["Cross-Origin-Resource-Policy"] = "cross-origin"
+    response["Access-Control-Allow-Origin"] = "*"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 def save_upload(callback, *, context=""):

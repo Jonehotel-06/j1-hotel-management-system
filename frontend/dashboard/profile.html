@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.23">
+<link rel="stylesheet" href="../css/main.css?v=1.1.24">
 
 </head>
 <body>
@@ -192,17 +192,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.23"></script>
-<script src="../js/config.js?v=1.1.23"></script>
-<script src="../js/utils.js?v=1.1.23"></script>
-<script src="../js/icons.js?v=1.1.23"></script>
-<script src="../js/api.js?v=1.1.23"></script>
-<script src="../js/theme.js?v=1.1.23"></script>
-<script src="../js/ui.js?v=1.1.23"></script>
-<script src="../js/auth.js?v=1.1.23"></script>
-<script src="../js/hotel-data.js?v=1.1.23"></script>
-<script src="../js/navigation.js?v=1.1.23"></script>
-<script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script>
+<script src="../js/runtime-config.js?v=1.1.24"></script>
+<script src="../js/config.js?v=1.1.24"></script>
+<script src="../js/utils.js?v=1.1.24"></script>
+<script src="../js/icons.js?v=1.1.24"></script>
+<script src="../js/api.js?v=1.1.24"></script>
+<script src="../js/theme.js?v=1.1.24"></script>
+<script src="../js/ui.js?v=1.1.24"></script>
+<script src="../js/auth.js?v=1.1.24"></script>
+<script src="../js/hotel-data.js?v=1.1.24"></script>
+<script src="../js/navigation.js?v=1.1.24"></script>
+<script src="../js/dashboard.js?v=1.1.24"></script><script src="../js/table-fit.js?v=1.1.24"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot(window.Auth ? window.Auth.OPERATIONAL_ROLES : null);
@@ -237,8 +237,22 @@
     $("pf-email").value = me.email || "";
     $("pf-phone").value = me.phone || "";
     if (me.profile_image_url) {
-      $("pf-avatar").src = me.profile_image_url;
+      var avatarEl = $("pf-avatar");
+      avatarEl.onerror = function () {
+        var fb = fallbackApiMediaUrl(avatarEl.getAttribute("src") || me.profile_image_url);
+        if (fb && avatarEl.dataset.retriedApiMedia !== "1") {
+          avatarEl.dataset.retriedApiMedia = "1";
+          me.profile_image_url = fb;
+          avatarEl.src = fb;
+          return;
+        }
+        hide("pf-avatar"); show("pf-avatar-fb");
+      };
+      avatarEl.dataset.retriedApiMedia = "0";
+      avatarEl.src = me.profile_image_url;
       show("pf-avatar"); hide("pf-avatar-fb");
+    } else {
+      hide("pf-avatar"); show("pf-avatar-fb");
     }
     hide("pf-loading"); show("pf-form");
     JONE.icons.inject($("pf-form"));
@@ -262,14 +276,31 @@
      the browser tells us whether the address it published really serves an
      image. Either answer being wrong is the difference between "your photo is
      set" and "your photo is set for nobody", so it is never assumed. */
+  function fallbackApiMediaUrl(url){
+    if(!url) return "";
+    var raw = String(url).split("?")[0];
+    if(raw.indexOf("/api/media/") !== -1) return "";
+    var m = raw.match(/\/media\/(.+)$/) || raw.match(/\/((?:profiles|room-types|rooms|facilities|gallery)\/.+)$/);
+    return m && m[1] ? "/api/media/" + m[1] : "";
+  }
   function probeImage(url){
     return new Promise(function(resolve){
       if(!url){ resolve(false); return; }
       var img = new Image();
       var done = false;
+      var triedFallback = false;
       function finish(ok){ if(done) return; done = true; resolve(ok); }
       img.onload = function(){ finish(true); };
-      img.onerror = function(){ finish(false); };
+      img.onerror = function(){
+        var fb = !triedFallback ? fallbackApiMediaUrl(url) : "";
+        if(fb){
+          triedFallback = true;
+          if(me && me.profile_image_url === url) me.profile_image_url = fb;
+          img.src = fb + (fb.indexOf("?") === -1 ? "?" : "&") + "photo-check=" + Date.now();
+          return;
+        }
+        finish(false);
+      };
       img.src = url + (url.indexOf("?") === -1 ? "?" : "&") + "photo-check=" + Date.now();
       setTimeout(function(){ finish(false); }, 8000);
     });
@@ -715,8 +746,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.23"></script>
-<script src="../js/version.js?v=1.1.23"></script>
-<script src="../js/update-checker.js?v=1.1.23"></script>
+<script src="../js/pwa.js?v=1.1.24"></script>
+<script src="../js/version.js?v=1.1.24"></script>
+<script src="../js/update-checker.js?v=1.1.24"></script>
 </body>
 </html>

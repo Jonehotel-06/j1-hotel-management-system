@@ -1615,13 +1615,41 @@
           close(out === undefined ? true : out);
         } catch (err) {
           JONE.releaseGuard(submit);
-          // Field-level errors from the backend envelope
+          // Field-level errors from the backend envelope (supports nested objects such as guest.*)
           const errs = err && err.data && err.data.errors;
           if (errs && typeof errs === "object") {
+            const flatErrs = {};
             Object.keys(errs).forEach((k) => {
-              const w = form.querySelector('[data-fm-field="' + k + '"]');
-              const msg = Array.isArray(errs[k]) ? errs[k].join(" ") : String(errs[k]);
+              const val = errs[k];
+              if (val && typeof val === "object" && !Array.isArray(val)) {
+                Object.keys(val).forEach((subKey) => {
+                  flatErrs[k + "_" + subKey] = val[subKey];
+                  if (!(subKey in flatErrs)) flatErrs[subKey] = val[subKey];
+                });
+              } else {
+                flatErrs[k] = val;
+              }
+            });
+            const aliasMap = {
+              first_name: "guest_first_name",
+              last_name: "guest_last_name",
+              email: "guest_email",
+              phone: "guest_phone",
+              check_in: "stay_dates",
+              check_out: "stay_dates"
+            };
+            const seenWidgets = new Set();
+            Object.keys(flatErrs).forEach((k) => {
+              let w = form.querySelector('[data-fm-field="' + k + '"]');
+              if (!w && aliasMap[k]) {
+                w = form.querySelector('[data-fm-field="' + aliasMap[k] + '"]');
+              }
+              const rawVal = flatErrs[k];
+              const msg = Array.isArray(rawVal) ? rawVal.join(" ") : String(rawVal || "");
+              if (!msg) return;
               if (w) {
+                if (seenWidgets.has(w)) return;
+                seenWidgets.add(w);
                 w.classList.add("has-error");
                 const fe = w.querySelector(".field-error");
                 if (fe) { fe.textContent = msg; fe.style.display = "block"; }

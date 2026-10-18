@@ -13,7 +13,7 @@
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="favicon/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="favicon/apple-touch-icon.png">
-<link rel="stylesheet" href="css/main.css?v=1.1.23">
+<link rel="stylesheet" href="css/main.css?v=1.1.24">
 <script>(function(){var t;try{t=JSON.parse(localStorage.getItem("jone.theme"))}catch(e){}if(t!=="dark"&&t!=="light"){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"}document.documentElement.setAttribute("data-theme",t);})();</script>
 
 
@@ -175,7 +175,7 @@
 
       <div class="footer-col">
         <h2 class="h5">Contact</h2>
-        <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566, Mgbowo Street, off NOWAS, near Mater Dei Catholic Church, Trans-Ekulu, Enugu State, Nigeria.</span></span>
+        <span class="footer-line"><span data-icon="mapPin" data-size="16"></span><span data-contact-address>Plot 566 Mgbowo Street, off Ezike Street, Enugu State.</span></span>
         <a class="footer-line" data-contact-whatsapp href="#"><span data-icon="phone" data-size="16"></span><span data-contact-phone>+234 803 211 2874</span></a>
         <a class="footer-line" href="mailto:jonathanonu76@gmail.com"><span data-icon="mail" data-size="16"></span><span data-contact-email>jonathanonu76@gmail.com</span></a>
         <a class="footer-line" data-google-maps href="https://www.google.com/maps" target="_blank" rel="noopener"><span data-icon="mapPin" data-size="16"></span>View on Google Maps</a>
@@ -218,21 +218,21 @@
   </div>
 </div>
 
-<script src="js/runtime-config.js?v=1.1.23"></script>
-<script src="js/config.js?v=1.1.23"></script>
-<script src="js/utils.js?v=1.1.23"></script>
-<script src="js/icons.js?v=1.1.23"></script>
-<script src="js/api.js?v=1.1.23"></script>
-<script src="js/theme.js?v=1.1.23"></script>
-<script src="js/ui.js?v=1.1.23"></script>
-<script src="js/auth.js?v=1.1.23"></script>
-<script src="js/hotel-data.js?v=1.1.23"></script>
-<script src="js/receipt.js?v=1.1.23"></script>
-<script src="js/contact.js?v=1.1.23"></script>
-<script src="js/navigation.js?v=1.1.23"></script>
+<script src="js/runtime-config.js?v=1.1.24"></script>
+<script src="js/config.js?v=1.1.24"></script>
+<script src="js/utils.js?v=1.1.24"></script>
+<script src="js/icons.js?v=1.1.24"></script>
+<script src="js/api.js?v=1.1.24"></script>
+<script src="js/theme.js?v=1.1.24"></script>
+<script src="js/ui.js?v=1.1.24"></script>
+<script src="js/auth.js?v=1.1.24"></script>
+<script src="js/hotel-data.js?v=1.1.24"></script>
+<script src="js/receipt.js?v=1.1.24"></script>
+<script src="js/contact.js?v=1.1.24"></script>
+<script src="js/navigation.js?v=1.1.24"></script>
 <script>JONE.ui.initChrome(); JONE.nav.init();</script>
-<script src="js/site.js?v=1.1.23"></script>
-<script src="js/booking-stepper.js?v=1.1.23"></script>
+<script src="js/site.js?v=1.1.24"></script>
+<script src="js/booking-stepper.js?v=1.1.24"></script>
 <script>
 (function () {
   "use strict";
@@ -293,18 +293,22 @@
   }
   var savedConfirmed = null;
   try { savedConfirmed = JONE.storage.get(S + ".confirmed", null); } catch (_) {}
+  var savedConfirmedMatchesRef = !!(
+    savedConfirmed && (!bookingRef || savedConfirmed.booking_reference === bookingRef)
+  );
   /* Signed value from an emailed link (?access=…). Exchanged for a real guest
      token during init, then dropped from the address bar so it is not copied,
      bookmarked or leaked through a shared screen. */
   var accessLink = p.get("access") || "";
-  var guestToken = (bookingRef && (sessionStorage.getItem(bookingTokenKey(bookingRef)) || localStorage.getItem(bookingTokenKey(bookingRef))))
-    || sessionStorage.getItem("jone.guest_access_token")
-    || localStorage.getItem("jone.guest_access_token")
-    || (savedConfirmed && savedConfirmed.guest_access_token)
-    || readCookie("jone_guest_access_token")
-    || p.get("token")
+  var fallbackAccessLink = accessLink || (savedConfirmedMatchesRef && savedConfirmed.access_link_token) || "";
+  var urlToken = p.get("token") || "";
+  var initialScopedToken = (bookingRef && (sessionStorage.getItem(bookingTokenKey(bookingRef)) || localStorage.getItem(bookingTokenKey(bookingRef)))) || "";
+  var guestToken = urlToken
+    || initialScopedToken
+    || (savedConfirmedMatchesRef && savedConfirmed.guest_access_token)
+    || (!bookingRef ? (sessionStorage.getItem("jone.guest_access_token") || localStorage.getItem("jone.guest_access_token") || readCookie("jone_guest_access_token")) : "")
     || "";
-  if (guestToken) {
+  if (urlToken || (savedConfirmedMatchesRef && savedConfirmed && savedConfirmed.guest_access_token && !initialScopedToken)) {
     saveGuestToken(guestToken, bookingRef, "");
   }
   /* Resolve the credential at CALL time, not page-load time: a token may have
@@ -314,14 +318,19 @@
      server then answers 404 because it cannot tell who is asking. */
   function currentGuestToken() {
     if (guestToken) return guestToken;
-    try { guestToken = (bookingRef && (sessionStorage.getItem(bookingTokenKey(bookingRef)) || localStorage.getItem(bookingTokenKey(bookingRef)))) || ""; } catch (_) {}
-    if (!guestToken) { try { guestToken = sessionStorage.getItem("jone.guest_access_token") || ""; } catch (_) {} }
-    if (!guestToken) { try { guestToken = localStorage.getItem("jone.guest_access_token") || ""; } catch (_) {} }
-    if (!guestToken) guestToken = readCookie("jone_guest_access_token") || "";
+    var activeRef = bookingRef || (booking && booking.booking_reference) || "";
+    try { guestToken = (activeRef && (sessionStorage.getItem(bookingTokenKey(activeRef)) || localStorage.getItem(bookingTokenKey(activeRef)))) || ""; } catch (_) {}
     if (!guestToken) {
       var saved = null;
       try { saved = JONE.storage.get(S + ".confirmed", null); } catch (_) {}
-      guestToken = (saved && saved.guest_access_token) || "";
+      if (saved && (!activeRef || saved.booking_reference === activeRef)) {
+        guestToken = saved.guest_access_token || "";
+      }
+    }
+    if (!guestToken && (!activeRef || !savedConfirmed || !savedConfirmed.booking_reference || savedConfirmed.booking_reference === activeRef)) {
+      try { guestToken = sessionStorage.getItem("jone.guest_access_token") || ""; } catch (_) {}
+      if (!guestToken) { try { guestToken = localStorage.getItem("jone.guest_access_token") || ""; } catch (_) {} }
+      if (!guestToken) guestToken = readCookie("jone_guest_access_token") || "";
     }
     return guestToken;
   }
@@ -594,22 +603,44 @@
   }
 
   /* Rebuild this browser's guest credential from the key it used to create the
-     booking. Returns true only when a new token was stored. */
+     booking (or any signed access link it holds). Returns true only when a new
+     token was stored. */
   async function reclaimBookingCredential() {
     var ref = bookingRef || (booking && booking.booking_reference) || "";
-    var key = ref ? bookingIdemKeyFor(ref) : "";
-    if (!ref || !key) return false;
-    try {
-      var restored = await window.API.reclaimBookingAccess(ref, key);
-      var token = (restored && restored.data && restored.data.guest_access_token) || "";
-      if (!token) return false;
-      guestToken = token;
-      if (booking) booking.guest_access_token = token;
-      saveGuestToken(token, ref, "");
-      return true;
-    } catch (_) {
-      return false;
+    if (!ref) return false;
+    var key = bookingIdemKeyFor(ref);
+    if (!key && savedConfirmed && savedConfirmed.booking_reference === ref) {
+      key = savedConfirmed.idempotency_key || "";
     }
+    if (key) {
+      try {
+        var restored = await window.API.reclaimBookingAccess(ref, key);
+        var token = (restored && restored.data && restored.data.guest_access_token) || "";
+        if (token) {
+          guestToken = token;
+          if (booking) booking.guest_access_token = token;
+          saveGuestToken(token, ref, "");
+          return true;
+        }
+      } catch (_) {}
+    }
+    var linkToken = fallbackAccessLink
+      || (booking && booking.access_link_token)
+      || (savedConfirmed && savedConfirmed.booking_reference === ref && savedConfirmed.access_link_token)
+      || "";
+    if (linkToken && window.API && window.API.exchangeBookingAccess) {
+      try {
+        var exchanged = await window.API.exchangeBookingAccess(ref, linkToken);
+        var exToken = (exchanged && exchanged.data && exchanged.data.guest_access_token) || "";
+        if (exToken) {
+          guestToken = exToken;
+          if (booking) booking.guest_access_token = exToken;
+          saveGuestToken(exToken, ref, "");
+          return true;
+        }
+      } catch (_) {}
+    }
+    return false;
   }
 
   async function redirectToPayment() {
@@ -618,6 +649,9 @@
        exactly how "payment fails" looked in the server log. Say it plainly and
        offer the emailed link instead of sending a request that cannot succeed.
        (A signed-in guest is fine: the backend accepts the account owner.) */
+    if (!currentGuestToken()) {
+      await reclaimBookingCredential();
+    }
     if (!currentGuestToken() && !signedIn()) {
       // Before giving up: this browser may have CREATED the booking and simply
       // lost its token (cleared storage, a reloaded tab, a rotated token).
@@ -634,13 +668,16 @@
     // Initialize via the backend; we never build provider URLs ourselves.
     var payRes;
     try {
-      payRes = await window.API.initPayment(booking.booking_reference, guestOpts());
+      var initOpts = (!currentGuestToken() && signedIn()) ? { auth: true } : guestOpts();
+      payRes = await window.API.initPayment(booking.booking_reference, initOpts);
     } catch (initErr) {
       /* The token may have been rotated by a replay or an exchange from another
          tab. Reclaim once and retry — a credential we can rebuild should never
          be reported to the guest as an unusable booking. */
       if ((initErr && (initErr.status === 401 || initErr.status === 404)) && await reclaimBookingCredential()) {
         payRes = await window.API.initPayment(booking.booking_reference, guestOpts());
+      } else if ((initErr && (initErr.status === 401 || initErr.status === 404)) && signedIn()) {
+        payRes = await window.API.initPayment(booking.booking_reference, { auth: true });
       } else {
         throw initErr;
       }
@@ -755,12 +792,17 @@
         }
         booking = res.data || {};
         createdThisAttempt = true;
+        var usedIdemKey = bookingIdemKey(payload);
         rememberBookingIdemKey(booking.booking_reference);
+        if (usedIdemKey && booking.booking_reference) {
+          booking.idempotency_key = usedIdemKey;
+        }
         clearBookingIdemKey();  // creation confirmed — a future booking gets a fresh key
         if (booking.guest_access_token) {
           guestToken = booking.guest_access_token;
           saveGuestToken(guestToken, booking.booking_reference, "");
         }
+        try { JONE.storage.set(S + ".confirmed", booking); } catch (_) {}
         bookingRef = booking.booking_reference || bookingRef;
         fillPaymentSummary();
         showSubstitutionNotice(booking);
@@ -923,14 +965,39 @@
         clean.delete("access");
         history.replaceState({}, "", location.pathname + (clean.toString() ? "?" + clean.toString() : ""));
       } catch (_) {}
+    } else if (accessLink) {
+      accessLink = "";
+      try {
+        var cleanUrl = new URLSearchParams(location.search);
+        cleanUrl.delete("access");
+        history.replaceState({}, "", location.pathname + (cleanUrl.toString() ? "?" + cleanUrl.toString() : ""));
+      } catch (_) {}
     }
     if (bookingRef) {
       // Viewing an existing booking — entirely backend-authoritative.
       // Guest checkout: no login wall here; guests returning from the
       // payment provider must land straight on their booking.
       try {
-        var res = await window.API.getBooking(bookingRef, guestOpts());
+        if (!currentGuestToken()) {
+          await reclaimBookingCredential();
+        }
+        var res;
+        try {
+          var fetchOpts = (!currentGuestToken() && signedIn()) ? { auth: true } : guestOpts();
+          res = await window.API.getBooking(bookingRef, fetchOpts);
+        } catch (getErr) {
+          if ((getErr && (getErr.status === 401 || getErr.status === 404)) && await reclaimBookingCredential()) {
+            res = await window.API.getBooking(bookingRef, guestOpts());
+          } else if ((getErr && (getErr.status === 401 || getErr.status === 404)) && signedIn()) {
+            res = await window.API.getBooking(bookingRef, { auth: true });
+          } else {
+            throw getErr;
+          }
+        }
         booking = res.data || {};
+        if (guestToken && booking && !booking.guest_access_token) {
+          booking.guest_access_token = guestToken;
+        }
         fillPaymentSummary();
         // Returning from the payment provider with a balance still outstanding
         // lands on the payment screen — the guest must still be told that the
@@ -1008,8 +1075,8 @@
   }
 })();
 </script>
-<script src="js/pwa.js?v=1.1.23"></script>
-<script src="js/version.js?v=1.1.23"></script>
-<script src="js/update-checker.js?v=1.1.23"></script>
+<script src="js/pwa.js?v=1.1.24"></script>
+<script src="js/version.js?v=1.1.24"></script>
+<script src="js/update-checker.js?v=1.1.24"></script>
 </body>
 </html>

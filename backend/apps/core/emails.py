@@ -93,19 +93,26 @@ def send_email_safe(
     # One EmailLog row per recipient so status is meaningful per mailbox.
     log = None
     for addr in recipients:
-        row = EmailLog.objects.create(
-            to_email=addr,
-            subject=subject,
-            body=message or "",
-            html_body=html_message or "",
-            kind=kind if kind in EmailLog.Kind.values else EmailLog.Kind.GENERIC,
-            booking_reference=booking_reference or "",
-            payment_reference=payment_reference or "",
-            booking_id=booking_id,
-            attach_receipt_pdf=bool(attach_receipt_pdf),
-            created_by=created_by if getattr(created_by, "pk", None) else None,
-            status=EmailLog.Status.PENDING,
-        )
+        try:
+            row = EmailLog.objects.create(
+                to_email=addr,
+                subject=subject,
+                body=message or "",
+                html_body=html_message or "",
+                kind=kind if kind in EmailLog.Kind.values else EmailLog.Kind.GENERIC,
+                booking_reference=booking_reference or "",
+                payment_reference=payment_reference or "",
+                booking_id=booking_id,
+                attach_receipt_pdf=bool(attach_receipt_pdf),
+                created_by=created_by if getattr(created_by, "pk", None) else None,
+                status=EmailLog.Status.PENDING,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "Could not create EmailLog for %s (%s)",
+                addr, exc.__class__.__name__,
+            )
+            continue
         _deliver(row)
         log = log or row
     return log
@@ -127,12 +134,15 @@ def _deliver(log):
             "Unexpected error delivering EmailLog#%s (%s)",
             log.pk, exc.__class__.__name__,
         )
-    log.refresh_from_db(
-        fields=[
-            "status", "sent_at", "failed_at", "error_class",
-            "error_message", "failure_stage", "provider_message_id",
-        ]
-    )
+    try:
+        log.refresh_from_db(
+            fields=[
+                "status", "sent_at", "failed_at", "error_class",
+                "error_message", "failure_stage", "provider_message_id",
+            ]
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not refresh EmailLog#%s after delivery", log.pk)
 
 
 def queue_email(subject, message, recipients, **kwargs):
@@ -150,6 +160,9 @@ def queue_email(subject, message, recipients, **kwargs):
     """
 
     def _after_commit(subject=subject, message=message, recipients=recipients, kwargs=kwargs):
-        send_email_safe(subject, message, recipients, **kwargs)
+        try:
+            send_email_safe(subject, message, recipients, **kwargs)
+        except Exception:  # noqa: BLE001
+            logger.exception("Unexpected error in on_commit email send (%s)", subject)
 
     transaction.on_commit(_after_commit)

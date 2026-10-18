@@ -92,6 +92,26 @@ const API = (() => {
     }
   }
 
+  function firstErrorString(node) {
+    if (!node) return "";
+    if (typeof node === "string") return node.trim();
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) {
+        const found = firstErrorString(node[i]);
+        if (found) return found;
+      }
+      return "";
+    }
+    if (typeof node === "object") {
+      const vals = Object.values(node);
+      for (let i = 0; i < vals.length; i++) {
+        const found = firstErrorString(vals[i]);
+        if (found) return found;
+      }
+    }
+    return "";
+  }
+
   // Map HTTP status codes to human-friendly, non-technical messages.
   // Backend-provided messages (envelope `message`) win when they are
   // user-safe; technical/token messages are replaced.
@@ -108,8 +128,8 @@ const API = (() => {
     const errs = data && data.errors;
     const genericEnvelopeMessage = !dmsg || GENERIC_ENVELOPE_MESSAGE.test(String(dmsg).trim());
     if (errs && typeof errs === "object" && genericEnvelopeMessage) {
-      const first = Object.values(errs).flat()[0];
-      if (first && typeof first === "string" && !TOKEN_RE.test(first)) return first;
+      const first = firstErrorString(errs);
+      if (first && !TOKEN_RE.test(first)) return first;
     }
     if (dmsg && typeof dmsg === "string" && !TOKEN_RE.test(dmsg)) return dmsg;
     switch (status) {
@@ -117,8 +137,8 @@ const API = (() => {
         // Field-level errors from the contract: { errors: { field: [msgs] } }
         const errs = data && data.errors;
         if (errs && typeof errs === "object") {
-          const first = Object.values(errs).flat()[0];
-          if (first && typeof first === "string") return first;
+          const first = firstErrorString(errs);
+          if (first) return first;
         }
         return "We couldn't process that request. Please check your details and try again.";
       }

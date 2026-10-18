@@ -24,7 +24,7 @@ from apps.hotel.models import HotelSettings
 from django.core.cache import cache
 
 from .access import can_access_booking
-from .access_links import read_access_link_token
+from .access_links import issue_access_link_token, read_access_link_token
 from .models import Booking
 from .serializers import (
     AvailabilityQuerySerializer,
@@ -203,6 +203,10 @@ class MyBookingsView(generics.ListCreateAPIView):
         payload["guest_access_expires_at"] = (
             booking.guest_access_expires_at.isoformat() if booking.guest_access_expires_at else None
         )
+        try:
+            payload["access_link_token"] = issue_access_link_token(booking)
+        except Exception:  # pragma: no cover
+            payload["access_link_token"] = None
         substitution = getattr(booking, "room_substitution", None)
         if substitution:
             # Never switch rooms silently — the guest is told on the

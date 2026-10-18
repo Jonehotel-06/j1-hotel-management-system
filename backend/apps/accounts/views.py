@@ -375,19 +375,44 @@ class ProfileView(generics.RetrieveUpdateAPIView):
 
     def update(self, request, *args, **kwargs):
         partial = request.method == "PATCH"
-        serializer = self.get_serializer(self.get_object(), data=request.data, partial=partial)
+        target = self.get_object()
+        previous_image_name = getattr(target.profile_image, "name", "") or ""
+        serializer = self.get_serializer(target, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
+        has_new_photo = (
+            "profile_image" in getattr(serializer, "validated_data", {})
+            and serializer.validated_data.get("profile_image") is not None
+        )
         # The storage write happens inside save(); a backend that refuses the
         # file must become a message the staff member can act on instead of a
         # generic failure, and never a silent success.
         from apps.core.storage import StorageUploadError, save_upload, verify_stored_upload
 
-        user = save_upload(serializer.save, context="profile photo")
-        payload = UserSerializer(user, context={"request": request}).data
+        try:
+            user = save_upload(serializer.save, context="profile photo")
+        except StorageUploadError:
+            if previous_image_name and (getattr(target.profile_image, "name", "") or "") != previous_image_name:
+                target.profile_image = previous_image_name
+                target.save(update_fields=["profile_image", "updated_at"])
+            raise
+
+        stored, warning = True, ""
         if "profile_image" in getattr(serializer, "validated_data", {}):
             # 200 must MEAN the photo is stored: say so, or say exactly what is
             # wrong so the uploader can show it.
-            stored, warning = verify_stored_upload(user.profile_image)
+            try:
+                stored, warning = verify_stored_upload(user.profile_image)
+            except StorageUploadError:
+                if has_new_photo and previous_image_name:
+                    user.profile_image = previous_image_name
+                    user.save(update_fields=["profile_image", "updated_at"])
+                raise
+            if has_new_photo and not stored and previous_image_name:
+                user.profile_image = previous_image_name
+                user.save(update_fields=["profile_image", "updated_at"])
+
+        payload = UserSerializer(user, context={"request": request}).data
+        if "profile_image" in getattr(serializer, "validated_data", {}):
             payload["profile_image_stored"] = stored
             payload["profile_image_warning"] = warning
         return success_response(payload, message="Profile updated.")

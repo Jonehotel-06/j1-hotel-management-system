@@ -200,25 +200,55 @@ def upsert_guest(*, user=None, guest_data=None) -> Guest:
     matches an existing standalone record by email.
     """
     data = guest_data or {}
+    email_lookup = str(data.get("email") or "").strip()
     if user is not None:
         guest = getattr(user, "guest_profile", None)
     else:
         guest = Guest.objects.filter(
-            email__iexact=data.get("email", "").strip(), user__isnull=True
-        ).first() if data.get("email") else None
+            email__iexact=email_lookup, user__isnull=True
+        ).first() if email_lookup else None
+
+    def _clean_str(val):
+        return str(val).strip() if val is not None else ""
+
+    raw_phone = _clean_str(data.get("phone") or (user.phone if user else ""))
+    if len(raw_phone) > 20:
+        compact_phone = "".join(ch for ch in raw_phone if not ch.isspace())
+        if len(compact_phone) <= 20:
+            raw_phone = compact_phone
+        else:
+            from django.core.exceptions import ValidationError as DjangoValidationError
+
+            raise DjangoValidationError({"phone": ["Phone number must be 20 characters or fewer."]})
+
+    first_name = _clean_str(data.get("first_name") or (user.first_name if user else ""))
+    last_name = _clean_str(data.get("last_name") or (user.last_name if user else ""))
+    email_val = _clean_str(data.get("email") or (user.email if user else "")).lower()
+
+    field_errors = {}
+    if len(first_name) > 100:
+        field_errors["first_name"] = ["First name must be 100 characters or fewer."]
+    if len(last_name) > 100:
+        field_errors["last_name"] = ["Last name must be 100 characters or fewer."]
+    if len(email_val) > 254:
+        field_errors["email"] = ["Email address must be 254 characters or fewer."]
+    if field_errors:
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        raise DjangoValidationError(field_errors)
 
     values = {
-        "first_name": data.get("first_name") or (user.first_name if user else ""),
-        "last_name": data.get("last_name") or (user.last_name if user else ""),
-        "email": data.get("email") or (user.email if user else ""),
-        "phone": data.get("phone") or (user.phone if user else ""),
-        "address": data.get("address", ""),
-        "city": data.get("city", ""),
-        "state": data.get("state", ""),
-        "country": data.get("country") or "Nigeria",
-        "identification_type": data.get("identification_type", ""),
-        "identification_number": data.get("identification_number", ""),
-        "special_requests": data.get("special_requests", ""),
+        "first_name": first_name,
+        "last_name": last_name,
+        "email": email_val,
+        "phone": raw_phone,
+        "address": _clean_str(data.get("address", ""))[:255],
+        "city": _clean_str(data.get("city", ""))[:100],
+        "state": _clean_str(data.get("state", ""))[:100],
+        "country": (_clean_str(data.get("country")) or "Nigeria")[:100],
+        "identification_type": _clean_str(data.get("identification_type", ""))[:30],
+        "identification_number": _clean_str(data.get("identification_number", ""))[:64],
+        "special_requests": _clean_str(data.get("special_requests", "")),
     }
     if guest is None:
         guest = Guest(user=user)
@@ -246,9 +276,10 @@ def upsert_guest(*, user=None, guest_data=None) -> Guest:
 # ---------------------------------------------------------------------------
 @transaction.atomic
 def create_booking(*, room_type_value, check_in, check_out, rooms, adults, children,
-                   offer_code=None, special_requests="", user=None, guest_data=None,
-                   source=Booking.Source.WEBSITE, require_payment=True, actor=None,
-                   request=None, room_id=None, idempotency_key=None, room_guests=None) -> Booking:
+                   offer_code=None, special_requests="", internal_notes="", user=None,
+                   guest_data=None, source=Booking.Source.WEBSITE, require_payment=True,
+                   actor=None, request=None, room_id=None, idempotency_key=None,
+                   room_guests=None) -> Booking:
     """Create a reservation.
 
     ``room_id`` requests one EXACT physical room ("Book this room — Room 203").
@@ -393,6 +424,7 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
         status=Booking.Status.PENDING if pending else Booking.Status.CONFIRMED,
         source=source,
         special_requests=special_requests or "",
+        internal_notes=internal_notes or "",
         expires_at=(
             timezone.now() + timedelta(minutes=settings_obj.pending_booking_minutes)
             if pending
@@ -549,52 +581,64 @@ def _send_confirmation_email(booking, hotel=None):
     from apps.bookings.services.receipt_email import render_receipt_email
     from apps.notifications.models import EmailLog
 
-    receipt = ReceiptSerializer().to_representation(booking)
-    payment_reference = receipt.get("receipt_reference") or booking.booking_reference
-    # Interrupted synchronous sends (deploy/timeout mid-request) leave rows in
-    # PENDING/SENDING with no worker to ever resolve them. Resolve stale rows
-    # to FAILED first, otherwise one interrupted attempt would silently block
-    # this guest's automatic receipt forever.
-    EmailLog.resolve_stale(
-        EmailLog.objects.filter(booking_reference=booking.booking_reference)
-    )
-    if EmailLog.objects.filter(
-        kind=EmailLog.Kind.RECEIPT,
-        booking_reference=booking.booking_reference,
-        payment_reference=payment_reference,
-        created_by__isnull=True,
-        status__in=[EmailLog.Status.PENDING, EmailLog.Status.SENDING,
-                    EmailLog.Status.SENT],
-    ).exists():
+    try:
+        receipt = ReceiptSerializer().to_representation(booking)
+        payment_reference = receipt.get("receipt_reference") or booking.booking_reference
+        # Interrupted synchronous sends (deploy/timeout mid-request) leave rows in
+        # PENDING/SENDING with no worker to ever resolve them. Resolve stale rows
+        # to FAILED first, otherwise one interrupted attempt would silently block
+        # this guest's automatic receipt forever.
+        EmailLog.resolve_stale(
+            EmailLog.objects.filter(booking_reference=booking.booking_reference)
+        )
+        if EmailLog.objects.filter(
+            kind=EmailLog.Kind.RECEIPT,
+            booking_reference=booking.booking_reference,
+            payment_reference=payment_reference,
+            created_by__isnull=True,
+            status__in=[EmailLog.Status.PENDING, EmailLog.Status.SENDING,
+                        EmailLog.Status.SENT],
+        ).exists():
+            return
+    except Exception:
+        logger.exception("Automatic receipt preparation failed for %s", booking.booking_reference)
         return
+
     try:
         subject, text_body, html_body = render_receipt_email(receipt)
     except Exception as exc:  # payment remains successful; failure stays observable
         logger.exception("Automatic receipt render failed for %s", booking.booking_reference)
-        EmailLog.objects.create(
-            to_email=booking.guest.email,
-            subject=f"Payment Receipt — {booking.booking_reference}",
+        try:
+            EmailLog.objects.create(
+                to_email=booking.guest.email,
+                subject=f"Payment Receipt — {booking.booking_reference}",
+                kind=EmailLog.Kind.RECEIPT,
+                booking_reference=booking.booking_reference,
+                payment_reference=payment_reference,
+                booking_id=booking.id,
+                attach_receipt_pdf=True,
+                status=EmailLog.Status.FAILED,
+                failure_stage=EmailLog.FailureStage.RENDER,
+                error_class=exc.__class__.__name__,
+                error_message="The automatic receipt could not be generated. No email was sent.",
+                failed_at=timezone.now(),
+            )
+        except Exception:
+            logger.exception("Could not record EmailLog failure for %s", booking.booking_reference)
+        return
+
+    try:
+        queue_email(
+            subject, text_body, [booking.guest.email],
+            html_message=html_body,
             kind=EmailLog.Kind.RECEIPT,
             booking_reference=booking.booking_reference,
             payment_reference=payment_reference,
             booking_id=booking.id,
             attach_receipt_pdf=True,
-            status=EmailLog.Status.FAILED,
-            failure_stage=EmailLog.FailureStage.RENDER,
-            error_class=exc.__class__.__name__,
-            error_message="The automatic receipt could not be generated. No email was sent.",
-            failed_at=timezone.now(),
         )
-        return
-    queue_email(
-        subject, text_body, [booking.guest.email],
-        html_message=html_body,
-        kind=EmailLog.Kind.RECEIPT,
-        booking_reference=booking.booking_reference,
-        payment_reference=payment_reference,
-        booking_id=booking.id,
-        attach_receipt_pdf=True,
-    )
+    except Exception:
+        logger.exception("Could not queue receipt email for %s", booking.booking_reference)
 
 
 # ---------------------------------------------------------------------------

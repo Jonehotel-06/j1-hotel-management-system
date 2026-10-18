@@ -185,12 +185,67 @@ class AdminBookingCreateSerializer(serializers.Serializer):
     # of the same type may be assigned instead (reported as room_substitution).
     room_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
 
+    def validate_room_type(self, value):
+        from .services.booking_service import resolve_room_type
+
+        if resolve_room_type(value, active_only=False) is None:
+            raise serializers.ValidationError("Unknown room type.")
+        return value
+
     def validate_room_id(self, value):
         if not value:
             return None
         if not Room.objects.filter(pk=value, is_active=True).exists():
             raise serializers.ValidationError("That room does not exist or is out of service.")
         return value
+
+    def validate_guest(self, value):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from django.core.validators import validate_email
+
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Guest details must be an object.")
+        cleaned = {
+            k: (str(v).strip() if v is not None else "")
+            for k, v in value.items()
+        }
+        required = ["first_name", "last_name", "email", "phone"]
+        errors = {
+            key: ["This field is required."]
+            for key in required
+            if not cleaned.get(key)
+        }
+
+        if cleaned.get("first_name") and len(cleaned["first_name"]) > 100:
+            errors["first_name"] = ["First name must be 100 characters or fewer."]
+        if cleaned.get("last_name") and len(cleaned["last_name"]) > 100:
+            errors["last_name"] = ["Last name must be 100 characters or fewer."]
+
+        if cleaned.get("email"):
+            try:
+                validate_email(cleaned["email"])
+            except DjangoValidationError:
+                errors["email"] = ["Enter a valid email address."]
+            else:
+                if len(cleaned["email"]) > 254:
+                    errors["email"] = ["Email address must be 254 characters or fewer."]
+                else:
+                    cleaned["email"] = cleaned["email"].lower()
+
+        if cleaned.get("phone"):
+            raw_phone = cleaned["phone"]
+            compact_phone = "".join(ch for ch in raw_phone if not ch.isspace())
+            digits_only = "".join(ch for ch in compact_phone if ch.isdigit())
+            if len(digits_only) < 7:
+                errors["phone"] = ["Enter a valid phone number (at least 7 digits)."]
+            elif len(compact_phone) > 20:
+                errors["phone"] = ["Phone number must be 20 characters or fewer."]
+            else:
+                cleaned["phone"] = compact_phone if (" " in raw_phone or len(raw_phone) > 20) else raw_phone
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return cleaned
 
     def validate(self, attrs):
         room_id = attrs.get("room_id")
@@ -204,16 +259,7 @@ class AdminBookingCreateSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     {"room_id": ["That room does not belong to the selected room type."]}
                 )
-        return attrs
 
-    def validate_guest(self, value):
-        required = ["first_name", "last_name", "email", "phone"]
-        missing = [key for key in required if not (value.get(key) or "").strip()]
-        if missing:
-            raise serializers.ValidationError({key: "This field is required." for key in missing})
-        return value
-
-    def validate(self, attrs):
         room_guests = attrs.get("room_guests") or []
         if not room_guests:
             return attrs

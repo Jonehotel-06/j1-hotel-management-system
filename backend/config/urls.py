@@ -34,12 +34,13 @@ as /api/v2/ alongside this one (see docs/FRONTEND_CONTRACT.md).
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 
 from apps.bookings import urls as booking_urls
 from apps.bookings import urls_admin as booking_admin_urls
 from apps.core import views as core_views
+from apps.core.storage import serve_media_file
 from apps.enquiries import urls as enquiry_urls
 from apps.finance import urls as finance_urls
 from apps.guest_services import urls as guest_services_urls
@@ -124,11 +125,13 @@ api_patterns = [
     path("admin/users/", include("apps.accounts.urls_admin", namespace="admin-users")),
     path("admin/audit-logs/", include("apps.audit.urls_admin", namespace="admin-audit")),
     path("admin/reviews/", include("apps.reviews.urls_admin", namespace="admin-reviews")),
+    re_path(r"^media/(?P<path>.*)$", serve_media_file, name="api-media-serve"),
 ]
 
 urlpatterns = [
     path("django-admin/", admin.site.urls),
     path("api/", include(api_patterns)),
+    re_path(r"^media/(?P<path>.*)$", serve_media_file, name="media-serve"),
 ]
 
 if settings.DEBUG:

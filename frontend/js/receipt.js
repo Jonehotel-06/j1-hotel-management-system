@@ -19,7 +19,7 @@
     name: "J-ONE HOTEL & LODGE",
     phone: "+234 803 211 2874",
     email: "jonathanonu76@gmail.com",
-    address: "Plot 566, Mgbowo Street, off NOWAS, near Mater Dei Catholic Church, Trans-Ekulu, Enugu State, Nigeria."
+    address: "Plot 566 Mgbowo Street, off Ezike Street, Enugu State."
   };
 
   /* Exact-colour export CSS. It intentionally does not depend on CSS custom

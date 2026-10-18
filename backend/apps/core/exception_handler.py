@@ -12,6 +12,7 @@ import logging
 
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import DataError, IntegrityError
 from django.http import Http404
 from rest_framework import exceptions as drf_exceptions
 from rest_framework import status
@@ -85,6 +86,15 @@ def jone_exception_handler(exc, context):
         # already logged by apps.core.storage; the client gets an honest, safe
         # failure instead of a false "saved" response.
         return _envelope("STORAGE_UPLOAD_FAILED", str(exc), None, status.HTTP_502_BAD_GATEWAY)
+    elif isinstance(exc, DataError):
+        view = (context or {}).get("view")
+        logger.warning("Database DataError in %s: %s", view, exc)
+        return _envelope(
+            "VALIDATION_ERROR",
+            "One or more fields exceed the maximum allowed length or format.",
+            None,
+            status.HTTP_400_BAD_REQUEST,
+        )
 
     response = drf_exception_handler(exc, context)
 

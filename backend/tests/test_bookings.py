@@ -10,7 +10,7 @@ from apps.bookings.models import Booking, Guest
 from apps.core.utils import hotel_today
 
 from .base import BaseAPITestCase
-from .factories import make_room, make_room_type, make_user, make_staff
+from .factories import hotel_settings, make_room, make_room_type, make_user, make_staff
 
 
 class BookingFlowTests(BaseAPITestCase):
@@ -180,3 +180,113 @@ class BookingFlowTests(BaseAPITestCase):
             "check_out": (self.today + timedelta(days=7)).isoformat(),
         }, format="json")
         self.assertEqual(response.status_code, 400)
+
+
+class WalkInBookingLifecycleTests(BaseAPITestCase):
+    """End-to-end tests for staff walk-in/phone booking creation (POST /api/admin/bookings/)."""
+
+    def setUp(self):
+        super().setUp()
+        hotel_settings(tax_rate="0.00", service_fee="0.00", pending_booking_minutes=30)
+        self.room_type = make_room_type("WalkIn Standard", price="15000.00", max_guests=2)
+        self.room1 = make_room(self.room_type, "301")
+        self.room2 = make_room(self.room_type, "302")
+        self.other_type = make_room_type("WalkIn Suite", price="35000.00", max_guests=2)
+        self.other_room = make_room(self.other_type, "401")
+        self.staff = make_staff("reception-walkin@jone.dev")
+        self.auth(self.staff)
+        self.today = hotel_today()
+
+    def _walk_in_payload(self, **overrides):
+        base = {
+            "room_type": self.room_type.slug,
+            "check_in": (self.today + timedelta(days=3)).isoformat(),
+            "check_out": (self.today + timedelta(days=5)).isoformat(),
+            "rooms": 1,
+            "adults": 2,
+            "children": 0,
+            "source": "WALK_IN",
+            "status": "CONFIRMED",
+            "special_requests": "Quiet floor near elevator",
+            "internal_notes": "VIP walk-in guest — verified ID at front desk",
+            "guest": {
+                "first_name": "Ngozi",
+                "last_name": "Eze",
+                "email": "ngozi.walkin@example.test",
+                "phone": "+234 (0) 803 123 4567",
+            },
+        }
+        base.update(overrides)
+        return base
+
+    def test_walk_in_booking_creates_guest_room_assignment_and_keeps_internal_notes_staff_only(self):
+        response = self.client.post("/api/admin/bookings/", self._walk_in_payload(), format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        data = response.json()["data"]
+        ref = data["booking_reference"]
+        self.assertTrue(ref.startswith("J1-"))
+        self.assertEqual(data["source"], "WALK_IN")
+        self.assertEqual(data["status"], "CONFIRMED")
+        self.assertEqual(data["special_requests"], "Quiet floor near elevator")
+        self.assertEqual(data["internal_notes"], "VIP walk-in guest — verified ID at front desk")
+        self.assertEqual(len(data["room_assignments"]), 1)
+        self.assertEqual(data["guest"]["phone"], "+234(0)8031234567")
+
+        booking = Booking.objects.get(booking_reference=ref)
+        self.assertEqual(booking.internal_notes, "VIP walk-in guest — verified ID at front desk")
+        token = booking.issue_guest_access_token()
+
+        # Public/guest endpoints must NEVER expose internal_notes
+        self.client.credentials()
+        public_detail = self.client.get(
+            f"/api/bookings/{ref}/",
+            HTTP_X_GUEST_ACCESS_TOKEN=token,
+        )
+        self.assertEqual(public_detail.status_code, 200, public_detail.content)
+        self.assertNotIn("internal_notes", public_detail.json()["data"])
+
+    def test_walk_in_booking_validation_errors_return_400_field_errors_never_500(self):
+        # Overlong phone (>20 non-space characters) returns 400 on guest.phone, never 500 DataError
+        bad_phone = self._walk_in_payload(
+            guest={
+                "first_name": "Ngozi",
+                "last_name": "Eze",
+                "email": "ngozi.walkin@example.test",
+                "phone": "08031234567/08021234567/08091234567",
+            }
+        )
+        r_phone = self.client.post("/api/admin/bookings/", bad_phone, format="json")
+        self.assertEqual(r_phone.status_code, 400, r_phone.content)
+        self.assertEqual(r_phone.json()["code"], "VALIDATION_ERROR")
+        self.assertIn("phone", r_phone.json()["errors"].get("guest", {}))
+
+        # Invalid email returns 400 on guest.email
+        bad_email = self._walk_in_payload(
+            guest={
+                "first_name": "Ngozi",
+                "last_name": "Eze",
+                "email": "not-an-email",
+                "phone": "08031234567",
+            }
+        )
+        r_email = self.client.post("/api/admin/bookings/", bad_email, format="json")
+        self.assertEqual(r_email.status_code, 400, r_email.content)
+        self.assertIn("email", r_email.json()["errors"].get("guest", {}))
+
+        # room_id belonging to another room_type returns 400 on room_id
+        bad_room = self._walk_in_payload(room_id=self.other_room.pk)
+        r_room = self.client.post("/api/admin/bookings/", bad_room, format="json")
+        self.assertEqual(r_room.status_code, 400, r_room.content)
+        self.assertIn("room_id", r_room.json()["errors"])
+
+    def test_walk_in_booking_succeeds_even_if_confirmation_email_preparation_fails(self):
+        from unittest.mock import patch
+
+        with patch(
+            "apps.bookings.serializers.ReceiptSerializer.to_representation",
+            side_effect=RuntimeError("simulated receipt failure"),
+        ):
+            response = self.client.post("/api/admin/bookings/", self._walk_in_payload(), format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertTrue(response.json()["data"]["booking_reference"].startswith("J1-"))
+

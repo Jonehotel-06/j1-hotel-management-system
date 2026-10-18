@@ -281,6 +281,49 @@ class ProfilePhotoHonestyTests(ProfileImageUploadTests):
         self.assertNotIn("profile_image_stored", data)
         self.assertNotIn("profile_image_warning", data)
 
+    @override_settings(DEBUG=False)
+    def test_uploaded_photo_is_served_in_production_mode_via_media_and_api_media(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.patch(
+            "/api/auth/profile/", {"profile_image": _file("prod-avatar.png")}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.staff.refresh_from_db()
+        rel_name = self.staff.profile_image.name
+        self.assertTrue(rel_name)
+
+        for route in (f"/media/{rel_name}", f"/api/media/{rel_name}"):
+            res = self.client.get(route)
+            self.assertEqual(res.status_code, 200, f"{route} failed in DEBUG=False")
+            self.assertEqual(res["Content-Type"], "image/png")
+            self.assertEqual(res["Cross-Origin-Resource-Policy"], "cross-origin")
+            self.assertTrue(res.content.startswith(b"\x89PNG"))
+
+    def test_failed_replacement_photo_preserves_previous_valid_image(self):
+        self.client.force_authenticate(self.staff)
+        first_res = self.client.patch(
+            "/api/auth/profile/", {"profile_image": _file("original-valid.png")}, format="multipart"
+        )
+        self.assertEqual(first_res.status_code, 200, first_res.content)
+        self.staff.refresh_from_db()
+        original_name = self.staff.profile_image.name
+        self.assertTrue(original_name)
+
+        with override_settings(
+            STORAGES={"default": {"BACKEND": "tests.test_profile_image_uploads._MissingObjectStorage"}}
+        ):
+            failed_res = self.client.patch(
+                "/api/auth/profile/", {"profile_image": _file("broken-replacement.png")}, format="multipart"
+            )
+        self.assertEqual(failed_res.status_code, 200, failed_res.content)
+        self.assertIs(failed_res.json()["data"]["profile_image_stored"], False)
+        self.staff.refresh_from_db()
+        self.assertEqual(
+            self.staff.profile_image.name,
+            original_name,
+            "Failed replacement upload must preserve the previous valid profile image",
+        )
+
 
 class RefusedProfilePhotoWriteTests(TransactionTestCase):
     """A media backend that refuses the write must fail loudly and store nothing.

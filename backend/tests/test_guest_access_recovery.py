@@ -296,3 +296,142 @@ class ErrorEnvelopeMessageTests(BaseAPITestCase):
         self.assertNotIn("ErrorDetail", message)
         self.assertNotIn("code=", message)
         self.assertTrue(message.strip())
+
+
+class MultiBookingAndAccessLinkRecoveryTests(BaseAPITestCase):
+    """End-to-end reproduction and recovery for multi-booking payment initialization."""
+
+    @staticmethod
+    def _guest_headers(token: str) -> dict:
+        return {"HTTP_X_GUEST_ACCESS_TOKEN": token}
+
+    def setUp(self):
+        super().setUp()
+        hotel_settings()
+        self.room_type = make_room_type("Audit Deluxe", price="25000.00", max_guests=2)
+        self.room1 = make_room(self.room_type, "961")
+        self.room2 = make_room(self.room_type, "962")
+
+    def _create_online_booking(self, *, days_offset: int, idem_key: str, email: str):
+        today = hotel_today()
+        return self.client.post(
+            "/api/bookings/",
+            {
+                "room_type": self.room_type.slug,
+                "check_in": (today + timedelta(days=days_offset)).isoformat(),
+                "check_out": (today + timedelta(days=days_offset + 2)).isoformat(),
+                "rooms": 1,
+                "adults": 2,
+                "children": 0,
+                "guest": {
+                    "first_name": "Chinedu",
+                    "last_name": "Okafor",
+                    "email": email,
+                    "phone": "08031234567",
+                },
+            },
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=idem_key,
+        )
+
+    def test_booking_creation_returns_signed_access_link_token_usable_for_recovery_and_payment(self):
+        from unittest.mock import patch
+
+        created = self._create_online_booking(
+            days_offset=20,
+            idem_key="idem-audit-link-0001",
+            email="link-recovery@example.test",
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        data = created.json()["data"]
+        ref = data["booking_reference"]
+        access_link_token = data.get("access_link_token")
+        self.assertTrue(access_link_token, "access_link_token must be returned on creation")
+
+        # Presenting the signed access_link_token directly or via exchange unlocks the booking
+        detail = self.client.get(
+            f"/api/bookings/{ref}/",
+            **self._guest_headers(access_link_token),
+        )
+        self.assertEqual(detail.status_code, 200, detail.content)
+
+        exchanged = self.client.post(
+            f"/api/bookings/{ref}/access/",
+            {"access": access_link_token},
+            format="json",
+        )
+        self.assertEqual(exchanged.status_code, 200, exchanged.content)
+        fresh_token = exchanged.json()["data"]["guest_access_token"]
+
+        with override_settings(PAYSTACK_SECRET_KEY="sk_test_valid_secret"), patch(
+            "apps.payments.services.paystack.initialize_transaction",
+            side_effect=lambda **kw: {
+                "authorization_url": "https://checkout.paystack.com/audit-ok",
+                "access_code": "ac_1",
+                "reference": kw["reference"],
+            },
+        ):
+            pay_res = self.client.post(
+                "/api/payments/initialize/",
+                {"booking_reference": ref},
+                format="json",
+                **self._guest_headers(fresh_token),
+            )
+        self.assertEqual(pay_res.status_code, 201, pay_res.content)
+        self.assertEqual(
+            pay_res.json()["data"]["authorization_url"],
+            "https://checkout.paystack.com/audit-ok",
+        )
+
+    def test_stale_prior_booking_token_is_recovered_via_second_booking_idempotency_key(self):
+        from unittest.mock import patch
+
+        b1 = self._create_online_booking(
+            days_offset=25,
+            idem_key="idem-prior-booking-01",
+            email="guest-b1@example.test",
+        ).json()["data"]
+        b2 = self._create_online_booking(
+            days_offset=28,
+            idem_key="idem-second-booking-02",
+            email="guest-b2@example.test",
+        ).json()["data"]
+
+        # Presenting Booking 1's token for Booking 2 is rejected with 404
+        wrong_init = self.client.post(
+            "/api/payments/initialize/",
+            {"booking_reference": b2["booking_reference"]},
+            format="json",
+            **self._guest_headers(b1["guest_access_token"]),
+        )
+        self.assertEqual(wrong_init.status_code, 404, wrong_init.content)
+
+        # Reclaiming Booking 2 via its idempotency_key restores a valid token and initializes payment
+        reclaimed = self.client.post(
+            f"/api/bookings/{b2['booking_reference']}/access/",
+            {"idempotency_key": "idem-second-booking-02"},
+            format="json",
+        )
+        self.assertEqual(reclaimed.status_code, 200, reclaimed.content)
+        recovered_token = reclaimed.json()["data"]["guest_access_token"]
+
+        with override_settings(PAYSTACK_SECRET_KEY="sk_test_valid_secret"), patch(
+            "apps.payments.services.paystack.initialize_transaction",
+            side_effect=lambda **kw: {
+                "authorization_url": "https://checkout.paystack.com/recovered-b2",
+                "access_code": "ac_2",
+                "reference": kw["reference"],
+            },
+        ):
+            ok_init = self.client.post(
+                "/api/payments/initialize/",
+                {"booking_reference": b2["booking_reference"]},
+                format="json",
+                **self._guest_headers(recovered_token),
+            )
+        self.assertEqual(ok_init.status_code, 201, ok_init.content)
+        self.assertEqual(
+            ok_init.json()["data"]["authorization_url"],
+            "https://checkout.paystack.com/recovered-b2",
+        )
+

@@ -207,6 +207,7 @@ class AdminBookingListCreateView(generics.ListCreateAPIView):
             children=data["children"],
             offer_code=data.get("offer_code") or None,
             special_requests=data.get("special_requests", ""),
+            internal_notes=data.get("internal_notes", ""),
             user=None,
             guest_data=data["guest"],
             source=data["source"],
@@ -216,12 +217,12 @@ class AdminBookingListCreateView(generics.ListCreateAPIView):
             room_id=data.get("room_id"),
             room_guests=data.get("room_guests") or None,
         )
-        if data.get("internal_notes"):
-            booking.internal_notes = data["internal_notes"]
-            booking.save(update_fields=["internal_notes", "updated_at"])
         logger.info("Staff %s created manual booking %s", request.user.id, booking.booking_reference)
-        payload = AdminBookingDetailSerializer(booking, context={"request": request}).data
         substitution = getattr(booking, "room_substitution", None)
+        hydrated = _get_admin_booking(booking.booking_reference) or booking
+        payload = AdminBookingDetailSerializer(
+            hydrated, context=_booking_detail_context(request, hydrated)
+        ).data
         if substitution:
             payload["room_substitution"] = substitution
         return success_response(

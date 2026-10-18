@@ -167,19 +167,33 @@ class Booking(TimeStampedModel):
 
     def issue_guest_access_token(self):
         """Return a one-time generated bearer token; only its hash is stored."""
+        from datetime import timedelta
+        from django.utils import timezone
+
         token = secrets.token_urlsafe(32)
         self.guest_access_token_hash = self.hash_guest_access_token(token)
-        from django.utils import timezone
-        from datetime import timedelta
         self.guest_access_expires_at = timezone.now() + timedelta(days=90)
         self.save(update_fields=["guest_access_token_hash", "guest_access_expires_at", "updated_at"])
         return token
 
     def guest_token_matches(self, token):
         from django.utils import timezone
-        return bool(token and self.guest_access_token_hash and
-                    self.guest_access_expires_at and self.guest_access_expires_at > timezone.now() and
-                    secrets.compare_digest(self.guest_access_token_hash, self.hash_guest_access_token(token)))
+
+        if not (
+            token
+            and self.guest_access_token_hash
+            and self.guest_access_expires_at
+            and self.guest_access_expires_at > timezone.now()
+        ):
+            return False
+        raw = str(token).strip()
+        if not raw:
+            return False
+        if secrets.compare_digest(self.guest_access_token_hash, self.hash_guest_access_token(raw)):
+            return True
+        from .access_links import read_access_link_token
+
+        return read_access_link_token(raw, self.booking_reference)
 
     # --- Convenience properties ---------------------------------------------
     @property

@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.23">
+<link rel="stylesheet" href="../css/main.css?v=1.1.24">
 
 </head>
 <body>
@@ -106,18 +106,18 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.23"></script>
-<script src="../js/config.js?v=1.1.23"></script>
-<script src="../js/utils.js?v=1.1.23"></script>
-<script src="../js/icons.js?v=1.1.23"></script>
-<script src="../js/api.js?v=1.1.23"></script>
-<script src="../js/theme.js?v=1.1.23"></script>
-<script src="../js/ui.js?v=1.1.23"></script>
-<script src="../js/auth.js?v=1.1.23"></script>
-<script src="../js/hotel-data.js?v=1.1.23"></script>
-<script src="../js/navigation.js?v=1.1.23"></script>
-<script src="../js/booking-calendar.js?v=1.1.23"></script>
-<script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script>
+<script src="../js/runtime-config.js?v=1.1.24"></script>
+<script src="../js/config.js?v=1.1.24"></script>
+<script src="../js/utils.js?v=1.1.24"></script>
+<script src="../js/icons.js?v=1.1.24"></script>
+<script src="../js/api.js?v=1.1.24"></script>
+<script src="../js/theme.js?v=1.1.24"></script>
+<script src="../js/ui.js?v=1.1.24"></script>
+<script src="../js/auth.js?v=1.1.24"></script>
+<script src="../js/hotel-data.js?v=1.1.24"></script>
+<script src="../js/navigation.js?v=1.1.24"></script>
+<script src="../js/booking-calendar.js?v=1.1.24"></script>
+<script src="../js/dashboard.js?v=1.1.24"></script><script src="../js/table-fit.js?v=1.1.24"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("receptionist");
@@ -402,9 +402,14 @@
           status: v.status,
           special_requests: v.special_requests || "",
           internal_notes: v.internal_notes || "",
-          guest: { first_name: v.guest_first_name, last_name: v.guest_last_name, email: v.guest_email, phone: v.guest_phone }
+          guest: {
+            first_name: String(v.guest_first_name || "").trim(),
+            last_name: String(v.guest_last_name || "").trim(),
+            email: String(v.guest_email || "").trim(),
+            phone: String(v.guest_phone || "").trim()
+          }
         };
-        if (v.offer_code) payload.offer_code = v.offer_code;
+        if (v.offer_code && String(v.offer_code).trim()) payload.offer_code = String(v.offer_code).trim();
         try {
           var res = await window.API.create("bookings", payload);
           created = (res && res.data) || null;
@@ -526,8 +531,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.23"></script>
-<script src="../js/version.js?v=1.1.23"></script>
-<script src="../js/update-checker.js?v=1.1.23"></script>
+<script src="../js/pwa.js?v=1.1.24"></script>
+<script src="../js/version.js?v=1.1.24"></script>
+<script src="../js/update-checker.js?v=1.1.24"></script>
 </body>
 </html>

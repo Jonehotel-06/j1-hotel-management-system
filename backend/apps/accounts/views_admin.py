@@ -269,14 +269,39 @@ class AdminUserDetailView(AdminUserQuerysetMixin, generics.RetrieveUpdateAPIView
 
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
+        previous_image_name = getattr(instance.profile_image, "name", "") or ""
         before = {"role": instance.role, "is_active": instance.is_active}
         serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        from apps.core.storage import save_upload
+        has_new_photo = (
+            "profile_image" in getattr(serializer, "validated_data", {})
+            and serializer.validated_data.get("profile_image") is not None
+        )
+        from apps.core.storage import StorageUploadError, save_upload, verify_stored_upload
 
         # Same rule as the self-service profile: a refused photo upload is an
         # error the administrator can read, not a 500 and not a silent success.
-        instance = save_upload(serializer.save, context="staff photo")
+        try:
+            instance = save_upload(serializer.save, context="staff photo")
+        except StorageUploadError:
+            if previous_image_name and (getattr(instance.profile_image, "name", "") or "") != previous_image_name:
+                instance.profile_image = previous_image_name
+                instance.save(update_fields=["profile_image", "updated_at"])
+            raise
+
+        stored, warning = True, ""
+        if "profile_image" in getattr(serializer, "validated_data", {}):
+            try:
+                stored, warning = verify_stored_upload(instance.profile_image)
+            except StorageUploadError:
+                if has_new_photo and previous_image_name:
+                    instance.profile_image = previous_image_name
+                    instance.save(update_fields=["profile_image", "updated_at"])
+                raise
+            if has_new_photo and not stored and previous_image_name:
+                instance.profile_image = previous_image_name
+                instance.save(update_fields=["profile_image", "updated_at"])
+
         changes = {}
         for field in before:
             old = before[field]
@@ -293,9 +318,6 @@ class AdminUserDetailView(AdminUserQuerysetMixin, generics.RetrieveUpdateAPIView
         logger.info("Admin %s updated user %s: %s", request.user.id, instance.id, changes)
         payload = AdminUserListSerializer(instance, context={"request": request}).data
         if "profile_image" in getattr(serializer, "validated_data", {}):
-            from apps.core.storage import verify_stored_upload
-
-            stored, warning = verify_stored_upload(instance.profile_image)
             payload["profile_image_stored"] = stored
             payload["profile_image_warning"] = warning
         return success_response(payload, message="User updated.")
