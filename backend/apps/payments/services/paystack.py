@@ -52,22 +52,50 @@ def secret_key_status():
     return False, KEY_MODE_NONE
 
 
-def _secret_key():
+#: Safe, value-free categories for why the secret key cannot be used. These
+#: are the only diagnostics that may be logged or shown to operators — never
+#: the key itself, not even partially.
+PROBLEM_MISSING = "missing"
+PROBLEM_PUBLIC_KEY = "public_key_in_secret_slot"
+PROBLEM_UNRECOGNIZED = "unrecognized_format"
+
+
+def secret_key_problem():
+    """Why the Paystack secret key is unusable, or ``""`` when it is usable.
+
+    A guest-facing 503 cannot say which deployment mistake caused it (and must
+    never echo credential material), but the operator reading the server log
+    needs exactly that distinction: setting a missing key, replacing a public
+    key pasted into the secret slot, and replacing an unrecognised value are
+    three different fixes.
+    """
+    configured, _mode = secret_key_status()
+    if configured:
+        return ""
     key = str(getattr(settings, "PAYSTACK_SECRET_KEY", "") or "").strip()
+    if not key:
+        return PROBLEM_MISSING
+    if key.startswith(("pk_", "pk_test_")):
+        return PROBLEM_PUBLIC_KEY
+    return PROBLEM_UNRECOGNIZED
+
+
+def _secret_key():
     configured, _mode = secret_key_status()
     if not configured:
-        raise PaymentNotConfiguredError()
-    # A Paystack PUBLIC key (pk_…) can never authorize server-side API calls.
-    # Treating it as "configured" would send authenticated requests that
-    # always fail, so it is rejected as not-configured — loudly, server-side —
-    # instead of half-working. Secret keys start with sk_ (live) / sk_test_.
-    if key.startswith(("pk_", "pk_test_")):
+        # A Paystack PUBLIC key (pk_…) can never authorize server-side API
+        # calls, and a blank/unrecognised value cannot either. Refuse loudly
+        # server-side (category only — never the value) instead of sending a
+        # charge request that would fail at the provider in a way the guest
+        # cannot act on. Secret keys start with sk_ (live) / sk_test_ (test).
         logger.error(
-            "PAYSTACK_SECRET_KEY is a PUBLIC key (pk_…). Set the secret key "
-            "(sk_… / sk_test_…) on the backend — never expose it to the frontend."
+            "Paystack secret key is not usable (%s). Set PAYSTACK_SECRET_KEY "
+            "to the secret key (sk_live_… / sk_test_…) on the backend service "
+            "— never expose it to the frontend.",
+            secret_key_problem(),
         )
         raise PaymentNotConfiguredError()
-    return key
+    return str(getattr(settings, "PAYSTACK_SECRET_KEY", "") or "").strip()
 
 
 def _headers():

@@ -601,6 +601,46 @@ class PaystackWrapperContractTests(BaseAPITestCase):
                 reference="J1P-BAD", callback_url="https://example.test/verify",
             )
 
+    @override_settings(PAYSTACK_SECRET_KEY="sk_test_secret")
+    @patch("apps.payments.services.paystack.requests.post")
+    def test_initialize_provider_rejection_is_a_gateway_error(self, mock_post):
+        from apps.core.exceptions import PaymentGatewayError
+        from apps.payments.services import paystack
+        mock_post.return_value.status_code = 400
+        mock_post.return_value.json.return_value = {
+            "status": False, "message": "Invalid email address",
+        }
+        with self.assertRaises(PaymentGatewayError):
+            paystack.initialize_transaction(
+                email="payer@example.test", amount_kobo=100,
+                reference="J1P-REJECTED", callback_url="https://example.test/verify",
+            )
+
+    @override_settings(PAYSTACK_SECRET_KEY="sk_test_secret")
+    @patch("apps.payments.services.paystack.requests.post")
+    def test_initialize_timeout_is_a_gateway_error_not_a_config_error(self, mock_post):
+        import requests as requests_lib
+
+        from apps.core.exceptions import PaymentGatewayError
+        from apps.payments.services import paystack
+        mock_post.side_effect = requests_lib.ConnectionError("unreachable")
+        with self.assertRaises(PaymentGatewayError):
+            paystack.initialize_transaction(
+                email="payer@example.test", amount_kobo=100,
+                reference="J1P-TIMEOUT", callback_url="https://example.test/verify",
+            )
+
+    @override_settings(PAYSTACK_SECRET_KEY="sk_test_secret")
+    @patch("apps.payments.services.paystack.requests.get")
+    def test_verify_timeout_is_a_gateway_error(self, mock_get):
+        import requests as requests_lib
+
+        from apps.core.exceptions import PaymentGatewayError
+        from apps.payments.services import paystack
+        mock_get.side_effect = requests_lib.Timeout("slow gateway")
+        with self.assertRaises(PaymentGatewayError):
+            paystack.verify_transaction("J1P-TIMEOUT")
+
 
 class OfflinePaymentStateGuardTests(BaseAPITestCase):
     """Task 17 (server side): the dashboard hides "Record payment" once a

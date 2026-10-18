@@ -161,9 +161,20 @@ def initialize_booking_payment(*, booking: Booking, user, request=None):
     # One predicate decides "can we take money online": a blank value, a public
     # key in the secret slot and an unrecognisable value are all the same
     # guest-visible failure, so they are answered the same way up front.
-    from apps.payments.services.paystack import secret_key_status
+    from apps.payments.services.paystack import secret_key_problem, secret_key_status
 
     if not secret_key_status()[0]:
+        # The guest gets the stable PAYMENT_NOT_CONFIGURED contract; the
+        # operator gets the reason category in the log. Without this line the
+        # only trace of a hotel-wide payment outage was the access-log 503,
+        # which cannot distinguish a missing key from a public key pasted
+        # into the secret slot. The key value is never logged.
+        logger.error(
+            "Payment initialization refused: Paystack is not configured (%s). "
+            "Set PAYSTACK_SECRET_KEY (sk_live_… / sk_test_…) on the backend "
+            "service and redeploy.",
+            secret_key_problem(),
+        )
         raise PaymentNotConfiguredError()
     booking, payment, should_call_gateway = _reserve_initialization(booking=booking, user=user)
     if not should_call_gateway:
@@ -1081,7 +1092,11 @@ def initiate_cancellation_refund(*, enquiry, staff_user, customer_note="", merch
 # Webhooks
 # ---------------------------------------------------------------------------
 def verify_webhook_signature(raw_body: bytes, signature: str) -> bool:
-    secret = getattr(settings, "PAYSTACK_SECRET_KEY", "")
+    # Paystack signs with the exact secret key; the value stored on the host
+    # is normalised the same way as for API calls (see paystack._secret_key),
+    # so surrounding whitespace pasted into the deployment's variable cannot
+    # make every genuine webhook fail HMAC while initialization succeeds.
+    secret = str(getattr(settings, "PAYSTACK_SECRET_KEY", "") or "").strip()
     if not secret or not signature:
         return False
     calculated = hmac.new(secret.encode(), msg=raw_body, digestmod=hashlib.sha512).hexdigest()
