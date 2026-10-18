@@ -19,7 +19,7 @@
     name: "J-ONE HOTEL & LODGE",
     phone: "+234 803 211 2874",
     email: "jonathanonu76@gmail.com",
-    address: "Plot 566 Mgbowo Street, off Ezike Street, Enugu State."
+    address: "Plot 566 Mgbowo Street, off Nowas, by Matade Catholic Church, Enugu State."
   };
 
   /* Exact-colour export CSS. It intentionally does not depend on CSS custom
