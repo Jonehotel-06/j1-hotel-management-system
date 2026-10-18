@@ -45,6 +45,11 @@ def backwards(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
+    # MySQL/MariaDB DDL is implicitly committing and cannot be rolled back.
+    # Django therefore refuses ``ALTER TABLE`` inside its default atomic
+    # migration transaction (observed on Railway/MariaDB, 2026-10-18).
+    # Run this idempotent conversion outside a transaction.
+    atomic = False
 
     dependencies = [
         ("notifications", "0015_alter_emaillog_kind"),

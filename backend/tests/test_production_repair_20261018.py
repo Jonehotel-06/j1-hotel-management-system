@@ -33,6 +33,7 @@ if a booking disappears between requests, if the wrong guest credential
 is accepted, or if ``transition_order`` is ever again callable outside a
 transaction (the POS HTTP-500 in the same incident).
 """
+import importlib
 from contextlib import contextmanager
 from datetime import timedelta
 from decimal import Decimal
@@ -40,7 +41,7 @@ from unittest.mock import patch
 
 from django.core.cache import cache
 from django.db import connection, transaction
-from django.test import TransactionTestCase, override_settings
+from django.test import SimpleTestCase, TransactionTestCase, override_settings
 
 from apps.accounts.models import User
 from apps.bookings.models import Booking, Guest
@@ -494,3 +495,25 @@ class WalkInRepairTests(BaseAPITestCase):
         self.assertEqual(response.status_code, 201, response.content)
         reference = response.json()["data"]["booking_reference"]
         self.assertTrue(Booking.objects.filter(booking_reference=reference).exists())
+
+
+class Utf8mb4MigrationTransactionTests(SimpleTestCase):
+    """Railway/MariaDB deployment regression, 2026-10-18.
+
+    The utf8mb4 migrations execute ``ALTER TABLE`` via the schema editor.
+    MariaDB/MySQL DDL implicitly commits and cannot be rolled back, so
+    Django correctly raises ``TransactionManagementError`` if those
+    migrations run under Django's default ``atomic=True``. The failed
+    Railway deploy stopped at ``audit.0003`` before any DDL ran. Both
+    conversion migrations must therefore remain explicitly non-atomic;
+    conversion itself is idempotent if a later table needs a retry.
+    """
+
+    def test_utf8mb4_conversion_migrations_are_non_atomic(self):
+        for module_name in (
+            "apps.audit.migrations.0003_utf8mb4_auditlog_table",
+            "apps.notifications.migrations.0016_utf8mb4_notification_tables",
+        ):
+            with self.subTest(module=module_name):
+                migration = importlib.import_module(module_name).Migration
+                self.assertIs(migration.atomic, False)
