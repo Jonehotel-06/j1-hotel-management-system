@@ -19,10 +19,12 @@ size, IP address or a front-end check):
   exception) but still must give a reason of at least
   ``MIN_MANUAL_REASON_LENGTH`` characters;
 * every fallback writes a ``MANUAL_OVERRIDE`` verification attempt, names the
-  authorising supervisor in the audit trail, and mints the SAME single-use,
-  time-limited temporary workstation credential as the biometric path — the code
-  is backend-issued, bound to the staff member's attendance record, and
-  invalidated on clock-out like any other.
+  authorising supervisor in the audit trail, and mints the SAME
+  attendance-bound workstation credential as the biometric path — the code is
+  backend-issued, bound to the staff member's attendance record, reusable for
+  repeat sign-ins until that record closes, and invalidated on clock-out like
+  any other. (The one-time ``jone-temp-`` token it also returns keeps its short
+  TTL and single use.)
 """
 from __future__ import annotations
 

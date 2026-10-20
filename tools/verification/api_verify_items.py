@@ -449,8 +449,16 @@ def main():
     r = requests.get(API + "/auth/profile/", headers=auth(staff_tok), timeout=30)
     record(5, "the session issued from that code is accepted", r.status_code == 200, f"HTTP {r.status_code}")
 
+    # The attendance code is a SESSION credential, not a one-time ticket: the
+    # employee signs out and back in with it as often as they need to until they
+    # clock out. An immediate replay must therefore SUCCEED and still identify
+    # the same account.
     r = login(BAR, access_code=code1, department="BAR")
-    record(5, "the code is single-use (immediate replay refused)", r.status_code in (400, 401, 403),
+    replay_ok = (
+        r.status_code == 200
+        and (data_of(r).get("user") or {}).get("email", "").lower() == (BAR or "").lower()
+    )
+    record(5, "the code signs the same employee in again before clock-out", replay_ok,
            f"HTTP {r.status_code}: {str(envelope(r))[:100]}")
 
     # code2 was minted for `fresh`, so the borrower must be somebody else — when

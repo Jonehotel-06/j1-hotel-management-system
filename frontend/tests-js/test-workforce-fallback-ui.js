@@ -1,8 +1,8 @@
 /* tests-js/test-workforce-fallback-ui.js
    Supervised attendance fallback in the workforce console: managers and
    administrators get the control, ordinary staff never do, the fallback never
-   carries a fabricated fingerprint probe, and the result explains the code's
-   single-use / clock-out behaviour.
+   carries a fabricated fingerprint probe, and the result explains that the code
+   stays usable for repeat sign-ins until the employee clocks out.
    Run from /frontend: node --test tests-js/test-workforce-fallback-ui.js */
 "use strict";
 
@@ -41,9 +41,13 @@ test("the failure path explains itself and never claims success", () => {
   assert.match(WORKFORCE, /labelled?|Supervised fallback · /, "the result names the authority that authorised it");
 });
 
-test("the issued code is described as single-use and clock-out bound", () => {
-  assert.match(WORKFORCE, /Single-use; cancelled on clock-out\./);
-  assert.match(WORKFORCE, /single-use and is cancelled the moment the employee clocks out/);
+test("the issued code is described as reusable until clock-out, never single-use", () => {
+  assert.match(WORKFORCE, /The employee can sign in with this code as often as they need to until they clock out\./);
+  assert.doesNotMatch(WORKFORCE, /Single-use; cancelled on clock-out\./);
+  assert.doesNotMatch(WORKFORCE, /single-use and is cancelled the moment the employee clocks out/);
+  assert.doesNotMatch(WORKFORCE, /The issued code is single-use/);
+  // The fallback panel states the same lifecycle before a code is issued.
+  assert.match(WORKFORCE, /stays valid for that employee's repeat sign-ins until they clock out/);
 });
 
 test("the console states whether this browser is an enrolled Receptionist Desktop", () => {

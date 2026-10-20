@@ -94,7 +94,7 @@
       </div>
       <div class="card card-pad" data-wf-rt-fallback hidden style="margin-top:1.25rem;">
         <h3 style="font-size:var(--fs-md);margin:0 0 0.35rem;">Supervised fallback (manager / administrator)</h3>
-        <p class="caption muted">Use only when the scanner or the employee's finger genuinely cannot be read. A manager fallback needs the recorded failure from the failed scan above; an administrator may authorise one without a prior attempt. This card works away from the front desk for management accounts &mdash; which is how a supervisor covers a reader outage on a non-reception device &mdash; and every fallback is audited with your account, this reason and the authority used. The issued code is single-use and expires when the employee clocks out. Ordinary staff can never issue one.</p>
+        <p class="caption muted">Use only when the scanner or the employee's finger genuinely cannot be read. A manager fallback needs the recorded failure from the failed scan above; an administrator may authorise one without a prior attempt. This card works away from the front desk for management accounts &mdash; which is how a supervisor covers a reader outage on a non-reception device &mdash; and every fallback is audited with your account, this reason and the authority used. The issued code stays valid for that employee's repeat sign-ins until they clock out. Ordinary staff can never issue one.</p>
         <div class="form-grid fg-2" style="margin-top:0.75rem;align-items:start;">
           <div class="field">
             <span class="field-label" id="wf-rt-fallback-picker-label">Select staff member (recommended)</span>
@@ -287,7 +287,7 @@ document.getElementById("wf-attendance-date").value=hotelToday();loadAttendance(
           '<div class="caption muted">Supervised fallback · '+JONE.esc(res.authority||"")+' · evidence: '+JONE.esc(res.evidence||"")+'</div>'+
           (JONE.biometrics.attendanceNote(res)?'<p class="caption muted" data-wf-rt-attendance-note>'+JONE.esc(JONE.biometrics.attendanceNote(res))+'</p>':'')+
           (res.access_code?'<div style="margin-top:0.65rem;padding:0.75rem;border:1px dashed var(--color-primary,#373435);border-radius:8px;text-align:center;"><div class="caption muted">6-DIGIT NUMERIC ACCESS CODE</div><div data-reception-issued-code style="font-size:1.6rem;font-weight:800;letter-spacing:0.28em;">'+JONE.esc(res.access_code)+'</div></div>':'')+
-          (res.expires_at?'<p class="caption muted" style="margin-top:0.5rem;">Valid until '+JONE.esc(dateTime(res.expires_at))+'. It is single-use and is cancelled the moment the employee clocks out.</p>':'');
+          (res.access_code?'<p class="caption muted" style="margin-top:0.5rem;">The employee can sign in with this code as often as they need to until they clock out.</p>':'');
       }
       if(fallbackState)fallbackState.textContent="Fallback code issued by "+((window.Auth.state&&window.Auth.state.user&&window.Auth.state.user.email)||"you")+" and recorded in the audit trail.";
       JONE.ui.toast("Supervised fallback code issued.","success");
@@ -315,7 +315,7 @@ document.querySelectorAll("button[data-wf-rt-action]").forEach(function(btn){
           '<div class="caption muted">'+JONE.esc(res.department||"—")+' · '+JONE.esc(res.attendance_status||res.status||"")+'</div>'+
           (attendanceNote?'<p class="caption muted" data-wf-rt-attendance-note>'+JONE.esc(attendanceNote)+'</p>':'')+
           (res.access_code?'<div style="margin-top:0.65rem;padding:0.75rem;border:1px dashed var(--color-primary,#373435);border-radius:8px;text-align:center;"><div class="caption muted">6-DIGIT NUMERIC ACCESS CODE</div><div data-reception-issued-code style="font-size:1.6rem;font-weight:800;letter-spacing:0.28em;">'+JONE.esc(res.access_code)+'</div></div>':'')+
-          (res.access_code&&res.expires_at?'<p class="caption muted" style="margin-top:0.5rem;">Valid until '+JONE.esc(dateTime(res.expires_at))+'. Single-use; cancelled on clock-out.</p>':'');
+          (res.access_code?'<p class="caption muted" style="margin-top:0.5rem;">The employee can sign in with this code as often as they need to until they clock out.</p>':'');
       }
       JONE.ui.toast("Biometric "+action.toLowerCase().replace(/_/g," ")+" completed.","success");
       loadAttendance(1);

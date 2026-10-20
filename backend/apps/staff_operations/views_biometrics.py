@@ -192,6 +192,7 @@ class TemporaryWorkstationCredentialIssueView(APIView):
             "temporary_token": details["temporary_token"],
             "access_code": details["access_code"],
             "expires_at": details["expires_at"],
+            "code_valid_until": details.get("code_valid_until", "CLOCK_OUT"),
             "workstation": workstation.reference,
             "department": details["department"],
             "staff_id": user.pk,

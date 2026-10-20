@@ -295,7 +295,9 @@ if you want the attendance list itself to show it.
 ## 5. Attendance codes
 
 * Issued by the server (`mint_temporary_workstation_credential`), bound to one
-  staff member **and** their open attendance record: 6 digits, TTL, single use.
+  staff member **and** their open attendance record: 6 digits, valid for every
+  sign-in until official clock-out (the one-time `jone-temp-` token beside it
+  keeps its short TTL).
 * Stored only as SHA-256 (token and code); the raw values are never logged.
 * A new issue supersedes the previous active code (`SUPERSEDED`).
 * Clock-out cancels the credential (session included) — the code can no longer
@@ -365,8 +367,8 @@ curl -s -X POST https://<host>/api/admin/staff-operations/biometrics/reception-t
 #   action=ATTENDANCE_OFF_DESK_TERMINAL  +  action=ATTENDANCE_MANUAL_OVERRIDE
 ```
 
-The same checks plus the code lifecycle (issue → sign in → single-use replay
-refused → clock-out → code dead) are automated in
+The same checks plus the code lifecycle (issue → sign in → sign out → sign in
+again with the same code → clock-out → code dead) are automated in
 `backend/tests/test_attendance_workstation_policy.py` and
 `tools/verification/api_verify_items.py`. The desk-by-address route — including
 the deployed host's forwarding shape, a forged edge header, refresh, attendance

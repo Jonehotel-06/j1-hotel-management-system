@@ -618,7 +618,17 @@ def mint_temporary_workstation_credential(
     issued_by: User | None = None,
     mode: str = "BIOMETRIC",
 ) -> dict:
-    """Mint the single-use temporary workstation credential (token + numeric code).
+    """Mint a temporary workstation credential (one-time token + session code).
+
+    The two parts have deliberately different lifetimes:
+
+    * ``temporary_token`` is a ONE-TIME ``jone-temp-...`` ticket with a short
+      ``expires_at`` TTL — the token path consumes it on first use;
+    * ``access_code`` (the 6-digit numeric code) is the staff member's sign-in
+      credential for the whole ATTENDANCE SESSION it is bound to. It stays valid
+      for repeated application sign-ins until an official clock-out revokes it,
+      so ``expires_at`` must never be read as the code's lifetime
+      (``code_valid_until`` states that explicitly).
 
     The ONE implementation of credential creation: the biometric terminal path
     and the supervised manual-fallback path both mint through here, so expiry,
@@ -684,7 +694,10 @@ def mint_temporary_workstation_credential(
         "credential_id": cred.pk,
         "temporary_token": raw_token,
         "access_code": numeric_code,
+        # Token TTL. The numeric code is NOT bounded by this value; it is bound
+        # to the open attendance record above and dies at clock-out.
         "expires_at": expires_at.isoformat(),
+        "code_valid_until": "CLOCK_OUT",
         "department": dept_code,
         "workstation": workstation_reference,
         "attendance_reference": attendance_record.reference if attendance_record else None,
@@ -1281,6 +1294,7 @@ def reception_attendance_workstation_action(
             "temporary_token": cred_details["temporary_token"],
             "access_code": cred_details["access_code"],
             "expires_at": cred_details["expires_at"],
+            "code_valid_until": cred_details["code_valid_until"],
         }
 
     if action_norm == "ISSUE_CODE":
@@ -1323,6 +1337,7 @@ def reception_attendance_workstation_action(
             "temporary_token": cred_details["temporary_token"],
             "access_code": cred_details["access_code"],
             "expires_at": cred_details["expires_at"],
+            "code_valid_until": cred_details["code_valid_until"],
         }
 
     if action_norm in ("BREAK_STARTED", "BREAK_ENDED"):
@@ -1442,7 +1457,26 @@ def authenticate_numeric_workstation_code(
     department: str = "",
     workstation_reference: str = "",
 ) -> TemporaryWorkstationCredential:
-    """Validate a 6-digit numeric workstation access code bound to an active attendance session."""
+    """Validate a 6-digit code against its staff member's ACTIVE attendance session.
+
+    The numeric code is the staff member's sign-in credential for the length of
+    one attendance session — it is not a one-time ticket that an application
+    sign-out consumes, and it is not tied to the application JWT's lifetime.
+    Application authentication (sign in / sign out / token expiry) and
+    attendance (clock in / clock out) are separate concerns:
+
+    * signing out blacklists the refresh token and nothing else;
+    * the code keeps working for as many sign-ins as the staff member needs
+      while their attendance record is open (browser refresh, a new device, a
+      token that expired overnight);
+    * an official clock-out (or an administrative revocation — suspension,
+      deactivation, biometric revocation, supersede-on-reissue) ends it, and
+      the code row stays in place as historical evidence.
+
+    A credential with NO attendance binding (a row written before every code was
+    bound at mint time) keeps the original short TTL and single-use rules, so
+    this lifecycle change can never extend the life of an old, unbound code.
+    """
     from ..models import AttendanceRecord
 
     code_str = str(access_code or "").strip()
@@ -1453,12 +1487,20 @@ def authenticate_numeric_workstation_code(
     now = timezone.now()
 
     with transaction.atomic():
-        cred = (
+        candidates = (
             TemporaryWorkstationCredential.objects.select_for_update()
             .select_related("staff", "staff__staff_profile", "attendance_record")
             .filter(numeric_code_hash=code_hash)
+        )
+        # A revoked/superseded row may legitimately share a hash with a newer
+        # live one (code generation only guarantees uniqueness among ACTIVE
+        # codes). Always prefer the live credential; fall back to the newest row
+        # so the refusal names the real state instead of a stale duplicate.
+        cred = (
+            candidates.filter(session_active=True, revoked_at__isnull=True)
             .order_by("-created_at")
             .first()
+            or candidates.order_by("-created_at").first()
         )
         if not cred:
             raise PermissionDenied("Invalid workstation access code.")
@@ -1489,49 +1531,67 @@ def authenticate_numeric_workstation_code(
                 {"presented_employee_code": employee_code.strip(), "owner_id": staff.pk},
             )
 
-        # Check active attendance / clock-out expiration
-        if refusal is not None:
-            pass
-        elif not cred.session_active or cred.revoked_at is not None:
+        # An administratively revoked credential is dead immediately, whatever
+        # the attendance record says (clock-out, suspension, supersede, ...).
+        if refusal is None and (not cred.session_active or cred.revoked_at is not None):
             raise PermissionDenied("Workstation access code has expired upon clock-out or been revoked.")
-
-        # A numeric code is a ONE-TIME ticket with its own validity window (the
-        # token path has always enforced both). The dashboard SESSION it opens
-        # deliberately outlives the code — it lasts for the work period and ends
-        # at clock-out — but the code itself must never be replayable, or a code
-        # read over a shoulder could sign a second device in later.
-        if cred.expires_at and cred.expires_at <= now:
-            raise PermissionDenied("Workstation access code has expired. Ask the front desk for a new code.")
-        if cred.is_used:
-            raise PermissionDenied(
-                "Workstation access code has already been used. Ask the front desk to re-issue one."
-            )
 
         open_att = (
             AttendanceRecord.objects.filter(staff=staff, clock_out_at__isnull=True)
             .order_by("-clock_in_at")
             .first()
         )
-        if (cred.attendance_record and cred.attendance_record.clock_out_at is not None) or open_att is None:
-            cred.session_active = False
-            cred.revoked_at = now
-            cred.revoked_reason = "CLOCKED_OUT"
-            cred.save(update_fields=["session_active", "revoked_at", "revoked_reason", "updated_at"])
-            raise PermissionDenied("Workstation access code expired because the employee has clocked out.")
+        bound_record = cred.attendance_record
+        revoke_reason = ""
+        if open_att is None:
+            # No attendance session is open: a code can never outlive its
+            # session, even if a revocation step was missed.
+            revoke_reason = "CLOCKED_OUT"
+        elif bound_record is not None and (
+            bound_record.clock_out_at is not None or bound_record.pk != open_att.pk
+        ):
+            # This code belongs to a completed/older session, not to the one
+            # currently open (or none at all).
+            revoke_reason = "CLOCKED_OUT"
 
-        if (workstation_reference or "").strip() and cred.workstation_reference != workstation_reference.strip():
-            raise PermissionDenied("Workstation access code is not valid for this workstation.")
+        if not revoke_reason and bound_record is None:
+            # Legacy unbound credential: the original ONE-TIME ticket rules
+            # still apply, because there is no session to justify a longer life.
+            if cred.expires_at and cred.expires_at <= now:
+                raise PermissionDenied("Workstation access code has expired. Ask the front desk for a new code.")
+            if cred.is_used:
+                raise PermissionDenied(
+                    "Workstation access code has already been used. Ask the front desk to re-issue one."
+                )
 
-        if refusal is None and (department or "").strip() and not is_staff_authorized_for_department(staff, department):
-            refusal = (
-                "Workstation access code is not authorized for this department dashboard.",
-                {"target_department": department, "staff_department": cred.department},
-            )
+        if not revoke_reason:
+            if (workstation_reference or "").strip() and cred.workstation_reference != workstation_reference.strip():
+                raise PermissionDenied("Workstation access code is not valid for this workstation.")
 
-        if refusal is None:
-            cred.is_used = True
-            cred.used_at = now
-            cred.save(update_fields=["is_used", "used_at", "updated_at"])
+            if refusal is None and (department or "").strip() and not is_staff_authorized_for_department(staff, department):
+                refusal = (
+                    "Workstation access code is not authorized for this department dashboard.",
+                    {"target_department": department, "staff_department": cred.department},
+                )
+
+            if refusal is None and not cred.is_used:
+                # First use is still recorded for the audit trail; unlike a
+                # ticket, it does not consume the credential. Repeat sign-ins
+                # are the documented behaviour for the rest of the session.
+                cred.is_used = True
+                cred.used_at = now
+                cred.save(update_fields=["is_used", "used_at", "updated_at"])
+
+    if revoke_reason:
+        # The revocation is written OUTSIDE the atomic block: raising inside it
+        # would roll back the very revocation the refusal records.
+        TemporaryWorkstationCredential.objects.filter(pk=cred.pk).update(
+            session_active=False,
+            revoked_at=now,
+            revoked_reason=revoke_reason,
+            expires_at=now,
+        )
+        raise PermissionDenied("Workstation access code expired because the employee has clocked out.")
 
     if refusal is not None:
         message, metadata = refusal
@@ -1543,4 +1603,3 @@ def authenticate_numeric_workstation_code(
         log_action(actor=cred.staff, action=action, instance=cred, metadata=metadata)
         raise PermissionDenied(message)
     return cred
-

@@ -4,7 +4,8 @@ Covers items 4–7 of the production audit:
 
 4. Receptionist Desktop is the sole attendance station — enforced server side
    (never from a user agent, an IP address or a screen size).
-5. Clock-in issues a backend-minted, attendance-bound, single-use numeric code.
+5. Clock-in issues a backend-minted, attendance-bound numeric code that stays
+   valid for repeated sign-ins until clock-out (logout never consumes it).
 6. A manager fallback code needs a recorded capture/hardware failure; an
    administrator may authorise one without a prior attempt; ordinary employees
    can never issue one.
@@ -169,7 +170,7 @@ class AccessCodeLifecycleTests(WorkstationPolicyTestCase):
         self.assertFalse(AttendanceRecord.objects.filter(staff=self.worker).exists())
         self.assertFalse(TemporaryWorkstationCredential.objects.exists())
 
-    def test_clock_in_issues_a_bound_single_use_code(self):
+    def test_clock_in_issues_a_bound_code_that_signs_in_again_until_clock_out(self):
         data = self.clock_in_at_desk()
         code = data["access_code"]
         self.assertTrue(code and code.isdigit() and len(code) == 6)
@@ -179,15 +180,18 @@ class AccessCodeLifecycleTests(WorkstationPolicyTestCase):
         self.assertNotIn(code, str(credential.numeric_code_hash))
         self.assertNotIn(code, AuditLog.objects.filter(action="TEMPORARY_WORKSTATION_CREDENTIAL_ISSUED").first().metadata)
 
-        # The code signs the employee in exactly once...
+        # The code signs the employee in...
         first = self.client.post(LOGIN_URL, {"email": self.worker.email, "access_code": code}, format="json")
         self.assertEqual(first.status_code, 200, first.content)
         credential.refresh_from_db()
-        self.assertTrue(credential.is_used)
-        # ...and never twice.
+        self.assertTrue(credential.is_used, "first use is kept as audit evidence")
+        # ...and keeps working for the rest of the attendance session. Logging
+        # out of the application never consumes the attendance credential; only
+        # clock-out does (test_clock_out_invalidates_the_code_and_keeps_the_history).
         second = self.client.post(LOGIN_URL, {"email": self.worker.email, "access_code": code}, format="json")
-        self.assertIn(second.status_code, (401, 403), second.content)
-        self.assertIn("already been used", second.data["message"])
+        self.assertEqual(second.status_code, 200, second.content)
+        self.assertEqual(AttendanceRecord.objects.filter(staff=self.worker).count(), 1)
+        self.assertEqual(TemporaryWorkstationCredential.objects.filter(staff=self.worker).count(), 1)
 
     def test_code_cannot_be_used_by_another_employee(self):
         data = self.clock_in_at_desk()
@@ -216,11 +220,16 @@ class AccessCodeLifecycleTests(WorkstationPolicyTestCase):
         refused = self.client.post(LOGIN_URL, {"email": self.worker.email, "access_code": code}, format="json")
         self.assertIn(refused.status_code, (401, 403), refused.content)
 
-    def test_expired_code_is_refused(self):
+    def test_expired_unbound_code_is_refused(self):
+        """Compatibility rule: a credential with NO attendance binding keeps its
+        original short TTL. Attendance-bound codes live until clock-out (see
+        tests/test_attendance_code_persistence), but an old unbound row must not
+        gain a longer life from that change."""
         data = self.clock_in_at_desk()
         credential = TemporaryWorkstationCredential.objects.get(staff=self.worker)
-        credential.expires_at = timezone.now() - timedelta(minutes=1)
-        credential.save(update_fields=["expires_at"])
+        TemporaryWorkstationCredential.objects.filter(pk=credential.pk).update(
+            attendance_record=None, expires_at=timezone.now() - timedelta(minutes=1)
+        )
         response = self.client.post(LOGIN_URL, {"email": self.worker.email, "access_code": data["access_code"]}, format="json")
         self.assertIn(response.status_code, (401, 403), response.content)
         self.assertIn("expired", response.data["message"])
