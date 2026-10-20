@@ -1,6 +1,6 @@
 # J-ONE HOTEL & LODGE — API Reference
 
-Base URL: `https://<host>/api/` · Format: JSON · Auth: JWT endpoints use `Authorization: Bearer <access_token>`; verified portal endpoints use `X-Portal-Session`
+Base URL: `https://<host>/api/` · Format: JSON · Auth: JWT endpoints use `Authorization: Bearer <access_token>`; verified portal endpoints use an HttpOnly session cookie (or `X-Portal-Session` for non-browser clients)
 
 Live interactive version: **`/api/docs/`** (Swagger UI, generated from code — it can never drift).
 
@@ -142,7 +142,10 @@ remain server-validated against the locked booking balance.
 
 ## Verified-email Guest Portal (`/api/portal/`)
 
-Portal sessions are short-lived opaque credentials sent only in `X-Portal-Session`.
+Portal sessions are opaque credentials held in an HttpOnly, SameSite=Lax cookie
+(`jone_portal_session`, path `/api/portal/`). Non-browser clients may send them in
+`X-Portal-Session`. Cookie-authenticated writes must send `X-Portal-Request: 1`.
+They end when the guest's stay checks out (`code: PORTAL_ACCESS_ENDED`).
 They are verified-email scoped and are never interchangeable with a booking access
 token or staff JWT.
 

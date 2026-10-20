@@ -19,7 +19,11 @@ class PortalAccessChallenge(TimeStampedModel):
     # SHA-256 digest of an unguessable link token.  A unique digest makes a
     # consume retry unambiguous without persisting the bearer secret itself.
     token_hash = models.CharField(max_length=64, unique=True)
-    expires_at = models.DateTimeField(db_index=True)
+    # NULL means "no time-based expiry": a link stays redeemable (once) while the
+    # verified address still has an eligible in-house stay. Checkout, supersession
+    # and consumption revoke it by setting consumed_at / expires_at to now.
+    # Legacy rows keep their original expires_at and are still honoured.
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
     consumed_at = models.DateTimeField(null=True, blank=True, db_index=True)
     request_ip = models.GenericIPAddressField(null=True, blank=True)
     request_user_agent = models.CharField(max_length=255, blank=True, default="")
@@ -34,7 +38,9 @@ class PortalAccessChallenge(TimeStampedModel):
 
     @property
     def is_consumable(self):
-        return self.consumed_at is None and self.expires_at > timezone.now()
+        if self.consumed_at is not None:
+            return False
+        return self.expires_at is None or self.expires_at > timezone.now()
 
     def __str__(self):
         return f"Portal challenge for {self.email} ({self.purpose})"

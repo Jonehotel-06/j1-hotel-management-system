@@ -17,6 +17,7 @@ from apps.core.exceptions import ServiceQRExpiredError
 from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
 from apps.portal.authentication import PortalSessionAuthentication
+from apps.portal.eligibility import eligible_stay_ids_for_email
 from apps.portal.permissions import HasPortalSession
 from apps.rooms.models import Room
 from apps.stays.models import Stay, StayRoom
@@ -86,9 +87,14 @@ def _portal_base_queryset(email, *, detail=False):
     # A room guest's address is stored on the request as ``portal_email`` and on
     # the occupant row; it is not the booking contact's address, so matching
     # only ``guest__email`` would hide a guest's OWN request from them.
+    #
+    # Reads are also stay-scoped: only requests belonging to a stay the address
+    # is currently eligible for. A completed stay's requests leave the portal at
+    # checkout, while any other in-house stay of the same address stays visible.
     queryset = (
         ServiceRequest.objects
         .filter(Q(guest__email__iexact=email) | Q(portal_email__iexact=email))
+        .filter(stay_id__in=eligible_stay_ids_for_email(email))
         .select_related("stay", "room")
     )
     if detail:
@@ -410,6 +416,13 @@ class PortalServiceRequestListCreateView(_PortalServiceRequestBase):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         email = str(request.portal_session.email or "").strip().lower()
+        # The hotel may restrict which request categories guests can raise
+        # (empty setting = all). Enforced here, not only in the catalogue view.
+        from django.conf import settings as dj_settings
+
+        enabled_categories = getattr(dj_settings, "PORTAL_ENABLED_SERVICE_CATEGORIES", None)
+        if enabled_categories and data["category"] not in enabled_categories:
+            raise ValidationError({"category": "This service category is not available in the guest portal."})
 
         # The stay is looked up by reference and in-house status ONLY; whose
         # email may act on it is decided next, so an occupant and the booking
@@ -419,6 +432,10 @@ class PortalServiceRequestListCreateView(_PortalServiceRequestBase):
             .filter(reference=data["stay_reference"], status=Stay.Status.IN_HOUSE)
             .first()
         )
+        # Eligibility is re-derived from live state (in-house stay, active room
+        # assignment, booking not checked out) rather than trusted from the session.
+        if stay is not None and stay.pk not in eligible_stay_ids_for_email(email):
+            stay = None
         if stay is None:
             # Do not reveal whether an arbitrary reference belongs to somebody
             # else or merely is not an active in-house stay.
@@ -442,8 +459,6 @@ class PortalServiceRequestListCreateView(_PortalServiceRequestBase):
             )
         if not is_contact and occupant is None:
             raise NotFound("An active stay matching this portal session was not found.")
-
-        from rest_framework.exceptions import ValidationError
 
         room = None
         if room_id := data.get("room_id"):

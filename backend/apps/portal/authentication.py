@@ -5,6 +5,7 @@ from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 
 from .services import INVALID_PORTAL_CREDENTIAL_MESSAGE, session_for_token
+from .session_cookie import CSRF_HEADER_VALUE, SAFE_METHODS, SESSION_COOKIE_NAME
 
 
 @dataclass(frozen=True)
@@ -24,12 +25,27 @@ class PortalPrincipal:
 
 
 class PortalSessionAuthentication(BaseAuthentication):
-    """Authenticate ``X-Portal-Session`` without sharing staff JWT privileges."""
+    """Authenticate the portal session from its HttpOnly cookie or ``X-Portal-Session``.
+
+    The browser uses the cookie (never readable by page scripts). Because a
+    browser attaches cookies automatically, a cookie-authenticated state-changing
+    request must also send ``X-Portal-Request: 1``: a cross-site form or simple
+    request cannot add a custom header, so this blocks CSRF. The header path is
+    for non-browser clients and is not CSRF-exposed (browsers never attach it).
+    Both paths resolve through ``session_for_token``, which re-checks eligibility.
+    """
 
     header_name = "HTTP_X_PORTAL_SESSION"
 
     def authenticate(self, request):
         raw_token = str(request.META.get(self.header_name, "") or "").strip()
+        via_cookie = False
+        if not raw_token:
+            raw_token = str(request.COOKIES.get(SESSION_COOKIE_NAME, "") or "").strip()
+            via_cookie = bool(raw_token)
+            if via_cookie and request.method not in SAFE_METHODS:
+                if request.META.get("HTTP_X_PORTAL_REQUEST", "") != CSRF_HEADER_VALUE:
+                    raise AuthenticationFailed(INVALID_PORTAL_CREDENTIAL_MESSAGE)
         if not raw_token:
             return None
         # Opaque tokens are URL-safe and fixed-size in current issuance. Bound

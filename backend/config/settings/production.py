@@ -114,6 +114,8 @@ if _portal_frontend.scheme != "https" or _portal_frontend.hostname in {"localhos
     raise ImproperlyConfigured(
         "PORTAL_FRONTEND_URL (or FRONTEND_URL fallback) must be a public HTTPS URL in production."
     )
+# The guest-portal session cookie is HTTPS-only in production.
+PORTAL_COOKIE_SECURE = True
 # Printed service QR codes encode this origin; a non-HTTPS or local origin would
 # print codes that guests cannot open safely.
 SERVICE_QR_REQUIRE_HTTPS = True

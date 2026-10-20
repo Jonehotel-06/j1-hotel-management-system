@@ -175,7 +175,7 @@ make a CORS failure disappear.
 
 Public and staff APIs use their established guest/JWT transports. The portal is
 different: after a one-use verified-email link is consumed, `portal.js` sends a
-short-lived opaque value only in `X-Portal-Session`, with `auth:false`; it is
+HttpOnly session cookie (never readable by page code), with `auth:false`; it is
 kept only in active-page JavaScript memory. It is **not** a staff JWT, booking
 `X-Guest-Access-Token`, cookie, `localStorage`, or `sessionStorage` value. The
 current design therefore needs no cross-origin cookies or CORS credentials.
@@ -191,10 +191,10 @@ address alone:
    non-enumerating whether or not that email is eligible.
 2. `POST /api/portal/auth/consume/` uses the one-use, short-lived link token.
    The login page removes `?token=` from browser history **before** network work.
-3. The returned opaque session crosses to `portal/index.html` in a URL fragment;
-   the portal immediately removes that fragment and holds the value in memory.
-   A refresh deliberately requires reopening a secure link.
-4. Portal requests carry only `X-Portal-Session`; logout revokes that server-side
+3. The API sets the session as an HttpOnly cookie. `portal/index.html` checks
+   `/api/portal/me/` on load, so a refresh or return visit keeps the guest signed
+   in without a new link. No token is placed in a URL, in memory, or in storage.
+4. Portal requests carry the cookie plus `X-Portal-Request: 1`; logout revokes that server-side
    session. The portal has no token persistence and does not poll.
 
 The overview is bounded. Folios and postings are requested only when the guest
@@ -241,10 +241,12 @@ Portal endpoints are intentionally isolated in `js/portal.js`, not staff `Auth`:
 | Purpose | Method | Path / transport |
 |---|---|---|
 | Request / consume magic link | POST | `/api/portal/auth/request/`, `/api/portal/auth/consume/` — public |
-| End portal session | POST | `/api/portal/auth/logout/` + `X-Portal-Session` |
-| Bounded overview | GET | `/api/portal/me/` + `X-Portal-Session` |
-| Folios and statement postings | GET | `/api/portal/folios/…` + `X-Portal-Session`, requested lazily and paginated |
-| Guest service requests | GET / POST | `/api/portal/requests/…` + `X-Portal-Session`; creates include an idempotency key |
+| End portal session | POST | `/api/portal/auth/logout/` (cookie + `X-Portal-Request`) |
+| Bounded overview | GET | `/api/portal/me/` (cookie) |
+| Menu (restaurant & bar) | GET | `/api/portal/catalog/menu/` (cookie) |
+| Guest services | GET | `/api/portal/catalog/services/` (cookie) |
+| Folios and statement postings | GET | `/api/portal/folios/…` (cookie), requested lazily and paginated |
+| Guest service requests | GET / POST | `/api/portal/requests/…` (cookie); creates include an idempotency key |
 
 ### Staff / dashboard resources — one integration point
 

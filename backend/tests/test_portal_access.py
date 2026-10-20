@@ -12,6 +12,7 @@ from apps.stays.models import Stay, StayRoom
 
 from .base import BaseAPITestCase
 from .factories import make_booking, make_guest, make_room, make_room_type
+from .portal_stay_helpers import make_in_house_stay
 
 
 class PortalAccessTests(BaseAPITestCase):
@@ -22,6 +23,8 @@ class PortalAccessTests(BaseAPITestCase):
         self.room_type = make_room_type("Portal suite", price="25000.00")
         self.room = make_room(self.room_type, "P01")
         self.booking = make_booking(self.guest, self.room_type, [self.room])
+        # Portal access requires a live in-house stay (checked in, not checked out).
+        self.stay = make_in_house_stay(self.booking)
 
     def _challenge(self, token="portal-magic-token-0123456789-abcdefghijklmnopqrstuvwxyz", *, expires_at=None):
         return PortalAccessChallenge.objects.create(
@@ -101,13 +104,7 @@ class PortalAccessTests(BaseAPITestCase):
         self.assertEqual(data["email"], self.email)
 
     def test_overview_exposes_only_an_owned_in_house_stay_and_active_room_selection(self):
-        from apps.core.utils import hotel_today
-
-        stay = Stay.objects.create(
-            reference=f"STY-{self.booking.booking_reference}", booking=self.booking, guest=self.guest,
-            status=Stay.Status.IN_HOUSE, expected_arrival=hotel_today(), expected_departure=hotel_today() + timedelta(days=2),
-        )
-        StayRoom.objects.create(stay=stay, room=self.room, actual_check_in_at=timezone.now())
+        stay = self.stay
         token = "portal-magic-token-0123456789-abcdefghijklmnopqrstuvwxyz"
         self._challenge(token)
         session_token = self._consume(token)

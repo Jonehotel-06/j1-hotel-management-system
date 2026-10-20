@@ -424,13 +424,15 @@ CORS_EXPOSE_HEADERS = ["X-Request-ID"]
 # losing any of these silently breaks the matching feature cross-origin:
 #   x-guest-access-token          legacy booking-scoped self-service access
 #   x-cancellation-access-token   cancellation status lookup (Contact flow)
-#   x-portal-session              short-lived verified-email portal session
+#   x-portal-session              verified-email portal session (non-browser clients)
+#   x-portal-request              CSRF marker for cookie-authenticated portal writes
 #   idempotency-key               safe booking-creation retries
 CORS_ALLOW_HEADERS = (
     *default_headers,
     "x-guest-access-token",
     "x-cancellation-access-token",
     "x-portal-session",
+    "x-portal-request",
     "x-service-qr-token",
     "idempotency-key",
     "x-jone-terminal",
@@ -503,11 +505,16 @@ SERVICE_QR_LINK_TTL_HOURS = min(max(config("SERVICE_QR_LINK_TTL_HOURS", default=
 PAYMENT_CALLBACK_URL = (
     config("PAYMENT_CALLBACK_URL", default="") or f"{FRONTEND_URL}/payment-verify.html"
 )
-# Portal access begins with a short-lived one-use email link and an opaque
-# bearer session held only in browser memory. Cookie refresh is intentionally
-# deferred until a deployment has an explicit compatible cookie/CSRF policy.
+# Portal access begins with a one-use email link (no elapsed-time expiry while the
+# guest is in house) and an opaque session kept in an HttpOnly, SameSite=Lax cookie.
 PORTAL_CHALLENGE_MINUTES = config("PORTAL_CHALLENGE_MINUTES", default=15, cast=int)
-PORTAL_SESSION_HOURS = config("PORTAL_SESSION_HOURS", default=8, cast=int)
+# Portal session lifetime: a sliding idle timeout (returning guests stay signed in
+# while eligible) bounded by an absolute cap. Eligibility is re-checked on every
+# request, so checkout ends access regardless of these values.
+PORTAL_SESSION_IDLE_HOURS = config("PORTAL_SESSION_IDLE_HOURS", default=168, cast=int)
+PORTAL_SESSION_MAX_HOURS = config("PORTAL_SESSION_MAX_HOURS", default=720, cast=int)
+# HttpOnly portal session cookie. Secure by default outside DEBUG (HTTPS only).
+PORTAL_COOKIE_SECURE = config("PORTAL_COOKIE_SECURE", default=not DEBUG, cast=bool)
 # Minimum gap between staff resends of the automatic portal invitation.
 # Service categories a guest may request in the portal (comma-separated values from
 # ServiceRequest.Category). Empty means all categories.

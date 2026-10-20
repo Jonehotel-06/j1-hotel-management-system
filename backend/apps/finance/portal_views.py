@@ -5,12 +5,27 @@ from rest_framework.views import APIView
 
 from apps.core.pagination import StandardPagination
 from apps.core.responses import success_response
+from django.db.models import Q
+
 from apps.portal.authentication import PortalSessionAuthentication
+from apps.portal.eligibility import eligible_stay_ids_for_email
 from apps.portal.permissions import HasPortalSession
 
 from .models import Folio, FolioPosting
 from .portal_serializers import PortalFolioPostingSerializer, PortalFolioSerializer
 from .services.folio_service import folio_balance_queryset
+
+
+def _owned_folios(email):
+    """Folios of this verified address that belong to a currently eligible stay.
+
+    A folio of a completed stay leaves the portal at checkout; the same address's
+    folios on any other in-house stay remain visible.
+    """
+    stay_ids = eligible_stay_ids_for_email(email)
+    return Folio.objects.filter(guest__email__iexact=email).filter(
+        Q(stay_id__in=stay_ids) | Q(booking__stay__id__in=stay_ids)
+    )
 
 
 def _page(view, request, queryset, serializer):
@@ -26,7 +41,7 @@ class PortalFolioListView(APIView):
 
     def get(self, request):
         queryset = folio_balance_queryset(
-            Folio.objects.filter(guest__email__iexact=request.portal_session.email)
+            _owned_folios(request.portal_session.email)
             .select_related("booking", "stay")
             .order_by("-opened_at", "-pk")
         )
@@ -41,7 +56,7 @@ class PortalFolioPostingListView(APIView):
     permission_classes = [HasPortalSession]
 
     def get(self, request, reference):
-        owned = Folio.objects.filter(reference=reference, guest__email__iexact=request.portal_session.email).first()
+        owned = _owned_folios(request.portal_session.email).filter(reference=reference).first()
         if owned is None:
             raise NotFound("Folio not found.")
         queryset = FolioPosting.objects.filter(folio=owned).order_by("-business_date", "-created_at", "-pk")
@@ -55,7 +70,7 @@ class PortalFolioDetailView(APIView):
 
     def get(self, request, reference):
         folio = folio_balance_queryset(
-            Folio.objects.filter(reference=reference, guest__email__iexact=request.portal_session.email)
+            _owned_folios(request.portal_session.email).filter(reference=reference)
             .select_related("booking", "stay")
         ).first()
         if folio is None:

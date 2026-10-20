@@ -9,7 +9,7 @@ const { makeContext, loadScript, FRONTEND, disposeAll } = require("./harness");
 
 test.after(() => disposeAll());
 
-test("portal transport keeps the opaque session separate from staff JWT authorization", async () => {
+test("portal transport keeps the cookie session separate from staff JWT authorization", async () => {
   const ctx = makeContext();
   loadScript(ctx, "js/config.js");
   const calls = [];
@@ -24,31 +24,56 @@ test("portal transport keeps the opaque session separate from staff JWT authoriz
   assert.equal(ctx.window.APP_CONFIG.API_ENDPOINTS.portalFolios, "/api/portal/folios/");
   assert.equal(ctx.window.APP_CONFIG.API_ENDPOINTS.portalRequests, "/api/portal/requests/");
 
-  await portal.sessionRequest("portalOverview", "opaque-session-token", "GET");
-  await portal.sessionPathRequest(portal.pathFor("portalRequests", "SRQ/TEST", "comments"), "opaque-session-token", "POST", { message: "Thank you" });
+  await portal.sessionRequest("portalOverview", "", "GET");
+  await portal.sessionPathRequest(portal.pathFor("portalRequests", "SRQ/TEST", "comments"), "", "POST", { message: "Thank you" });
   assert.equal(calls[0].url, "/api/portal/me/");
   assert.equal(calls[0].opts.auth, false);
-  assert.equal(calls[0].opts.headers["X-Portal-Session"], "opaque-session-token");
   assert.equal(calls[1].url, "/api/portal/requests/SRQ%2FTEST/comments/");
   assert.equal(calls[1].opts.auth, false);
   assert.deepEqual(calls[1].opts.body, { message: "Thank you" });
-  assert.equal(calls[1].opts.headers["X-Portal-Session"], "opaque-session-token");
+  // The browser attaches the HttpOnly cookie itself; page code never sends a session token.
+  for (const call of calls) {
+    assert.equal(call.opts.headers["X-Portal-Request"], "1");
+    assert.equal(call.opts.headers["X-Portal-Session"], undefined);
+    assert.equal(call.opts.headers.Authorization, undefined);
+  }
+  assert.equal(portal.sessionFromHash, undefined);
+  assert.equal(portal.sessionHash, undefined);
 });
 
-test("portal UI consumes a magic-link token without durable browser storage", () => {
+test("portal ended-session message is shown only for the checkout code", () => {
+  const ctx = makeContext();
+  loadScript(ctx, "js/config.js");
+  ctx.window.API = { request: () => Promise.resolve({}) };
+  loadScript(ctx, "js/portal.js");
+  const portal = ctx.window.JONE.portal;
+  assert.equal(
+    portal.sessionEndedMessage({ status: 401, code: "PORTAL_ACCESS_ENDED", message: "Portal access ended because checkout is complete." }),
+    "Portal access ended because checkout is complete.",
+  );
+  assert.equal(portal.sessionEndedMessage({ status: 401, code: "UNAUTHORIZED", message: "invalid" }), "");
+  assert.equal(portal.sessionEndedMessage(null), "");
+});
+
+test("portal UI consumes a magic link and relies on an HttpOnly cookie, not page-held tokens", () => {
   const transport = fs.readFileSync(path.join(FRONTEND, "js", "portal.js"), "utf8");
   const login = fs.readFileSync(path.join(FRONTEND, "portal", "login.html"), "utf8");
   const portal = fs.readFileSync(path.join(FRONTEND, "portal", "index.html"), "utf8");
 
-  assert.match(transport, /sessionFromHash/);
-  assert.match(transport, /history\.replaceState/);
-  assert.doesNotMatch(transport, /localStorage|sessionStorage/);
+  // The one-use link token is stripped from the address bar and never sent by Referer.
   assert.match(login, /portal\.consumeAccess/);
   assert.match(login, /history\.replaceState/);
-  assert.match(login, /sessionHash\(sessionToken\)/);
-  assert.match(portal, /portal\.sessionFromHash\(\)/);
+  assert.match(login, /<meta name="referrer" content="no-referrer">/);
+  assert.match(login, /window\.location\.replace\("index\.html"\)/);
+  assert.doesNotMatch(login, /sessionHash|session_token/);
+  // No fragment or memory session transport remains.
+  assert.doesNotMatch(transport, /sessionFromHash|sessionHash|#session=|location\.hash/);
+  assert.doesNotMatch(portal, /sessionFromHash|sessionHash|#session=/);
+  assert.match(transport, /X-Portal-Request/);
+  assert.match(portal, /JONE\.portal\.sessionEndedMessage\(err\)/);
+  assert.doesNotMatch(transport, /localStorage|sessionStorage/);
   assert.doesNotMatch(portal, /my-bookings\.html/);
-  const portalApp = portal.slice(portal.indexOf("var token=JONE.portal.sessionFromHash"));
+  const portalApp = portal.slice(portal.indexOf("var token=true"));
   assert.doesNotMatch(portalApp, /localStorage|sessionStorage/);
   // Reload-capable PWA/update scripts would erase this deliberately
   // memory-only session, so the release builder must keep them off portal HTML.
@@ -82,6 +107,9 @@ test("portal dashboard consumes bounded authoritative reads, lazy statements, an
   const portal = fs.readFileSync(path.join(FRONTEND, "portal", "index.html"), "utf8");
   assert.match(portal, /portalOverview/);
   assert.match(portal, /portalFolios/);
+  assert.match(portal, /portalMenu/);
+  assert.match(portal, /portalServices/);
+  assert.match(portal, /portal-catalog\.js/);
   assert.match(portal, /portalRequests/);
   assert.match(portal, /in_house_stay/);
   assert.match(portal, /data-portal-postings/);

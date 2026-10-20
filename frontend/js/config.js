@@ -329,13 +329,15 @@
     /* Authoritative availability search (public; used by staff too) */
     availability:  "/api/rooms/availability/",
 
-    /* Verified-email guest portal (opaque X-Portal-Session, never staff JWT). */
+    /* Verified-email guest portal (HttpOnly session cookie, never staff JWT). */
     portalAccessRequest: "/api/portal/auth/request/",
     portalAccessConsume: "/api/portal/auth/consume/",
     portalLogout:        "/api/portal/auth/logout/",
     portalOverview:      "/api/portal/me/",
     portalFolios:        "/api/portal/folios/",
     portalRequests:      "/api/portal/requests/",
+    portalMenu:          "/api/portal/catalog/menu/",
+    portalServices:      "/api/portal/catalog/services/",
 
     /* Notifications (authenticated user, not admin-namespaced) */
     notifications: "/api/notifications/"

@@ -12,9 +12,11 @@ from apps.stays.models import StayRoom
 from apps.core.serializers import EmptySerializer
 
 from .authentication import PortalSessionAuthentication
+from .eligibility import eligible_stay_ids_for_email
 from .permissions import HasPortalSession
 from .serializers import PortalAccessConsumeSerializer, PortalAccessRequestSerializer
 from .services import consume_access_challenge, request_access_challenge, revoke_session
+from .session_cookie import clear_session_cookie, set_session_cookie
 
 
 @extend_schema(tags=["Guest Portal"], summary="Request a non-enumerating email sign-in link")
@@ -49,14 +51,18 @@ class PortalAccessConsumeView(APIView):
         session, raw_session_token = consume_access_challenge(
             raw_token=serializer.validated_data["token"], request=request
         )
-        return success_response(
+        # The browser keeps the session only in an HttpOnly cookie. The raw value
+        # is also returned for non-browser API clients that send X-Portal-Session;
+        # the bundled portal never stores it.
+        response = success_response(
             {
                 "session_token": raw_session_token,
                 "expires_at": session.expires_at.isoformat(),
-                "transport": "memory_bearer",
+                "transport": "http_only_cookie",
             },
             message="Guest portal session created.",
         )
+        return set_session_cookie(response, raw_session_token)
 
 
 @extend_schema(tags=["Guest Portal"], summary="Revoke the active guest portal session")
@@ -67,7 +73,7 @@ class PortalLogoutView(APIView):
 
     def post(self, request):
         revoke_session(request.portal_session, request=request)
-        return success_response(message="Guest portal session ended.")
+        return clear_session_cookie(success_response(message="Guest portal session ended."))
 
 
 def _rooms_for_portal_email(booking, email):
@@ -135,8 +141,13 @@ class PortalOverviewView(APIView):
         # received a one-time link, so no unverified third party can see a
         # booking by guessing an email.
         portal_email = str(request.portal_session.email or "").strip().lower()
+        # Only bookings with a currently eligible (in-house) stay are shown. A
+        # completed stay's booking disappears from the portal at checkout, even
+        # if the same address still has another stay.
+        eligible_stay_ids = eligible_stay_ids_for_email(portal_email)
         rows = list(
-            Booking.objects.filter(
+            Booking.objects.filter(stay__id__in=eligible_stay_ids)
+            .filter(
                 Q(guest__email__iexact=portal_email)
                 | Q(room_assignments__occupants__email__iexact=portal_email)
             )

@@ -122,18 +122,24 @@ The portal is deliberately different from staff JWT authentication and from
 
 | Variable | Default / purpose |
 |---|---|
-| `PORTAL_CHALLENGE_MINUTES` | `15`; maximum life of a one-use email link. |
-| `PORTAL_SESSION_HOURS` | `8`; maximum life of a short-lived opaque portal session. |
+| `PORTAL_CHALLENGE_MINUTES` | `15`; legacy setting. New links have no elapsed-time expiry while the guest is in house. |
+| `PORTAL_SESSION_IDLE_HOURS` | `168`; sliding idle timeout for a portal session. A returning guest stays signed in while eligible. |
+| `PORTAL_SESSION_MAX_HOURS` | `720`; absolute cap on one portal session, regardless of activity. |
+| `PORTAL_COOKIE_SECURE` | Defaults to `true` outside `DJANGO_DEBUG`; the session cookie is HTTPS-only. |
 | `PORTAL_SESSION_TOUCH_MINUTES` | `15`; minimum write interval for last-used telemetry. |
 | `PORTAL_CHALLENGES_PER_EMAIL_PER_HOUR` | `5`; per-email challenge ceiling in addition to request throttling. |
 
-A guest requests a non-enumerating magic link, consumes it once, then the
-portal sends the opaque value only in `X-Portal-Session`. The browser holds it
-only in active-page JavaScript memory: it is not a cookie, staff JWT,
-booking `X-Guest-Access-Token`, `localStorage`, or `sessionStorage` value.
-Refreshing the portal intentionally requires reopening a secure link. The
-backend hashes portal credentials, scopes reads to the verified email, and
-revokes the server-side session on logout.
+A guest requests a non-enumerating magic link and consumes it once. The API
+then sets the session as an `HttpOnly`, `SameSite=Lax` cookie scoped to
+`/api/portal/`. Page scripts cannot read it, and it is not stored in
+`localStorage` or `sessionStorage`. A refresh or return visit is restored from
+that cookie without a new link, and the server re-checks eligibility on every
+request. A guest is eligible only while their stay is in house. The
+cookie-authenticated write requests must send `X-Portal-Request: 1`, which the
+portal sends automatically, as protection against CSRF. Checkout ends access
+for the completed stay; the portal shows "Portal access ended because checkout
+is complete." The backend hashes portal credentials, scopes reads to the
+verified email and eligible stays, and revokes the server-side session on logout.
 
 For a split API/frontend deployment, the backend already allows the required
 `x-portal-session` header explicitly. A CORS preflight failure is therefore an
@@ -292,8 +298,9 @@ Then:
 3. Publish the versioned static frontend, including portal pages and static-host
    no-store/noindex headers.
 4. Request a real staging portal link, verify the generic request response,
-   consume flow, `X-Portal-Session` requests, logout, and intentional
-   refresh/reopen-link behavior.
+   consume flow, the HttpOnly cookie (confirm the `/api/` rewrite forwards
+   `Set-Cookie`), refresh/return without a new link, logout, and the checkout
+   end-of-access message.
 5. Confirm the public booking flow, multi-room booking, payment callback, and
    existing `my-bookings.html` journey still work independently of the portal.
 
@@ -301,18 +308,18 @@ Then:
 `version.json`, `js/version.js`, and the service-worker cache namespace and
 stamps local CSS/JS assets. It includes portal pages and `qr-service.html` for asset stamping but
 deliberately does not inject persistent theme bootstrap or reload-capable
-PWA/update-controller scripts into these credential-bearing shells, because a
-reload could discard an in-memory portal session or a newly issued QR code.
+PWA/update-controller scripts into these credential-bearing shells. The portal
+session lives in an HttpOnly cookie, so reloads are safe for the session itself,
+but the QR-service shell still must not be reloaded mid-flow.
 
 ## 6. Troubleshooting
 
 - **Portal link opens the wrong site** — set the exact HTTPS
   `PORTAL_FRONTEND_URL`; blank intentionally falls back to `FRONTEND_URL`.
-- **Portal request is blocked by CORS** — compare the browser origin exactly to
-  one entry in `CORS_ALLOWED_ORIGINS`, including scheme and subdomain, and make
-  sure the API host permits `x-portal-session` (already configured by Django).
-- **Portal refresh signs the guest out** — expected by design; reopen a new
-  magic link rather than trying to persist the opaque session.
+- **Portal refresh signs the guest out** — the session cookie was not stored.
+  Check that the API is served on the same origin as the portal (through the
+  `/api/` rewrite) and that `PORTAL_COOKIE_SECURE` matches the HTTPS setup.
+- **Portal says access ended** — the guest's stay has checked out. Expected.
 - **Images disappear after a deploy** — production media storage is incomplete;
   run `python manage.py check_media_storage` and configure durable storage.
 - **429 during development** — sensitive routes are throttled. Wait for the

@@ -89,10 +89,11 @@ class GuestServiceTests(BaseAPITestCase):
         self.assertIn("Two extra towels, please.", portal_messages)
         self.assertNotIn("Use linen-store reserve", portal_messages)
 
+        # An address with no in-house stay holds no portal access at all.
         other_token = self._portal_token("other-guest-service@example.com")
         self.assertEqual(
             self.client.get(f"/api/portal/requests/{reference}/", HTTP_X_PORTAL_SESSION=other_token).status_code,
-            404,
+            401,
         )
 
     def test_team_worker_can_claim_and_progress_own_queue_but_cannot_view_other_team(self):
@@ -206,7 +207,7 @@ class GuestServiceTests(BaseAPITestCase):
         other_token = self._portal_token("other-folio-guest@example.com")
         self.assertEqual(
             self.client.get(f"/api/portal/folios/{folio.reference}/", HTTP_X_PORTAL_SESSION=other_token).status_code,
-            404,
+            401,
         )
 
     def test_guest_can_cancel_open_request_but_not_an_in_progress_request(self):

@@ -133,16 +133,22 @@ The portal does **not** accept a staff JWT or booking
 ```http
 POST /api/portal/auth/request/  # generic/non-enumerating email-link response
 POST /api/portal/auth/consume/  # one-use challenge -> opaque short-lived session
-GET  /api/portal/me/            # X-Portal-Session: <opaque-session>
-POST /api/portal/auth/logout/   # X-Portal-Session: <opaque-session>
+GET  /api/portal/me/            # session cookie (or X-Portal-Session for API clients)
+POST /api/portal/auth/logout/   # cookie + X-Portal-Request: 1 (or X-Portal-Session)
+GET  /api/portal/catalog/menu/      # active restaurant/bar menu (read-only)
+GET  /api/portal/catalog/services/  # guest-facing services (read-only)
 ```
 
-The server stores only hashes of challenge/session credentials. The client
-holds the opaque session only in active-page memory and sends it solely in the
-explicit `X-Portal-Session` header with no staff JWT. It is neither a cookie
-nor durable browser storage. Portal views scope records by the verified email,
-keep list reads bounded/paginated, and require an owned active in-house stay
-for guest-service request creation. Logout revokes the server-side session.
+The server stores only hashes of challenge/session credentials. The browser
+receives the session as an `HttpOnly`, `SameSite=Lax` cookie scoped to
+`/api/portal/`; page scripts cannot read it. Cookie-authenticated writes must
+also send `X-Portal-Request: 1`. Non-browser clients may send the session in
+`X-Portal-Session`. Every request re-checks eligibility: a guest is eligible only
+while their stay is in house and their room is still assigned. Checkout ends
+access to the completed stay only, while the same address's other in-house
+stays keep working. Portal views scope records by the verified email and
+eligible stays, keep list reads bounded/paginated, and require an owned active
+in-house stay for guest-service request creation. Logout revokes the session.
 
 ## 5. Environments & settings modules
 
@@ -180,9 +186,9 @@ CSRF_TRUSTED_ORIGINS=https://hotel.example.com,https://manage.example.com,https:
 ```
 
 `CORS_ALLOWED_ORIGINS` is an exact allowlist: no wildcard, URL path, trailing
-slash, or unneeded origin. The API explicitly permits `x-portal-session` in
-CORS preflight headers. Public/staff JWT flows and the current header-based
-portal session need no cross-origin cookies, so `CORS_ALLOW_CREDENTIALS` remains
+slash, or unneeded origin. The API permits `x-portal-session` and
+`x-portal-request` in CORS preflight headers. The portal cookie is first-party
+(same origin via the `/api/` rewrite), so `CORS_ALLOW_CREDENTIALS` remains
 `False`. Do not weaken that setting to fix a bad origin configuration.
 
 ## 6. MySQL (production)

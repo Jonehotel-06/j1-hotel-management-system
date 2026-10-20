@@ -1,6 +1,7 @@
 """Transactional bridge from existing booking check-in/out to Stay history."""
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from django.db import transaction
@@ -9,6 +10,8 @@ from django.utils import timezone
 from apps.core.utils import hotel_today
 
 from .models import Stay, StayEvent, StayRoom
+
+logger = logging.getLogger(__name__)
 
 
 def _stay_reference(booking) -> str:
@@ -218,4 +221,21 @@ def close_stay_for_checkout(*, booking, assignments, actor=None, automatic=False
         actor=actor,
         details={"automatic": bool(automatic), "booking_reference": booking.booking_reference},
     )
+    _end_portal_access_after_checkout(stay)
     return stay
+
+
+def _end_portal_access_after_checkout(stay):
+    """Revoke portal access tied to this completed stay, without blocking checkout.
+
+    Runs in a savepoint: if the revocation itself fails, only it is rolled back
+    and checkout still completes. Access is also enforced on every request by
+    live eligibility, so this step records the revocation; it never grants anything.
+    """
+    from apps.portal.services import end_portal_access_for_checked_out_stay
+
+    try:
+        with transaction.atomic():
+            end_portal_access_for_checked_out_stay(stay)
+    except Exception:  # pragma: no cover - exercised via a patched failure test
+        logger.exception("Portal access revocation failed for stay %s", stay.reference)

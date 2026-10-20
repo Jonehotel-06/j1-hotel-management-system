@@ -124,6 +124,16 @@ def jone_exception_handler(exc, context):
         )
 
     if isinstance(exc, drf_exceptions.AuthenticationFailed):
+        # Portal access that ended at checkout carries a distinct code so the
+        # guest portal can explain it. Every other auth failure stays UNAUTHORIZED.
+        if str(exc.get_codes()) == "portal_access_ended":
+            return _envelope(
+                "PORTAL_ACCESS_ENDED",
+                _detail_text(getattr(exc, "detail", None), "Portal access has ended."),
+                None,
+                response.status_code,
+                response.headers,
+            )
         return _envelope(
             "UNAUTHORIZED",
             _detail_text(

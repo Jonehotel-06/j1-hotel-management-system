@@ -1,8 +1,10 @@
 /* js/portal.js
-   Verified-email guest portal transport. Portal credentials are opaque,
-   short-lived X-Portal-Session values and are intentionally kept only in the
-   current page's JavaScript memory. A consumed link moves the token through a
-   URL fragment once, then immediately removes it from browser history. */
+   Verified-email guest portal transport. The portal session is an HttpOnly,
+   SameSite=Lax cookie set by the API. Page scripts never read or store it, so
+   there is no session token in the URL, in memory, or in web storage. A refresh
+   or return visit re-validates the cookie with the server (GET /api/portal/me/).
+   Every portal call sends X-Portal-Request so the server can refuse
+   cookie-authenticated writes that did not come from this page (CSRF). */
 (function () {
   "use strict";
 
@@ -41,16 +43,24 @@
     return callPath(endpoint(name), Object.assign({}, opts, { method: method || "GET", body: body }));
   }
 
-  function sessionRequest(name, sessionToken, method, body, opts) {
-    opts = opts || {};
-    var headers = Object.assign({}, opts.headers || {}, { "X-Portal-Session": sessionToken || "" });
-    return callPath(endpoint(name), Object.assign({}, opts, { method: method || "GET", body: body, headers: headers }));
+  // The session travels in the HttpOnly cookie. The session argument is accepted
+  // for call-site compatibility and is deliberately not sent anywhere.
+  function portalHeaders(extra) {
+    return Object.assign({}, extra || {}, { "X-Portal-Request": "1" });
   }
 
-  function sessionPathRequest(path, sessionToken, method, body, opts) {
+  function sessionRequest(name, _sessionIgnored, method, body, opts) {
     opts = opts || {};
-    var headers = Object.assign({}, opts.headers || {}, { "X-Portal-Session": sessionToken || "" });
-    return callPath(path, Object.assign({}, opts, { method: method || "GET", body: body, headers: headers }));
+    return callPath(endpoint(name), Object.assign({}, opts, {
+      method: method || "GET", body: body, headers: portalHeaders(opts.headers),
+    }));
+  }
+
+  function sessionPathRequest(path, _sessionIgnored, method, body, opts) {
+    opts = opts || {};
+    return callPath(path, Object.assign({}, opts, {
+      method: method || "GET", body: body, headers: portalHeaders(opts.headers),
+    }));
   }
 
   function newIdempotencyKey(prefix) {
@@ -60,15 +70,13 @@
     return (prefix || "portal") + "-ui-" + suffix;
   }
 
-  function consumeSessionFromHash() {
-    var raw = String(window.location.hash || "").replace(/^#/, "");
-    if (!raw) return "";
-    var token = "";
-    try { token = new URLSearchParams(raw).get("session") || ""; } catch (_) {}
-    // A fragment is not sent to the server, but removing it immediately keeps
-    // it out of copied URLs and reduces accidental local exposure.
-    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch (_) {}
-    return token;
+  // Shown only when the server says the stay has ended at checkout. Any other
+  // 401 simply means "sign in again", so it returns an empty message.
+  function sessionEndedMessage(err) {
+    if (err && err.code === "PORTAL_ACCESS_ENDED") {
+      return err.message || "Portal access ended because checkout is complete.";
+    }
+    return "";
   }
 
   portal.endpoint = endpoint;
@@ -79,7 +87,6 @@
   portal.requestAccess = function (email) { return publicRequest("portalAccessRequest", "POST", { email: email }); };
   portal.consumeAccess = function (token) { return publicRequest("portalAccessConsume", "POST", { token: token }); };
   portal.logout = function (sessionToken) { return sessionRequest("portalLogout", sessionToken, "POST", {}); };
-  portal.sessionFromHash = consumeSessionFromHash;
-  portal.sessionHash = function (sessionToken) { return "#session=" + encodeURIComponent(sessionToken || ""); };
+  portal.sessionEndedMessage = sessionEndedMessage;
   portal.newIdempotencyKey = newIdempotencyKey;
 })();
