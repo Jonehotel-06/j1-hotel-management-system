@@ -1,0 +1,40 @@
+# ===========================================================================
+# J-ONE HOTEL & LODGE — Repository root Git ignore rules
+# Protects environment secrets, local virtual environments, and DB dumps.
+# ===========================================================================
+
+# --- Secrets & environment files -------------------------------------------
+.env
+.env.*
+!.env.example
+!backend/.env.example
+*.pem
+*.key
+
+# --- Python & local virtual environments -----------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Local databases, dumps & temporary schedules --------------------------
+*.sqlite3*
+*.sql
+*.sql.gz
+*.dump
+*.log
+celerybeat-schedule*
+
+# --- OS & editor metadata --------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo

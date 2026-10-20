@@ -84,6 +84,10 @@ if "*" in CORS_ALLOWED_ORIGINS:
 
 # --- HTTPS / browser security headers ---------------------------------------
 SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=True, cast=bool)
+# Orchestrators (Docker HEALTHCHECK, Render, Fly.io, Railway, Nginx/ALB) probe
+# container health over internal plain HTTP before TLS termination; redirecting
+# probes to HTTPS masks a down database with HTTP 301 instead of HTTP 503.
+SECURE_REDIRECT_EXEMPT = [r"^api/health/(?:live/|ready/)?$"]
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_HSTS_SECONDS = 60 * 60 * 24 * 30
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True

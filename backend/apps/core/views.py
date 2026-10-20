@@ -62,7 +62,7 @@ def _readiness_response():
 
 
 @extend_schema(responses={200: dict}, summary="Process liveness probe", tags=["Meta"])
-@api_view(["GET"])
+@api_view(["GET", "HEAD"])
 @permission_classes([AllowAny])
 def health_liveness(request):
     """Report that the Django process can receive requests without touching DB."""
@@ -74,7 +74,7 @@ def health_liveness(request):
     summary="Dependency readiness probe",
     tags=["Meta"],
 )
-@api_view(["GET"])
+@api_view(["GET", "HEAD"])
 @permission_classes([AllowAny])
 def health_readiness(request):
     """Report whether the API is ready to serve authoritative hotel data."""
@@ -86,7 +86,7 @@ def health_readiness(request):
     summary="Health check (legacy readiness alias)",
     tags=["Meta"],
 )
-@api_view(["GET"])
+@api_view(["GET", "HEAD"])
 @permission_classes([AllowAny])
 def health_check(request):
     """Keep the established endpoint contract for existing load balancers."""

@@ -2,7 +2,9 @@
 
 How to install, configure, validate, and deploy J-ONE Hotel & Lodge. The
 application is one Django API and one MySQL database serving the public site,
-staff console, and verified-email guest portal. For operational use, see
+staff console, and verified-email guest portal. For container builds, Docker
+Compose local stacks, external MySQL wiring, backups, and cloud container
+rollouts, see **[DOCKER.md](DOCKER.md)**. For operational use, see
 [USAGE.md](USAGE.md).
 
 ## 1. Requirements

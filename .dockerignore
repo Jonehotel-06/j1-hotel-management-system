@@ -1,0 +1,46 @@
+# ===========================================================================
+# J-ONE HOTEL & LODGE — Root Docker build context exclusions
+# Primary backend image build context is ./backend (using backend/.dockerignore),
+# and this root file also guards any root-scoped Docker build invocations.
+# ===========================================================================
+
+.git
+.git/
+.github/
+.vscode/
+.idea/
+
+# --- Secrets & environment files -------------------------------------------
+.env
+.env.*
+backend/.env
+backend/.env.*
+*.pem
+*.key
+*.crt
+
+# --- Frontend & documentation trees (backend deploys independently) --------
+frontend/
+docs/
+*.md
+
+# --- Python caches, virtual environments, DB dumps & media -----------------
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/venv/
+**/env/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage*
+**/htmlcov/
+**/*.sqlite3*
+**/*.sql
+**/*.sql.gz
+**/*.dump
+**/*.log
+backend/media/
+backend/staticfiles/
+backend/logs/
+backend/.migration_backup/

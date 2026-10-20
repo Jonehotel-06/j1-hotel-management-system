@@ -15,7 +15,7 @@ dashboard for J-ONE Hotel & Lodge.
 |---|---|
 | [`backend/`](backend/) | Django + Django REST Framework JSON API. Reservations, stays, folios/finance, POS, guest services, operations, inventory, workforce, payments, reporting, and verified portal access. |
 | [`frontend/`](frontend/) | Static HTML/CSS/vanilla-JS public site, staff dashboard, and verified-email guest portal. `build.py` handles release versioning and public chrome. |
-| [`docs/`](docs/) | [Setup](docs/SETUP.md), [usage](docs/USAGE.md) and [verification](docs/VERIFICATION.md) guides. |
+| [`docs/`](docs/) | [Setup](docs/SETUP.md), [Docker & container operations](docs/DOCKER.md), [usage](docs/USAGE.md) and [verification](docs/VERIFICATION.md) guides. |
 | [`docs/verification/`](docs/verification/) | Machine-readable evidence from the repair verification: browser accessibility scans, responsive measurements, the performance before/after pair, the backend query profile and the dependency scan. |
 | [`backend/docs/`](backend/docs/) | API reference, architecture notes, booking-flow spec and the OpenAPI 3 schema. |
 
@@ -73,6 +73,19 @@ python dev_server.py
 
 Development defaults are safe: SQLite, console email (nothing leaves the
 machine), Paystack test keys, no Redis required.
+
+To run the full production-parity container stack locally instead (Gunicorn +
+MySQL 8.0 + Redis 7 + Celery worker + Celery beat):
+
+```bash
+cp .env.example .env
+docker compose up -d --build --wait
+docker compose exec api python manage.py migrate --noinput
+```
+
+Full container build, external MySQL, migration, media volume/Backblaze B2,
+backup/restore, and multi-provider deployment instructions are in
+**[docs/DOCKER.md](docs/DOCKER.md)**.
 
 ## Day-to-day operation
 

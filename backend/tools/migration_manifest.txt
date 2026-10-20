@@ -35,10 +35,13 @@ apps/accounts/migrations/0022_remove_payroll_statutory_capabilities.py
 apps/accounts/migrations/0023_workstation_registered_desktop_ip.py
 apps/audit/migrations/0001_initial.py
 apps/audit/migrations/0002_auditlog_actor_department_auditlog_actor_role_and_more.py
+apps/audit/migrations/0003_utf8mb4_auditlog_table.py
 apps/bookings/migrations/0001_initial.py
 apps/bookings/migrations/0002_guest_access_token.py
 apps/bookings/migrations/0003_booking_idempotency_key.py
 apps/bookings/migrations/0004_report_range_indexes.py
+apps/bookings/migrations/0005_bookingroom_arrival_note_bookingroom_checked_in_at_and_more.py
+apps/bookings/migrations/0006_backfill_room_check_ins.py
 apps/enquiries/migrations/0001_initial.py
 apps/enquiries/migrations/0002_cancellation_request_workflow.py
 apps/finance/migrations/0001_folio_finance_foundation.py
@@ -55,6 +58,8 @@ apps/finance/migrations/0011_expense_department.py
 apps/finance/migrations/0012_expense_payment_settlement.py
 apps/finance/migrations/0013_folioposting_settles.py
 apps/finance/migrations/0014_classify_existing_folio_money.py
+apps/finance/migrations/0015_expense_receipt_file.py
+apps/finance/migrations/0016_ledger_reporting_indexes.py
 apps/gallery/migrations/0001_initial.py
 apps/guest_services/migrations/0001_guest_service_requests.py
 apps/guest_services/migrations/0002_servicerequest_table_number_and_more.py
@@ -62,6 +67,7 @@ apps/guest_services/migrations/0003_alter_servicerequestevent_type.py
 apps/guest_services/migrations/0004_service_qr_link_expiry.py
 apps/guest_services/migrations/0005_laundryorder_laundryitem_and_more.py
 apps/guest_services/migrations/0006_laundry_walk_in_customers.py
+apps/guest_services/migrations/0007_servicerequest_occupant.py
 apps/hotel/migrations/0001_initial.py
 apps/hotel/migrations/0002_hotelsettings_google_review_url.py
 apps/hotel/migrations/0003_hotelsettings_contact_image_and_more.py
@@ -69,6 +75,7 @@ apps/hotel/migrations/0004_remove_hotelsettings_contact_image_and_more.py
 apps/hotel/migrations/0005_hotelsettings_restrict_check_in_to_booked_date.py
 apps/hotel/migrations/0006_hotelsettings_statutory_tax_basis_and_more.py
 apps/hotel/migrations/0007_front_desk_desktop_ip.py
+apps/hotel/migrations/0008_alter_hotelsettings_front_desk_desktop_ip.py
 apps/housekeeping/migrations/0001_housekeeping_task_foundation.py
 apps/inventory/migrations/0001_inventory_procurement_foundation.py
 apps/inventory/migrations/0002_pos_stock_consumption_request.py
@@ -78,6 +85,9 @@ apps/inventory/migrations/0005_stockitem_pack_packaging.py
 apps/inventory/migrations/0006_item_types_direct_sale_and_issue_departments.py
 apps/inventory/migrations/0007_classify_existing_stock_items.py
 apps/inventory/migrations/0008_portable_direct_sale_unique.py
+apps/inventory/migrations/0009_purchaseorder_approval_receipt_and_more.py
+apps/inventory/migrations/0010_normalize_pack_counted_items.py
+apps/inventory/migrations/0011_purchaseorder_paid_at_purchaseorder_paid_by_and_more.py
 apps/maintenance/migrations/0001_maintenance_work_order_foundation.py
 apps/notifications/migrations/0001_initial.py
 apps/notifications/migrations/0002_alter_notification_type.py
@@ -93,6 +103,8 @@ apps/notifications/migrations/0011_alter_emaillog_failure_stage.py
 apps/notifications/migrations/0012_alter_emaillog_failure_stage.py
 apps/notifications/migrations/0013_emaillog_synchronous_delivery.py
 apps/notifications/migrations/0014_email_kind_portal_invitation.py
+apps/notifications/migrations/0015_alter_emaillog_kind.py
+apps/notifications/migrations/0016_utf8mb4_notification_tables.py
 apps/offers/migrations/0001_initial.py
 apps/offers/migrations/0002_guestdiscount_guestdiscountapplication_and_more.py
 apps/payments/migrations/0001_initial.py
@@ -101,6 +113,7 @@ apps/payments/migrations/0003_refund_cancellation_request.py
 apps/payments/migrations/0004_report_range_indexes.py
 apps/portal/migrations/0001_capability_and_portal_foundation.py
 apps/portal/migrations/0002_guest_portal_invitation.py
+apps/portal/migrations/0003_portal_challenge_optional_expiry.py
 apps/pos/migrations/0001_pos_room_service_foundation.py
 apps/pos/migrations/0002_kitchenticket_station_menucategory_service_area_and_more.py
 apps/pos/migrations/0003_restauranttablesessionevent_restauranttable_and_more.py

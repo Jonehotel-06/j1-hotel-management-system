@@ -1,0 +1,74 @@
+# ===========================================================================
+# J-ONE HOTEL & LODGE — Backend Docker build context exclusions
+# Excludes secrets, VCS metadata, local virtualenvs, caches, logs, SQLite DBs,
+# database dumps, and local uploaded private media while preserving all runtime
+# code, templates, embedded assets, static files, migrations, tools, and tests.
+# ===========================================================================
+
+# --- Version control & CI metadata -----------------------------------------
+.git
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# --- Secrets & local environment files (NEVER bake into images) ------------
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+.pypirc
+
+# --- Python caches & local virtual environments ----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.envrc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+build/
+dist/
+*.egg-info/
+
+# --- Local databases, dumps, logs & temporary artifacts --------------------
+db.sqlite3
+db.sqlite3-journal
+*.sqlite3*
+jone_hotel-*
+*.sql
+*.sql.gz
+*.dump
+*.bak
+logs/
+*.log
+celerybeat-schedule*
+.migration_backup/
+
+# --- Ephemeral / user-uploaded media & pre-existing local static outputs ---
+media/
+staticfiles/
+
+# --- Editor & OS cruft -----------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Non-runtime markdown docs ---------------------------------------------
+README.md
+docs/*.md

@@ -1,0 +1,249 @@
+# ===========================================================================
+# J-ONE HOTEL & LODGE — Local Development & Integration Docker Compose Stack
+#
+# Quick start (from repository root):
+#   cp .env.example .env
+#   docker compose up -d --build
+#   docker compose exec api python manage.py migrate --noinput
+#   docker compose exec api python manage.py createsuperuser
+#
+# Database safety:
+#   - Named volume `mysql_data` persists data across `docker compose down` and
+#     image rebuilds (`docker compose up -d --build`).
+#   - Migrations are NEVER auto-executed on container startup.
+#   - Database and Redis ports are isolated on the internal network by default.
+# ===========================================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-backend-env: &backend-common-env
+  DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.production}
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-docker-dev-only-secret-key-not-for-production-use-change-me}
+  DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,api,testserver}
+  SECURE_SSL_REDIRECT: ${SECURE_SSL_REDIRECT:-False}
+  # Service-to-service communication over the internal Compose network (`db`, `redis`)
+  DB_NAME: ${DB_NAME:-jone_hotel}
+  DB_USER: ${DB_USER:-jone}
+  DB_PASSWORD: ${DB_PASSWORD:-jone_local_dev_password}
+  DB_HOST: ${DB_HOST:-db}
+  DB_PORT: ${DB_PORT:-3306}
+  DATABASE_URL: ${DATABASE_URL:-}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  # Browser origins (safe non-loopback HTTPS placeholder satisfies production URL guard locally;
+  # CORS allows local frontend dev_server.py on port 5500/8080)
+  FRONTEND_URL: ${FRONTEND_URL:-https://hotel.example.invalid}
+  PORTAL_FRONTEND_URL: ${PORTAL_FRONTEND_URL:-}
+  SERVICE_QR_FRONTEND_URL: ${SERVICE_QR_FRONTEND_URL:-}
+  PAYMENT_CALLBACK_URL: ${PAYMENT_CALLBACK_URL:-}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:8080,http://localhost:8080}
+  CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:5173,http://localhost:5173}
+  ALLOW_ADMIN_APPROVAL_OVERRIDE: ${ALLOW_ADMIN_APPROVAL_OVERRIDE:-True}
+  # Leave TRUSTED_PROXY_CIDRS and TRUSTED_CLIENT_IP_HEADERS unset unless explicitly
+  # overriding defaults in config/settings/base.py (setting an empty string disables them).
+  # Optional integrations (safe offline local defaults — no live external charges or emails)
+  PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+  PAYSTACK_PUBLIC_KEY: ${PAYSTACK_PUBLIC_KEY:-}
+  BACKBLAZE_KEY_ID: ${BACKBLAZE_KEY_ID:-}
+  BACKBLAZE_APPLICATION_KEY: ${BACKBLAZE_APPLICATION_KEY:-}
+  BACKBLAZE_BUCKET_NAME: ${BACKBLAZE_BUCKET_NAME:-}
+  BACKBLAZE_ENDPOINT: ${BACKBLAZE_ENDPOINT:-}
+  BACKBLAZE_REGION: ${BACKBLAZE_REGION:-}
+  BACKBLAZE_OBJECT_ACL: ${BACKBLAZE_OBJECT_ACL:-}
+  MEDIA_CUSTOM_DOMAIN: ${MEDIA_CUSTOM_DOMAIN:-}
+  MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-http://127.0.0.1:8000}
+  MEDIA_ROOT: ${MEDIA_ROOT:-/app/media}
+  # Email defaults to console locally so zero real emails leave the machine
+  EMAIL_PROVIDER: ${EMAIL_PROVIDER:-console}
+  EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+  EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+  EMAIL_API_DOMAIN: ${EMAIL_API_DOMAIN:-}
+  EMAIL_API_BASE_URL: ${EMAIL_API_BASE_URL:-}
+  EMAIL_HOST: ${EMAIL_HOST:-}
+  EMAIL_PORT: ${EMAIL_PORT:-587}
+  EMAIL_USE_TLS: ${EMAIL_USE_TLS:-True}
+  EMAIL_USE_SSL: ${EMAIL_USE_SSL:-False}
+  EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+  EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+  EMAIL_TIMEOUT: ${EMAIL_TIMEOUT:-20}
+  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-J-ONE Hotel Local Dev <noreply@example.invalid>}
+  EMAIL_LOGO_URL: ${EMAIL_LOGO_URL:-}
+  HOTEL_NOTIFICATION_EMAILS: ${HOTEL_NOTIFICATION_EMAILS:-}
+  MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-5}
+  MAX_DOCUMENT_UPLOAD_MB: ${MAX_DOCUMENT_UPLOAD_MB:-10}
+
+services:
+  # -------------------------------------------------------------------------
+  # MySQL 8.0 authoritative relational database (persistent named volume)
+  # -------------------------------------------------------------------------
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-jone_hotel}
+      MYSQL_USER: ${DB_USER:-jone}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-jone_local_dev_password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-jone_local_root_password}
+      TZ: Africa/Lagos
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - backend_internal
+    # Uses TCP (--protocol=TCP) + real SQL query so initialization restarts
+    # cannot falsely report healthy before TCP port 3306 accepts connections.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysql --protocol=TCP -h 127.0.0.1 -P 3306 -u \"$$MYSQL_USER\" \"-p$$MYSQL_PASSWORD\" -e 'SELECT 1;' \"$$MYSQL_DATABASE\" >/dev/null 2>&1",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 25s
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # Redis 7 (Django rate-limit/hot cache + Celery scheduled-job broker)
+  # -------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend_internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # Django + Gunicorn Production WSGI API (non-root uid=10001)
+  # -------------------------------------------------------------------------
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: jone-hotel-backend:local
+    pull_policy: build
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *backend-common-env
+      PORT: "8000"
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
+      GUNICORN_THREADS: ${GUNICORN_THREADS:-2}
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-60}
+      HEALTHCHECK_PATH: /api/health/ready/
+    ports:
+      - "${API_BIND_IP:-127.0.0.1}:${API_PORT:-8000}:8000"
+    volumes:
+      - media_data:/app/media
+    networks:
+      - backend_internal
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD", "python", "/usr/local/bin/container-healthcheck.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # Celery Worker (scheduled booking expiry, auto-checkout, finance sweeps)
+  # -------------------------------------------------------------------------
+  worker:
+    image: jone-hotel-backend:local
+    pull_policy: never
+    restart: unless-stopped
+    command: ["celery", "-A", "config", "worker", "-l", "info", "--concurrency", "2"]
+    depends_on:
+      api:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *backend-common-env
+    volumes:
+      - media_data:/app/media
+    networks:
+      - backend_internal
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD", "python", "/usr/local/bin/container-healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # Celery Beat Scheduler (MUST remain 1 replica to prevent duplicate schedules)
+  # -------------------------------------------------------------------------
+  beat:
+    image: jone-hotel-backend:local
+    pull_policy: never
+    restart: unless-stopped
+    deploy:
+      replicas: 1
+    command:
+      [
+        "celery",
+        "-A",
+        "config",
+        "beat",
+        "-l",
+        "info",
+        "--schedule",
+        "/var/tmp/jone/celerybeat-schedule",
+      ]
+    depends_on:
+      api:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *backend-common-env
+    networks:
+      - backend_internal
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "python", "/usr/local/bin/container-healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: *default-logging
+
+networks:
+  backend_internal:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+  media_data:

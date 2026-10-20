@@ -257,7 +257,7 @@ CELERY_ENABLE_UTC = True
 # ---------------------------------------------------------------------------
 
 STATIC_URL = "/static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
+STATIC_ROOT = Path(config("STATIC_ROOT", default=str(BASE_DIR / "staticfiles")))
 STATICFILES_DIRS = [
     BASE_DIR / "static",
 ]
@@ -409,7 +409,7 @@ MEDIA_URL = (
         if _B2_MEDIA["enabled"] else "/media/"
     )
 )
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = Path(config("MEDIA_ROOT", default=str(BASE_DIR / "media")))
 
 # ---------------------------------------------------------------------------
 # CORS (development allows everything; production must list exact origins)

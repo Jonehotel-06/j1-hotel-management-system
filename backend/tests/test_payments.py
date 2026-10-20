@@ -530,6 +530,7 @@ class AnonymousGuestPaymentSecurityTests(BaseAPITestCase):
         self.assertEqual(response.status_code, 404)
         self.assertNotIn("guestpayer", str(response.json()).lower())
 
+    @override_settings(CORS_ALLOWED_ORIGINS=["https://www.jonehotel.com"])
     def test_cors_preflight_allows_guest_access_header(self):
         response = self.client.options(
             "/api/payments/initialize/",
