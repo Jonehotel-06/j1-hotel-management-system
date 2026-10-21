@@ -213,11 +213,11 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://j1-hotel-management-system-production.up.railway.app/api/$1"
+      "destination": "https://p01--j-one-hotel-and-lodge-backend--9vjvqjpzrgmb.code.run/api/$1"
     },
     {
       "source": "/media/(.*)",
-      "destination": "https://j1-hotel-management-system-production.up.railway.app/media/$1"
+      "destination": "https://p01--j-one-hotel-and-lodge-backend--9vjvqjpzrgmb.code.run/media/$1"
     }
   ]
 }
