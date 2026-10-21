@@ -42,6 +42,7 @@ from .serializers import (
     RestaurantTableSessionCloseSerializer,
     RestaurantTableSessionCreateSerializer,
     RestaurantTableSessionSerializer,
+    RestaurantTableSessionTransferSerializer,
 )
 from .services import order_service
 from .services import table_service
@@ -513,6 +514,28 @@ class PosRestaurantTableSessionDetailView(APIView):
         if session is None:
             raise NotFound("Restaurant table session not found.")
         return success_response(RestaurantTableSessionSerializer(session).data)
+
+
+@extend_schema(tags=["Admin · POS"], summary="Transfer an open restaurant table session")
+class PosRestaurantTableSessionTransferView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "restaurant.order.manage"
+
+    def post(self, request, reference):
+        from rest_framework.exceptions import PermissionDenied
+
+        if not has_capability(request.user, "restaurant.order.manage"):
+            raise PermissionDenied("You cannot transfer restaurant table sessions.")
+        serializer = RestaurantTableSessionTransferSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        session, changed = table_service.transfer_table_session(
+            reference=reference, destination_table_id=serializer.validated_data["destination_table_id"], actor=request.user
+        )
+        session = _table_session_queryset().get(pk=session.pk)
+        return success_response(
+            RestaurantTableSessionSerializer(session).data,
+            message="Table session transferred." if changed else "Table session already uses this destination.",
+        )
 
 
 class PosRestaurantTableSessionCloseView(APIView):

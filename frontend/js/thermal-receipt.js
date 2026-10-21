@@ -469,11 +469,11 @@
       "}" +
 
       "pre.thermal-body {" +
-        "display:block;font-family:'Courier New',monospace;" +
-        "font-size:" + (width === "58" ? "10px" : "10px") + ";" +
-        "line-height:1.3;width:100%;max-width:100%;" +
-        "margin:0;padding:0;white-space:pre;" +
-        "overflow:visible;text-align:left;" +
+        "display:block;color:#000 !important;font-family:'Courier New',monospace;" +
+        "font-size:" + (width === "58" ? "10px" : "11px") + ";font-weight:600;" +
+        "line-height:1.28;width:100%;max-width:100%;" +
+        "margin:0;padding:0;white-space:pre;opacity:1;" +
+        "overflow:visible;text-align:left;-webkit-print-color-adjust:exact;print-color-adjust:exact;" +
       "}" +
 
       "@media print {" +

@@ -18,6 +18,7 @@ urlpatterns = [
     path("restaurant-table-sessions/", views.PosRestaurantTableSessionListCreateView.as_view(), name="restaurant-table-sessions"),
     path("restaurant-table-sessions/<str:reference>/", views.PosRestaurantTableSessionDetailView.as_view(), name="restaurant-table-session-detail"),
     path("restaurant-table-sessions/<str:reference>/close/", views.PosRestaurantTableSessionCloseView.as_view(), name="restaurant-table-session-close"),
+    path("restaurant-table-sessions/<str:reference>/transfer/", views.PosRestaurantTableSessionTransferView.as_view(), name="restaurant-table-session-transfer"),
     path("room-service-stays/", views.PosRoomServiceStayListView.as_view(), name="room-service-stays"),
     path("orders/", views.PosOrderListCreateView.as_view(), name="orders"),
     path("orders/<str:reference>/", views.PosOrderDetailView.as_view(), name="order-detail"),

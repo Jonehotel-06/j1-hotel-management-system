@@ -211,9 +211,20 @@ class RestaurantTableSession(TimeStampedModel):
                     field.attname for field in self._meta.concrete_fields
                     if getattr(prior, field.attname) != getattr(self, field.attname)
                 }
-                allowed = {"status", "active_table_id", "closed_at", "closed_by_id", "close_note", "updated_at"}
+                allowed = {"status", "table_id", "active_table_id", "closed_at", "closed_by_id", "close_note", "updated_at"}
                 if prior.status == self.Status.CLOSED or not changed.issubset(allowed):
                     raise ValidationError("Restaurant table session history cannot be rewritten or reopened.")
+                if prior.table_id != self.table_id:
+                    transfer = RestaurantTableSessionEvent.objects.filter(
+                        table_session_id=self.pk, type=RestaurantTableSessionEvent.Type.TRANSFERRED,
+                    ).order_by("-occurred_at", "-pk").first()
+                    if (
+                        transfer is None
+                        or transfer.details.get("from_table_id") != prior.table_id
+                        or transfer.details.get("to_table_id") != self.table_id
+                        or transfer.occurred_at < prior.updated_at
+                    ):
+                        raise ValidationError("A table session can change tables only through an audited transfer.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
@@ -473,6 +484,7 @@ class RestaurantTableSessionEvent(models.Model):
     class Type(models.TextChoices):
         OPENED = "OPENED", "Opened"
         ORDER_ADDED = "ORDER_ADDED", "POS order added"
+        TRANSFERRED = "TRANSFERRED", "Transferred to another table"
         CLOSED = "CLOSED", "Closed"
 
     table_session = models.ForeignKey(

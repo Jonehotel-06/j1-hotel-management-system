@@ -93,3 +93,24 @@ test("stock shortages require an Admin role decision and never deduct when recor
   assert.match(page, /Reject — make no payroll deduction/);
   assert.match(page, /No payroll deduction has been made yet/);
 });
+
+test("compensation editing creates a controlled effective-dated replacement and never rewrites history", () => {
+  const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "payroll.html"), "utf8");
+  assert.match(page, /data-comp-edit/);
+  assert.match(page, /async function editCompensation/);
+  assert.match(page, /Save new effective-dated terms/);
+  assert.match(page, /staff_id:Number\(row\.staff\)/);
+  assert.match(page, /effective date \(today or later\)/i);
+  assert.match(page, /history is append-only/);
+  assert.match(page, /Previously submitted, approved or paid payroll remains unchanged/);
+  assert.match(page, /if\(!canManage\)return/);
+});
+
+test("submitted payroll exposes an approval/rejection review action only to an independent approver", () => {
+  const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "payroll.html"), "utf8");
+  assert.match(page, /row\.status==="SUBMITTED"&&canApprove&&!owner/);
+  assert.match(page, /">Approve<\/button>/);
+  assert.match(page, /resourceAction\("payrollPeriods",reference,"review"/);
+  assert.match(page, /approved:values\.approved==="true"/);
+  assert.match(page, /status==="APPROVED"&&canManage/);
+});

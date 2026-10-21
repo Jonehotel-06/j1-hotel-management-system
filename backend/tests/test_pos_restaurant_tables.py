@@ -1,9 +1,12 @@
 """Registered dining tables, session idempotency, and POS close safeguards."""
+from django.core.exceptions import ValidationError
+
 from apps.accounts.models import User
 from apps.pos.models import (
     MenuCategory,
     MenuItem,
     PosOrder,
+    RestaurantTable,
     RestaurantTableSession,
     RestaurantTableSessionEvent,
 )
@@ -235,3 +238,62 @@ class PosRestaurantTableApiTests(BaseAPITestCase):
         )
         self.assertEqual(closed.status_code, 200, closed.content)
         self.assertEqual(closed.json()["data"]["unpaid_order_count"], 0)
+
+    def test_transfer_moves_open_session_without_recreating_orders_and_is_idempotent(self):
+        source = self._register_table(code="T-SOURCE", seats=3)
+        destination = self._register_table(code="T-DEST", seats=3)
+        session = self._open_session(source, key="transfer-source-session").json()["data"]
+        self.auth(self.waiter)
+        order_response = self._create_order(session["reference"], key="transfer-order-001")
+        self.assertEqual(order_response.status_code, 201, order_response.content)
+        order_reference = order_response.json()["data"]["reference"]
+        submitted = self.client.post(f"/api/admin/pos/orders/{order_reference}/submit/", {}, format="json")
+        self.assertEqual(submitted.status_code, 200, submitted.content)
+        order_before = PosOrder.objects.get(reference=order_reference)
+        ticket_before = order_before.kitchen_ticket.pk
+
+        transfer_url = f"/api/admin/pos/restaurant-table-sessions/{session['reference']}/transfer/"
+        moved = self.client.post(transfer_url, {"destination_table_id": destination["id"]}, format="json")
+        self.assertEqual(moved.status_code, 200, moved.content)
+        self.assertEqual(moved.json()["data"]["table_id"], destination["id"])
+        order_after = PosOrder.objects.get(reference=order_reference)
+        self.assertEqual(order_after.pk, order_before.pk)
+        self.assertEqual(order_after.table_session_id, order_before.table_session_id)
+        self.assertEqual(order_after.total_amount, order_before.total_amount)
+        self.assertEqual(order_after.status, order_before.status)
+        self.assertEqual(order_after.kitchen_ticket.pk, ticket_before)
+        transfer_event = RestaurantTableSessionEvent.objects.get(
+            table_session__reference=session["reference"], type=RestaurantTableSessionEvent.Type.TRANSFERRED,
+        )
+        self.assertEqual(transfer_event.details["from_table_code"], source["code"])
+        self.assertEqual(transfer_event.details["to_table_code"], destination["code"])
+
+        # Direct ORM edits cannot bypass the service's audited transition.
+        session_record = RestaurantTableSession.objects.get(reference=session["reference"])
+        bypass_target = RestaurantTable.objects.create(code="T-BYPASS", seats=3)
+        session_record.table = bypass_target
+        session_record.active_table = bypass_target
+        with self.assertRaises(ValidationError):
+            session_record.save(update_fields=["table", "active_table", "updated_at"])
+
+        repeated = self.client.post(transfer_url, {"destination_table_id": destination["id"]}, format="json")
+        self.assertEqual(repeated.status_code, 200, repeated.content)
+        self.assertEqual(RestaurantTableSessionEvent.objects.filter(
+            table_session__reference=session["reference"], type=RestaurantTableSessionEvent.Type.TRANSFERRED,
+        ).count(), 1)
+        self.assertEqual(self.client.post(transfer_url, {"destination_table_id": destination["id"]}, format="json").status_code, 200)
+
+    def test_table_transfer_rejects_self_occupied_or_undersized_destination(self):
+        source = self._register_table(code="T-TRANSFER-A", seats=3)
+        too_small = self._register_table(code="T-TRANSFER-B", seats=1)
+        occupied = self._register_table(code="T-TRANSFER-C", seats=3)
+        session = self._open_session(source, key="transfer-rules-source").json()["data"]
+        occupied_session = self._open_session(occupied, key="transfer-rules-occupied", covers=1)
+        self.auth(self.waiter)
+        base = f"/api/admin/pos/restaurant-table-sessions/{session['reference']}/transfer/"
+        self.assertEqual(self.client.post(base, {"destination_table_id": source["id"]}, format="json").status_code, 400)
+        self.assertEqual(self.client.post(base, {"destination_table_id": too_small["id"]}, format="json").status_code, 400)
+        occupied_response = self.client.post(base, {"destination_table_id": occupied["id"]}, format="json")
+        self.assertEqual(occupied_response.status_code, 409, occupied_response.content)
+        self.assertEqual(RestaurantTableSession.objects.get(reference=session["reference"]).table_id, source["id"])
+        self.assertEqual(RestaurantTableSession.objects.get(reference=occupied_session.json()["data"]["reference"]).table_id, occupied["id"])

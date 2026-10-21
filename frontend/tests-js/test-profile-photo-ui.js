@@ -80,3 +80,20 @@ test("the staff editor reports the same answer to the administrator", () => {
   // The success toast only happens when the API did not deny the photo.
   assert.match(save, /\} else \{\s*JONE\.ui\.toast\(id \? "Staff account updated\."/);
 });
+
+test("staff profile photos open an accessible lightbox without entering the edit action", () => {
+  const dashboard = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
+  const ui = fs.readFileSync(path.join(FRONTEND, "js", "ui.js"), "utf8");
+  assert.match(dashboard, /profile-photo-viewer/);
+  assert.match(dashboard, /data-profile-lightbox/);
+  assert.match(dashboard, /role="button" aria-label="View larger profile photo/);
+  assert.match(dashboard, /event\.stopPropagation\(\)/);
+  assert.match(dashboard, /JONE\.ui\.lightbox\.open/);
+  assert.match(dashboard, /underlying staff profile panel/);
+  assert.match(dashboard, /lightbox\.wrap\.classList\.contains\("open"\)/);
+  assert.match(dashboard, /fallback\.className="profile-photo profile-photo-fallback"/);
+  assert.match(ui, /role: "dialog", "aria-modal": "true"/);
+  assert.match(ui, /if \(e\.key === "Escape"\)/);
+  assert.match(ui, /this\.lastFocus\.focus\(\)/);
+  assert.match(ui, /const wrapper = this\.wrap;[\s\S]{0,220}setTimeout\(\(\) => wrapper\.remove\(\), 200\)/);
+});

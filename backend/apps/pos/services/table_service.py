@@ -130,6 +130,116 @@ def lock_open_table_session(reference: str) -> RestaurantTableSession:
 
 
 @transaction.atomic
+def transfer_table_session(*, reference: str, destination_table_id: int, actor):
+    """Move an open dining session without recreating orders or tickets.
+
+    The destination must be active and unoccupied. Repeating the same request
+    is a harmless no-op; merges are deliberately not implicit. Table rows are
+    locked in stable order before session rows to keep opposing transfers from
+    deadlocking each other.
+    """
+    observed = RestaurantTableSession.objects.filter(reference=reference).first()
+    if observed is None:
+        raise ValidationError({"reference": "Restaurant table session not found."})
+    try:
+        destination_id = int(destination_table_id)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({"destination_table_id": "Choose a valid destination table."}) from exc
+
+    observed_source_id = observed.table_id
+    if destination_id == observed_source_id:
+        was_transferred_here = RestaurantTableSessionEvent.objects.filter(
+            table_session=observed, type=RestaurantTableSessionEvent.Type.TRANSFERRED,
+            details__to_table_id=destination_id,
+        ).exists()
+        if was_transferred_here:
+            return observed, False
+        raise ValidationError({"destination_table_id": "A table cannot be transferred to itself."})
+
+    # Lock both table rows in stable order before locking the session. This
+    # matches table opening's lock order and prevents opposite-direction
+    # transfers from holding one session while waiting on each other's table.
+    locked = {row.pk: row for row in RestaurantTable.objects.select_for_update().filter(
+        pk__in=sorted({observed_source_id, destination_id})
+    ).order_by("pk")}
+    source = locked.get(observed_source_id)
+    destination = locked.get(destination_id)
+    if source is None:
+        raise ValidationError({"reference": "The source table no longer exists."})
+    if destination is None:
+        raise ValidationError({"destination_table_id": "The destination table does not exist."})
+
+    session = (
+        RestaurantTableSession.objects.select_for_update()
+        .select_related("table")
+        .filter(reference=reference)
+        .first()
+    )
+    if session is None:
+        raise ValidationError({"reference": "Restaurant table session not found."})
+    if session.table_id != observed_source_id:
+        # If the earlier request committed to this same destination while this
+        # call waited for its locks, treat this request as an idempotent retry.
+        already_moved_here = (
+            session.table_id == destination_id
+            and RestaurantTableSessionEvent.objects.filter(
+                table_session=session, type=RestaurantTableSessionEvent.Type.TRANSFERRED,
+                details__to_table_id=destination_id,
+            ).exists()
+        )
+        if already_moved_here:
+            return session, False
+        raise RestaurantTableSessionConflictError("The table session changed while this transfer was being prepared. Refresh and retry.")
+    if session.status != RestaurantTableSession.Status.OPEN or session.active_table_id != session.table_id:
+        raise RestaurantTableSessionConflictError("Only an open table session can be transferred.")
+    if not source.is_active:
+        raise RestaurantTableSessionConflictError("The source table is no longer active.")
+    if not destination.is_active:
+        raise RestaurantTableSessionConflictError("An inactive table cannot receive a service session.")
+    if destination.seats < session.covers:
+        raise ValidationError({"destination_table_id": "The destination table does not have enough seats for this session."})
+
+    existing = RestaurantTableSession.objects.select_for_update().filter(
+        active_table_id=destination.pk, status=RestaurantTableSession.Status.OPEN
+    ).exclude(pk=session.pk).first()
+    if existing:
+        raise RestaurantTableSessionConflictError(
+            f"Destination table {destination.code} is occupied. Close its session or use a separately authorized merge workflow."
+        )
+
+    try:
+        # Keep the database's unique-active-table guard authoritative even
+        # when two requests race on engines with weaker row-lock semantics.
+        with transaction.atomic():
+            order_count = PosOrder.objects.filter(table_session=session).count()
+            # The event is written first in this same savepoint so the model's
+            # persistence guard can prove a table_id change is authorized.
+            RestaurantTableSessionEvent.objects.create(
+                table_session=session,
+                type=RestaurantTableSessionEvent.Type.TRANSFERRED,
+                actor=actor,
+                details={"from_table_id": source.pk, "from_table_code": source.code,
+                         "to_table_id": destination.pk, "to_table_code": destination.code,
+                         "order_count": order_count},
+            )
+            session.table = destination
+            session.active_table = destination
+            session.save(update_fields=["table", "active_table", "updated_at"])
+            log_action(
+                actor=actor,
+                action="RESTAURANT_TABLE_SESSION_TRANSFERRED",
+                instance=session,
+                metadata={"reference": session.reference, "from_table_code": source.code,
+                          "to_table_code": destination.code, "order_count": order_count},
+            )
+    except IntegrityError as exc:
+        raise RestaurantTableSessionConflictError(
+            "Another request occupied the destination table first. Refresh the table list."
+        ) from exc
+    return session, True
+
+
+@transaction.atomic
 def close_table_session(*, reference: str, actor, close_note: str = ""):
     """Close only after all attached orders are terminal and direct sales settled."""
     session = (

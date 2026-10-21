@@ -233,3 +233,14 @@ test("the print sheet scopes logo styling to the chosen paper width", () => {
     "logo width comes from the chosen paper width");
   assert.match(src, /\.thermal-logo \{[\s\S]{0,240}?max-width:100%/, "logo can never overflow the paper");
 });
+
+test("thermal print stylesheet explicitly uses dark, opaque, readable text at both widths", () => {
+  const src = require("node:fs").readFileSync(
+    require("node:path").join(__dirname, "..", "js", "thermal-receipt.js"), "utf-8"
+  );
+  assert.match(src, /color:#000 !important/);
+  assert.match(src, /font-weight:600/);
+  assert.match(src, /opacity:1/);
+  assert.match(src, /width === "58" \? "10px" : "11px"/);
+  assert.match(src, /print-color-adjust:exact/);
+});

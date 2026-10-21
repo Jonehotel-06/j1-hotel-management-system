@@ -62,7 +62,7 @@ test("the shared read-only dialog host is exported and drives the drill-down", (
   assert.equal(typeof ctx.window.JONE.dashboard.panel.close, "function");
   assert.equal(typeof ctx.window.JONE.dashboard.panel.body, "function");
   // The host keeps the one ESC/backdrop/focus contract every dialog shares.
-  assert.match(DASHBOARD_JS, /function panelKeydown\(e\) \{ if \(e\.key === "Escape"\) closePanel\(\); \}/);
+  assert.match(DASHBOARD_JS, /function panelKeydown\(e\) \{[\s\S]{0,300}lightbox\.wrap\.classList\.contains\("open"\)/);
   assert.match(DASHBOARD_JS, /document\.addEventListener\("keydown", panelKeydown, true\)/);
   assert.match(DASHBOARD_JS, /data-panel-close/);
   assert.match(DASHBOARD_JS, /aria-modal="true"/);

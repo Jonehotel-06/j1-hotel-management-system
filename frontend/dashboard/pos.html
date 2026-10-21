@@ -361,7 +361,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     var selected=rows.find(function(row){return row.reference===state.selectedTableSession;});
     if(hint)hint.textContent=selected?'Selected '+selected.table_code+' · '+selected.covers+' cover(s). New restaurant orders will join this service session.':'Select an open session, or open a new one in Restaurant tables.';
     if(!target)return;
-    target.innerHTML=rows.length?rows.map(function(session){var selectedNow=session.reference===state.selectedTableSession;var detail=session.order_count+' order(s) · '+session.active_order_count+' in progress · '+session.unpaid_order_count+' unpaid';return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(session.table_code)+(session.table_name?' · '+JONE.esc(session.table_name):'')+'</strong><span class="badge">'+JONE.esc(session.covers)+' covers</span></div><p>'+JONE.esc(session.table_section||'Main dining')+' · opened '+JONE.esc(session.opened_at?JONE.formatDateTime(session.opened_at):'—')+'<br>'+JONE.esc(detail)+'</p><div class="pos-action-stack" style="margin-top:.55rem;"><button type="button" class="btn btn-sm '+(selectedNow?'':'btn-outline')+'" data-pos-select-table-session="'+JONE.esc(session.reference)+'">'+(selectedNow?'Selected for order':'Use this table')+'</button><button type="button" class="btn btn-sm btn-outline" data-pos-close-table-session="'+JONE.esc(session.reference)+'">Close session</button></div></div>';}).join(''):'<div class="empty-state"><h3>No open table sessions</h3><p>Choose a registered table and open a service session to begin dine-in orders.</p></div>';
+    target.innerHTML=rows.length?rows.map(function(session){var selectedNow=session.reference===state.selectedTableSession;var detail=session.order_count+' order(s) · '+session.active_order_count+' in progress · '+session.unpaid_order_count+' unpaid';var transfer=hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter'])?'<button type="button" class="btn btn-sm btn-outline" data-pos-transfer-table-session="'+JONE.esc(session.reference)+'">Transfer table</button>':'';return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(session.table_code)+(session.table_name?' · '+JONE.esc(session.table_name):'')+'</strong><span class="badge">'+JONE.esc(session.covers)+' covers</span></div><p>'+JONE.esc(session.table_section||'Main dining')+' · opened '+JONE.esc(session.opened_at?JONE.formatDateTime(session.opened_at):'—')+'<br>'+JONE.esc(detail)+'</p><div class="pos-action-stack" style="margin-top:.55rem;"><button type="button" class="btn btn-sm '+(selectedNow?'':'btn-outline')+'" data-pos-select-table-session="'+JONE.esc(session.reference)+'">'+(selectedNow?'Selected for order':'Use this table')+'</button>'+transfer+'<button type="button" class="btn btn-sm btn-outline" data-pos-close-table-session="'+JONE.esc(session.reference)+'">Close session</button></div></div>';}).join(''):'<div class="empty-state"><h3>No open table sessions</h3><p>Choose a registered table and open a service session to begin dine-in orders.</p></div>';
   }
   function selectRestaurantTableSession(reference){state.selectedTableSession=(state.tableSessions||[]).some(function(row){return row.reference===reference;})?reference:null;renderRestaurantSessions();}
   async function loadRestaurantTables(silent){
@@ -385,6 +385,20 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     catch(err){JONE.ui.toast((err&&err.message)||'The table session could not be opened. Refresh and check the register.','error');loadRestaurantTables(true);loadRestaurantSessions(true);}
     finally{JONE.releaseGuard(button);}
   }
+  async function transferRestaurantTableSession(reference,button){
+    if(!hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter']))return;
+    var session=(state.tableSessions||[]).find(function(row){return row.reference===reference;});if(!session)return;
+    var destinations=(state.restaurantTables||[]).filter(function(table){return table.is_active&&String(table.id)!==String(session.table_id);});
+    if(!destinations.length){JONE.ui.toast('No active destination tables are available.','warning');return;}
+    var fields=[{name:'destination_table_id',label:'Destination table',type:'select',required:true,value:String(destinations[0].id),options:destinations.map(function(table){return {value:String(table.id),label:table.code+(table.name?' · '+table.name:'')+' · '+table.seats+' seats'};})}];
+    var result=await JONE.dashboard.formModal({title:'Transfer session from '+session.table_code,submitText:'Transfer table',fields:fields,onRender:function(panel){var note=document.createElement('p');note.className='payroll-note';note.textContent='This keeps the same dining session and its existing orders, preparation tickets, prices and payment history. The session currently has '+String(session.order_count||0)+' order(s), '+String(session.active_order_count||0)+' in progress and '+String(session.unpaid_order_count||0)+' unpaid. Occupied destinations cannot be merged; the server checks availability and capacity before moving.';panel.appendChild(note);},onSubmit:async function(values){
+      var chosen=destinations.find(function(table){return String(table.id)===String(values.destination_table_id);});if(!chosen)throw new Error('Choose an active destination table.');
+      if(!JONE.guardSubmit(button))throw new Error('A transfer is already in progress.');
+      try{await window.API.resourceAction('posRestaurantTableSessions',reference,'transfer',{destination_table_id:Number(chosen.id)},{cache:'no-store'});return {message:'Table session transferred to '+chosen.code+'.'};}finally{JONE.releaseGuard(button);}
+    }});
+    if(result){JONE.ui.toast('Table session transferred.','success');await loadRestaurantSessions(true);}
+  }
+
   async function closeRestaurantTableSession(reference,button){
     var confirmed=await JONE.ui.confirm({title:'Close table session?',message:'Every order must be finished, and delivered orders must be fully settled. The server will reject closure while anything remains open or unpaid.',confirmText:'Close session'});if(!confirmed)return;
     if(!JONE.guardSubmit(button))return;
@@ -488,7 +502,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(["SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-action="DELIVERED" data-pos-ref="'+ref+'">Deliver</button>';
     if(["DRAFT","SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-action="CANCELLED" data-pos-ref="'+ref+'">Cancel</button>';
     if(status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&order.settlement_status!=="PAID"&&canTender())buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-tender="'+ref+'">Tender</button>';
-    if(status==="DELIVERED")buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-thermal="'+ref+'">Receipt</button>';
+    if(status==="DELIVERED"&&order.settlement_status==="PAID")buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-thermal="'+ref+'">Print receipt</button>';
     return '<div class="pos-action-stack">'+buttons+'</div>';
   }
   function renderOrders(rows){
@@ -574,10 +588,18 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(!window.JONE||!JONE.ThermalReceipt){JONE.ui.toast("Thermal receipt module unavailable.","error");return;}
     var orderRes;try{orderRes=await window.API.getOne("posOrders",reference);}catch(err){JONE.ui.toast((err&&err.message)||"Order could not be loaded.","error");return;}
     var order=orderRes.data||{};
+    if(order.status!=="DELIVERED"||order.mode==="ROOM_SERVICE"||order.settlement_status!=="PAID") { JONE.ui.toast("A paid receipt is available only after the backend confirms full payment.","warning"); return; }
     var widthResult=await JONE.dashboard.formModal({title:"Thermal receipt · "+JONE.esc(reference),submitText:"Print",fields:[{name:"width",label:"Paper width",type:"select",required:true,value:JONE.ThermalReceipt.getWidth(),options:[{value:"80",label:"80 mm thermal roll"},{value:"58",label:"58 mm thermal roll"}]}],onSubmit:async function(values){JONE.ThermalReceipt.setWidth(values.width);return{message:"Preparing receipt…"};}});
     if(!widthResult)return;
     var width=JONE.ThermalReceipt.getWidth();
-    var tender=(order.tenders||[]).filter(function(t){return t.status==="CAPTURED";}).pop()||null;
+    // Re-read payment state after the modal: concurrent reversals must not
+    // leave a stale paid receipt action printable.
+    try{orderRes=await window.API.getOne("posOrders",reference);order=orderRes.data||{};}catch(err){JONE.ui.toast((err&&err.message)||"Payment status could not be confirmed.","error");return;}
+    if(order.status!=="DELIVERED"||order.mode==="ROOM_SERVICE"||order.settlement_status!=="PAID"){JONE.ui.toast("Payment is no longer confirmed; receipt printing was stopped.","warning");return;}
+    var capturedTenders=(order.tenders||[]).filter(function(t){return t.status==="CAPTURED";});
+    var capturedAmount=capturedTenders.reduce(function(total,t){return total+Number(t.amount||0);},0);
+    if(!capturedTenders.length||capturedAmount+0.0001<Number(order.total_amount||0)){JONE.ui.toast("Captured payment records do not cover this order total; ask Finance to reconcile before printing.","error");return;}
+    var tender=capturedTenders[capturedTenders.length-1];
     var receipt={
       hotel:{name:"J-ONE HOTEL & LODGE",address:"Plot 566 Mgbowo Street, off Ezike Street, Enugu State",phone:"+234 803 211 2874"},
       reference:order.reference,
@@ -590,9 +612,9 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       discount:order.discount_amount||0,
       tax:order.tax_amount||0,
       total:order.total_amount,
-      paid:(order.amount_paid!=null?order.amount_paid:(tender?tender.amount:order.total_amount)),
-      change:0,
-      balance_due:(order.settlement_status==="PAID"?0:order.total_amount),
+      paid:capturedAmount,
+      change:Math.max(0,capturedAmount-Number(order.total_amount||0)),
+      balance_due:0,
       payment_method:tender?tender.method:"",
       payment_reference:tender?(tender.external_reference||""):""
     };
@@ -711,7 +733,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   document.getElementById("pos-open-table").addEventListener("change",function(){state.openTableSessionKey=newKey();});
   document.getElementById("pos-open-covers").addEventListener("input",function(){state.openTableSessionKey=newKey();});
   document.getElementById("pos-table-session").addEventListener("change",function(){selectRestaurantTableSession(this.value);});
-  document.querySelector("[data-pos-table-sessions]").addEventListener("click",function(event){var close=event.target.closest("[data-pos-close-table-session]");var select=event.target.closest("[data-pos-select-table-session]");if(close)closeRestaurantTableSession(close.getAttribute("data-pos-close-table-session"),close);else if(select)selectRestaurantTableSession(select.getAttribute("data-pos-select-table-session"));});
+  document.querySelector("[data-pos-table-sessions]").addEventListener("click",function(event){var close=event.target.closest("[data-pos-close-table-session]");var select=event.target.closest("[data-pos-select-table-session]");var transfer=event.target.closest("[data-pos-transfer-table-session]");if(close)closeRestaurantTableSession(close.getAttribute("data-pos-close-table-session"),close);else if(transfer)transferRestaurantTableSession(transfer.getAttribute("data-pos-transfer-table-session"),transfer);else if(select)selectRestaurantTableSession(select.getAttribute("data-pos-select-table-session"));});
   document.querySelector("[data-pos-restaurant-table-register]").addEventListener("click",function(event){var button=event.target.closest("[data-pos-edit-restaurant-table]");if(button)editRestaurantTable(button.getAttribute("data-pos-edit-restaurant-table"));});
   kitchen.addEventListener("click",function(event){var button=event.target.closest("[data-pos-ticket-status]");if(button)advanceTicket(button.getAttribute("data-pos-ticket-status"),button.getAttribute("data-pos-ticket-target"),button);});
   document.querySelector("[data-pos-refresh-drawer]").addEventListener("click",loadDrawer);

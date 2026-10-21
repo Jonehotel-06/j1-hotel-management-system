@@ -157,7 +157,9 @@
     items: [],
     index: 0,
     wrap: null,
+    lastFocus: null,
     open(items, index = 0) {
+      this.lastFocus = document.activeElement;
       this.items = items;
       this.index = index;
       this.render();
@@ -170,6 +172,7 @@
       }
       const item = this.items[this.index];
       this.wrap.classList.add("open");
+      this.wrap.setAttribute("aria-label", item.caption || "Image viewer");
       document.body.classList.add("modal-open");
 
       let media;
@@ -202,7 +205,7 @@
       const closeBtn = JONE.el("button", { class: "lightbox-btn lightbox-close", "aria-label": "Close", innerHTML: JONE.icons.get("x") });
       const prevBtn = JONE.el("button", { class: "lightbox-btn lightbox-nav prev", "aria-label": "Previous", innerHTML: JONE.icons.get("chevronLeft") });
       const nextBtn = JONE.el("button", { class: "lightbox-btn lightbox-nav next", "aria-label": "Next", innerHTML: JONE.icons.get("chevronRight") });
-      const wrap = JONE.el("div", { class: "lightbox" },
+      const wrap = JONE.el("div", { class: "lightbox", role: "dialog", "aria-modal": "true", "aria-label": "Image viewer", tabindex: "-1" },
         JONE.el("div", { class: "lightbox-top" },
           JONE.el("span", { class: "lightbox-counter" }),
           closeBtn),
@@ -218,9 +221,15 @@
       nextBtn.addEventListener("click", () => self.nav(1));
       wrap.addEventListener("click", (e) => { if (e.target === wrap) self.close(); });
       const keydown = (e) => {
-        if (e.key === "Escape") { self.close(); }
+        if (e.key === "Escape") { e.preventDefault(); self.close(); }
         else if (e.key === "ArrowLeft") self.nav(-1);
         else if (e.key === "ArrowRight") self.nav(1);
+        else if (e.key === "Tab") {
+          const controls = Array.from(wrap.querySelectorAll("button:not([style*=\"display: none\"]), [href], [tabindex]:not([tabindex='-1'])"));
+          const first = controls[0], last = controls[controls.length - 1];
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
       };
       document.addEventListener("keydown", keydown);
       wrap._keydown = keydown;
@@ -233,11 +242,14 @@
     },
     close() {
       if (this.wrap) {
-        this.wrap.classList.remove("open");
+        const wrapper = this.wrap;
+        wrapper.classList.remove("open");
         document.body.classList.remove("modal-open");
-        document.removeEventListener("keydown", this.wrap._keydown);
-        setTimeout(() => this.wrap.remove(), 200);
+        document.removeEventListener("keydown", wrapper._keydown);
+        setTimeout(() => wrapper.remove(), 200);
         this.wrap = null;
+        if (this.lastFocus && this.lastFocus.isConnected && this.lastFocus.focus) this.lastFocus.focus();
+        this.lastFocus = null;
       }
     }
   };

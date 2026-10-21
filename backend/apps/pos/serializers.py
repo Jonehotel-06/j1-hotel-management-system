@@ -196,6 +196,10 @@ class RestaurantTableSessionCloseSerializer(serializers.Serializer):
     close_note = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
 
 
+class RestaurantTableSessionTransferSerializer(serializers.Serializer):
+    destination_table_id = serializers.IntegerField(min_value=1)
+
+
 class RestaurantTableSessionSerializer(serializers.ModelSerializer):
     table_id = serializers.IntegerField(source="table.id", read_only=True)
     table_code = serializers.CharField(source="table.code", read_only=True)

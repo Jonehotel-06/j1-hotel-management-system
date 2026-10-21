@@ -1852,7 +1852,7 @@
       '<div class="profile-card">' +
         '<div class="profile-identity">' +
           (profile.profile_image_url
-            ? '<img class="profile-photo" src="' + JONE.esc(profile.profile_image_url) + '" alt="" loading="lazy">'
+            ? '<img class="profile-photo profile-photo-viewer" src="' + JONE.esc(profile.profile_image_url) + '" alt="Profile photo of ' + JONE.esc(fullName) + '" loading="lazy" tabindex="0" role="button" aria-label="View larger profile photo of ' + JONE.esc(fullName) + '" data-profile-lightbox>'
             : '<div class="profile-photo profile-photo-fallback">' + JONE.esc(JONE.initials(fullName)) + "</div>") +
           '<div class="profile-identity-text">' +
             '<h3>' + JONE.esc(fullName) + "</h3>" +
@@ -1897,6 +1897,16 @@
 
     const panel = lastPanel;
     if (!panel) return profile;
+    const profilePhoto = panel.querySelector("[data-profile-lightbox]");
+    if (profilePhoto) {
+      const showProfilePhoto = (event) => {
+        event.preventDefault(); event.stopPropagation();
+        if (window.JONE && JONE.ui && JONE.ui.lightbox) JONE.ui.lightbox.open([{src: profilePhoto.currentSrc || profilePhoto.src, caption: profilePhoto.alt}], 0);
+      };
+      profilePhoto.addEventListener("click", showProfilePhoto);
+      profilePhoto.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") showProfilePhoto(event); });
+      profilePhoto.addEventListener("error", () => { const fallback=document.createElement("div"); fallback.className="profile-photo profile-photo-fallback"; fallback.textContent=JONE.initials(fullName); fallback.setAttribute("aria-label","No profile photo available"); profilePhoto.replaceWith(fallback); }, {once:true});
+    }
     const editBtn = panel.querySelector("[data-sp-edit]");
     if (editBtn) {
       editBtn.addEventListener("click", async () => {
@@ -2212,7 +2222,11 @@
     }
   }
   let panelHost = null;
-  function panelKeydown(e) { if (e.key === "Escape") closePanel(); }
+  function panelKeydown(e) {
+    // A top-level image viewer owns Escape while it is open; do not close the
+    // underlying staff profile panel at the same time.
+    if (e.key === "Escape" && !(JONE.ui && JONE.ui.lightbox && JONE.ui.lightbox.wrap && JONE.ui.lightbox.wrap.classList.contains("open"))) closePanel();
+  }
 
   function openPanel(title, html, actionsHTML, sizeClass) {
     closePanel();

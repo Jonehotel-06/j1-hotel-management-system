@@ -1132,6 +1132,7 @@ tr.is-muted { opacity: 0.55; }
   border-radius: 50%; object-fit: cover;
   border: 1px solid var(--color-border); background: var(--color-surface-alt);
 }
+.profile-photo-viewer { cursor: zoom-in; }
 .profile-photo-fallback {
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--color-accent); color: var(--color-accent-ink);
