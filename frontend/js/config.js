@@ -34,7 +34,7 @@
   function resolveApiBase(value) {
     return normalizeApiBase(value) ||
       (isLocalHost() ? LOCAL_API_BASE_URL : "");
-  }
+  } 
 
   var API_BASE_URL = resolveApiBase(runtimeConfig.API_BASE_URL);
 
