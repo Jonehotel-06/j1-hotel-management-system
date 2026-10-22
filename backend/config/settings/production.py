@@ -14,29 +14,14 @@ SECRET_KEY = config("DJANGO_SECRET_KEY")  # required — no insecure default
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", cast=Csv())
 
 # --- Database: MySQL 8+ via DATABASE_URL or components ----------------------
-_database_url = config("DATABASE_URL", default="")
+_database_url = config("DATABASE_URL", default="").strip()
 if _database_url:
     DATABASES = {
-        "default": dj_database_url.parse(
+        "default": parse_database_url_with_mysql_defaults(  # noqa: F405
             _database_url,
             conn_max_age=600,
-            conn_health_checks=True,
         )
     }
-    # Railway/managed MySQL is reached via DATABASE_URL, and dj-database-url
-    # only sets a charset when the URL itself carries one. Without this the
-    # connection silently uses the server default (often latin1/utf8mb3),
-    # so storing ordinary Unicode in a notification ("2026-10-21 → ...")
-    # fails with MySQL 1366 — the start of the 2026-10-18 booking-loss
-    # chain. The DATABASE_URL path must get exactly the utf8mb4 + strict
-    # mode options the DB_* path below already had. Explicit options in
-    # the URL itself still win (setdefault).
-    if "mysql" in DATABASES["default"].get("ENGINE", ""):
-        _mysql_options = DATABASES["default"].setdefault("OPTIONS", {})
-        _mysql_options.setdefault("charset", "utf8mb4")
-        _mysql_options.setdefault(
-            "init_command", "SET sql_mode='STRICT_TRANS_TABLES'"
-        )
 else:
     DATABASES = {
         "default": {
@@ -48,10 +33,7 @@ else:
             "PORT": config("DB_PORT", default="3306"),
             "CONN_MAX_AGE": 600,
             "CONN_HEALTH_CHECKS": True,
-            "OPTIONS": {
-                "charset": "utf8mb4",
-                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-            },
+            "OPTIONS": configure_mysql_options({}),  # noqa: F405
         }
     }
 # Guard: refuse to boot production on SQLite.
@@ -60,27 +42,45 @@ if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
 
 # --- CORS / CSRF: explicit allowlists only ----------------------------------
 # A wildcard origin is never acceptable here, including via a stray
-# CORS_ALLOW_ALL_ORIGINS environment variable (audit SEC-02). The allowlist may
-# be intentionally EMPTY when the frontend reaches the API through its own
-# origin (same-origin requests are not CORS requests at all) — see the "/api"
-# rewrite in frontend/vercel.json.
-CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", cast=Csv())
-CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", cast=Csv())
+# CORS_ALLOW_ALL_ORIGINS environment variable (audit SEC-02). Exact browser
+# origins (e.g. https://jonehotels.com,https://www.jonehotels.com) allow direct
+# HTTPS requests to https://api.jonehotels.com including the Guest Portal's
+# SameSite=Lax HttpOnly session cookie scoped to /api/portal/.
+CORS_ALLOWED_ORIGINS = [o.strip() for o in config("CORS_ALLOWED_ORIGINS", cast=Csv()) if o.strip()]
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in config("CSRF_TRUSTED_ORIGINS", cast=Csv()) if o.strip()]
 CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOW_CREDENTIALS = False
+CORS_ALLOW_CREDENTIALS = config("CORS_ALLOW_CREDENTIALS", default=True, cast=bool)
 if config("CORS_ALLOW_ALL_ORIGINS", default="False", cast=bool):
     raise RuntimeError(
         "CORS_ALLOW_ALL_ORIGINS must not be enabled in production. List the exact "
         "browser origins in CORS_ALLOWED_ORIGINS instead."
     )
+if "*" in CORS_ALLOWED_ORIGINS:
+    raise RuntimeError("CORS_ALLOWED_ORIGINS must list exact origins, not '*'.")
 for _origin in CORS_ALLOWED_ORIGINS:
     if not _origin.startswith(("http://", "https://")):
         raise RuntimeError(
             f"CORS_ALLOWED_ORIGINS entry {_origin!r} must include a scheme "
-            "(for example https://hotel.example.com)."
+            "(for example https://jonehotels.com)."
         )
-if "*" in CORS_ALLOWED_ORIGINS:
-    raise RuntimeError("CORS_ALLOWED_ORIGINS must list exact origins, not '*'.")
+    if _origin.endswith("/") or len(_origin.split("/")) > 3:
+        raise RuntimeError(
+            f"CORS_ALLOWED_ORIGINS entry {_origin!r} must be scheme + host only "
+            "(no trailing slash or path)."
+        )
+if "*" in CSRF_TRUSTED_ORIGINS:
+    raise RuntimeError("CSRF_TRUSTED_ORIGINS must list exact origins, not '*'.")
+for _origin in CSRF_TRUSTED_ORIGINS:
+    if not _origin.startswith(("http://", "https://")):
+        raise RuntimeError(
+            f"CSRF_TRUSTED_ORIGINS entry {_origin!r} must include a scheme "
+            "(for example https://jonehotels.com)."
+        )
+    if _origin.endswith("/") or len(_origin.split("/")) > 3:
+        raise RuntimeError(
+            f"CSRF_TRUSTED_ORIGINS entry {_origin!r} must be scheme + host only "
+            "(no trailing slash or path)."
+        )
 
 # --- HTTPS / browser security headers ---------------------------------------
 SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=True, cast=bool)

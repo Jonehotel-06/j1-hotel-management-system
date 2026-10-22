@@ -50,14 +50,14 @@ function boot({ hostname, runtimeConfig }) {
   return { ctx, requested };
 }
 
-test("a deployed site calls the payment endpoint on its own origin, never on 127.0.0.1", async () => {
-  const { ctx, requested } = boot({ hostname: "www.jonehotel.test" });
-  assert.equal(ctx.window.APP_CONFIG.API_BASE_URL, "", "a public host defaults to same-origin");
+test("a deployed site calls the payment endpoint on https://api.jonehotels.com, never on 127.0.0.1", async () => {
+  const { ctx, requested } = boot({ hostname: "jonehotels.com" });
+  assert.equal(ctx.window.APP_CONFIG.API_BASE_URL, "https://api.jonehotels.com");
 
   await ctx.window.API.initPayment("J1-20261018-ABCDEF12");
 
   assert.equal(requested.length, 1);
-  assert.equal(requested[0], "/api/payments/initialize/");
+  assert.equal(requested[0], "https://api.jonehotels.com/api/payments/initialize/");
   assert.doesNotMatch(requested[0], /127\.0\.0\.1|localhost/,
     "a deployed site must never fall back to the local dev API");
 });
@@ -125,8 +125,8 @@ test("no shipped frontend file hardcodes a deployment API host for the payment f
   assert.deepEqual(executableHosts, ["http://127.0.0.1:8000"],
     "config.js may only name the local dev API");
 
-  // 3. The shipped runtime config defaults to same-origin, so a deployment
-  //    that forgets to set API_BASE_URL still talks to its own backend.
-  assert.match(runtime, /API_BASE_URL:\s*""/,
-    "runtime-config.js must ship an empty (same-origin) API base");
+  // 3. The authoritative runtime config resolves public origins directly to
+  //    https://api.jonehotels.com over HTTPS and never to a PaaS preview host.
+  assert.match(runtime, /https:\/\/api\.jonehotels\.com/,
+    "runtime-config.js must declare https://api.jonehotels.com as the production API origin");
 });

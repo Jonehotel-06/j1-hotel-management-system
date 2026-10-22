@@ -18,21 +18,47 @@
 
   // True when the frontend is opened on the dev machine (e.g. Live Server :5500).
   function isLocalHost() {
-    return ["localhost", "127.0.0.1", ""].indexOf(window.location.hostname) !== -1;
+    return ["localhost", "127.0.0.1", "[::1]", ""].indexOf(window.location.hostname) !== -1;
   }
 
   // Django dev server used when running locally and nothing else is configured.
   var LOCAL_API_BASE_URL = "http://127.0.0.1:8000";
+  var CONFIG_ERROR = "";
+
+  function validateApiBase(rawValue) {
+    if (rawValue === undefined || rawValue === null) return "";
+    if (typeof rawValue !== "string") {
+      CONFIG_ERROR = "[J-ONE CONFIG] Invalid API_BASE_URL type; expected a string origin.";
+      if (typeof console !== "undefined" && console.error) console.error(CONFIG_ERROR);
+      return "";
+    }
+    var trimmed = normalizeApiBase(rawValue);
+    if (trimmed === "") return "";
+    if (!/^https?:\/\/[^/\s]+$/i.test(trimmed)) {
+      CONFIG_ERROR = "[J-ONE CONFIG] Invalid API_BASE_URL (" + trimmed + "): expected scheme + host without path.";
+      if (typeof console !== "undefined" && console.error) console.error(CONFIG_ERROR);
+      return "";
+    }
+    if (window.location && window.location.protocol === "https:" && /^http:\/\//i.test(trimmed)) {
+      CONFIG_ERROR = "[J-ONE CONFIG] Insecure HTTP API_BASE_URL (" + trimmed + ") rejected on an HTTPS origin.";
+      if (typeof console !== "undefined" && console.error) console.error(CONFIG_ERROR);
+      return "";
+    }
+    return trimmed;
+  }
 
   function resolveApiBase(value) {
-    return normalizeApiBase(value) ||
-      (isLocalHost() ? LOCAL_API_BASE_URL : "");
+    var validated = validateApiBase(value);
+    if (validated) return validated;
+    if (CONFIG_ERROR) return "";
+    return isLocalHost() ? LOCAL_API_BASE_URL : "";
   }
 
   var API_BASE_URL = resolveApiBase(runtimeConfig.API_BASE_URL);
 
   window.APP_CONFIG = {
     API_BASE_URL: API_BASE_URL,
+    CONFIG_ERROR: CONFIG_ERROR,
     HOTEL_SLUG: "j-one-hotel-lodge",
     PAGE_DEFAULT: 1,
     PAGE_SIZE: 10,

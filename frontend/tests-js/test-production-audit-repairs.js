@@ -81,17 +81,16 @@ test("Failure B: dashboard.js formModal maps nested guest.* errors to guest_* in
   assert.match(DASH_BOOKINGS, /phone:\s*String\(v\.guest_phone\s*\|\|\s*""\)\.trim\(\)/);
 });
 
-test("Failure C: vercel.json allows https: images in CSP and proxies /media/ to backend", () => {
-  const rewrites = VERCEL.rewrites || [];
-  assert.ok(
-    rewrites.some((r) => r.source === "/media/(.*)" && /\/media\/\$1$/.test(r.destination)),
-    "vercel.json must rewrite /media/(.*) to the backend media origin",
-  );
+test("Failure C: CSP permits https://api.jonehotels.com and https: images in _headers and vercel.json", () => {
+  const cfHeaders = fs.readFileSync(path.join(FRONTEND, "_headers"), "utf8");
+  assert.match(cfHeaders, /img-src\s+'self'\s+https:\/\/api\.jonehotels\.com\s+https:\s+data:\s+blob:;/);
+  assert.match(cfHeaders, /connect-src\s+'self'\s+https:\/\/api\.jonehotels\.com;/);
+
   const cspHeader = (VERCEL.headers || [])
     .flatMap((h) => h.headers || [])
     .find((h) => h.key === "Content-Security-Policy");
   assert.ok(cspHeader, "Content-Security-Policy header must exist in vercel.json");
-  assert.match(cspHeader.value, /img-src\s+'self'\s+data:\s+blob:\s+https:;/);
+  assert.match(cspHeader.value, /img-src\s+'self'\s+https:\/\/api\.jonehotels\.com\s+https:\s+data:\s+blob:;/);
 });
 
 test("Failure C: profile.html falls back to /api/media/ when direct media URL fails and restores avatar fallback", () => {

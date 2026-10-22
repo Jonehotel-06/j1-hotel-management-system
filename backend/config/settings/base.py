@@ -107,29 +107,48 @@ WSGI_APPLICATION = "config.wsgi.application"
 # Database (DATABASE_URL takes priority; legacy settings remain supported)
 # ---------------------------------------------------------------------------
 
+def configure_mysql_options(options: dict, *, force_tls: bool = False) -> dict:
+    """Enforce utf8mb4, strict SQL mode, and mysqlclient-compatible TLS options."""
+    options.setdefault("charset", "utf8mb4")
+    options.setdefault("init_command", "SET sql_mode='STRICT_TRANS_TABLES'")
+    # Managed providers such as Northflank emit `?ssl-mode=REQUIRED` (hyphen) or
+    # `mysqls://...`, whereas mysqlclient 2.2+ expects `ssl_mode` (underscore).
+    if "ssl-mode" in options:
+        ssl_mode_val = options.pop("ssl-mode")
+        options.setdefault("ssl_mode", ssl_mode_val)
+    env_ssl_mode = config("DB_SSL_MODE", default="").strip()
+    if env_ssl_mode:
+        options["ssl_mode"] = env_ssl_mode
+    elif force_tls:
+        options.setdefault("ssl_mode", "REQUIRED")
+    env_ssl_ca = config("DB_SSL_CA", default="").strip()
+    if env_ssl_ca:
+        ssl_dict = dict(options.get("ssl") or {}) if isinstance(options.get("ssl"), dict) else {}
+        ssl_dict.setdefault("ca", env_ssl_ca)
+        options["ssl"] = ssl_dict
+    return options
+
+
+def parse_database_url_with_mysql_defaults(raw_url: str, *, conn_max_age: int) -> dict:
+    cleaned = (raw_url or "").strip()
+    force_tls = cleaned.startswith("mysqls://")
+    normalized = "mysql://" + cleaned[len("mysqls://"):] if force_tls else cleaned
+    parsed = dj_database_url.parse(
+        normalized,
+        conn_max_age=conn_max_age,
+        conn_health_checks=True,
+    )
+    if "mysql" in parsed.get("ENGINE", ""):
+        configure_mysql_options(parsed.setdefault("OPTIONS", {}), force_tls=force_tls)
+    return parsed
+
+
 DATABASE_URL = config("DATABASE_URL", default="").strip()
 
 if DATABASE_URL:
-    # Connect to the external PostgreSQL/MySQL database.
     DATABASES = {
-        "default": dj_database_url.parse(
-            DATABASE_URL,
-            conn_max_age=60,
-            conn_health_checks=True,
-        )
+        "default": parse_database_url_with_mysql_defaults(DATABASE_URL, conn_max_age=60)
     }
-
-    # Apply strict SQL mode and a utf8mb4 connection charset for MySQL.
-    # dj-database-url sets neither unless the URL carries them, so a
-    # DATABASE_URL deployment would otherwise inherit the server default
-    # charset and fail to store ordinary Unicode (MySQL 1366).
-    if "mysql" in DATABASES["default"]["ENGINE"]:
-        DATABASES["default"].setdefault("OPTIONS", {})
-        DATABASES["default"]["OPTIONS"].setdefault("charset", "utf8mb4")
-        DATABASES["default"]["OPTIONS"].setdefault(
-            "init_command",
-            "SET sql_mode='STRICT_TRANS_TABLES'",
-        )
 
 else:
     # Local SQLite or legacy DB_* environment configuration.
@@ -416,7 +435,12 @@ MEDIA_ROOT = Path(config("MEDIA_ROOT", default=str(BASE_DIR / "media")))
 # ---------------------------------------------------------------------------
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="", cast=Csv())
 CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
-CORS_ALLOW_CREDENTIALS = False  # JWT travels in Authorization headers, not cookies
+# Enabled so the Guest Portal's HttpOnly, SameSite=Lax, Secure cookie scoped to
+# /api/portal/ is accepted and sent across same-site subdomains
+# (https://jonehotels.com -> https://api.jonehotels.com). Production pairs this
+# strictly with CORS_ALLOW_ALL_ORIGINS = False and an exact CORS_ALLOWED_ORIGINS
+# allowlist — wildcard origins are refused at startup.
+CORS_ALLOW_CREDENTIALS = config("CORS_ALLOW_CREDENTIALS", default=True, cast=bool)
 CORS_EXPOSE_HEADERS = ["X-Request-ID"]
 # Custom request headers the independently hosted frontend sends. Keeping this
 # list explicit (instead of CORS_ALLOW_ALL_HEADERS) matters: a browser rejects
@@ -604,9 +628,34 @@ EMAIL_BACKEND = config(
 
 # --- Celery / cache --------------------------------------------------------
 
-REDIS_URL = config("REDIS_URL", default="redis://127.0.0.1:6379/0")
+
+def _normalize_redis_url(raw_url: str) -> str:
+    """Ensure managed TLS Redis URLs (rediss://) satisfy Celery 5.x SSL checks.
+
+    Managed providers such as Northflank expose TLS Redis connection strings in
+    the form ``rediss://user:password@host:6379`` without a query string.
+    Celery 5's Redis result backend raises ``ValueError`` unless ``ssl_cert_reqs``
+    is present on ``rediss://`` URLs, so default to strict certificate
+    verification (``required``) whenever the caller did not specify one.
+    """
+    cleaned = (raw_url or "").strip()
+    if cleaned.startswith("rediss://") and "ssl_cert_reqs=" not in cleaned:
+        sep = "&" if "?" in cleaned else "?"
+        cert_reqs = config("REDIS_SSL_CERT_REQS", default="required").strip() or "required"
+        return f"{cleaned}{sep}ssl_cert_reqs={cert_reqs}"
+    return cleaned
+
+
+REDIS_URL = _normalize_redis_url(config("REDIS_URL", default="redis://127.0.0.1:6379/0"))
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_ENABLE_UTC = USE_TZ
+CELERY_BROKER_CONNECTION_TIMEOUT = config("CELERY_BROKER_CONNECTION_TIMEOUT", default=5, cast=int)
+CELERY_BEAT_SCHEDULE_FILENAME = config(
+    "CELERY_BEAT_SCHEDULE_FILENAME",
+    default="/tmp/celerybeat-schedule",
+)
 CELERY_TASK_ALWAYS_EAGER = config("CELERY_TASK_ALWAYS_EAGER", default=False, cast=bool)
 
 CELERY_TASK_EAGER_PROPAGATES = config("CELERY_TASK_EAGER_PROPAGATES", default=False, cast=bool)

@@ -40,7 +40,9 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 VERSION_FILE = ROOT / "version.json"
 VERSION_JS = ROOT / "js" / "version.js"
+RUNTIME_CONFIG_JS = ROOT / "js" / "runtime-config.js"
 SW_FILE = ROOT / "sw.js"
+DEFAULT_PRODUCTION_API_ORIGIN = "https://api.jonehotels.com"
 
 HEADER = (ROOT / "components/header.html").read_text(encoding="utf-8")
 FOOTER = (ROOT / "components/footer.html").read_text(encoding="utf-8")
@@ -327,12 +329,63 @@ def build(path, version):
     return True
 
 
+def write_runtime_config(api_origin: str):
+    cleaned = (api_origin or "").strip().rstrip("/")
+    if cleaned and not re.fullmatch(r"https://[^/\s]+", cleaned, re.IGNORECASE):
+        raise SystemExit(
+            f"Invalid JONE_API_BASE_URL / --api-base-url {api_origin!r}: expected an HTTPS origin such as 'https://api.jonehotels.com'."
+        )
+    target = cleaned or DEFAULT_PRODUCTION_API_ORIGIN
+    RUNTIME_CONFIG_JS.write_text(
+        "/* js/runtime-config.js */\n"
+        "/* ==========================================================================\n"
+        "   J-ONE HOTEL & LODGE — authoritative public runtime configuration.\n"
+        "\n"
+        "   Contains ONLY public origin settings (never API keys or private values).\n"
+        "   In production on Cloudflare static hosting (jonehotels.com), browser calls\n"
+        f"   go directly to {target} over HTTPS. On local development\n"
+        "   hosts (localhost / 127.0.0.1), this stays empty so js/config.js resolves\n"
+        "   requests to its local development backend.\n"
+        "\n"
+        "   Served with Cache-Control: no-store and bypassed by sw.js so configuration\n"
+        "   updates take effect immediately without cache staleness.\n"
+        "   ========================================================================== */\n"
+        "(function (window) {\n"
+        '  "use strict";\n'
+        "\n"
+        "  var existing = window.__APP_CONFIG__;\n"
+        '  if (!existing || typeof existing !== "object" || Array.isArray(existing)) {\n'
+        "    existing = {};\n"
+        "  }\n"
+        "\n"
+        '  var hostname = (window.location && window.location.hostname) || "";\n'
+        "  var isLocalHost =\n"
+        '    hostname === "localhost" ||\n'
+        '    hostname === "127.0.0.1" ||\n'
+        '    hostname === "[::1]" ||\n'
+        '    hostname === "";\n'
+        "\n"
+        "  window.__APP_CONFIG__ = Object.assign(\n"
+        "    {\n"
+        f'      API_BASE_URL: isLocalHost ? "" : "{target}",\n'
+        "    },\n"
+        "    existing\n"
+        "  );\n"
+        "})(window);\n",
+        encoding="utf-8",
+    )
+
+
 def main():
+    import os
     parser = argparse.ArgumentParser(description="Build the J-ONE frontend.")
     parser.add_argument("--bump", choices=("major", "minor", "patch"),
                         help="Release a new version before building.")
     parser.add_argument("--version", metavar="X.Y.Z",
                         help="Set an explicit version before building.")
+    parser.add_argument("--api-base-url", metavar="HTTPS_ORIGIN",
+                        default=os.environ.get("JONE_API_BASE_URL", DEFAULT_PRODUCTION_API_ORIGIN),
+                        help="Authoritative HTTPS API origin for runtime-config.js.")
     args = parser.parse_args()
 
     if args.bump and args.version:
@@ -350,6 +403,7 @@ def main():
     # drifted js/version.js or service-worker CACHE_VERSION can never survive
     # a build. On --bump/--version this IS the release step; on a plain build
     # it is a no-op consistency check.
+    write_runtime_config(args.api_base_url)
     write_version(version)
     if args.bump or args.version:
         print(f"Released version {version} (version.json, js/version.js, sw.js cache).")

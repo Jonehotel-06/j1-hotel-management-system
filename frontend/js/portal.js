@@ -35,7 +35,7 @@
     if (!window.API || typeof window.API.request !== "function") {
       return Promise.reject(new Error("Guest portal service is unavailable. Refresh and try again."));
     }
-    return window.API.request(path, Object.assign({ auth: false }, opts));
+    return window.API.request(path, Object.assign({ auth: false, credentials: "include" }, opts));
   }
 
   function publicRequest(name, method, body, opts) {

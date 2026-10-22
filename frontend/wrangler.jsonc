@@ -1,18 +1,14 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "jone-hotels-frontend",
-  "main": "worker/index.js",
-  "compatibility_date": "2025-10-01",
+  "name": "j1-hotel-frontend",
+  "compatibility_date": "2026-10-01",
   "assets": {
-    "directory": "./",
-    "binding": "ASSETS",
-    "html_handling": "none",
-    "not_found_handling": "404-page",
-    "run_worker_first": ["/api/*", "/media/*", "/", "/dashboard/", "/portal/"]
+    "directory": ".",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
   },
   "routes": [
     { "pattern": "jonehotels.com", "custom_domain": true },
     { "pattern": "www.jonehotels.com", "custom_domain": true }
-  ],
-  "observability": { "enabled": true }
+  ]
 }

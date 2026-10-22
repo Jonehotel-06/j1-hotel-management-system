@@ -11,7 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 PUBLIC = [p for p in ROOT.glob("*.html")]
 DASH = [p for p in (ROOT / "dashboard").glob("*.html")]
-ALL = PUBLIC + DASH
+PORTAL = [p for p in (ROOT / "portal").glob("*.html")]
+ALL = PUBLIC + DASH + PORTAL
 
 def err(msg):
     print("  [FAIL] " + msg)

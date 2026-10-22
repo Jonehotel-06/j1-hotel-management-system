@@ -1,7 +1,13 @@
 User-agent: *
 Allow: /
 Disallow: /dashboard/
-Disallow: /login.html
+Disallow: /portal/
+Disallow: /qr-service.html
+Disallow: /payment-verify.html
 Disallow: /booking-confirmation.html
+Disallow: /cancellation-result.html
+Disallow: /my-bookings.html
+Disallow: /login.html
+Disallow: /register.html
 
-Sitemap: /sitemap.xml
+Sitemap: https://jonehotels.com/sitemap.xml

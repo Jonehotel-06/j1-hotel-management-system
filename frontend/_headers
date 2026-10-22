@@ -1,15 +1,15 @@
-# Ported from vercel.json. Static assets already default to
-# "Cache-Control: public, max-age=0, must-revalidate", so only the exceptions are listed.
-# (These rules do not apply to proxied /api and /media responses.)
+# J-ONE HOTEL & LODGE — Authoritative Cloudflare Pages / Static Assets Headers
+# Production architecture:
+#   Frontend origins : https://jonehotels.com , https://www.jonehotels.com
+#   Backend API      : https://api.jonehotels.com (direct cross-origin HTTPS)
 
 /*
   X-Content-Type-Options: nosniff
-  X-Frame-Options: SAMEORIGIN
+  X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
-  Permissions-Policy: geolocation=(), microphone=(), camera=(), interest-cohort=()
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), interest-cohort=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; frame-src 'self'; upgrade-insecure-requests
-  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; frame-src 'self'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https://api.jonehotels.com https: data: blob:; font-src 'self' data:; connect-src 'self' https://api.jonehotels.com; manifest-src 'self'; worker-src 'self' blob:; media-src 'self' https://api.jonehotels.com https: blob:; frame-src 'self' https://www.google.com https://maps.google.com; object-src 'none'; base-uri 'self'; form-action 'self' https://checkout.paystack.com; frame-ancestors 'none'; upgrade-insecure-requests
 
 /sw.js
   Cache-Control: public, max-age=0, must-revalidate
@@ -17,16 +17,30 @@
 
 /dashboard/manifest.webmanifest
   Content-Type: application/manifest+json; charset=utf-8
+  Cache-Control: public, max-age=0, must-revalidate
+
+/dashboard
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
 
 /dashboard/*
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
 
+/portal
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
 /portal/*
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
 
 /js/runtime-config.js
+  Cache-Control: no-store, no-cache, max-age=0, must-revalidate
+
+/js/version.js
   Cache-Control: no-store, no-cache, max-age=0, must-revalidate
 
 /version.json
@@ -36,3 +50,24 @@
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer
+
+/payment-verify.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/booking-confirmation.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/cancellation-result.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/assets/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+
+/favicon/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400

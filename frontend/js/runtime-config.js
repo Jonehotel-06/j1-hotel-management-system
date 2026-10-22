@@ -1,20 +1,15 @@
 /* js/runtime-config.js */
 /* ==========================================================================
-   J-ONE HOTEL & LODGE — deployment-owned public runtime configuration.
+   J-ONE HOTEL & LODGE — authoritative public runtime configuration.
 
-   This deliberately contains no host-specific value, credential, payment key,
-   or private setting. By default the browser uses the same origin for /api/.
-   A deployment that hosts the static frontend separately may replace this
-   served file (or set window.__APP_CONFIG__ earlier in the document) with
-   public values such as:
+   Contains ONLY public origin settings (never API keys or private values).
+   In production on Cloudflare static hosting (jonehotels.com), browser calls
+   go directly to https://api.jonehotels.com over HTTPS. On local development
+   hosts (localhost / 127.0.0.1), this stays empty so js/config.js resolves
+   requests to its local development backend.
 
-       window.__APP_CONFIG__ = { API_BASE_URL: "https://api.example.com" };
-
-   Keep a trailing slash out of API_BASE_URL. config.js normalizes it and
-   merges supported overrides with the application's safe defaults.
-
-   This file is intentionally network-only in sw.js: environment changes must
-   take effect without a service-worker cache race. It is not a secret store.
+   Served with Cache-Control: no-store and bypassed by sw.js so configuration
+   updates take effect immediately without cache staleness.
    ========================================================================== */
 (function (window) {
   "use strict";
@@ -24,11 +19,16 @@
     existing = {};
   }
 
+  var hostname = (window.location && window.location.hostname) || "";
+  var isLocalHost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hostname === "";
+
   window.__APP_CONFIG__ = Object.assign(
     {
-      // Empty means same-origin API requests: /api/... . This is the portable
-      // default for reverse-proxy, single-host, and local dev_server setups.
-      API_BASE_URL: "",
+      API_BASE_URL: isLocalHost ? "" : "https://api.jonehotels.com",
     },
     existing
   );

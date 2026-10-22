@@ -149,6 +149,7 @@ services:
         condition: service_healthy
     environment:
       <<: *backend-common-env
+      SERVICE_ROLE: web
       PORT: "8000"
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
       GUNICORN_THREADS: ${GUNICORN_THREADS:-2}
@@ -186,6 +187,7 @@ services:
         condition: service_healthy
     environment:
       <<: *backend-common-env
+      SERVICE_ROLE: worker
     volumes:
       - media_data:/app/media
     networks:
@@ -228,6 +230,7 @@ services:
         condition: service_healthy
     environment:
       <<: *backend-common-env
+      SERVICE_ROLE: beat
     networks:
       - backend_internal
     stop_grace_period: 15s

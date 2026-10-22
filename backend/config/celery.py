@@ -12,7 +12,7 @@ from celery.schedules import crontab
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.development")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 
 app = Celery("jone_hotel")
 app.config_from_object("django.conf:settings", namespace="CELERY")

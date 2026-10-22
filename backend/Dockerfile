@@ -79,6 +79,7 @@ COPY --chown=appuser:appgroup . /app
 
 RUN chmod 0755 /usr/local/bin/docker-cmd.sh /usr/local/bin/container-healthcheck.py /app/build.sh \
     && mkdir -p /app/staticfiles /app/media /var/tmp/jone \
+    && chown appuser:appgroup /app \
     && chown -R appuser:appgroup /app/staticfiles /app/media /var/tmp/jone
 
 USER appuser

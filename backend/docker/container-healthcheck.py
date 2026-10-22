@@ -2,13 +2,16 @@
 """Lightweight, zero-side-effect container health probe for J-ONE Hotel & Lodge.
 
 Behaviour by process role:
-  * Web process (Gunicorn, default): GET http://127.0.0.1:${PORT:-8000}${HEALTHCHECK_PATH:-/api/health/live/}
+  * Web process (Gunicorn, default `SERVICE_ROLE=web`):
+    GET http://127.0.0.1:${PORT:-8000}${HEALTHCHECK_PATH:-/api/health/live/}
     - Defaults to /api/health/live/ (process liveness, no DB touch) so transient
       upstream blips do not kill healthy web workers.
-    - Compose / orchestrators that want DB readiness set HEALTHCHECK_PATH=/api/health/ready/.
-  * Celery worker / beat process (when the same image runs background jobs):
-    verifies PID 1 is alive and running Celery without opening unnecessary network
-    or broker round-trips on every interval tick.
+    - Orchestrators that want DB readiness configure /api/health/ready/ explicitly.
+  * Celery worker / beat process (`SERVICE_ROLE=worker|beat` or a running celery
+    process anywhere in /proc — including Northflank microVM runtimes where PID 1
+    is the guest init rather than celery itself):
+    verifies that at least one live, non-zombie celery process exists without
+    attempting an HTTP probe against an unexposed port.
 """
 import os
 import sys
@@ -16,20 +19,55 @@ import urllib.error
 import urllib.request
 
 
-def _pid1_args() -> list[str]:
+def _iter_live_process_cmdlines() -> list[tuple[int, str, list[str]]]:
+    entries: list[tuple[int, str, list[str]]] = []
     try:
-        with open("/proc/1/cmdline", "rb") as fh:
-            raw = fh.read().split(b"\x00")
-        return [part.decode("utf-8", errors="ignore") for part in raw if part]
+        names = os.listdir("/proc")
     except OSError:
-        return []
+        return entries
+    for name in names:
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                parts = [p.decode("utf-8", errors="ignore") for p in fh.read().split(b"\x00") if p]
+            if not parts:
+                continue
+            state = ""
+            try:
+                with open(f"/proc/{pid}/stat", "r", encoding="utf-8", errors="ignore") as sfh:
+                    raw_stat = sfh.read()
+                rparen = raw_stat.rfind(")")
+                if rparen != -1:
+                    fields = raw_stat[rparen + 2:].split()
+                    state = fields[0] if fields else ""
+            except OSError:
+                state = ""
+            entries.append((pid, state, parts))
+        except OSError:
+            continue
+    return entries
 
 
 def main() -> int:
-    cmd = _pid1_args()
-    if any("celery" in part for part in cmd[:3]):
-        # Background worker or beat scheduler shares this image without an HTTP port.
-        return 0 if cmd else 1
+    role = os.environ.get("SERVICE_ROLE", "").strip().lower()
+    procs = _iter_live_process_cmdlines()
+    live_celery = [
+        (pid, parts)
+        for pid, state, parts in procs
+        if state != "Z" and any("celery" in part for part in parts[:4])
+    ]
+
+    if role in {"worker", "beat", "scheduler"}:
+        if procs:
+            return 0 if live_celery else 1
+        # Hardened container runtimes with restricted /proc visibility: fall back
+        # to checking pid 1 if readable; do not falsely probe HTTP on background workers.
+        return 0
+
+    if live_celery and not any("gunicorn" in part for _, _, parts in procs for part in parts[:4]):
+        return 0
 
     port = os.environ.get("PORT", "8000").strip() or "8000"
     path = os.environ.get("HEALTHCHECK_PATH", "/api/health/live/").strip() or "/api/health/live/"

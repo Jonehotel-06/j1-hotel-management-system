@@ -1,13 +1,12 @@
-# Not served publicly (keeps tests, source tooling and config off the live site)
-.assetsignore
-wrangler.jsonc
-worker
-node_modules
-.wrangler
-.git
-.gitignore
+# Non-public build, test, and configuration files excluded from Cloudflare assets.
 tests-js
 tests-pwa
-*.py
-*.md
+build.py
+validate.py
+dev_server.py
+wrangler.jsonc
 vercel.json
+README.md
+*.md
+.gitignore
+__pycache__

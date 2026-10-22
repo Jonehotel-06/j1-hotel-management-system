@@ -212,6 +212,7 @@ const API = (() => {
       auth = true,
       timeout = DEFAULT_TIMEOUT,
       cache,
+      credentials,
       responseType = "json",
       signal
     } = opts;
@@ -228,6 +229,7 @@ const API = (() => {
 
     const out = { method, headers: { Accept: "application/json", ...headers } };
     if (cache) out.cache = cache;
+    if (credentials) out.credentials = credentials;
     if (body !== undefined) {
       out.body = body instanceof FormData ? body : JSON.stringify(body);
       if (!(body instanceof FormData)) out.headers["Content-Type"] = "application/json";

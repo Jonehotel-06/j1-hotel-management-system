@@ -23,7 +23,6 @@ dj-database-url>=2.2                 # DATABASE_URL parsing (production MySQL)
 # MySQL 8.0+ driver. Installable on Linux with pkg-config + libmysqlclient dev
 # packages (see README "Troubleshooting"). Not required for local SQLite dev.
 mysqlclient>=2.2
-dj_database_url
 
 # --- Media / files ---------------------------------------------------------
 Pillow>=10.0                         # ImageField support + upload validation
