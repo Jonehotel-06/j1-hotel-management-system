@@ -213,11 +213,11 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://p01--j-one-hotel-and-lodge-backend--9vjvqjpzrgmb.code.run/api/$1"
+      "destination": "https://api.jonehotels.com/api/$1"
     },
     {
       "source": "/media/(.*)",
-      "destination": "https://p01--j-one-hotel-and-lodge-backend--9vjvqjpzrgmb.code.run/media/$1"
+      "destination": "https://api.jonehotels.com/media/$1"
     }
   ]
 }
