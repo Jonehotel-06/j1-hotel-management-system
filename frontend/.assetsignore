@@ -1,0 +1,13 @@
+# Not served publicly (keeps tests, source tooling and config off the live site)
+.assetsignore
+wrangler.jsonc
+worker
+node_modules
+.wrangler
+.git
+.gitignore
+tests-js
+tests-pwa
+*.py
+*.md
+vercel.json

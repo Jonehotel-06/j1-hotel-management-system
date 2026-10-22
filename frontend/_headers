@@ -1,0 +1,38 @@
+# Ported from vercel.json. Static assets already default to
+# "Cache-Control: public, max-age=0, must-revalidate", so only the exceptions are listed.
+# (These rules do not apply to proxied /api and /media responses.)
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), interest-cohort=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; frame-src 'self'; upgrade-insecure-requests
+  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'; frame-src 'self'; upgrade-insecure-requests
+
+/sw.js
+  Cache-Control: public, max-age=0, must-revalidate
+  Service-Worker-Allowed: /dashboard/
+
+/dashboard/manifest.webmanifest
+  Content-Type: application/manifest+json; charset=utf-8
+
+/dashboard/*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/portal/*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/js/runtime-config.js
+  Cache-Control: no-store, no-cache, max-age=0, must-revalidate
+
+/version.json
+  Cache-Control: no-store, no-cache, max-age=0, must-revalidate
+
+/qr-service.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
