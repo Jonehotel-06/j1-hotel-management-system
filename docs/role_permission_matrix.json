@@ -1,0 +1,5748 @@
+{
+  "_meta": {
+    "generated": "2026-10-22",
+    "generator": "docs/tools/build_role_permission_matrix.py",
+    "sources": [
+      "backend Django URL resolver (live walk, this deployment's settings)",
+      "apps.accounts.models.User.Role",
+      "apps.accounts.capabilities.CAPABILITY_DEFINITIONS",
+      "apps.accounts.capabilities.ROLE_CAPABILITY_CODES",
+      "frontend/js/dashboard.js PAGE_ACCESS (exported to docs/page_access_export.json)",
+      "frontend/js/auth.js defaultStaffLanding()"
+    ],
+    "notes": [
+      "ADMIN resolves to the full active capability catalogue at runtime; its role row lists the catalogue in code, which can trail the database by a seed migration.",
+      "dashboard_pages is UI navigation only. It never authorises an API call: every endpoint row carries its own server-side permission_classes/required_capabilities.",
+      "require_any=true means any ONE listed capability suffices; otherwise all are required.",
+      "Paths are normalised from Django regexes; <pk>/<reference> are path parameters.",
+      "Capability grants are the code catalogue. A deployment whose RoleCapability rows were seeded earlier can differ; run the audit probe against the target database."
+    ]
+  },
+  "capabilities": [
+    {
+      "code": "account.view",
+      "name": "View staff accounts",
+      "category": "Identity",
+      "description": "View permitted staff account information."
+    },
+    {
+      "code": "account.manage",
+      "name": "Manage staff accounts",
+      "category": "Identity",
+      "description": "Create and change staff roles/accounts."
+    },
+    {
+      "code": "booking.read",
+      "name": "View reservations",
+      "category": "Reservations",
+      "description": "Read reservation and guest operational details."
+    },
+    {
+      "code": "booking.manage",
+      "name": "Manage reservations",
+      "category": "Reservations",
+      "description": "Create and manage permitted reservations."
+    },
+    {
+      "code": "stay.check_in",
+      "name": "Check in guests",
+      "category": "Stays",
+      "description": "Perform a validated guest check-in."
+    },
+    {
+      "code": "stay.check_out",
+      "name": "Check out guests",
+      "category": "Stays",
+      "description": "Perform a validated guest check-out."
+    },
+    {
+      "code": "folio.view",
+      "name": "View folios",
+      "category": "Finance",
+      "description": "View permitted guest folios and balances."
+    },
+    {
+      "code": "folio.charge.post",
+      "name": "Post normal folio charges",
+      "category": "Finance",
+      "description": "Post permitted normal charges to an open folio."
+    },
+    {
+      "code": "finance.controls.manage",
+      "name": "Manage finance controls",
+      "category": "Finance",
+      "description": "Create effective-dated financial control policies."
+    },
+    {
+      "code": "payment.read",
+      "name": "Read payment ledger",
+      "category": "Finance",
+      "description": "Review payment and refund records."
+    },
+    {
+      "code": "payment.capture",
+      "name": "Capture collections",
+      "category": "Finance",
+      "description": "Record permitted tender collections."
+    },
+    {
+      "code": "payment.receipt.send",
+      "name": "Send guest receipts",
+      "category": "Finance",
+      "description": "Send a verified booking receipt to its guest."
+    },
+    {
+      "code": "payment.refund.request",
+      "name": "Request refunds",
+      "category": "Finance",
+      "description": "Request a refund, void, or controlled discount."
+    },
+    {
+      "code": "payment.refund.approve",
+      "name": "Approve sensitive money actions",
+      "category": "Finance",
+      "description": "Approve policy-controlled refunds, voids, and discounts."
+    },
+    {
+      "code": "cash_session.open",
+      "name": "Open cash sessions",
+      "category": "Cashier",
+      "description": "Open the user's permitted cash session."
+    },
+    {
+      "code": "cash_session.close",
+      "name": "Close cash sessions",
+      "category": "Cashier",
+      "description": "Close the user's permitted cash session."
+    },
+    {
+      "code": "expense.manage",
+      "name": "Manage expenses",
+      "category": "Finance",
+      "description": "Create, submit, and post permitted expense records."
+    },
+    {
+      "code": "expense.approve",
+      "name": "Approve expenses",
+      "category": "Finance",
+      "description": "Independently approve or reject controlled expense requests."
+    },
+    {
+      "code": "pos.order.manage",
+      "name": "Manage general POS orders",
+      "category": "POS",
+      "description": "Manage permitted room-service, restaurant, takeaway, and order records."
+    },
+    {
+      "code": "pos.menu.manage",
+      "name": "Manage all POS menus",
+      "category": "POS",
+      "description": "Create and manage every POS menu category, item, and modifier."
+    },
+    {
+      "code": "restaurant.menu.manage",
+      "name": "Manage restaurant menu",
+      "category": "Restaurant",
+      "description": "Create and manage restaurant-category menu items."
+    },
+    {
+      "code": "restaurant.order.manage",
+      "name": "Manage restaurant orders",
+      "category": "Restaurant",
+      "description": "Create and progress restaurant orders."
+    },
+    {
+      "code": "restaurant.table.manage",
+      "name": "Manage restaurant tables",
+      "category": "Restaurant",
+      "description": "Maintain table records and table-service sessions."
+    },
+    {
+      "code": "bar.order.manage",
+      "name": "Manage bar orders",
+      "category": "Bar",
+      "description": "Create and progress bar orders."
+    },
+    {
+      "code": "bar.menu.manage",
+      "name": "Manage bar menu",
+      "category": "Bar",
+      "description": "Maintain bar-category menu items."
+    },
+    {
+      "code": "kitchen.queue.view",
+      "name": "View production queues",
+      "category": "Kitchen",
+      "description": "View the user's assigned kitchen or bar production queue."
+    },
+    {
+      "code": "kitchen.ticket.manage",
+      "name": "Progress production tickets",
+      "category": "Kitchen",
+      "description": "Start, mark ready, or complete assigned production tickets."
+    },
+    {
+      "code": "guest_request.manage",
+      "name": "Manage guest requests",
+      "category": "Guest services",
+      "description": "Create or progress permitted guest requests."
+    },
+    {
+      "code": "guest_request.assign",
+      "name": "Dispatch guest requests",
+      "category": "Guest services",
+      "description": "Assign or re-route guest service requests."
+    },
+    {
+      "code": "housekeeping.task.manage",
+      "name": "Manage housekeeping tasks",
+      "category": "Operations",
+      "description": "Work permitted housekeeping tasks."
+    },
+    {
+      "code": "housekeeping.task.assign",
+      "name": "Dispatch housekeeping tasks",
+      "category": "Operations",
+      "description": "Assign and inspect housekeeping tasks."
+    },
+    {
+      "code": "maintenance.work_order.manage",
+      "name": "Manage maintenance work orders",
+      "category": "Operations",
+      "description": "Work permitted maintenance orders."
+    },
+    {
+      "code": "maintenance.work_order.assign",
+      "name": "Dispatch maintenance work orders",
+      "category": "Operations",
+      "description": "Assign and verify maintenance work orders."
+    },
+    {
+      "code": "inventory.manage",
+      "name": "Manage inventory",
+      "category": "Inventory",
+      "description": "Create permitted inventory movements and counts."
+    },
+    {
+      "code": "inventory.adjust.approve",
+      "name": "Approve inventory adjustments",
+      "category": "Inventory",
+      "description": "Approve count variances before stock adjustments post."
+    },
+    {
+      "code": "procurement.manage",
+      "name": "Manage procurement",
+      "category": "Inventory",
+      "description": "Create and receive permitted procurement records."
+    },
+    {
+      "code": "procurement.approve",
+      "name": "Approve procurement",
+      "category": "Inventory",
+      "description": "Approve purchase orders requested by another user."
+    },
+    {
+      "code": "staff.profile.manage",
+      "name": "Manage staff operational profiles",
+      "category": "Staff operations",
+      "description": "Create and maintain non-sensitive staff operational profiles."
+    },
+    {
+      "code": "staff.view",
+      "name": "View staff records",
+      "category": "Staff operations",
+      "description": "View permitted staff operational records, including biometric enrollment and attendance status."
+    },
+    {
+      "code": "staff.manage",
+      "name": "Manage staff records",
+      "category": "Staff operations",
+      "description": "Record permitted staff operational changes, including another staff member's biometric enrollment or revocation."
+    },
+    {
+      "code": "shift.manage",
+      "name": "Manage staff shifts",
+      "category": "Staff operations",
+      "description": "Create, schedule, and cancel staff shifts."
+    },
+    {
+      "code": "attendance.clock",
+      "name": "Clock attendance",
+      "category": "Staff operations",
+      "description": "Record the user's own source-keyed attendance events."
+    },
+    {
+      "code": "attendance.manage",
+      "name": "Manage attendance",
+      "category": "Staff operations",
+      "description": "View workforce attendance records and resolve permitted operations."
+    },
+    {
+      "code": "leave.request",
+      "name": "Request leave",
+      "category": "Staff operations",
+      "description": "Submit and cancel the user's permitted leave requests."
+    },
+    {
+      "code": "leave.approve",
+      "name": "Approve leave",
+      "category": "Staff operations",
+      "description": "Review leave requests for other staff members."
+    },
+    {
+      "code": "payroll.view",
+      "name": "View payroll",
+      "category": "Payroll",
+      "description": "View payroll run and compensation records."
+    },
+    {
+      "code": "payroll.manage",
+      "name": "Prepare payroll",
+      "category": "Payroll",
+      "description": "Maintain compensation records and prepare payroll runs."
+    },
+    {
+      "code": "payroll.approve",
+      "name": "Approve payroll",
+      "category": "Payroll",
+      "description": "Independently approve a submitted payroll run."
+    },
+    {
+      "code": "reports.financial.view",
+      "name": "View financial reports",
+      "category": "Reports",
+      "description": "View financial reporting and exports."
+    },
+    {
+      "code": "audit.view",
+      "name": "View audit records",
+      "category": "Security",
+      "description": "View immutable audit history."
+    },
+    {
+      "code": "terminal.manage",
+      "name": "Manage workstation registry",
+      "category": "Security",
+      "description": "Register, label, and deactivate informational workstations."
+    },
+    {
+      "code": "service_qr.manage",
+      "name": "Manage guest service QR links",
+      "category": "Guest services",
+      "description": "Create and revoke signed room/table service links."
+    },
+    {
+      "code": "settings.manage",
+      "name": "Manage hotel settings",
+      "category": "Administration",
+      "description": "Manage hotel-wide configuration."
+    }
+  ],
+  "departments": {
+    "MANAGEMENT": {
+      "name": "Management",
+      "dashboard": "/dashboard/index.html",
+      "roles": [
+        "ADMIN",
+        "GENERAL_MANAGER",
+        "MANAGER",
+        "HR_MANAGER"
+      ]
+    },
+    "ACCOUNTS": {
+      "name": "Accounts & Finance",
+      "dashboard": "/dashboard/accounting.html",
+      "roles": [
+        "ACCOUNTS_MANAGER",
+        "ACCOUNTANT",
+        "CASHIER"
+      ]
+    },
+    "ADMIN_PROCUREMENT": {
+      "name": "Administration & Procurement",
+      "dashboard": "/dashboard/procurement.html",
+      "roles": [
+        "ADMIN",
+        "PROCUREMENT_OFFICER",
+        "MANAGER"
+      ]
+    },
+    "FRONT_DESK": {
+      "name": "Front Desk / Reception",
+      "dashboard": "/dashboard/bookings.html",
+      "roles": [
+        "FRONT_DESK_SUPERVISOR",
+        "RECEPTIONIST"
+      ]
+    },
+    "KITCHEN": {
+      "name": "Kitchen",
+      "dashboard": "/dashboard/pos.html",
+      "roles": [
+        "KITCHEN_MANAGER",
+        "CHEF",
+        "KITCHEN_ASSISTANT"
+      ]
+    },
+    "RESTAURANT_BAR": {
+      "name": "Restaurant & Bar Service",
+      "dashboard": "/dashboard/pos.html",
+      "roles": [
+        "RESTAURANT_MANAGER",
+        "WAITER",
+        "BAR_MANAGER",
+        "BARTENDER"
+      ]
+    },
+    "HOUSEKEEPING": {
+      "name": "Housekeeping",
+      "dashboard": "/dashboard/housekeeping.html",
+      "roles": [
+        "HOUSEKEEPING_MANAGER",
+        "HOUSEKEEPER",
+        "HOUSEKEEPING"
+      ]
+    },
+    "PORTERING": {
+      "name": "Portering / Maintenance",
+      "dashboard": "/dashboard/service-requests.html",
+      "roles": [
+        "PORTER",
+        "SECURITY",
+        "MAINTENANCE",
+        "MAINTENANCE_TECHNICIAN"
+      ]
+    },
+    "STORES_INVENTORY": {
+      "name": "Stores & Inventory",
+      "dashboard": "/dashboard/inventory.html",
+      "roles": [
+        "STOREKEEPER",
+        "INVENTORY_CLERK"
+      ]
+    }
+  },
+  "roles": [
+    {
+      "role": "ADMIN",
+      "label": "Administrator",
+      "departments": [
+        "MANAGEMENT",
+        "ADMIN_PROCUREMENT"
+      ],
+      "capabilities": [
+        "account.manage",
+        "account.view",
+        "attendance.clock",
+        "attendance.manage",
+        "audit.view",
+        "bar.menu.manage",
+        "bar.order.manage",
+        "booking.manage",
+        "booking.read",
+        "cash_session.close",
+        "cash_session.open",
+        "expense.approve",
+        "expense.manage",
+        "finance.controls.manage",
+        "folio.charge.post",
+        "folio.view",
+        "guest_request.assign",
+        "guest_request.manage",
+        "housekeeping.task.assign",
+        "housekeeping.task.manage",
+        "inventory.adjust.approve",
+        "inventory.manage",
+        "kitchen.queue.view",
+        "kitchen.ticket.manage",
+        "leave.approve",
+        "leave.request",
+        "maintenance.work_order.assign",
+        "maintenance.work_order.manage",
+        "payment.capture",
+        "payment.read",
+        "payment.receipt.send",
+        "payment.refund.approve",
+        "payment.refund.request",
+        "payroll.approve",
+        "payroll.manage",
+        "payroll.view",
+        "pos.menu.manage",
+        "pos.order.manage",
+        "procurement.approve",
+        "procurement.manage",
+        "reports.financial.view",
+        "restaurant.menu.manage",
+        "restaurant.order.manage",
+        "restaurant.table.manage",
+        "service_qr.manage",
+        "settings.manage",
+        "shift.manage",
+        "staff.manage",
+        "staff.profile.manage",
+        "staff.view",
+        "stay.check_in",
+        "stay.check_out",
+        "terminal.manage"
+      ],
+      "login_destination": "/dashboard/index.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Overview",
+            "items": [
+              "Dashboard",
+              "Approvals"
+            ]
+          },
+          {
+            "group": "Operations",
+            "items": [
+              "Bookings",
+              "Availability",
+              "Occupancy",
+              "Check-in",
+              "Check-out",
+              "Missed bookings",
+              "Guests",
+              "Rooms",
+              "POS & Room Service",
+              "Workforce",
+              "Guest Requests",
+              "Laundry",
+              "Barcode Labels",
+              "Service Links",
+              "Housekeeping",
+              "Maintenance",
+              "Inventory",
+              "Procurement"
+            ]
+          },
+          {
+            "group": "Finance",
+            "items": [
+              "Payments",
+              "Receipts",
+              "Accounting",
+              "Reports",
+              "Payroll"
+            ]
+          },
+          {
+            "group": "Content",
+            "items": [
+              "Facilities",
+              "Gallery",
+              "Offers"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Enquiries",
+              "Reviews",
+              "Notifications"
+            ]
+          },
+          {
+            "group": "Administration",
+            "items": [
+              "Staff",
+              "Staff Profiles",
+              "Workstations",
+              "Audit Logs",
+              "Settings"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "403.html",
+        "accounting.html",
+        "approvals.html",
+        "audit-log-details.html",
+        "audit-logs.html",
+        "availability.html",
+        "barcode-labels.html",
+        "booking-details.html",
+        "bookings.html",
+        "check-in.html",
+        "check-out.html",
+        "enquiries.html",
+        "facilities.html",
+        "gallery.html",
+        "guests.html",
+        "housekeeping.html",
+        "index.html",
+        "inventory.html",
+        "laundry.html",
+        "maintenance.html",
+        "missed-bookings.html",
+        "notification-details.html",
+        "notifications.html",
+        "occupancy.html",
+        "offers.html",
+        "payments.html",
+        "payroll.html",
+        "pos.html",
+        "procurement.html",
+        "profile.html",
+        "receipt-details.html",
+        "receipts.html",
+        "reports.html",
+        "reviews.html",
+        "room-details.html",
+        "rooms.html",
+        "service-qr.html",
+        "service-requests.html",
+        "settings.html",
+        "staff-profile.html",
+        "staff.html",
+        "terminals.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "MANAGER",
+      "label": "Manager",
+      "departments": [
+        "MANAGEMENT",
+        "ADMIN_PROCUREMENT"
+      ],
+      "capabilities": [
+        "account.view",
+        "attendance.clock",
+        "attendance.manage",
+        "bar.menu.manage",
+        "bar.order.manage",
+        "booking.manage",
+        "booking.read",
+        "cash_session.close",
+        "cash_session.open",
+        "expense.approve",
+        "expense.manage",
+        "finance.controls.manage",
+        "folio.charge.post",
+        "folio.view",
+        "guest_request.assign",
+        "guest_request.manage",
+        "housekeeping.task.assign",
+        "housekeeping.task.manage",
+        "inventory.adjust.approve",
+        "inventory.manage",
+        "kitchen.queue.view",
+        "kitchen.ticket.manage",
+        "leave.approve",
+        "leave.request",
+        "maintenance.work_order.assign",
+        "maintenance.work_order.manage",
+        "payment.capture",
+        "payment.read",
+        "payment.receipt.send",
+        "payment.refund.approve",
+        "payment.refund.request",
+        "payroll.approve",
+        "payroll.manage",
+        "payroll.view",
+        "pos.menu.manage",
+        "pos.order.manage",
+        "procurement.approve",
+        "procurement.manage",
+        "reports.financial.view",
+        "restaurant.menu.manage",
+        "restaurant.order.manage",
+        "restaurant.table.manage",
+        "service_qr.manage",
+        "shift.manage",
+        "staff.manage",
+        "staff.profile.manage",
+        "staff.view",
+        "stay.check_in",
+        "stay.check_out",
+        "terminal.manage"
+      ],
+      "login_destination": "/dashboard/index.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Overview",
+            "items": [
+              "Dashboard",
+              "Approvals"
+            ]
+          },
+          {
+            "group": "Operations",
+            "items": [
+              "Bookings",
+              "Availability",
+              "Occupancy",
+              "Check-in",
+              "Check-out",
+              "Missed bookings",
+              "Guests",
+              "Rooms",
+              "POS & Room Service",
+              "Workforce",
+              "Guest Requests",
+              "Laundry",
+              "Barcode Labels",
+              "Service Links",
+              "Housekeeping",
+              "Maintenance",
+              "Inventory",
+              "Procurement"
+            ]
+          },
+          {
+            "group": "Finance",
+            "items": [
+              "Payments",
+              "Receipts",
+              "Accounting",
+              "Reports",
+              "Payroll"
+            ]
+          },
+          {
+            "group": "Content",
+            "items": [
+              "Facilities",
+              "Gallery",
+              "Offers"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Enquiries",
+              "Notifications"
+            ]
+          },
+          {
+            "group": "Administration",
+            "items": [
+              "Staff Profiles",
+              "Workstations"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "403.html",
+        "accounting.html",
+        "approvals.html",
+        "availability.html",
+        "barcode-labels.html",
+        "booking-details.html",
+        "bookings.html",
+        "check-in.html",
+        "check-out.html",
+        "enquiries.html",
+        "facilities.html",
+        "gallery.html",
+        "guests.html",
+        "housekeeping.html",
+        "index.html",
+        "inventory.html",
+        "laundry.html",
+        "maintenance.html",
+        "missed-bookings.html",
+        "notification-details.html",
+        "notifications.html",
+        "occupancy.html",
+        "offers.html",
+        "payments.html",
+        "payroll.html",
+        "pos.html",
+        "procurement.html",
+        "profile.html",
+        "receipt-details.html",
+        "receipts.html",
+        "reports.html",
+        "room-details.html",
+        "rooms.html",
+        "service-qr.html",
+        "service-requests.html",
+        "staff-profile.html",
+        "terminals.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "RECEPTIONIST",
+      "label": "Receptionist",
+      "departments": [
+        "FRONT_DESK"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "booking.manage",
+        "booking.read",
+        "folio.charge.post",
+        "folio.view",
+        "guest_request.assign",
+        "guest_request.manage",
+        "housekeeping.task.assign",
+        "housekeeping.task.manage",
+        "leave.request",
+        "maintenance.work_order.assign",
+        "maintenance.work_order.manage",
+        "payment.capture",
+        "payment.read",
+        "payment.receipt.send",
+        "payment.refund.request",
+        "stay.check_in",
+        "stay.check_out"
+      ],
+      "login_destination": "/dashboard/index.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Overview",
+            "items": [
+              "Dashboard"
+            ]
+          },
+          {
+            "group": "Operations",
+            "items": [
+              "Bookings",
+              "Availability",
+              "Occupancy",
+              "Check-in",
+              "Check-out",
+              "Missed bookings",
+              "Guests",
+              "Rooms",
+              "Workforce",
+              "Guest Requests",
+              "Laundry",
+              "Housekeeping",
+              "Maintenance"
+            ]
+          },
+          {
+            "group": "Finance",
+            "items": [
+              "Payments",
+              "Receipts"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Enquiries",
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "403.html",
+        "availability.html",
+        "booking-details.html",
+        "bookings.html",
+        "check-in.html",
+        "check-out.html",
+        "enquiries.html",
+        "guests.html",
+        "housekeeping.html",
+        "index.html",
+        "laundry.html",
+        "maintenance.html",
+        "missed-bookings.html",
+        "notification-details.html",
+        "notifications.html",
+        "occupancy.html",
+        "payments.html",
+        "profile.html",
+        "receipt-details.html",
+        "receipts.html",
+        "room-details.html",
+        "rooms.html",
+        "service-requests.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "CASHIER",
+      "label": "Cashier",
+      "departments": [
+        "ACCOUNTS"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "cash_session.close",
+        "cash_session.open",
+        "expense.manage",
+        "folio.charge.post",
+        "leave.request",
+        "payment.capture",
+        "payment.refund.request",
+        "pos.order.manage"
+      ],
+      "login_destination": "/dashboard/pos.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "POS & Room Service",
+              "Workforce",
+              "Barcode Labels"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "barcode-labels.html",
+        "notification-details.html",
+        "notifications.html",
+        "pos.html",
+        "profile.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "HOUSEKEEPING",
+      "label": "Housekeeping",
+      "departments": [
+        "HOUSEKEEPING"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "guest_request.manage",
+        "housekeeping.task.manage",
+        "leave.request"
+      ],
+      "login_destination": "/dashboard/housekeeping.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce",
+              "Guest Requests",
+              "Laundry",
+              "Housekeeping"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "housekeeping.html",
+        "laundry.html",
+        "notification-details.html",
+        "notifications.html",
+        "profile.html",
+        "service-requests.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "MAINTENANCE",
+      "label": "Maintenance",
+      "departments": [
+        "PORTERING"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "guest_request.manage",
+        "leave.request",
+        "maintenance.work_order.manage"
+      ],
+      "login_destination": "/dashboard/maintenance.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce",
+              "Guest Requests",
+              "Laundry",
+              "Maintenance"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "laundry.html",
+        "maintenance.html",
+        "notification-details.html",
+        "notifications.html",
+        "profile.html",
+        "service-requests.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "INVENTORY_CLERK",
+      "label": "Inventory Clerk",
+      "departments": [
+        "STORES_INVENTORY"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "inventory.manage",
+        "leave.request",
+        "procurement.manage"
+      ],
+      "login_destination": "/dashboard/inventory.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce",
+              "Barcode Labels",
+              "Inventory",
+              "Procurement"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "approvals.html",
+        "barcode-labels.html",
+        "inventory.html",
+        "notification-details.html",
+        "notifications.html",
+        "procurement.html",
+        "profile.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "FRONT_DESK_SUPERVISOR",
+      "label": "Front Desk Supervisor",
+      "departments": [
+        "FRONT_DESK"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "attendance.manage",
+        "booking.manage",
+        "booking.read",
+        "folio.charge.post",
+        "folio.view",
+        "guest_request.assign",
+        "guest_request.manage",
+        "housekeeping.task.assign",
+        "housekeeping.task.manage",
+        "leave.request",
+        "maintenance.work_order.assign",
+        "maintenance.work_order.manage",
+        "payment.capture",
+        "payment.read",
+        "payment.receipt.send",
+        "payment.refund.request",
+        "stay.check_in",
+        "stay.check_out"
+      ],
+      "login_destination": "/dashboard/index.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Overview",
+            "items": [
+              "Dashboard"
+            ]
+          },
+          {
+            "group": "Operations",
+            "items": [
+              "Bookings",
+              "Availability",
+              "Occupancy",
+              "Check-in",
+              "Check-out",
+              "Missed bookings",
+              "Guests",
+              "Rooms",
+              "Workforce",
+              "Guest Requests",
+              "Laundry",
+              "Housekeeping",
+              "Maintenance"
+            ]
+          },
+          {
+            "group": "Finance",
+            "items": [
+              "Payments",
+              "Receipts"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Enquiries",
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "403.html",
+        "approvals.html",
+        "availability.html",
+        "booking-details.html",
+        "bookings.html",
+        "check-in.html",
+        "check-out.html",
+        "enquiries.html",
+        "guests.html",
+        "housekeeping.html",
+        "index.html",
+        "laundry.html",
+        "maintenance.html",
+        "missed-bookings.html",
+        "notification-details.html",
+        "notifications.html",
+        "occupancy.html",
+        "payments.html",
+        "profile.html",
+        "receipt-details.html",
+        "receipts.html",
+        "room-details.html",
+        "rooms.html",
+        "service-requests.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "GENERAL_MANAGER",
+      "label": "General Manager",
+      "departments": [
+        "MANAGEMENT"
+      ],
+      "capabilities": [
+        "account.view",
+        "attendance.clock",
+        "attendance.manage",
+        "bar.menu.manage",
+        "bar.order.manage",
+        "booking.manage",
+        "booking.read",
+        "cash_session.close",
+        "cash_session.open",
+        "expense.approve",
+        "expense.manage",
+        "finance.controls.manage",
+        "folio.charge.post",
+        "folio.view",
+        "guest_request.assign",
+        "guest_request.manage",
+        "housekeeping.task.assign",
+        "housekeeping.task.manage",
+        "inventory.adjust.approve",
+        "inventory.manage",
+        "kitchen.queue.view",
+        "kitchen.ticket.manage",
+        "leave.approve",
+        "leave.request",
+        "maintenance.work_order.assign",
+        "maintenance.work_order.manage",
+        "payment.capture",
+        "payment.read",
+        "payment.receipt.send",
+        "payment.refund.approve",
+        "payment.refund.request",
+        "payroll.approve",
+        "payroll.manage",
+        "payroll.view",
+        "pos.menu.manage",
+        "pos.order.manage",
+        "procurement.approve",
+        "procurement.manage",
+        "reports.financial.view",
+        "restaurant.menu.manage",
+        "restaurant.order.manage",
+        "restaurant.table.manage",
+        "service_qr.manage",
+        "shift.manage",
+        "staff.manage",
+        "staff.profile.manage",
+        "staff.view",
+        "stay.check_in",
+        "stay.check_out",
+        "terminal.manage"
+      ],
+      "login_destination": "/dashboard/index.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Overview",
+            "items": [
+              "Dashboard",
+              "Approvals"
+            ]
+          },
+          {
+            "group": "Operations",
+            "items": [
+              "Bookings",
+              "Availability",
+              "Occupancy",
+              "Check-in",
+              "Check-out",
+              "Missed bookings",
+              "Guests",
+              "Rooms",
+              "POS & Room Service",
+              "Workforce",
+              "Guest Requests",
+              "Laundry",
+              "Barcode Labels",
+              "Service Links",
+              "Housekeeping",
+              "Maintenance",
+              "Inventory",
+              "Procurement"
+            ]
+          },
+          {
+            "group": "Finance",
+            "items": [
+              "Payments",
+              "Receipts",
+              "Accounting",
+              "Reports",
+              "Payroll"
+            ]
+          },
+          {
+            "group": "Content",
+            "items": [
+              "Facilities",
+              "Gallery",
+              "Offers"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Enquiries",
+              "Notifications"
+            ]
+          },
+          {
+            "group": "Administration",
+            "items": [
+              "Staff Profiles",
+              "Workstations"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "403.html",
+        "accounting.html",
+        "approvals.html",
+        "availability.html",
+        "barcode-labels.html",
+        "booking-details.html",
+        "bookings.html",
+        "check-in.html",
+        "check-out.html",
+        "enquiries.html",
+        "facilities.html",
+        "gallery.html",
+        "guests.html",
+        "housekeeping.html",
+        "index.html",
+        "inventory.html",
+        "laundry.html",
+        "maintenance.html",
+        "missed-bookings.html",
+        "notification-details.html",
+        "notifications.html",
+        "occupancy.html",
+        "offers.html",
+        "payments.html",
+        "payroll.html",
+        "pos.html",
+        "procurement.html",
+        "profile.html",
+        "receipt-details.html",
+        "receipts.html",
+        "reports.html",
+        "room-details.html",
+        "rooms.html",
+        "service-qr.html",
+        "service-requests.html",
+        "staff-profile.html",
+        "terminals.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "RESTAURANT_MANAGER",
+      "label": "Restaurant Manager",
+      "departments": [
+        "RESTAURANT_BAR"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "attendance.manage",
+        "kitchen.queue.view",
+        "leave.request",
+        "payment.capture",
+        "restaurant.menu.manage",
+        "restaurant.order.manage",
+        "restaurant.table.manage",
+        "shift.manage"
+      ],
+      "login_destination": "/dashboard/pos.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "POS & Room Service",
+              "Workforce"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "notification-details.html",
+        "notifications.html",
+        "pos.html",
+        "profile.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "WAITER",
+      "label": "Waiter / Server",
+      "departments": [
+        "RESTAURANT_BAR"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "guest_request.manage",
+        "leave.request",
+        "payment.capture",
+        "restaurant.order.manage"
+      ],
+      "login_destination": "/dashboard/pos.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "POS & Room Service",
+              "Workforce",
+              "Guest Requests",
+              "Laundry"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "laundry.html",
+        "notification-details.html",
+        "notifications.html",
+        "pos.html",
+        "profile.html",
+        "service-requests.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "BAR_MANAGER",
+      "label": "Bar Manager",
+      "departments": [
+        "RESTAURANT_BAR"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "attendance.manage",
+        "bar.menu.manage",
+        "bar.order.manage",
+        "kitchen.queue.view",
+        "leave.request",
+        "payment.capture",
+        "shift.manage"
+      ],
+      "login_destination": "/dashboard/pos.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "POS & Room Service",
+              "Workforce"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "notification-details.html",
+        "notifications.html",
+        "pos.html",
+        "profile.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "BARTENDER",
+      "label": "Bartender",
+      "departments": [
+        "RESTAURANT_BAR"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "bar.order.manage",
+        "guest_request.manage",
+        "leave.request",
+        "payment.capture"
+      ],
+      "login_destination": "/dashboard/pos.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "POS & Room Service",
+              "Workforce",
+              "Guest Requests",
+              "Laundry"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "laundry.html",
+        "notification-details.html",
+        "notifications.html",
+        "pos.html",
+        "profile.html",
+        "service-requests.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "KITCHEN_MANAGER",
+      "label": "Kitchen Manager",
+      "departments": [
+        "KITCHEN"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "attendance.manage",
+        "kitchen.queue.view",
+        "kitchen.ticket.manage",
+        "leave.request",
+        "shift.manage"
+      ],
+      "login_destination": "/dashboard/pos.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "POS & Room Service",
+              "Workforce"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "notification-details.html",
+        "notifications.html",
+        "pos.html",
+        "profile.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "CHEF",
+      "label": "Chef / Kitchen Staff",
+      "departments": [
+        "KITCHEN"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "kitchen.queue.view",
+        "kitchen.ticket.manage",
+        "leave.request"
+      ],
+      "login_destination": "/dashboard/pos.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "POS & Room Service",
+              "Workforce"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "notification-details.html",
+        "notifications.html",
+        "pos.html",
+        "profile.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "HOUSEKEEPING_MANAGER",
+      "label": "Housekeeping Manager",
+      "departments": [
+        "HOUSEKEEPING"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "attendance.manage",
+        "guest_request.assign",
+        "guest_request.manage",
+        "housekeeping.task.assign",
+        "housekeeping.task.manage",
+        "leave.request",
+        "shift.manage"
+      ],
+      "login_destination": "/dashboard/housekeeping.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce",
+              "Guest Requests",
+              "Laundry",
+              "Housekeeping"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "housekeeping.html",
+        "laundry.html",
+        "notification-details.html",
+        "notifications.html",
+        "profile.html",
+        "service-requests.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "HOUSEKEEPER",
+      "label": "Housekeeper",
+      "departments": [
+        "HOUSEKEEPING"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "guest_request.manage",
+        "housekeeping.task.manage",
+        "leave.request"
+      ],
+      "login_destination": "/dashboard/housekeeping.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce",
+              "Guest Requests",
+              "Laundry",
+              "Housekeeping"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "housekeeping.html",
+        "laundry.html",
+        "notification-details.html",
+        "notifications.html",
+        "profile.html",
+        "service-requests.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "MAINTENANCE_TECHNICIAN",
+      "label": "Maintenance Technician",
+      "departments": [
+        "PORTERING"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "guest_request.manage",
+        "leave.request",
+        "maintenance.work_order.manage"
+      ],
+      "login_destination": "/dashboard/maintenance.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce",
+              "Guest Requests",
+              "Laundry",
+              "Maintenance"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "laundry.html",
+        "maintenance.html",
+        "notification-details.html",
+        "notifications.html",
+        "profile.html",
+        "service-requests.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "ACCOUNTS_MANAGER",
+      "label": "Accounts Manager",
+      "departments": [
+        "ACCOUNTS"
+      ],
+      "capabilities": [
+        "account.view",
+        "attendance.clock",
+        "cash_session.close",
+        "cash_session.open",
+        "expense.approve",
+        "expense.manage",
+        "finance.controls.manage",
+        "folio.charge.post",
+        "folio.view",
+        "payment.capture",
+        "payment.read",
+        "payment.refund.approve",
+        "payment.refund.request",
+        "payroll.approve",
+        "payroll.manage",
+        "payroll.view",
+        "reports.financial.view"
+      ],
+      "login_destination": "/dashboard/payments.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Overview",
+            "items": [
+              "Approvals"
+            ]
+          },
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce"
+            ]
+          },
+          {
+            "group": "Finance",
+            "items": [
+              "Payments",
+              "Receipts",
+              "Accounting",
+              "Payroll"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "accounting.html",
+        "approvals.html",
+        "notification-details.html",
+        "notifications.html",
+        "payments.html",
+        "payroll.html",
+        "profile.html",
+        "receipt-details.html",
+        "receipts.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "ACCOUNTANT",
+      "label": "Accountant",
+      "departments": [
+        "ACCOUNTS"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "expense.manage",
+        "folio.charge.post",
+        "folio.view",
+        "leave.request",
+        "payment.capture",
+        "payment.read",
+        "payment.refund.request",
+        "payroll.manage",
+        "payroll.view",
+        "reports.financial.view"
+      ],
+      "login_destination": "/dashboard/payments.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce"
+            ]
+          },
+          {
+            "group": "Finance",
+            "items": [
+              "Payments",
+              "Receipts",
+              "Accounting",
+              "Payroll"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "accounting.html",
+        "approvals.html",
+        "notification-details.html",
+        "notifications.html",
+        "payments.html",
+        "payroll.html",
+        "profile.html",
+        "receipt-details.html",
+        "receipts.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "HR_MANAGER",
+      "label": "HR Manager",
+      "departments": [
+        "MANAGEMENT"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "attendance.manage",
+        "leave.approve",
+        "leave.request",
+        "payroll.approve",
+        "payroll.manage",
+        "payroll.view",
+        "shift.manage",
+        "staff.manage",
+        "staff.profile.manage",
+        "staff.view"
+      ],
+      "login_destination": "/dashboard/workforce.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Overview",
+            "items": [
+              "Approvals"
+            ]
+          },
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce"
+            ]
+          },
+          {
+            "group": "Finance",
+            "items": [
+              "Payroll"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          },
+          {
+            "group": "Administration",
+            "items": [
+              "Staff Profiles"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "approvals.html",
+        "notification-details.html",
+        "notifications.html",
+        "payroll.html",
+        "profile.html",
+        "staff-profile.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "SECURITY",
+      "label": "Security",
+      "departments": [
+        "PORTERING"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "guest_request.manage"
+      ],
+      "login_destination": "/dashboard/index.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce",
+              "Guest Requests",
+              "Laundry"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "laundry.html",
+        "notification-details.html",
+        "notifications.html",
+        "profile.html",
+        "service-requests.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "PROCUREMENT_OFFICER",
+      "label": "Procurement Officer",
+      "departments": [
+        "ADMIN_PROCUREMENT"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "leave.request",
+        "procurement.manage"
+      ],
+      "login_destination": "/dashboard/procurement.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce",
+              "Procurement"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "approvals.html",
+        "notification-details.html",
+        "notifications.html",
+        "procurement.html",
+        "profile.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "STOREKEEPER",
+      "label": "Storekeeper",
+      "departments": [
+        "STORES_INVENTORY"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "inventory.manage",
+        "leave.request",
+        "procurement.manage"
+      ],
+      "login_destination": "/dashboard/inventory.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce",
+              "Barcode Labels",
+              "Inventory",
+              "Procurement"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "approvals.html",
+        "barcode-labels.html",
+        "inventory.html",
+        "notification-details.html",
+        "notifications.html",
+        "procurement.html",
+        "profile.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "PORTER",
+      "label": "Porter",
+      "departments": [
+        "PORTERING"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "guest_request.manage",
+        "leave.request"
+      ],
+      "login_destination": "/dashboard/service-requests.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "Workforce",
+              "Guest Requests",
+              "Laundry"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "laundry.html",
+        "notification-details.html",
+        "notifications.html",
+        "profile.html",
+        "service-requests.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "KITCHEN_ASSISTANT",
+      "label": "Kitchen Assistant",
+      "departments": [
+        "KITCHEN"
+      ],
+      "capabilities": [
+        "attendance.clock",
+        "kitchen.queue.view",
+        "kitchen.ticket.manage",
+        "leave.request"
+      ],
+      "login_destination": "/dashboard/pos.html",
+      "visible_nav": {
+        "groups": [
+          {
+            "group": "Operations",
+            "items": [
+              "POS & Room Service",
+              "Workforce"
+            ]
+          },
+          {
+            "group": "Communication",
+            "items": [
+              "Notifications"
+            ]
+          }
+        ],
+        "bottom": []
+      },
+      "dashboard_pages": [
+        "notification-details.html",
+        "notifications.html",
+        "pos.html",
+        "profile.html",
+        "workforce.html"
+      ],
+      "is_guest": false
+    },
+    {
+      "role": "GUEST",
+      "label": "Guest",
+      "departments": [],
+      "capabilities": [],
+      "login_destination": "/index.html",
+      "visible_nav": null,
+      "dashboard_pages": [],
+      "is_guest": true
+    }
+  ],
+  "endpoints": [
+    {
+      "path": "/api/",
+      "view": "api_index",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/admin/amenities/",
+      "view": "AmenityAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/amenities/<drf_format_suffix:format>",
+      "view": "APIRootView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/admin/amenities/<pk>/",
+      "view": "AmenityAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/audit-logs/",
+      "view": "AuditLogListView",
+      "permission_classes": [
+        "IsAdminRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/audit-logs/<int:pk>/",
+      "view": "AuditLogDetailView",
+      "permission_classes": [
+        "IsAdminRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/audit-logs/actions/",
+      "view": "AuditLogActionListView",
+      "permission_classes": [
+        "IsAdminRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/",
+      "view": "AdminBookingListCreateView",
+      "permission_classes": [
+        "BookingAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/",
+      "view": "AdminBookingDetailView",
+      "permission_classes": [
+        "BookingAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/assign-room/",
+      "view": "AdminBookingAssignRoomView",
+      "permission_classes": [
+        "BookingManageAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/cancel/",
+      "view": "AdminBookingCancelView",
+      "permission_classes": [
+        "BookingManageAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/check-in/",
+      "view": "AdminBookingCheckInView",
+      "permission_classes": [
+        "BookingManageAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/check-out/",
+      "view": "AdminBookingCheckOutView",
+      "permission_classes": [
+        "BookingManageAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/confirm/",
+      "view": "AdminBookingConfirmView",
+      "permission_classes": [
+        "BookingManageAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/folio-clearance/",
+      "view": "AdminBookingFolioClearanceView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "folio.view"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/no-show/",
+      "view": "AdminBookingNoShowView",
+      "permission_classes": [
+        "BookingManageAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/portal-invitation/",
+      "view": "AdminBookingPortalInvitationView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "stay.check_in"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/receipt/",
+      "view": "AdminBookingReceiptView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payment.read"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/reschedule/",
+      "view": "AdminBookingRescheduleView",
+      "permission_classes": [
+        "IsManagerOrAdmin"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/room-guests/",
+      "view": "AdminBookingRoomGuestsView",
+      "permission_classes": [
+        "BookingManageAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/rooms/<int:assignment_id>/check-in/",
+      "view": "AdminBookingRoomCheckInView",
+      "permission_classes": [
+        "BookingManageAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/send-receipt/",
+      "view": "AdminBookingSendReceiptView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payment.receipt.send"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/<str:lookup>/settle-balance/",
+      "view": "AdminBookingSettleBalanceView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "booking.manage",
+        "payment.capture"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/calendar/",
+      "view": "AdminOccupancyCalendarView",
+      "permission_classes": [
+        "BookingReadAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/late-arrivals/",
+      "view": "AdminLateArrivalBookingListView",
+      "permission_classes": [
+        "BookingReadAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/bookings/missed/",
+      "view": "AdminMissedBookingListView",
+      "permission_classes": [
+        "BookingReadAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/dashboard/",
+      "view": "DashboardView",
+      "permission_classes": [
+        "IsDashboardViewer"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/enquiries/",
+      "view": "EnquiryAdminListView",
+      "permission_classes": [
+        "IsStaffRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/enquiries/<int:pk>/",
+      "view": "EnquiryAdminDetailView",
+      "permission_classes": [
+        "IsStaffRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/enquiries/<int:pk>/approve-cancellation/",
+      "view": "CancellationApproveView",
+      "permission_classes": [
+        "IsStaffRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/enquiries/<int:pk>/close/",
+      "view": "CancellationCloseView",
+      "permission_classes": [
+        "IsStaffRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/enquiries/<int:pk>/process-refund/",
+      "view": "CancellationProcessRefundView",
+      "permission_classes": [
+        "IsManagerOrAdmin"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/enquiries/<int:pk>/reject-cancellation/",
+      "view": "CancellationRejectView",
+      "permission_classes": [
+        "IsStaffRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/enquiries/<int:pk>/review/",
+      "view": "CancellationReviewView",
+      "permission_classes": [
+        "IsStaffRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/facilities/",
+      "view": "FacilityAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/facilities/<drf_format_suffix:format>",
+      "view": "APIRootView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/admin/facilities/<pk>/",
+      "view": "FacilityAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/approvals/",
+      "view": "ApprovalRequestListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payment.refund.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/approvals/<str:reference>/review/",
+      "view": "ApprovalReviewView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payment.refund.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/cash-sessions/",
+      "view": "CashSessionListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "cash_session.open",
+        "cash_session.close",
+        "reports.financial.view"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/cash-sessions/<str:reference>/drop/",
+      "view": "CashSessionDropView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "cash_session.open",
+        "cash_session.close"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/cash-sessions/<str:reference>/variance-review/",
+      "view": "CashVarianceReviewView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payment.refund.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/chart-of-accounts/",
+      "view": "ChartOfAccountsView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "expense.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/control-policies/",
+      "view": "FinancialControlPolicyListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "finance.controls.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/expenses/",
+      "view": "ExpenseListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "expense.manage",
+        "expense.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/expenses/<str:reference>/",
+      "view": "ExpenseDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "expense.manage",
+        "expense.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/expenses/<str:reference>/payment-evidence/",
+      "view": "ExpensePaymentEvidenceView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "expense.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/expenses/<str:reference>/post/",
+      "view": "ExpensePostView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "expense.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/expenses/<str:reference>/review/",
+      "view": "ExpenseReviewView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "expense.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/expenses/<str:reference>/settle-payment/",
+      "view": "ExpenseSettlePaymentView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "expense.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/expenses/<str:reference>/submit/",
+      "view": "ExpenseSubmitView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "expense.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/folios/",
+      "view": "FolioListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "folio.view"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/folios/<str:reference>/",
+      "view": "FolioDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "folio.view"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/folios/<str:reference>/postings/",
+      "view": "FolioPostingListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "folio.view"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/journals/",
+      "view": "ManualJournalView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "expense.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/reports/ar-aging/",
+      "view": "AccountsReceivableAgingView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "reports.financial.view",
+        "expense.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/reports/balance-sheet/",
+      "view": "BalanceSheetView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "reports.financial.view",
+        "expense.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/reports/cash-flow/",
+      "view": "CashFlowView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "reports.financial.view",
+        "expense.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/reports/night-audit/",
+      "view": "NightAuditView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "reports.financial.view",
+        "expense.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/reports/summary/",
+      "view": "FinancialSummaryReportView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "reports.financial.view"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/transactions/",
+      "view": "FinancialTransactionListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "reports.financial.view"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/finance/transactions/<str:reference>/",
+      "view": "FinancialTransactionDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "reports.financial.view"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/gallery/",
+      "view": "GalleryAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/gallery/<drf_format_suffix:format>",
+      "view": "APIRootView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/admin/gallery/<pk>/",
+      "view": "GalleryAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/guest-discounts/",
+      "view": "GuestDiscountAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/guest-discounts/<drf_format_suffix:format>",
+      "view": "APIRootView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/admin/guest-discounts/<pk>/",
+      "view": "GuestDiscountAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/guests/",
+      "view": "AdminGuestListView",
+      "permission_classes": [
+        "BookingReadAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/guests/<int:pk>/",
+      "view": "AdminGuestDetailView",
+      "permission_classes": [
+        "BookingAccess"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/housekeeping/",
+      "view": "HousekeepingTaskListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "housekeeping.task.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/housekeeping/<str:reference>/",
+      "view": "HousekeepingTaskDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "housekeeping.task.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/housekeeping/<str:reference>/assign/",
+      "view": "HousekeepingTaskAssignView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "housekeeping.task.assign"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/housekeeping/<str:reference>/claim/",
+      "view": "HousekeepingTaskClaimView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "housekeeping.task.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/housekeeping/<str:reference>/comments/",
+      "view": "HousekeepingTaskCommentView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "housekeeping.task.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/housekeeping/<str:reference>/status/",
+      "view": "HousekeepingTaskStatusView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "housekeeping.task.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/balances/",
+      "view": "StockBalanceListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/consumption-requests/",
+      "view": "StockConsumptionRequestListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/consumption-requests/<str:reference>/process/",
+      "view": "StockConsumptionRequestProcessView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/consumption-requests/<str:reference>/reverse/",
+      "view": "StockConsumptionReverseView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/consumption-requests/process-pending/",
+      "view": "StockConsumptionCatchUpView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/issues/",
+      "view": "StockIssueView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/items/",
+      "view": "StockItemListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/items/<int:pk>/",
+      "view": "StockItemDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/locations/",
+      "view": "StockLocationListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/locations/<int:pk>/",
+      "view": "StockLocationDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/menu-items/",
+      "view": "InventoryMenuItemDirectoryView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/movements/",
+      "view": "StockMovementListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/opening-stock/",
+      "view": "StockOpeningView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/profitability/",
+      "view": "ProductProfitabilityView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage",
+        "reports.financial.view"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/profitability/filters/",
+      "view": "ProductProfitabilityFiltersView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage",
+        "reports.financial.view"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/purchase-orders/",
+      "view": "PurchaseOrderListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "procurement.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/purchase-orders/<str:reference>/",
+      "view": "PurchaseOrderDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "procurement.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/purchase-orders/<str:reference>/approval-receipt/",
+      "view": "PurchaseOrderReceiptUploadView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "procurement.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/purchase-orders/<str:reference>/approve/",
+      "view": "PurchaseOrderApproveView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "procurement.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/purchase-orders/<str:reference>/ordered/",
+      "view": "PurchaseOrderOrderedView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "procurement.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/purchase-orders/<str:reference>/pay/",
+      "view": "PurchaseOrderPayView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "procurement.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/purchase-orders/<str:reference>/receipts/",
+      "view": "GoodsReceiptCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "procurement.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/purchase-orders/<str:reference>/submit/",
+      "view": "PurchaseOrderSubmitView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "procurement.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/recipes/",
+      "view": "StockRecipeListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/recipes/<str:reference>/retire/",
+      "view": "StockRecipeRetireView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/returns/",
+      "view": "StockReturnView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/stock-counts/",
+      "view": "StockCountListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/stock-counts/<str:reference>/",
+      "view": "StockCountDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/stock-counts/<str:reference>/approve/",
+      "view": "StockCountApproveView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.adjust.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/stock-counts/<str:reference>/submit/",
+      "view": "StockCountSubmitView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/suppliers/",
+      "view": "SupplierListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "procurement.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/suppliers/<int:pk>/",
+      "view": "SupplierDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "procurement.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/inventory/transfers/",
+      "view": "StockTransferView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "inventory.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/maintenance/",
+      "view": "MaintenanceWorkOrderListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "maintenance.work_order.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/maintenance/<str:reference>/",
+      "view": "MaintenanceWorkOrderDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "maintenance.work_order.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/maintenance/<str:reference>/assign/",
+      "view": "MaintenanceWorkOrderAssignView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "maintenance.work_order.assign"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/maintenance/<str:reference>/claim/",
+      "view": "MaintenanceWorkOrderClaimView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "maintenance.work_order.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/maintenance/<str:reference>/comments/",
+      "view": "MaintenanceWorkOrderCommentView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "maintenance.work_order.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/maintenance/<str:reference>/outage/clear/",
+      "view": "MaintenanceOutageClearView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "maintenance.work_order.assign"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/maintenance/<str:reference>/outage/start/",
+      "view": "MaintenanceOutageStartView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "maintenance.work_order.assign"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/maintenance/<str:reference>/status/",
+      "view": "MaintenanceWorkOrderStatusView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "maintenance.work_order.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/offers/",
+      "view": "OfferAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/offers/<drf_format_suffix:format>",
+      "view": "APIRootView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/admin/offers/<pk>/",
+      "view": "OfferAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/payments/",
+      "view": "AdminPaymentListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payment.read"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/payments/<str:lookup>/",
+      "view": "AdminPaymentDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payment.read"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/payments/record/",
+      "view": "AdminRecordOfflinePaymentView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "booking.manage",
+        "payment.capture"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/payments/refunds/",
+      "view": "AdminRefundListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payment.read"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/payments/refunds/<int:pk>/",
+      "view": "AdminRefundDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payment.read"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/policies/",
+      "view": "PolicyAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/policies/<drf_format_suffix:format>",
+      "view": "APIRootView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/admin/policies/<pk>/",
+      "view": "PolicyAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/cash-sessions/<str:reference>/close/",
+      "view": "CashSessionCloseView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "cash_session.close"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/cash-sessions/open/",
+      "view": "CashSessionOpenView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "cash_session.open"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/kitchen-tickets/",
+      "view": "KitchenTicketListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.order.manage",
+        "restaurant.order.manage",
+        "bar.order.manage",
+        "kitchen.queue.view",
+        "kitchen.ticket.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/kitchen-tickets/<int:pk>/status/",
+      "view": "KitchenTicketStatusView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.order.manage",
+        "restaurant.order.manage",
+        "bar.order.manage",
+        "kitchen.ticket.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/menu/",
+      "view": "PosMenuView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.order.manage",
+        "restaurant.order.manage",
+        "bar.order.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/menu/barcode-lookup/",
+      "view": "PosBarcodeLookupView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.order.manage",
+        "restaurant.order.manage",
+        "bar.order.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/menu/categories/",
+      "view": "PosMenuCategoryManagementView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.menu.manage",
+        "restaurant.menu.manage",
+        "bar.menu.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/menu/categories/<int:pk>/",
+      "view": "PosMenuCategoryManagementDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.menu.manage",
+        "restaurant.menu.manage",
+        "bar.menu.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/menu/items/",
+      "view": "PosMenuItemManagementView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.menu.manage",
+        "restaurant.menu.manage",
+        "bar.menu.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/menu/items/<int:pk>/",
+      "view": "PosMenuItemManagementDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.menu.manage",
+        "restaurant.menu.manage",
+        "bar.menu.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/menu/modifiers/",
+      "view": "PosMenuModifierManagementView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.menu.manage",
+        "restaurant.menu.manage",
+        "bar.menu.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/menu/modifiers/<int:pk>/",
+      "view": "PosMenuModifierManagementDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.menu.manage",
+        "restaurant.menu.manage",
+        "bar.menu.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/orders/",
+      "view": "PosOrderListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.order.manage",
+        "restaurant.order.manage",
+        "bar.order.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/orders/<str:reference>/",
+      "view": "PosOrderDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.order.manage",
+        "restaurant.order.manage",
+        "bar.order.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/orders/<str:reference>/status/",
+      "view": "PosOrderStatusView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.order.manage",
+        "restaurant.order.manage",
+        "bar.order.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/orders/<str:reference>/submit/",
+      "view": "PosOrderSubmitView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.order.manage",
+        "restaurant.order.manage",
+        "bar.order.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/orders/<str:reference>/tenders/",
+      "view": "PosTenderCaptureView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payment.capture"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/restaurant-table-sessions/",
+      "view": "PosRestaurantTableSessionListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "restaurant.order.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/restaurant-table-sessions/<str:reference>/",
+      "view": "PosRestaurantTableSessionDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "restaurant.order.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/restaurant-table-sessions/<str:reference>/close/",
+      "view": "PosRestaurantTableSessionCloseView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "restaurant.order.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/restaurant-table-sessions/<str:reference>/transfer/",
+      "view": "PosRestaurantTableSessionTransferView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "restaurant.order.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/restaurant-tables/",
+      "view": "PosRestaurantTableListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "restaurant.order.manage",
+        "restaurant.table.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/restaurant-tables/<int:pk>/",
+      "view": "PosRestaurantTableDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "restaurant.order.manage",
+        "restaurant.table.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/room-service-stays/",
+      "view": "PosRoomServiceStayListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.order.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/reports/approvals/",
+      "view": "ApprovalsInboxView",
+      "permission_classes": [
+        "CanApproveSomething"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/reports/bookings/",
+      "view": "BookingsReportView",
+      "permission_classes": [
+        "IsManagerOrAdmin"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/reports/occupancy/",
+      "view": "OccupancyReportView",
+      "permission_classes": [
+        "IsManagerOrAdmin"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/reports/revenue/",
+      "view": "RevenueReportView",
+      "permission_classes": [
+        "IsManagerOrAdmin"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/reviews/",
+      "view": "ReviewAdminListView",
+      "permission_classes": [
+        "IsAdminRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/reviews/<int:pk>/",
+      "view": "ReviewAdminDetailView",
+      "permission_classes": [
+        "IsAdminRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/reviews/stats/",
+      "view": "ReviewStatsView",
+      "permission_classes": [
+        "IsAdminRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/room-images/<int:pk>/",
+      "view": "RoomTypeImageDetailView",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/room-images/room/<int:room_id>/",
+      "view": "RoomImageUploadView",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/room-types/",
+      "view": "RoomTypeAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/room-types/<drf_format_suffix:format>",
+      "view": "APIRootView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/admin/room-types/<int:room_type_id>/images/",
+      "view": "RoomTypeImageUploadView",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/room-types/<pk>/",
+      "view": "RoomTypeAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/room-types/images/<int:pk>/",
+      "view": "RoomTypeImageDetailView",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/rooms/",
+      "view": "RoomAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/rooms/<drf_format_suffix:format>",
+      "view": "APIRootView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/admin/rooms/<int:room_id>/images/",
+      "view": "RoomImageUploadView",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/rooms/<pk>/",
+      "view": "RoomAdminViewSet",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/rooms/images/<int:pk>/",
+      "view": "RoomImageDetailView",
+      "permission_classes": [
+        "IsStaffReadOnlyManagerWrite"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-qr-links/",
+      "view": "ServiceQRLinkListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "service_qr.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-qr-links/<str:reference>/revoke/",
+      "view": "ServiceQRLinkRevokeView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "service_qr.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-qr-links/<str:reference>/rotate/",
+      "view": "ServiceQRLinkRotateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "service_qr.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/",
+      "view": "ServiceRequestListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/<str:reference>/",
+      "view": "ServiceRequestDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/<str:reference>/assign/",
+      "view": "ServiceRequestAssignView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.assign"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/<str:reference>/claim/",
+      "view": "ServiceRequestClaimView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/<str:reference>/comments/",
+      "view": "ServiceRequestCommentView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/<str:reference>/housekeeping-task/",
+      "view": "ServiceRequestHousekeepingTaskView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.manage",
+        "housekeeping.task.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/<str:reference>/maintenance-work-order/",
+      "view": "ServiceRequestMaintenanceWorkOrderView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.manage",
+        "maintenance.work_order.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/<str:reference>/status/",
+      "view": "ServiceRequestStatusView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/laundry/",
+      "view": "LaundryOrderListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/laundry/<str:reference>/assign/",
+      "view": "LaundryOrderAssignView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.assign"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/laundry/<str:reference>/bill/",
+      "view": "LaundryOrderBillView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/laundry/<str:reference>/settle/",
+      "view": "LaundryOrderSettleView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/service-requests/laundry/<str:reference>/status/",
+      "view": "LaundryOrderStatusView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/settings/",
+      "view": "HotelSettingsAdminView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/admin/staff-operations/attendance/",
+      "view": "AttendanceRecordListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.clock",
+        "attendance.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/attendance/<str:reference>/",
+      "view": "AttendanceRecordDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.clock",
+        "attendance.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/attendance/clock/",
+      "view": "AttendanceClockView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.clock"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/biometrics/devices/",
+      "view": "FingerprintDeviceListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/biometrics/reception-terminal/",
+      "view": "ReceptionAttendanceTerminalView",
+      "permission_classes": [],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/biometrics/temporary-credential/",
+      "view": "TemporaryWorkstationCredentialIssueView",
+      "permission_classes": [],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/department-dashboard/",
+      "view": "DepartmentDashboardSummaryView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.clock",
+        "attendance.manage",
+        "staff.view",
+        "staff.profile.manage",
+        "booking.read",
+        "pos.order.manage",
+        "kitchen.queue.view",
+        "housekeeping.task.manage",
+        "guest_request.manage",
+        "procurement.manage",
+        "reports.financial.view",
+        "payment.read",
+        "inventory.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/departments/",
+      "view": "DepartmentListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.view",
+        "staff.profile.manage",
+        "shift.manage",
+        "attendance.manage",
+        "attendance.clock"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/departments/<int:pk>/",
+      "view": "DepartmentDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.profile.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/departments/<str:code_or_slug>/dashboard-summary/",
+      "view": "DepartmentDashboardSummaryView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.clock",
+        "attendance.manage",
+        "staff.view",
+        "staff.profile.manage",
+        "booking.read",
+        "pos.order.manage",
+        "kitchen.queue.view",
+        "housekeeping.task.manage",
+        "guest_request.manage",
+        "procurement.manage",
+        "reports.financial.view",
+        "payment.read",
+        "inventory.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/disciplinary/",
+      "view": "StaffDisciplinaryRecordListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.view",
+        "staff.profile.manage",
+        "payroll.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/disciplinary/<str:reference>/",
+      "view": "StaffDisciplinaryRecordDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.view",
+        "staff.profile.manage",
+        "payroll.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/disciplinary/<str:reference>/action/",
+      "view": "StaffDisciplinaryActionView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.profile.manage",
+        "payroll.approve",
+        "payroll.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/documents/",
+      "view": "StaffDocumentListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.view",
+        "staff.profile.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/documents/<str:reference>/",
+      "view": "StaffDocumentDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.profile.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/face/enrollment/",
+      "view": "FaceEnrollmentView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.clock"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/face/enrollments/",
+      "view": "FaceEnrollmentQueueView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/face/enrollments/<int:pk>/<str:action>/",
+      "view": "FaceEnrollmentActionView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/fingerprint/enrollment/",
+      "view": "FingerprintEnrollmentView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.clock"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/fingerprint/enrollments/",
+      "view": "FingerprintEnrollmentQueueView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/fingerprint/enrollments/<int:pk>/<str:action>/",
+      "view": "FingerprintEnrollmentActionView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "attendance.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/fingerprint/staff/<int:staff_id>/",
+      "view": "StaffFingerprintStatusEnrollView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.view"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/leave-requests/",
+      "view": "LeaveRequestListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "leave.request",
+        "leave.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/leave-requests/<str:reference>/",
+      "view": "LeaveRequestDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "leave.request",
+        "leave.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/leave-requests/<str:reference>/cancel/",
+      "view": "LeaveCancelView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "leave.request",
+        "leave.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/leave-requests/<str:reference>/review/",
+      "view": "LeaveReviewView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "leave.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/my-profile/",
+      "view": "MyStaffProfileView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/compensation/",
+      "view": "StaffCompensationListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.view",
+        "payroll.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/lateness-deductions/",
+      "view": "StaffLatenessDeductionListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.view",
+        "payroll.manage",
+        "payroll.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/lateness-deductions/<str:reference>/decision/",
+      "view": "StaffLatenessDeductionRevocationDecisionView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/lateness-deductions/<str:reference>/request-revocation/",
+      "view": "StaffLatenessDeductionRevocationRequestView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/lateness-policy/",
+      "view": "LatenessPolicyView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.view",
+        "payroll.manage",
+        "payroll.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/my-payslips/",
+      "view": "MyPayslipListView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/payslips/<str:reference>/",
+      "view": "PayrollPayslipView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/periods/",
+      "view": "PayrollPeriodListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.view",
+        "payroll.manage",
+        "payroll.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/periods/<str:reference>/",
+      "view": "PayrollPeriodDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.view",
+        "payroll.manage",
+        "payroll.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/periods/<str:reference>/lines/<int:line_id>/payments/",
+      "view": "PayrollSalaryPaymentListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.view",
+        "payroll.manage",
+        "payroll.approve"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/periods/<str:reference>/lines/<int:line_id>/payments/<str:payment_reference>/reverse/",
+      "view": "PayrollSalaryPaymentReverseView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/periods/<str:reference>/pay/",
+      "view": "PayrollPayView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/periods/<str:reference>/review/",
+      "view": "PayrollReviewView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.approve"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/periods/<str:reference>/submit/",
+      "view": "PayrollSubmitView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/stock-shortages/",
+      "view": "PayrollStockShortageListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.view",
+        "payroll.manage",
+        "payroll.approve",
+        "inventory.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/stock-shortages/<str:reference>/",
+      "view": "PayrollStockShortageDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "payroll.view",
+        "payroll.manage",
+        "payroll.approve",
+        "inventory.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/payroll/stock-shortages/<str:reference>/decision/",
+      "view": "PayrollStockShortageDecisionView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/performance-reviews/",
+      "view": "StaffPerformanceReviewListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.view",
+        "staff.profile.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/performance-reviews/<str:reference>/",
+      "view": "StaffPerformanceReviewDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.profile.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/profiles/",
+      "view": "StaffProfileListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.profile.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/profiles/<int:pk>/",
+      "view": "StaffProfileDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.profile.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/shift-templates/",
+      "view": "ShiftTemplateListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "shift.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/shift-templates/<int:pk>/",
+      "view": "ShiftTemplateDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "shift.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/shifts/",
+      "view": "ShiftAssignmentListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "shift.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/shifts/<str:reference>/",
+      "view": "ShiftAssignmentDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "shift.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/shifts/<str:reference>/cancel/",
+      "view": "ShiftAssignmentCancelView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "shift.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/staff-operations/staff/<int:user_id>/full-profile/",
+      "view": "StaffComprehensiveProfileView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.view",
+        "staff.profile.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/users/",
+      "view": "AdminUserListCreateView",
+      "permission_classes": [
+        "IsAdminRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/users/<int:pk>/",
+      "view": "AdminUserDetailView",
+      "permission_classes": [
+        "IsAdminRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/users/<int:pk>/actions/",
+      "view": "AdminUserAccountActionView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "staff.profile.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/users/<int:pk>/permissions/",
+      "view": "AdminUserPermissionsView",
+      "permission_classes": [
+        "IsAdminRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/users/directory/",
+      "view": "OperationalStaffDirectoryView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "guest_request.assign",
+        "housekeeping.task.assign",
+        "maintenance.work_order.assign",
+        "shift.manage",
+        "staff.profile.manage",
+        "payroll.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/users/permissions-matrix/",
+      "view": "AdminPermissionMatrixView",
+      "permission_classes": [
+        "IsAdminRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/users/staff/<int:pk>/",
+      "view": "AdminStaffProfileView",
+      "permission_classes": [
+        "CanViewStaffProfile"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/users/terminals/",
+      "view": "WorkstationListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "terminal.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/users/terminals/<int:pk>/",
+      "view": "WorkstationDetailView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "terminal.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/users/terminals/<int:pk>/desktop-key/",
+      "view": "WorkstationDesktopKeyView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "terminal.manage"
+      ],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/auth/capabilities/",
+      "view": "MyCapabilitiesView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/auth/client-address/",
+      "view": "ClientAddressView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/auth/login/",
+      "view": "LoginView",
+      "permission_classes": [],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/auth/logout/",
+      "view": "LogoutView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/auth/password/change/",
+      "view": "PasswordChangeView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/auth/password/reset/",
+      "view": "PasswordResetRequestView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/auth/password/reset/confirm/",
+      "view": "PasswordResetConfirmView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/auth/profile/",
+      "view": "ProfileView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/auth/register/",
+      "view": "RegisterView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/auth/token/refresh/",
+      "view": "JOneTokenRefreshView",
+      "permission_classes": [],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/bookings/",
+      "view": "MyBookingsView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/bookings/<str:lookup>/",
+      "view": "BookingDetailView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/bookings/<str:lookup>/access-link/",
+      "view": "BookingAccessLinkResendView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/bookings/<str:lookup>/access/",
+      "view": "BookingAccessExchangeView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/bookings/<str:lookup>/cancel/",
+      "view": "BookingCancelView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/bookings/<str:lookup>/receipt/",
+      "view": "BookingReceiptView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/bookings/quote/",
+      "view": "QuoteView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/docs/",
+      "view": "SpectacularSwaggerView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/enquiries/",
+      "view": "EnquiryCreateView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/enquiries/cancellation-status/<str:reference>/",
+      "view": "CancellationStatusView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/facilities/",
+      "view": "FacilityListView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/gallery/",
+      "view": "GalleryPublicListView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/health/",
+      "view": "health_check",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/health/live/",
+      "view": "health_liveness",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/health/ready/",
+      "view": "health_readiness",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/hotel/",
+      "view": "HotelInfoView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/hotel/policies/",
+      "view": "PolicyListView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/notifications/",
+      "view": "NotificationListView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/notifications/<int:pk>/",
+      "view": "NotificationDetailView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/notifications/<int:pk>/read/",
+      "view": "MarkReadView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/notifications/emails/",
+      "view": "EmailLogListView",
+      "permission_classes": [
+        "IsStaffRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/notifications/emails/<int:pk>/",
+      "view": "EmailLogDetailView",
+      "permission_classes": [
+        "IsStaffRole"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/notifications/read-all/",
+      "view": "MarkAllReadView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/notifications/unread-count/",
+      "view": "UnreadCountView",
+      "permission_classes": [
+        "IsAuthenticated"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/offers/",
+      "view": "OfferPublicListView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/payments/initialize/",
+      "view": "InitializePaymentView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/payments/verify/",
+      "view": "VerifyPaymentView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/payments/verify/<str:reference>/",
+      "view": "VerifyPaymentView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/payments/webhook/",
+      "view": "PaystackWebhookView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/portal/auth/consume/",
+      "view": "PortalAccessConsumeView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/portal/auth/logout/",
+      "view": "PortalLogoutView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/portal/auth/request/",
+      "view": "PortalAccessRequestView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/portal/catalog/menu/",
+      "view": "PortalMenuView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/portal/catalog/services/",
+      "view": "PortalServicesView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/portal/folios/",
+      "view": "PortalFolioListView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/portal/folios/<str:reference>/",
+      "view": "PortalFolioDetailView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/portal/folios/<str:reference>/postings/",
+      "view": "PortalFolioPostingListView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/portal/me/",
+      "view": "PortalOverviewView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/portal/requests/",
+      "view": "PortalServiceRequestListCreateView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/portal/requests/<str:reference>/",
+      "view": "PortalServiceRequestDetailView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/portal/requests/<str:reference>/cancel/",
+      "view": "PortalServiceRequestCancelView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/portal/requests/<str:reference>/comments/",
+      "view": "PortalServiceRequestCommentView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/portal/requests/catalog/",
+      "view": "PortalServiceCatalogView",
+      "permission_classes": [
+        "HasPortalSession"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/redoc/",
+      "view": "SpectacularRedocView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/reviews/",
+      "view": "ReviewSubmitView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/reviews/verify/",
+      "view": "ReviewVerifyView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/rooms/",
+      "view": "RoomTypeListView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/rooms/<slug:slug>/",
+      "view": "RoomTypeDetailView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/rooms/<slug:slug>/rooms/",
+      "view": "RoomTypeRoomsView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/rooms/<slug:slug>/unavailable-dates/",
+      "view": "RoomTypeUnavailableDatesView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/rooms/availability/",
+      "view": "AvailabilityView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/schema/",
+      "view": "SpectacularAPIView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/service-qr/context/",
+      "view": "PublicServiceQRContextView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    },
+    {
+      "path": "/api/service-qr/requests/",
+      "view": "PublicServiceQRRequestView",
+      "permission_classes": [
+        "AllowAny"
+      ],
+      "required_capabilities": [],
+      "require_any": false,
+      "login_required": false
+    }
+  ]
+}

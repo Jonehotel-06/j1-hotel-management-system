@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.exceptions import InvalidDatesError
-from apps.core.permissions import IsAdminRole, IsManagerOrAdmin, IsStaffRole
+from apps.core.permissions import IsAdminRole, IsDashboardViewer, IsManagerOrAdmin, IsStaffRole
 from apps.core.responses import success_response
 from apps.core.serializers import EmptySerializer
 
@@ -41,7 +41,10 @@ def _date_param(request, name):
 
 @extend_schema(tags=["Admin · Dashboard"], summary="Aggregated staff dashboard")
 class DashboardView(APIView):
-    permission_classes = [IsStaffRole]
+    # Roles the frontend actually routes to index.html (admin, manager,
+    # receptionist, front desk supervisor, general manager). STAFF_ROLES alone
+    # 403'd the last two on their own landing page; see DASHBOARD_ROLES.
+    permission_classes = [IsDashboardViewer]
     serializer_class = EmptySerializer  # response contract: docs/FRONTEND_CONTRACT.md
 
     def get(self, request):

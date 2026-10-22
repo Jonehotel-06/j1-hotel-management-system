@@ -102,6 +102,10 @@
     if (["maintenance", "maintenance_technician"].includes(r)) return "dashboard/maintenance.html";
     if (["inventory_clerk", "storekeeper"].includes(r)) return "dashboard/inventory.html";
     if (r === "procurement_officer") return "dashboard/procurement.html";
+    /* Security officers clock in and pick up guest requests; they are not
+       admitted to index.html, so landing them there bounced them straight to
+       /403.html after a successful sign-in. */
+    if (r === "security") return "dashboard/workforce.html";
     if (["accounts_manager", "accountant"].includes(r)) return "dashboard/payments.html";
     if (["hr_manager"].includes(r)) return "dashboard/workforce.html";
     return "dashboard/index.html";

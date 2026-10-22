@@ -1,0 +1,1220 @@
+{
+  "_meta": {
+    "generated": "2026-10-22",
+    "source": "frontend/js/dashboard.js NAV/BOTTOM_NAV/navItemAllowed + PAGE_ACCESS + js/auth.js OPERATIONAL_ROLES"
+  },
+  "PAGE_ACCESS": {
+    "notifications.html": {
+      "everyone": true
+    },
+    "notification-details.html": {
+      "everyone": true
+    },
+    "profile.html": {
+      "everyone": true
+    },
+    "403.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "index.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "bookings.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "booking-details.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "availability.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "occupancy.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "check-in.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "check-out.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "missed-bookings.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "guests.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "rooms.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "room-details.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "enquiries.html": {
+      "roles": [
+        "receptionist",
+        "front_desk_supervisor",
+        "staff",
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "payments.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "receptionist",
+        "front_desk_supervisor",
+        "general_manager",
+        "accounts_manager",
+        "accountant"
+      ]
+    },
+    "receipts.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "receptionist",
+        "front_desk_supervisor",
+        "general_manager",
+        "accounts_manager",
+        "accountant"
+      ]
+    },
+    "receipt-details.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "receptionist",
+        "front_desk_supervisor",
+        "general_manager",
+        "accounts_manager",
+        "accountant"
+      ]
+    },
+    "accounting.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "accounts_manager",
+        "accountant"
+      ]
+    },
+    "payroll.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "accounts_manager",
+        "accountant",
+        "hr_manager"
+      ]
+    },
+    "reports.html": {
+      "roles": [
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "approvals.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "accounts_manager",
+        "accountant",
+        "hr_manager",
+        "inventory_clerk",
+        "storekeeper",
+        "procurement_officer",
+        "front_desk_supervisor"
+      ]
+    },
+    "service-requests.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "front_desk_supervisor",
+        "receptionist",
+        "housekeeping",
+        "housekeeping_manager",
+        "housekeeper",
+        "porter",
+        "maintenance",
+        "maintenance_technician",
+        "waiter",
+        "bartender",
+        "security"
+      ]
+    },
+    "laundry.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "front_desk_supervisor",
+        "receptionist",
+        "housekeeping",
+        "housekeeping_manager",
+        "housekeeper",
+        "porter",
+        "maintenance",
+        "maintenance_technician",
+        "waiter",
+        "bartender",
+        "security"
+      ]
+    },
+    "housekeeping.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "front_desk_supervisor",
+        "receptionist",
+        "housekeeping",
+        "housekeeping_manager",
+        "housekeeper"
+      ]
+    },
+    "maintenance.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "front_desk_supervisor",
+        "receptionist",
+        "maintenance",
+        "maintenance_technician"
+      ]
+    },
+    "pos.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "cashier",
+        "restaurant_manager",
+        "waiter",
+        "bar_manager",
+        "bartender",
+        "kitchen_manager",
+        "chef",
+        "kitchen_assistant"
+      ]
+    },
+    "barcode-labels.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "inventory_clerk",
+        "storekeeper",
+        "cashier"
+      ]
+    },
+    "service-qr.html": {
+      "roles": [
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "inventory.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "inventory_clerk",
+        "storekeeper"
+      ]
+    },
+    "procurement.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "inventory_clerk",
+        "storekeeper",
+        "procurement_officer"
+      ]
+    },
+    "workforce.html": {
+      "roles": [
+        "admin",
+        "manager",
+        "general_manager",
+        "front_desk_supervisor",
+        "receptionist",
+        "cashier",
+        "housekeeping",
+        "maintenance",
+        "inventory_clerk",
+        "restaurant_manager",
+        "waiter",
+        "bar_manager",
+        "bartender",
+        "kitchen_manager",
+        "chef",
+        "kitchen_assistant",
+        "housekeeping_manager",
+        "housekeeper",
+        "porter",
+        "maintenance_technician",
+        "accounts_manager",
+        "accountant",
+        "hr_manager",
+        "security",
+        "procurement_officer",
+        "storekeeper",
+        "staff"
+      ]
+    },
+    "staff.html": {
+      "roles": [
+        "admin"
+      ]
+    },
+    "staff-profile.html": {
+      "roles": [
+        "admin",
+        "general_manager",
+        "manager",
+        "hr_manager"
+      ]
+    },
+    "facilities.html": {
+      "roles": [
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "gallery.html": {
+      "roles": [
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "offers.html": {
+      "roles": [
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "reviews.html": {
+      "roles": [
+        "admin"
+      ]
+    },
+    "terminals.html": {
+      "roles": [
+        "manager",
+        "general_manager",
+        "admin"
+      ]
+    },
+    "audit-logs.html": {
+      "roles": [
+        "admin"
+      ]
+    },
+    "audit-log-details.html": {
+      "roles": [
+        "admin"
+      ]
+    },
+    "settings.html": {
+      "roles": [
+        "admin"
+      ]
+    },
+    "login.html": {
+      "public": true
+    },
+    "policies.html": {
+      "public": true
+    }
+  },
+  "ROLES": [
+    "admin",
+    "manager",
+    "receptionist",
+    "cashier",
+    "housekeeping",
+    "maintenance",
+    "inventory_clerk",
+    "front_desk_supervisor",
+    "general_manager",
+    "restaurant_manager",
+    "waiter",
+    "bar_manager",
+    "bartender",
+    "kitchen_manager",
+    "chef",
+    "housekeeping_manager",
+    "housekeeper",
+    "maintenance_technician",
+    "accounts_manager",
+    "accountant",
+    "hr_manager",
+    "security",
+    "procurement_officer",
+    "storekeeper",
+    "porter",
+    "kitchen_assistant",
+    "staff"
+  ],
+  "VISIBLE_NAV": {
+    "ADMIN": {
+      "groups": [
+        {
+          "group": "Overview",
+          "items": [
+            "Dashboard",
+            "Approvals"
+          ]
+        },
+        {
+          "group": "Operations",
+          "items": [
+            "Bookings",
+            "Availability",
+            "Occupancy",
+            "Check-in",
+            "Check-out",
+            "Missed bookings",
+            "Guests",
+            "Rooms",
+            "POS & Room Service",
+            "Workforce",
+            "Guest Requests",
+            "Laundry",
+            "Barcode Labels",
+            "Service Links",
+            "Housekeeping",
+            "Maintenance",
+            "Inventory",
+            "Procurement"
+          ]
+        },
+        {
+          "group": "Finance",
+          "items": [
+            "Payments",
+            "Receipts",
+            "Accounting",
+            "Reports",
+            "Payroll"
+          ]
+        },
+        {
+          "group": "Content",
+          "items": [
+            "Facilities",
+            "Gallery",
+            "Offers"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Enquiries",
+            "Reviews",
+            "Notifications"
+          ]
+        },
+        {
+          "group": "Administration",
+          "items": [
+            "Staff",
+            "Staff Profiles",
+            "Workstations",
+            "Audit Logs",
+            "Settings"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "MANAGER": {
+      "groups": [
+        {
+          "group": "Overview",
+          "items": [
+            "Dashboard",
+            "Approvals"
+          ]
+        },
+        {
+          "group": "Operations",
+          "items": [
+            "Bookings",
+            "Availability",
+            "Occupancy",
+            "Check-in",
+            "Check-out",
+            "Missed bookings",
+            "Guests",
+            "Rooms",
+            "POS & Room Service",
+            "Workforce",
+            "Guest Requests",
+            "Laundry",
+            "Barcode Labels",
+            "Service Links",
+            "Housekeeping",
+            "Maintenance",
+            "Inventory",
+            "Procurement"
+          ]
+        },
+        {
+          "group": "Finance",
+          "items": [
+            "Payments",
+            "Receipts",
+            "Accounting",
+            "Reports",
+            "Payroll"
+          ]
+        },
+        {
+          "group": "Content",
+          "items": [
+            "Facilities",
+            "Gallery",
+            "Offers"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Enquiries",
+            "Notifications"
+          ]
+        },
+        {
+          "group": "Administration",
+          "items": [
+            "Staff Profiles",
+            "Workstations"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "RECEPTIONIST": {
+      "groups": [
+        {
+          "group": "Overview",
+          "items": [
+            "Dashboard"
+          ]
+        },
+        {
+          "group": "Operations",
+          "items": [
+            "Bookings",
+            "Availability",
+            "Occupancy",
+            "Check-in",
+            "Check-out",
+            "Missed bookings",
+            "Guests",
+            "Rooms",
+            "Workforce",
+            "Guest Requests",
+            "Laundry",
+            "Housekeeping",
+            "Maintenance"
+          ]
+        },
+        {
+          "group": "Finance",
+          "items": [
+            "Payments",
+            "Receipts"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Enquiries",
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "CASHIER": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "POS & Room Service",
+            "Workforce",
+            "Barcode Labels"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "HOUSEKEEPING": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce",
+            "Guest Requests",
+            "Laundry",
+            "Housekeeping"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "MAINTENANCE": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce",
+            "Guest Requests",
+            "Laundry",
+            "Maintenance"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "INVENTORY_CLERK": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce",
+            "Barcode Labels",
+            "Inventory",
+            "Procurement"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "FRONT_DESK_SUPERVISOR": {
+      "groups": [
+        {
+          "group": "Overview",
+          "items": [
+            "Dashboard"
+          ]
+        },
+        {
+          "group": "Operations",
+          "items": [
+            "Bookings",
+            "Availability",
+            "Occupancy",
+            "Check-in",
+            "Check-out",
+            "Missed bookings",
+            "Guests",
+            "Rooms",
+            "Workforce",
+            "Guest Requests",
+            "Laundry",
+            "Housekeeping",
+            "Maintenance"
+          ]
+        },
+        {
+          "group": "Finance",
+          "items": [
+            "Payments",
+            "Receipts"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Enquiries",
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "GENERAL_MANAGER": {
+      "groups": [
+        {
+          "group": "Overview",
+          "items": [
+            "Dashboard",
+            "Approvals"
+          ]
+        },
+        {
+          "group": "Operations",
+          "items": [
+            "Bookings",
+            "Availability",
+            "Occupancy",
+            "Check-in",
+            "Check-out",
+            "Missed bookings",
+            "Guests",
+            "Rooms",
+            "POS & Room Service",
+            "Workforce",
+            "Guest Requests",
+            "Laundry",
+            "Barcode Labels",
+            "Service Links",
+            "Housekeeping",
+            "Maintenance",
+            "Inventory",
+            "Procurement"
+          ]
+        },
+        {
+          "group": "Finance",
+          "items": [
+            "Payments",
+            "Receipts",
+            "Accounting",
+            "Reports",
+            "Payroll"
+          ]
+        },
+        {
+          "group": "Content",
+          "items": [
+            "Facilities",
+            "Gallery",
+            "Offers"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Enquiries",
+            "Notifications"
+          ]
+        },
+        {
+          "group": "Administration",
+          "items": [
+            "Staff Profiles",
+            "Workstations"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "RESTAURANT_MANAGER": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "POS & Room Service",
+            "Workforce"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "WAITER": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "POS & Room Service",
+            "Workforce",
+            "Guest Requests",
+            "Laundry"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "BAR_MANAGER": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "POS & Room Service",
+            "Workforce"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "BARTENDER": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "POS & Room Service",
+            "Workforce",
+            "Guest Requests",
+            "Laundry"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "KITCHEN_MANAGER": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "POS & Room Service",
+            "Workforce"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "CHEF": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "POS & Room Service",
+            "Workforce"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "HOUSEKEEPING_MANAGER": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce",
+            "Guest Requests",
+            "Laundry",
+            "Housekeeping"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "HOUSEKEEPER": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce",
+            "Guest Requests",
+            "Laundry",
+            "Housekeeping"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "MAINTENANCE_TECHNICIAN": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce",
+            "Guest Requests",
+            "Laundry",
+            "Maintenance"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "ACCOUNTS_MANAGER": {
+      "groups": [
+        {
+          "group": "Overview",
+          "items": [
+            "Approvals"
+          ]
+        },
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce"
+          ]
+        },
+        {
+          "group": "Finance",
+          "items": [
+            "Payments",
+            "Receipts",
+            "Accounting",
+            "Payroll"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "ACCOUNTANT": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce"
+          ]
+        },
+        {
+          "group": "Finance",
+          "items": [
+            "Payments",
+            "Receipts",
+            "Accounting",
+            "Payroll"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "HR_MANAGER": {
+      "groups": [
+        {
+          "group": "Overview",
+          "items": [
+            "Approvals"
+          ]
+        },
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce"
+          ]
+        },
+        {
+          "group": "Finance",
+          "items": [
+            "Payroll"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        },
+        {
+          "group": "Administration",
+          "items": [
+            "Staff Profiles"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "SECURITY": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce",
+            "Guest Requests",
+            "Laundry"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "PROCUREMENT_OFFICER": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce",
+            "Procurement"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "STOREKEEPER": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce",
+            "Barcode Labels",
+            "Inventory",
+            "Procurement"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "PORTER": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "Workforce",
+            "Guest Requests",
+            "Laundry"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "KITCHEN_ASSISTANT": {
+      "groups": [
+        {
+          "group": "Operations",
+          "items": [
+            "POS & Room Service",
+            "Workforce"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    },
+    "STAFF": {
+      "groups": [
+        {
+          "group": "Overview",
+          "items": [
+            "Dashboard"
+          ]
+        },
+        {
+          "group": "Operations",
+          "items": [
+            "Bookings",
+            "Availability",
+            "Occupancy",
+            "Check-in",
+            "Check-out",
+            "Missed bookings",
+            "Guests",
+            "Rooms",
+            "Workforce"
+          ]
+        },
+        {
+          "group": "Communication",
+          "items": [
+            "Enquiries",
+            "Notifications"
+          ]
+        }
+      ],
+      "bottom": []
+    }
+  }
+}

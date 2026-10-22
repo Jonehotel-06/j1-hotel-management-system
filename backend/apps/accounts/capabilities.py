@@ -162,6 +162,13 @@ ROLE_CAPABILITY_CODES = {
         "payment.refund.request", "payment.refund.approve", "cash_session.open", "cash_session.close",
         "expense.manage", "expense.approve", "payroll.view", "payroll.manage", "payroll.approve",
         "reports.financial.view",
+        # Every other staff role holds ``attendance.clock``; its absence here
+        # made the accounts manager the one employee who could not record their
+        # own attendance. ``clock_attendance`` authorises the *actor*, so the
+        # terminal's own "open a record for this staff member" path failed with
+        # the misleading "limited to the active staff member" refusal. The
+        # persisted grants are corrected by migration 0024.
+        "attendance.clock",
     }),
     "ACCOUNTANT": frozenset({
         "folio.view", "folio.charge.post", "payment.read", "payment.capture", "payment.refund.request", "expense.manage",

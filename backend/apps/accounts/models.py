@@ -105,7 +105,12 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
     @property
     def is_manager_or_admin(self):
-        return self.role in (self.Role.ADMIN, self.Role.MANAGER)
+        # GENERAL_MANAGER is manager-equivalent: the capability catalogue grants
+        # it MANAGER's full set, including ``reports.financial.view``. Keeping
+        # the property in step with ``apps.core.permissions.MANAGER_ROLES`` is
+        # what lets the general manager see the financial half of the dashboard
+        # the frontend routes them to.
+        return self.role in (self.Role.ADMIN, self.Role.MANAGER, self.Role.GENERAL_MANAGER)
 
     @property
     def is_staff_member(self):

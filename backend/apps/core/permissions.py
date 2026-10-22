@@ -13,7 +13,22 @@ from apps.accounts.capabilities import has_capability
 # would silently grant a Cashier/Housekeeping/Maintenance account access to old
 # staff-wide endpoints before each one has been migrated to a capability check.
 STAFF_ROLES = ("ADMIN", "MANAGER", "RECEPTIONIST")
-MANAGER_ROLES = ("ADMIN", "MANAGER")
+#: GENERAL_MANAGER is manager-equivalent: ``ROLE_CAPABILITY_CODES`` grants it the
+#: same 50 capabilities as MANAGER (booking/refund approval, financial reports,
+#: payroll, staff records, terminal management). It was omitted from this tuple
+#: while being routed to ``index.html``, ``reports.html``, ``offers.html``,
+#: ``rooms.html`` and ``staff-profile.html`` by the frontend, so every one of
+#: those pages answered 403 to the person running the hotel. Adding it here does
+#: not grant a capability the catalogue withholds; it makes enforcement agree
+#: with the grants the role already has.
+MANAGER_ROLES = ("ADMIN", "MANAGER", "GENERAL_MANAGER")
+
+#: Read allowlist for the legacy configuration endpoints (amenities, facilities,
+#: gallery, guest discounts, offers, policies, room types, rooms). These are the
+#: same read-only records a RECEPTIONIST already sees; FRONT_DESK_SUPERVISOR
+#: supervises that desk and is routed to ``rooms.html``. Writes remain
+#: ``MANAGER_ROLES`` — no operational worker gains a mutation.
+LEGACY_READ_ROLES = STAFF_ROLES + ("FRONT_DESK_SUPERVISOR", "GENERAL_MANAGER")
 
 
 def _active(user):
@@ -53,6 +68,28 @@ class IsStaffRole(BasePermission):
 
     def has_permission(self, request, view):
         return _active(request.user) and request.user.role in STAFF_ROLES
+
+
+#: Roles whose landing page is the hotel dashboard.
+#:
+#: ``frontend/js/dashboard.js`` (PAGE_ACCESS) sends exactly these roles to
+#: ``index.html`` and renders the link for them. The API gate used to be
+#: ``STAFF_ROLES`` alone, so a General Manager and a Front Desk Supervisor were
+#: shown the dashboard, were routed to it after sign-in, and then received 403
+#: from ``/api/admin/dashboard/`` — a dashboard that never loads. The union
+#: below is the same promise the frontend makes and nothing wider: the four
+#: remaining operational roles (housekeeping, kitchen, stores, portering) keep
+#: their own department screens and are still refused here.
+DASHBOARD_ROLES = STAFF_ROLES + ("FRONT_DESK_SUPERVISOR", "GENERAL_MANAGER")
+
+
+class IsDashboardViewer(BasePermission):
+    """The roles the frontend actually routes to the main dashboard."""
+
+    message = "Staff access is required."
+
+    def has_permission(self, request, view):
+        return _active(request.user) and request.user.role in DASHBOARD_ROLES
 
 
 class IsManagerOrAdmin(BasePermission):
@@ -128,10 +165,15 @@ class IsAdminRole(BasePermission):
 
 
 class IsStaffReadOnlyManagerWrite(BasePermission):
-    """All staff may read; only managers/admins may modify."""
+    """Read-only records for the desk, writes for managers.
+
+    Read: the legacy staff tuple plus the front desk supervisor (the role that
+    runs the desk and needs room inventory) and the manager-equivalent general
+    manager. Write: managers and administrators only.
+    """
 
     def has_permission(self, request, view):
-        if not (_active(request.user) and request.user.role in STAFF_ROLES):
+        if not (_active(request.user) and request.user.role in LEGACY_READ_ROLES):
             return False
         if request.method in SAFE_METHODS:
             return True
@@ -141,9 +183,13 @@ class IsStaffReadOnlyManagerWrite(BasePermission):
 class CanViewStaffProfile(BasePermission):
     """Who may open another person's staff profile card.
 
-    * ADMIN — every account (and may edit them via the users endpoints).
-    * MANAGER — read-only view of every staff account.
-    * RECEPTIONIST — their own profile only.
+    Any staff member may open their own card. Other cards are visible to accounts that
+    hold ``staff.view`` — ADMIN holds the full catalogue, MANAGER and
+    GENERAL_MANAGER are granted it, and so is HR_MANAGER, whose ``staff.html``
+    and ``staff-profile.html`` pages the frontend already unlocks. Deciding on
+    the capability rather than the legacy role tuple is what makes the two
+    agree: the previous ADMIN/MANAGER/RECEPTIONIST check refused the HR manager
+    and the general manager the very card their navigation linked to.
 
     Role claims from the client are never consulted; the row in the database
     decides. This is the READ half of staff management — every mutation still
@@ -153,12 +199,12 @@ class CanViewStaffProfile(BasePermission):
     message = "You do not have permission to view this staff profile."
 
     def has_permission(self, request, view):
-        if not (_active(request.user) and request.user.role in STAFF_ROLES):
+        user = request.user
+        if not (_active(user) and getattr(user, "is_staff_member", False)):
             return False
-        if request.user.role in MANAGER_ROLES:
+        if str(view.kwargs.get("pk") or "") == str(user.pk):
             return True
-        # Receptionists may only ever look at themselves.
-        return str(view.kwargs.get("pk") or "") == str(request.user.pk)
+        return has_capability(user, "staff.view")
 
 
 class IsOwnerOrStaff(BasePermission):

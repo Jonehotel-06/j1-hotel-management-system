@@ -185,8 +185,26 @@ def clock_attendance(*, staff: User, action: str, actor: User, idempotency_key, 
     action = str(action or "").upper()
     if action not in AttendanceEvent.Type.values:
         raise ValidationError({"action": "Invalid attendance clock action."})
-    if actor.pk != staff.pk or not has_capability(actor, "attendance.clock"):
+    if actor.pk != staff.pk:
         raise PermissionDenied("Attendance clocking is limited to the active staff member.")
+    # The identity rule above and the capability rule below are separate
+    # failures with separate fixes. They used to share one message, so a
+    # staff member whose ROLE does not carry ``attendance.clock`` was told
+    # "clocking is limited to the active staff member" while they *were*
+    # that member — an operator issuing a workstation access code read it as
+    # an identity/session bug and could not correct it. Report the missing
+    # capability for what it is (no permission is granted here).
+    if not has_capability(actor, "attendance.clock"):
+        logger.warning(
+            "Attendance capability missing: staff_id=%s role=%s capability=attendance.clock",
+            staff.pk, getattr(staff, "role", ""),
+        )
+        raise PermissionDenied(
+            "This staff member's role is not permitted to record attendance "
+            f"({staff.get_role_display()} does not hold the 'attendance.clock' capability), "
+            "so no access code can be issued. Assign a role that records attendance, or ask "
+            "an administrator to grant the capability to this account."
+        )
     staff = _locked_operational_staff(staff)
     source_key = _attendance_source_key(staff=staff, event_type=action, raw_key=idempotency_key)
     prior = AttendanceEvent.objects.select_for_update().select_related("record").filter(source_key=source_key).first()

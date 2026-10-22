@@ -40,9 +40,34 @@ def _page(view, request, queryset, serializer):
 
 
 def _profile_queryset():
+    """Staff profile list/detail queryset.
+
+    The list serializer reports each member's fingerprint enrolment state and
+    their open attendance status. Asking the database once per row turned a
+    40-member page into 82 queries (measured), so both collections are
+    prefetched for the whole page in two fixed queries. The serializer keeps
+    its per-row fallback for callers that load a profile without this
+    queryset.
+    """
+    from .biometric_models import FingerprintTemplate
+
     return (
         StaffProfile.objects.select_related(
             "user", "department_ref", "reporting_manager", "default_shift_template", "assigned_workstation"
+        )
+        .prefetch_related(
+            Prefetch(
+                "user__fingerprint_templates",
+                queryset=FingerprintTemplate.objects.only("staff_id", "status"),
+                to_attr="_jone_fingerprint_templates",
+            ),
+            Prefetch(
+                "user__attendance_records",
+                queryset=AttendanceRecord.objects.filter(clock_out_at__isnull=True)
+                .only("staff_id", "status", "clock_in_at")
+                .order_by("-clock_in_at"),
+                to_attr="_jone_open_attendance",
+            ),
         )
         .order_by("user__last_name", "user__first_name", "pk")
     )

@@ -104,7 +104,16 @@ class StaffProfileSerializer(serializers.ModelSerializer):
         active = False
         pending = False
         revoked = False
-        for t in FingerprintTemplate.objects.filter(staff_id=obj.user_id).values_list("status", flat=True):
+        # The list endpoint prefetches the statuses onto the user object; a
+        # caller without that prefetch keeps the original per-row query.
+        statuses = getattr(obj.user, "_jone_fingerprint_templates", None)
+        if statuses is None:
+            statuses = list(
+                FingerprintTemplate.objects.filter(staff_id=obj.user_id).values_list("status", flat=True)
+            )
+        else:
+            statuses = [t.status for t in statuses]
+        for t in statuses:
             if t == FingerprintTemplate.Status.ACTIVE:
                 active = True
             elif t == FingerprintTemplate.Status.PENDING:
@@ -120,13 +129,16 @@ class StaffProfileSerializer(serializers.ModelSerializer):
         return "NOT_ENROLLED"
 
     def get_attendance_status(self, obj):
-        open_att = (
-            AttendanceRecord.objects.filter(staff_id=obj.user_id, clock_out_at__isnull=True)
-            .order_by("-clock_in_at")
-            .values_list("status", flat=True)
-            .first()
-        )
-        return open_att or "NOT_CLOCKED_IN"
+        open_records = getattr(obj.user, "_jone_open_attendance", None)
+        if open_records is None:
+            open_att = (
+                AttendanceRecord.objects.filter(staff_id=obj.user_id, clock_out_at__isnull=True)
+                .order_by("-clock_in_at")
+                .values_list("status", flat=True)
+                .first()
+            )
+            return open_att or "NOT_CLOCKED_IN"
+        return open_records[0].status if open_records else "NOT_CLOCKED_IN"
 
 
 class StaffProfileCreateSerializer(serializers.Serializer):

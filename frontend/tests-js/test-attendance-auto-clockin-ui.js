@@ -144,6 +144,11 @@ function clockContext() {
   ctx.state = { tab: "attendance", attendanceItems: [], myOpenRecord: null };
   ctx.me = { id: 7, email: "housekeeping@jonehotel.com" };
   ctx.isManager = false;
+  /* The summary consults the team-scope switch (attendance.manage); this
+     harness evaluates the production function in isolation, so it must
+     supply the same bindings the page creates at parse time. */
+  ctx.canViewTeam = false;
+  ctx.scopeSelect = scope;
   ctx.hotelToday = () => TODAY;
   ctx.date = (v) => (v ? String(v) : "—");
   ctx.dateTime = (v) => (v ? String(v) : "—");
