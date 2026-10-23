@@ -37,6 +37,8 @@ import re
 import sys
 from pathlib import Path
 
+import seo_build
+
 ROOT = Path(__file__).parent
 VERSION_FILE = ROOT / "version.json"
 VERSION_JS = ROOT / "js" / "version.js"
@@ -325,6 +327,13 @@ def build(path, version):
     # --- Version wiring ------------------------------------------------------
     raw = _stamp_assets(raw, version)
 
+    # --- SEO head (title, description, canonical, robots, Open Graph, JSON-LD)
+    # Owned centrally by seo_build.py so the page head, sitemap.xml and
+    # robots.txt can never disagree. Applied last: nothing below rewrites head
+    # tags after this point.
+    if not is_memory_only_page:
+        raw = seo_build.apply_to_html(raw, path)
+
     f.write_text(raw, encoding="utf-8")
     return True
 
@@ -419,6 +428,24 @@ def main():
         if build(p, version):
             built.append(p)
     print(f"Built {len(built)} page(s) at version {version}: {', '.join(built)}")
+
+    # sitemap.xml + robots.txt are generated from the same page registry the
+    # heads were built from, so a new public page is never left out of the
+    # sitemap and a noindex page is never listed in it.
+    seo_changed = [
+        name for name in seo_build.apply_all(ROOT) if name in ("sitemap.xml", "robots.txt")
+    ]
+    print(f"SEO: sitemap.xml/robots.txt {'updated' if seo_changed else 'already current'}")
+
+    # Fail the build on any SEO defect (duplicate/missing titles or
+    # descriptions, wrong canonical, noindexed sitemap entry, broken OG image,
+    # fabricated rating markup, ...). Release integrity beats shipping quietly.
+    problems = seo_build.validate(ROOT)
+    for problem in problems:
+        print("  [SEO FAIL] " + problem, file=sys.stderr)
+    if problems:
+        raise SystemExit(f"SEO validation failed with {len(problems)} problem(s); not releasing.")
+    print("SEO: validation passed")
 
 
 if __name__ == "__main__":

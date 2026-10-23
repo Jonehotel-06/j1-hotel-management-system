@@ -119,12 +119,20 @@
     fillAll("[data-contact-checkin]", fmtTime(settings.checkin_time));
     fillAll("[data-contact-checkout]", fmtTime(settings.checkout_time));
 
-    // Google Maps: only set a real, configured URL. Never point at a fake one.
-    if (settings.google_maps_url) {
-      document.querySelectorAll("[data-google-maps]").forEach((n) => n.setAttribute("href", settings.google_maps_url));
-    } else {
-      document.querySelectorAll("[data-google-maps]").forEach((n) => { n.style.display = "none"; });
-    }
+    /* Google Maps: a configured URL wins; otherwise fall back to a maps SEARCH
+       for the configured address — the same precedence rule the embedded map
+       below already uses. Never a fake map URL, and the link is only hidden
+       when the hotel has neither a map URL nor an address. */
+    const mapsHref = settings.google_maps_url
+      || (settings.address
+        ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(
+            [settings.address, settings.city, settings.state, settings.country].filter(Boolean).join(", ")
+          )
+        : "");
+    document.querySelectorAll("[data-google-maps]").forEach((n) => {
+      if (mapsHref) n.setAttribute("href", mapsHref);
+      else n.style.display = "none";
+    });
 
     /* Embedded map on the contact page. Source of truth, in order:
        1. A configured google_maps_url that is already an embed URL -> use as-is.

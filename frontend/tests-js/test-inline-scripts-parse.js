@@ -26,11 +26,29 @@ function pagesIn(dir, out = []) {
   return out;
 }
 
+/* Classic JavaScript only. A <script> that declares another type is a DATA
+   block, not code: the page's JSON-LD structured data is JSON parsed by search
+   engines, and compiling it as JavaScript would wrongly treat its top-level
+   object literal as a labelled block. Those blocks are validated separately
+   and more strictly (JSON.parse + Schema.org field checks) in test-seo.js and
+   frontend/seo_build.py --check, so nothing escapes verification. */
+const JS_TYPES = new Set([
+  "", "text/javascript", "application/javascript", "module",
+  "text/ecmascript", "application/ecmascript",
+]);
+
 function inlineScripts(html) {
   const scripts = [];
-  const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
-  let match;
-  while ((match = re.exec(html)) !== null) scripts.push(match[1]);
+  const tagRe = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
+  let tag;
+  while ((tag = tagRe.exec(html)) !== null) {
+    const attrs = tag[1] || "";
+    if (/\bsrc\s*=/i.test(attrs)) continue;
+    const typeMatch = attrs.match(/\btype\s*=\s*["']([^"']*)["']/i);
+    const type = (typeMatch ? typeMatch[1] : "").trim().toLowerCase();
+    if (!JS_TYPES.has(type)) continue;
+    scripts.push(tag[2]);
+  }
   return scripts;
 }
 

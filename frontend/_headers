@@ -56,6 +56,16 @@
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer
 
+/booking-review.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/my-bookings.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
 /booking-confirmation.html
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
@@ -65,6 +75,15 @@
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer
+
+# SEO files — must never be cached for long: a stale sitemap delays indexing.
+/robots.txt
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+/sitemap.xml
+  Content-Type: application/xml; charset=utf-8
+  Cache-Control: public, max-age=3600
 
 /assets/*
   Cache-Control: public, max-age=604800, stale-while-revalidate=86400

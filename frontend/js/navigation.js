@@ -83,16 +83,26 @@
   function markActive(root = document) {
     let path = location.pathname.replace(/\/+$/g, "") || "/";
     if (path === "") path = "/index.html";
+    /* Cloudflare serves extensionless URLs and 307-redirects /rooms.html to
+       /rooms, while the shipped links are written as "rooms.html". Normalise
+       both sides (strip .html and /index) before comparing, otherwise the
+       active nav item was never highlighted in production. */
+    const normalise = (value) =>
+      value
+        .replace(/\/index\.html$/i, "/")
+        .replace(/\.html$/i, "")
+        .replace(/\/+$/g, "") || "/";
+    path = normalise(path);
     root.querySelectorAll("[data-nav]").forEach((a) => {
       const rawHref = a.getAttribute("href") || "";
-      const href = rawHref.split("#")[0].split("?")[0].replace(/\/+$/g, "");
+      const href = rawHref.split("#")[0].split("?")[0];
       a.classList.remove("is-active");
       if (!href) {
         // Same-page anchor (e.g. index.html section): active only on that page.
         if (path === "/index.html" || path === "/") a.classList.add("is-active");
         return;
       }
-      const hrefNorm = "/" + href;
+      const hrefNorm = normalise("/" + href.replace(/^\//, ""));
       if (path === hrefNorm || path.endsWith(hrefNorm)) {
         a.classList.add("is-active");
       }
@@ -129,11 +139,22 @@
     fillAll("[data-contact-phone]", settings.phone);
     fillAll("[data-contact-email]", settings.email);
     fillAll("[data-contact-address]", settings.address);
-    if (settings.google_maps_url) {
-      document.querySelectorAll("[data-google-maps]").forEach(n => n.setAttribute("href", settings.google_maps_url));
-    } else {
-      document.querySelectorAll("[data-google-maps]").forEach(n => { n.style.display = "none"; });
-    }
+    /* Same precedence as the embedded map in js/hotel-data.js: a configured
+       Google Maps URL wins, otherwise fall back to a maps SEARCH for the
+       hotel's configured address. Only hide the link when there is neither —
+       a dead "View on Google Maps" button helps nobody, and the address link
+       is what tells Google this site and its Business Profile are the same
+       business. */
+    const mapsUrl = settings.google_maps_url
+      || (settings.address
+        ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(
+            [settings.address, settings.city, settings.state, settings.country].filter(Boolean).join(", ")
+          )
+        : "");
+    document.querySelectorAll("[data-google-maps]").forEach(n => {
+      if (mapsUrl) n.setAttribute("href", mapsUrl);
+      else n.style.display = "none";
+    });
     const wa = settings.whatsapp ? String(settings.whatsapp).replace(/\D/g, "") : "";
     if (wa) {
       document.querySelectorAll("[data-contact-whatsapp]").forEach(n => n.setAttribute("href", "https://wa.me/" + wa));

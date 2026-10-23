@@ -2,8 +2,10 @@
 tests-js
 tests-pwa
 build.py
+seo_build.py
 validate.py
 dev_server.py
+optimize_images.py
 wrangler.jsonc
 vercel.json
 README.md
