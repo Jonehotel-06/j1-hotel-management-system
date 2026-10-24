@@ -13,6 +13,8 @@ from .models import (
     PosOrder,
     PosOrderEvent,
     PosOrderLine,
+    PosOrderReturn,
+    PosOrderReturnLine,
     PosTender,
     RestaurantTable,
     RestaurantTableSession,
@@ -69,11 +71,14 @@ class RestaurantTableSessionAdmin(admin.ModelAdmin):
 
 @admin.register(PosOrder)
 class PosOrderAdmin(admin.ModelAdmin):
-    list_display = ("reference", "mode", "status", "settlement_status", "total_amount", "currency", "guest_name", "created_by", "created_at")
+    list_display = (
+        "reference", "mode", "status", "settlement_status", "total_amount", "returned_amount",
+        "currency", "guest_name", "created_by", "created_at",
+    )
     list_filter = ("mode", "status", "settlement_status")
     search_fields = ("reference", "guest_name", "table_number")
     date_hierarchy = "created_at"
-    readonly_fields = ("submitted_at", "delivered_at", "cancelled_at", "charge_transaction")
+    readonly_fields = ("submitted_at", "delivered_at", "cancelled_at", "charge_transaction", "returned_amount")
 
 
 @admin.register(PosOrderLine)
@@ -93,6 +98,49 @@ class KitchenTicketAdmin(admin.ModelAdmin):
 class PosTenderAdmin(ReadOnlyAdmin):
     list_display = ("reference", "order", "method", "status", "amount", "currency", "captured_at")
     list_filter = ("method", "status")
+
+
+class PosOrderReturnLineInline(admin.TabularInline):
+    model = PosOrderReturnLine
+    extra = 0
+    can_delete = False
+    readonly_fields = (
+        "order_line", "item_name", "item_sku", "quantity_returned", "unit_net_price",
+        "line_net_amount", "restock_quantity",
+    )
+
+
+@admin.register(PosOrderReturn)
+class PosOrderReturnAdmin(ReadOnlyAdmin):
+    """Unopened-item returns are evidence: visible, filterable, never editable.
+
+    The refund state must only advance through the controlled POS workflow (a
+    cash drawer payout or a provider confirmation), so this changelist is the
+    place an owner inspects what happened, not the place to change it.
+    """
+
+    list_display = (
+        "reference", "order", "returned_amount", "final_total", "refund_due",
+        "refund_method", "refund_status", "recorded_by", "created_at",
+    )
+    list_filter = ("refund_status", "refund_method", "order__mode", "created_at")
+    search_fields = ("reference", "order__reference", "order__guest_name", "reason")
+    date_hierarchy = "created_at"
+    readonly_fields = [field.name for field in PosOrderReturn._meta.fields]
+    inlines = [PosOrderReturnLineInline]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(PosOrderReturnLine)
+class PosOrderReturnLineAdmin(ReadOnlyAdmin):
+    list_display = ("return_record", "item_name", "quantity_returned", "line_net_amount", "restock_quantity")
+    list_filter = ("created_at",)
+    search_fields = ("return_record__reference", "item_name", "item_sku")
 
 
 @admin.register(PosOrderEvent)

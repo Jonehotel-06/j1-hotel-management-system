@@ -40,6 +40,10 @@ CAPABILITY_DEFINITIONS = (
     ("restaurant.table.manage", "Manage restaurant tables", "Restaurant", "Maintain table records and table-service sessions."),
     ("bar.order.manage", "Manage bar orders", "Bar", "Create and progress bar orders."),
     ("bar.menu.manage", "Manage bar menu", "Bar", "Maintain bar-category menu items."),
+    ("pos.return.record", "Record unopened-item returns", "POS",
+     "Record untouched, unopened items returned by a guest against a delivered bar/restaurant order."),
+    ("pos.return.refund", "Pay out return refunds", "POS",
+     "Complete the refund owed when unopened items are returned, within the configured money controls."),
     ("kitchen.queue.view", "View production queues", "Kitchen", "View the user's assigned kitchen or bar production queue."),
     ("kitchen.ticket.manage", "Progress production tickets", "Kitchen", "Start, mark ready, or complete assigned production tickets."),
     ("guest_request.manage", "Manage guest requests", "Guest services", "Create or progress permitted guest requests."),
@@ -68,6 +72,10 @@ CAPABILITY_DEFINITIONS = (
     ("terminal.manage", "Manage workstation registry", "Security", "Register, label, and deactivate informational workstations."),
     ("service_qr.manage", "Manage guest service QR links", "Guest services", "Create and revoke signed room/table service links."),
     ("settings.manage", "Manage hotel settings", "Administration", "Manage hotel-wide configuration."),
+    ("sign_in.any_device", "Sign in from any device", "Identity",
+     "Sign in, refresh a session and use operational screens from any device instead of only "
+     "from an enrolled front-desk desktop. Granted to management by default and to anyone else "
+     "only as an explicit, audited grant — it is authority, not a rung on a departmental ladder."),
 )
 
 ALL_CAPABILITY_CODES = frozenset(item[0] for item in CAPABILITY_DEFINITIONS)
@@ -82,13 +90,14 @@ ROLE_CAPABILITY_CODES = {
         "payment.receipt.send", "payment.refund.request", "payment.refund.approve", "cash_session.open",
         "cash_session.close", "expense.manage", "expense.approve",
         "pos.order.manage", "pos.menu.manage", "restaurant.menu.manage", "restaurant.order.manage", "restaurant.table.manage",
-        "bar.order.manage", "bar.menu.manage", "kitchen.queue.view", "kitchen.ticket.manage",
+        "bar.order.manage", "bar.menu.manage", "pos.return.record", "pos.return.refund",
+        "kitchen.queue.view", "kitchen.ticket.manage",
         "guest_request.manage", "guest_request.assign", "housekeeping.task.manage", "housekeeping.task.assign",
         "maintenance.work_order.manage", "maintenance.work_order.assign", "inventory.manage", "inventory.adjust.approve",
         "procurement.manage", "procurement.approve", "staff.profile.manage", "staff.view", "staff.manage",
         "shift.manage", "attendance.clock",
         "attendance.manage", "leave.request", "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
-        "reports.financial.view", "terminal.manage", "service_qr.manage",
+        "reports.financial.view", "terminal.manage", "service_qr.manage", "sign_in.any_device",
     }),
     "RECEPTIONIST": frozenset({
         "booking.read", "booking.manage", "stay.check_in", "stay.check_out", "folio.view", "folio.charge.post",
@@ -99,6 +108,7 @@ ROLE_CAPABILITY_CODES = {
     "CASHIER": frozenset({
         "folio.charge.post", "payment.capture", "payment.refund.request", "cash_session.open",
         "cash_session.close", "expense.manage", "pos.order.manage", "attendance.clock", "leave.request",
+        "pos.return.record", "pos.return.refund",
     }),
     "HOUSEKEEPING": frozenset({
         "housekeeping.task.manage", "guest_request.manage", "attendance.clock", "leave.request",
@@ -120,27 +130,33 @@ ROLE_CAPABILITY_CODES = {
         "payment.refund.request", "payment.refund.approve", "cash_session.open", "cash_session.close",
         "expense.manage", "expense.approve",
         "pos.order.manage", "pos.menu.manage", "restaurant.menu.manage", "restaurant.order.manage", "restaurant.table.manage",
-        "bar.order.manage", "bar.menu.manage", "kitchen.queue.view", "kitchen.ticket.manage", "guest_request.manage",
+        "bar.order.manage", "bar.menu.manage", "pos.return.record", "pos.return.refund",
+        "kitchen.queue.view", "kitchen.ticket.manage", "guest_request.manage",
         "guest_request.assign", "housekeeping.task.manage", "housekeeping.task.assign", "maintenance.work_order.manage",
         "maintenance.work_order.assign", "inventory.manage", "inventory.adjust.approve", "procurement.manage",
         "procurement.approve", "staff.profile.manage", "staff.view", "staff.manage", "shift.manage",
         "attendance.clock", "attendance.manage",
         "leave.request", "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
         "reports.financial.view", "terminal.manage", "service_qr.manage",
+        "sign_in.any_device",
     }),
     "RESTAURANT_MANAGER": frozenset({
         "restaurant.order.manage", "restaurant.table.manage", "restaurant.menu.manage", "payment.capture",
+        "pos.return.record", "pos.return.refund",
         "kitchen.queue.view", "attendance.clock", "attendance.manage", "shift.manage", "leave.request",
     }),
     "WAITER": frozenset({
         "restaurant.order.manage", "payment.capture", "guest_request.manage", "attendance.clock", "leave.request",
+        "pos.return.record",
     }),
     "BAR_MANAGER": frozenset({
         "bar.order.manage", "bar.menu.manage", "payment.capture", "kitchen.queue.view", "attendance.clock",
+        "pos.return.record", "pos.return.refund",
         "attendance.manage", "shift.manage", "leave.request",
     }),
     "BARTENDER": frozenset({
         "bar.order.manage", "payment.capture", "guest_request.manage", "attendance.clock", "leave.request",
+        "pos.return.record",
     }),
     "KITCHEN_MANAGER": frozenset({
         "kitchen.queue.view", "kitchen.ticket.manage", "attendance.clock", "attendance.manage", "shift.manage",
@@ -178,6 +194,17 @@ ROLE_CAPABILITY_CODES = {
         "staff.profile.manage", "staff.view", "staff.manage", "shift.manage", "attendance.clock", "attendance.manage",
         "leave.request",
         "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
+    }),
+    # The HR department's ONE standard role. It carries the HR *work* — staff
+    # records, shifts, attendance administration, leave requests, payroll
+    # preparation — and none of the sensitive approvals: approving leave,
+    # payroll or an expense is a maker-checker decision granted explicitly per
+    # person (accounts.departments.SENSITIVE_APPROVAL_CAPABILITIES), so a title
+    # alone can never authorise money or somebody else's leave.
+    "HR_OFFICER": frozenset({
+        "staff.profile.manage", "staff.view", "staff.manage", "shift.manage",
+        "attendance.clock", "attendance.manage", "leave.request",
+        "payroll.view", "payroll.manage",
     }),
     "SECURITY": frozenset({"guest_request.manage", "attendance.clock"}),
     "PROCUREMENT_OFFICER": frozenset({"procurement.manage", "attendance.clock", "leave.request"}),
@@ -256,6 +283,15 @@ def capability_codes_for_user(user: "User") -> frozenset[str]:
             Capability.objects.filter(is_active=True).values_list("code", flat=True)
         )
     else:
+        # Grants stay exactly what is on record for THIS role. One role per
+        # department (apps.accounts.departments) is enforced at the assignment
+        # boundary and by migration 0027, which moves an account onto the
+        # department's role while preserving, as explicit per-user overrides,
+        # every capability it already held. Resolution deliberately does NOT
+        # quietly union a retired title with its department role here: an
+        # authorization decision must be traceable to persisted rows, and a
+        # silently wider grant is exactly the kind of surprise this codebase's
+        # least-privilege rule exists to prevent.
         role_codes = set(
             RoleCapability.objects.filter(role=user.role, capability__is_active=True)
             .values_list("capability__code", flat=True)

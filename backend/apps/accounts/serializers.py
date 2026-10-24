@@ -472,6 +472,47 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
             password_validation.validate_password(value)
         return value
 
+    def validate_role(self, value):
+        """One role per department: a retired departmental title is refused.
+
+        The role IS the department (``apps.accounts.departments``). An operator
+        who wants a bar supervisor to have an extra right grants that right
+        explicitly and audits it, instead of recreating a hierarchy by title.
+        """
+        from .departments import RetiredDepartmentalRole, assert_assignable_role
+
+        try:
+            return assert_assignable_role(value)
+        except RetiredDepartmentalRole as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        from .departments import DEPARTMENT_ROLES, _normalize_department_code, department_for_role
+
+        department = str(attrs.get("department") or "").strip()
+        role = str(attrs.get("role") or "").strip()
+        if department:
+            code = _normalize_department_code(department)
+            if code not in DEPARTMENT_ROLES:
+                raise serializers.ValidationError({
+                    "department": (
+                        "Choose a configured department: "
+                        + ", ".join(DEPARTMENT_ROLES)
+                        + "."
+                    )
+                })
+            role_department = department_for_role(role or User.Role.RECEPTIONIST)
+            if role_department and code != role_department:
+                raise serializers.ValidationError({
+                    "department": (
+                        f"A {role or User.Role.RECEPTIONIST} account belongs to {role_department}; "
+                        "the request payload cannot place it in a different team."
+                    )
+                })
+            attrs["department"] = code
+        return attrs
+
     def create(self, validated_data):
         import secrets
         from apps.staff_operations.services.staff_operations_service import ensure_staff_profile
@@ -587,5 +628,12 @@ class AdminUserUpdateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"role": ["You cannot remove your own admin role."]})
         if target and target.is_superuser and request.user != target and not request.user.is_superuser:
             raise serializers.ValidationError("Only a superuser can modify another superuser account.")
+        if "role" in attrs:
+            from .departments import RetiredDepartmentalRole, assert_assignable_role
+
+            try:
+                attrs["role"] = assert_assignable_role(attrs["role"])
+            except RetiredDepartmentalRole as exc:
+                raise serializers.ValidationError({"role": str(exc)}) from exc
         return attrs
 

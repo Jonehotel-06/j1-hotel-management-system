@@ -16,6 +16,7 @@ OUT = os.path.join(ROOT, "docs", "ROLE_PERMISSION_MATRIX.md")
 
 VIEW = {
     "booking.read": "Bookings",
+    "sign_in.any_device": "Sign-in freedom (any device)",
     "folio.view": "Folio",
     "payment.read": "Payments",
     "kitchen.queue.view": "Kitchen queue",
@@ -40,6 +41,7 @@ WRITE = {
     "expense.manage": "Expenses",
     "pos.order.manage": "POS orders",
     "pos.menu.manage": "POS menu",
+    "pos.return.record": "POS item returns",
     "restaurant.order.manage": "Restaurant orders",
     "restaurant.menu.manage": "Restaurant menu",
     "restaurant.table.manage": "Restaurant tables",
@@ -67,6 +69,7 @@ WRITE = {
 }
 APPROVE = {
     "payment.refund.approve": "Refunds",
+    "pos.return.refund": "POS return payouts",
     "expense.approve": "Expenses",
     "inventory.adjust.approve": "Stock adjustments",
     "procurement.approve": "Procurement",

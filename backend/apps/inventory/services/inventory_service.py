@@ -1277,6 +1277,125 @@ def reverse_pos_stock_consumption(*, request_or_order=None, pos_order=None, orde
 
 
 @transaction.atomic
+def restock_returned_pos_items(
+    *, order, line_quantities, actor, return_reference, reason="", location=None,
+):
+    """Post append-only ``POS_RETURN`` movements for returned, unopened items.
+
+    Used by the POS unopened-item return workflow. Nothing is inferred: each
+    returned order line is resolved through the SAME two configuration sources
+    the sale was deducted from — an active :class:`StockRecipe` (ingredients) or
+    an explicit direct-sale configuration on the ``StockItem`` — and the same
+    base-unit quantity the sale consumed comes back.
+
+    Returns ``(movements, aggregates, per_line_base_quantities, skipped_reason)``:
+
+    * ``movements`` — the ``StockMovement`` rows created (or already existing)
+    * ``aggregates`` — ``{(item_id, location_id): Decimal}`` restocked base units
+    * ``per_line_base_quantities`` — ``{order_line_id: Decimal}`` base units that
+      came back for each returned order line (zero when that line is explicitly
+      non-stock tracked), so the return evidence is line-accurate
+    * ``skipped_reason`` — a non-empty explanation when nothing was restocked
+      because the order's stock was never deducted (an unprocessed catch-up
+      hand-off), so a return can never invent stock the hotel never issued.
+
+    A line whose menu item has no configured deduction raises ``ValidationError``
+    naming the product: silently restocking an unconfigured product, or silently
+    skipping it, would both misstate the ledger.
+    """
+    from apps.inventory.models import StockConsumptionRequest
+
+    line_quantities = {
+        int(line_id): _quantity(quantity, field="quantity", positive=True)
+        for line_id, quantity in (line_quantities or {}).items()
+    }
+    if not line_quantities:
+        raise ValidationError({"lines": "At least one returned line quantity is required."})
+    order = order.__class__.objects.select_for_update().get(pk=order.pk)
+    lines = {line.pk: line for line in order.lines.select_related("menu_item").filter(pk__in=line_quantities)}
+    missing = sorted(set(line_quantities) - set(lines))
+    if missing:
+        raise ValidationError({"lines": f"Unknown order line identifier(s): {missing}."})
+
+    hand_off = StockConsumptionRequest.objects.filter(pos_order=order).first()
+    if hand_off is None or hand_off.status != StockConsumptionRequest.Status.PROCESSED:
+        return [], {}, {}, (
+            "No posted stock consumption exists for this order, so nothing was deducted and "
+            "nothing is restocked. Resolve the order's inventory hand-off first."
+        )
+
+    snapshots = _active_recipe_snapshots([line.menu_item_id for line in lines.values()])
+    aggregates = {}
+    per_line = {line_id: Decimal("0.0000") for line_id in line_quantities}
+    unresolved = []
+    for line_id, quantity in sorted(line_quantities.items()):
+        line = lines[line_id]
+        snapshot = snapshots.get(str(line.menu_item_id)) if line.menu_item_id else None
+        if not snapshot:
+            unresolved.append(line.item_sku or line.item_name)
+            continue
+        if snapshot.get("tracking_mode") == StockRecipe.TrackingMode.NO_STOCK:
+            continue
+        components = list(snapshot.get("components") or ())
+        if not components:
+            unresolved.append(line.item_sku or line.item_name)
+            continue
+        target_location_id = location.pk if location is not None else snapshot.get("location_id")
+        for component in components:
+            try:
+                item_id = int(component["item_id"])
+                per_unit = Decimal(str(component["quantity_per_menu_unit"]))
+            except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+                raise ValidationError("The configured stock deduction for this order line is invalid.") from exc
+            amount = (per_unit * quantity).quantize(QTY, rounding=ROUND_HALF_UP)
+            key = (item_id, int(target_location_id))
+            aggregates[key] = (aggregates.get(key, Decimal("0.0000")) + amount).quantize(QTY)
+            per_line[line_id] = (per_line[line_id] + amount).quantize(QTY)
+    if unresolved:
+        raise ValidationError({
+            "lines": (
+                "These products have no configured stock deduction, so the returned quantity cannot be "
+                "put back into the ledger: " + ", ".join(sorted(set(unresolved)))
+                + ". Configure the stock item as a direct sale or define a stock recipe first."
+            )
+        })
+    if not aggregates:
+        return [], {}, per_line, "Every returned line is explicitly non-stock tracked; no movement was posted."
+
+    items = {item.pk: item for item in StockItem.objects.filter(pk__in=[key[0] for key in aggregates])}
+    locations = {loc.pk: loc for loc in StockLocation.objects.filter(pk__in=[key[1] for key in aggregates])}
+    if len(items) != len({key[0] for key in aggregates}) or len(locations) != len({key[1] for key in aggregates}):
+        raise ValidationError("A configured stock deduction references a removed stock item or location.")
+    movements = []
+    for (item_id, location_id), quantity in sorted(aggregates.items()):
+        item = items[item_id]
+        target = locations[location_id]
+        movement, _created = record_stock_movement(
+            item=item,
+            location=target,
+            movement_type=StockMovement.Type.POS_RETURN,
+            quantity_delta=quantity,
+            source_key=key_for_pos_return(return_reference=return_reference, location_id=location_id, item_id=item_id),
+            actor=actor,
+            unit_cost=item.standard_cost,
+            source_reference=order.reference,
+            notes=(reason or f"Unopened items returned for {order.reference}")[:500],
+            metadata={
+                "pos_order": order.reference,
+                "pos_order_return": return_reference,
+                "stock_consumption_request": hand_off.reference,
+            },
+        )
+        movements.append(movement)
+    return movements, aggregates, per_line, ""
+
+
+def key_for_pos_return(*, return_reference, location_id, item_id):
+    """Deterministic source key for one returned-item movement."""
+    return f"pos-return:{return_reference}:{int(location_id)}:{int(item_id)}"
+
+
+@transaction.atomic
 def record_opening_stock(*, item, location, quantity, actor, source_key="", idempotency_key="", unit_cost=None, notes=""):
     """Record an idempotent opening-balance stock movement."""
     key = source_key or idempotency_key

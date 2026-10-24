@@ -255,6 +255,7 @@ class PosOrder(TimeStampedModel):
         UNPAID = "UNPAID", "Unpaid"
         PARTIALLY_PAID = "PARTIALLY_PAID", "Partially paid"
         PAID = "PAID", "Paid"
+        PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED", "Partially refunded"
         REFUNDED = "REFUNDED", "Refunded"
 
     reference = models.CharField(max_length=64, unique=True, db_index=True)
@@ -295,6 +296,12 @@ class PosOrder(TimeStampedModel):
         related_name="pos_order_charge",
     )
     metadata = models.JSONField(default=dict, blank=True)
+    #: Money the guest is no longer charged because untouched items came back
+    #: (see ``PosOrderReturn``). ``total_amount``/``subtotal`` stay frozen as the
+    #: amount that was originally shown and charged to the ledger; the amount
+    #: actually owed is ``net_total``. Reducing the frozen fields instead would
+    #: make the posted charge disagree with the order it belongs to.
+    returned_amount = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
 
     class Meta:
         ordering = ["-created_at", "-pk"]
@@ -314,6 +321,19 @@ class PosOrder(TimeStampedModel):
                 name="room_service_order_requires_stay_folio",
             ),
         ]
+
+    @property
+    def net_total(self) -> Decimal:
+        """What this order actually charges after unopened-item returns."""
+        return (
+            Decimal(self.total_amount or 0) - Decimal(self.returned_amount or 0)
+        ).quantize(ZERO)
+
+    @property
+    def net_subtotal(self) -> Decimal:
+        return (
+            Decimal(self.subtotal or 0) - Decimal(self.returned_amount or 0)
+        ).quantize(ZERO)
 
     def __str__(self):
         return f"{self.reference} · {self.mode} · {self.status}"
@@ -453,6 +473,8 @@ class PosOrderEvent(models.Model):
         CHARGED = "CHARGED", "Charged to folio"
         TENDER_CAPTURED = "TENDER_CAPTURED", "Tender captured"
         VOID_REQUESTED = "VOID_REQUESTED", "Void requested"
+        RETURN_RECORDED = "RETURN_RECORDED", "Unopened items returned"
+        RETURN_REFUND = "RETURN_REFUND", "Return refund recorded"
 
     order = models.ForeignKey(PosOrder, on_delete=models.PROTECT, related_name="events")
     type = models.CharField(max_length=24, choices=Type.choices, db_index=True)
@@ -476,6 +498,166 @@ class PosOrderEvent(models.Model):
 
     def __str__(self):
         return f"{self.order.reference} · {self.type}"
+
+
+def _new_pos_return_reference():
+    return f"PRT-{timezone.now():%Y%m%d}-{secrets.token_hex(8).upper()}"
+
+
+def _new_pos_return_refund_reference():
+    return f"PRR-{timezone.now():%Y%m%d}-{secrets.token_hex(8).upper()}"
+
+
+class PosOrderReturn(TimeStampedModel):
+    """Record of untouched, unopened items a guest handed back to the bar.
+
+    WHY THIS EXISTS
+    ===============
+    A table orders twelve bottles, drinks seven and leaves five unopened. Until
+    this model existed there was no way to say so: the order was charged for
+    twelve, the stock ledger had twelve bottles leaving the bar, and the only
+    "fix" available was a cancellation (which destroys the sale history) or a
+    manual stock adjustment (which destroys the link between the bottles and
+    the guest who returned them).
+
+    WHAT IT GUARANTEES
+    ==================
+    * The original order, its lines, its charge transaction and its tenders are
+      never edited. ``PosOrder.total_amount`` stays frozen; the money that
+      comes off the bill is accumulated in ``PosOrder.returned_amount`` and
+      published as ``net_total``.
+    * Stock comes back through an append-only ``POS_RETURN`` movement keyed on
+      this record, so a retried request converges on the same movement.
+    * The refund is a separate, explicitly-tracked obligation
+      (``refund_status``) that is never labelled successful before it actually
+      is: cash is only completed when the drawer paid it out, and a card/bank
+      refund stays ``PROCESSING`` until a provider reference is confirmed.
+    * One row per return attempt (``idempotency_key`` unique), so a
+      double-click or a browser retry cannot return the same bottles twice.
+    """
+
+    class RefundStatus(models.TextChoices):
+        NOT_DUE = "NOT_DUE", "Nothing to refund"
+        PENDING = "PENDING", "Refund outstanding"
+        AWAITING_APPROVAL = "AWAITING_APPROVAL", "Awaiting manager approval"
+        PROCESSING = "PROCESSING", "Awaiting provider confirmation"
+        COMPLETED = "COMPLETED", "Refund completed"
+        FAILED = "FAILED", "Refund failed"
+
+    class RefundMethod(models.TextChoices):
+        CASH = "CASH", "Cash from the drawer"
+        CARD = "CARD", "Card / POS terminal"
+        BANK_TRANSFER = "BANK_TRANSFER", "Bank transfer"
+        #: The charge had not been paid, or it sits on an open guest folio that
+        #: the credit already reduces, so there is no money to hand back.
+        NONE = "NONE", "No cash refund (bill reduced)"
+
+    reference = models.CharField(max_length=64, unique=True, default=_new_pos_return_reference, db_index=True)
+    idempotency_key = models.CharField(max_length=120, null=True, blank=True, unique=True)
+    order = models.ForeignKey(PosOrder, on_delete=models.PROTECT, related_name="returns")
+    reason = models.CharField(max_length=255, blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    restock_location = models.ForeignKey(
+        "inventory.StockLocation", null=True, blank=True, on_delete=models.PROTECT, related_name="pos_order_returns"
+    )
+    original_total = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
+    returned_amount = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
+    final_total = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
+    amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
+    refund_due = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
+    refund_method = models.CharField(
+        max_length=20, choices=RefundMethod.choices, default=RefundMethod.NONE, db_index=True
+    )
+    refund_status = models.CharField(
+        max_length=20, choices=RefundStatus.choices, default=RefundStatus.NOT_DUE, db_index=True
+    )
+    refund_reference = models.CharField(max_length=120, blank=True, default="", db_index=True)
+    refund_recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="pos_order_refunds_recorded"
+    )
+    refund_recorded_at = models.DateTimeField(null=True, blank=True)
+    refund_failure_reason = models.CharField(max_length=500, blank=True, default="")
+    refund_cash_session = models.ForeignKey(
+        "finance.CashSession", null=True, blank=True, on_delete=models.PROTECT, related_name="pos_order_refund_returns"
+    )
+    #: Ledger entry that takes the returned value off the guest's charge.
+    credit_transaction = models.OneToOneField(
+        "finance.FinancialTransaction", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="pos_return_credit",
+    )
+    #: Ledger entry that actually pays money back (cash/card/bank).
+    refund_transaction = models.OneToOneField(
+        "finance.FinancialTransaction", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="pos_return_refund",
+    )
+    approval = models.ForeignKey(
+        "finance.ApprovalRequest", null=True, blank=True, on_delete=models.PROTECT, related_name="pos_order_returns"
+    )
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="pos_order_returns_recorded"
+    )
+    received_by = models.CharField(max_length=120, blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        indexes = [
+            models.Index(fields=["order", "-created_at"]),
+            models.Index(fields=["refund_status", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.reference} · {self.order_id and self.order.reference} · {self.returned_amount}"
+
+    # Fields a controlled refund workflow may still advance after posting.
+    _MUTABLE_AFTER_POST = frozenset({
+        "refund_status", "refund_method", "refund_reference", "refund_recorded_by",
+        "refund_recorded_at", "refund_failure_reason", "refund_cash_session",
+        "refund_transaction", "approval", "metadata", "credit_transaction", "updated_at",
+    })
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            update_fields = set(kwargs.get("update_fields") or ())
+            if update_fields and not update_fields.issubset(self._MUTABLE_AFTER_POST):
+                raise ValidationError(
+                    "A posted unopened-item return is immutable; only its refund state may advance."
+                )
+            if not update_fields:
+                raise ValidationError(
+                    "A posted unopened-item return is immutable; update its refund state explicitly."
+                )
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Unopened-item returns are retained as audit evidence and cannot be deleted.")
+
+
+class PosOrderReturnLine(models.Model):
+    """One returned order line: quantity, money and the stock it put back."""
+
+    return_record = models.ForeignKey(PosOrderReturn, on_delete=models.PROTECT, related_name="lines")
+    order_line = models.ForeignKey(PosOrderLine, on_delete=models.PROTECT, related_name="return_lines")
+    quantity_returned = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    item_name = models.CharField(max_length=180, blank=True, default="")
+    item_sku = models.CharField(max_length=64, blank=True, default="")
+    unit_net_price = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
+    line_net_amount = models.DecimalField(max_digits=12, decimal_places=2, default=ZERO)
+    restock_quantity = models.DecimalField(max_digits=14, decimal_places=4, default=ZERO)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["return_record", "order_line"], name="one_return_line_per_order_line"),
+        ]
+        indexes = [models.Index(fields=["order_line", "return_record"])]
+
+    def __str__(self):
+        return f"{self.quantity_returned} × {self.item_name} returned"
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Return lines are retained as audit evidence and cannot be deleted.")
 
 
 class RestaurantTableSessionEvent(models.Model):

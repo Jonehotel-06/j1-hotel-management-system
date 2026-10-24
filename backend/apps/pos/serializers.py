@@ -6,8 +6,8 @@ from rest_framework import serializers
 from apps.stays.models import Stay
 
 from .models import (
-    KitchenTicket, MenuCategory, MenuItem, MenuModifier, PosOrder, PosOrderEvent, PosOrderLine, PosTender,
-    RestaurantTable, RestaurantTableSession,
+    KitchenTicket, MenuCategory, MenuItem, MenuModifier, PosOrder, PosOrderEvent, PosOrderLine, PosOrderReturn,
+    PosOrderReturnLine, PosTender, RestaurantTable, RestaurantTableSession,
 )
 
 
@@ -326,18 +326,145 @@ class CashSessionCloseSerializer(serializers.Serializer):
 
 
 class MenuCategoryManageSerializer(serializers.ModelSerializer):
+    """Editable menu category plus the counts the management table shows.
+
+    ``item_count`` is annotated by the view (one aggregate query); when the
+    serializer is used without that annotation it falls back to a count of the
+    related items so the field is never wrong, only slower.
+    """
+
+    item_count = serializers.SerializerMethodField()
+
     class Meta:
         model = MenuCategory
-        fields = ["id", "name", "slug", "service_area", "description", "sort_order", "is_active"]
+        fields = [
+            "id", "name", "slug", "service_area", "description", "sort_order", "is_active",
+            "item_count", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "item_count", "created_at", "updated_at"]
+
+    def get_item_count(self, obj):
+        annotated = getattr(obj, "item_count", None)
+        if annotated is not None:
+            return annotated
+        return obj.items.count()
 
 
 class MenuItemManageSerializer(serializers.ModelSerializer):
+    """Editable menu item plus the read-only context its table row needs."""
+
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    service_area = serializers.CharField(source="category.service_area", read_only=True)
+    stock_linkage = serializers.SerializerMethodField()
+    margin = serializers.SerializerMethodField()
+
     class Meta:
         model = MenuItem
         fields = [
-            "id", "category", "name", "sku", "barcode", "description", "base_price", "currency", "tax_rate_percent",
-            "preparation_minutes", "is_available", "is_active", "sort_order",
+            "id", "category", "category_name", "service_area", "name", "sku", "barcode", "description",
+            "base_price", "currency", "tax_rate_percent", "preparation_minutes", "is_available",
+            "is_active", "sort_order", "stock_linkage", "margin", "created_at", "updated_at",
         ]
+        read_only_fields = [
+            "id", "category_name", "service_area", "stock_linkage", "margin", "created_at", "updated_at",
+        ]
+
+    def get_stock_linkage(self, obj):
+        """How this sale reaches the stock ledger — evidence, never an inference.
+
+        ``recipe`` is an active stock recipe (ingredient BOM); ``direct_sale``
+        is an explicit one-product-per-menu-unit configuration; ``none`` means
+        nothing is configured, so a delivered sale deducts nothing and the
+        inventory hand-off is parked for review.
+        """
+        prefetched = getattr(obj, "_stock_linkage", None)
+        if prefetched is not None:
+            return prefetched
+        active_recipe = (
+            obj.stock_recipes.filter(is_active=True).order_by("-version").first()
+            if hasattr(obj, "stock_recipes")
+            else None
+        )
+        direct_sale = None
+        if hasattr(obj, "direct_sale_stock_items"):
+            direct_sale = obj.direct_sale_stock_items.first()
+        if active_recipe is not None:
+            lines = active_recipe.lines.count()
+            return {
+                "type": "recipe" if active_recipe.tracking_mode == "COMPONENTS" else "non_stock",
+                "reference": active_recipe.reference,
+                "version": active_recipe.version,
+                "component_count": lines,
+                "location": active_recipe.location.code if active_recipe.location_id else "",
+            }
+        if direct_sale is not None:
+            return {
+                "type": "direct_sale",
+                "reference": direct_sale.sku,
+                "version": 0,
+                "component_count": 1,
+                "location": direct_sale.direct_sale_location.code if direct_sale.direct_sale_location_id else "",
+                "quantity_per_menu_unit": str(direct_sale.direct_sale_quantity),
+            }
+        return {"type": "none", "reference": "", "version": 0, "component_count": 0, "location": ""}
+
+    def get_margin(self, obj):
+        """Selling price against the recorded supplier cost of ONE sale.
+
+        Computed only when the caller asks for it (``?with_margin=true`` on the
+        management list, or on a single-item read): the cost basis reads recipes
+        and goods-receipt averages per row, which is worth paying for on a
+        bounded page an operator is reading, but must not be paid silently by
+        every consumer of the catalogue.
+
+        The same ``menu_item_cost_basis`` the save-time price/cost guard uses, so
+        the number an operator sees in the table is the number the guard
+        enforces — never a second, drifting calculation. ``None`` fields mean
+        "nothing honest to compare": no cost on record, or a cost in a different
+        currency. The menu screen shows "cost not recorded" rather than a made-up
+        margin, because a guessed margin is worse than no margin at all.
+        """
+        if not self.context.get("include_margin"):
+            return None
+        from apps.inventory.services.valuation_service import menu_item_cost_basis
+
+        price = getattr(obj, "base_price", None)
+        currency = str(getattr(obj, "currency", "") or "NGN").upper()
+        payload = {
+            "unit_cost": None,
+            "cost_basis": "",
+            "currency": currency,
+            "margin_amount": None,
+            "margin_percent": None,
+            "below_cost": False,
+            "comparable": False,
+            "note": "",
+        }
+        if price is None:
+            payload["note"] = "No selling price recorded."
+            return payload
+        basis = menu_item_cost_basis(obj)
+        if not basis:
+            payload["note"] = "No supplier cost on record for one sale, so margin cannot be shown."
+            return payload
+        if currency not in {(code or "NGN").upper() for code in (basis.get("currencies") or [])}:
+            payload["note"] = "The recorded cost is in a different currency from the selling price."
+            return payload
+        from decimal import Decimal, ROUND_HALF_UP
+
+        cost = basis["cost"]
+        margin = Decimal(price) - cost
+        percent = (margin / Decimal(price) * 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if price else None
+        payload.update({
+            "unit_cost": str(cost),
+            "cost_basis": basis.get("basis", ""),
+            "margin_amount": str(margin),
+            "margin_percent": str(percent) if percent is not None else None,
+            "below_cost": margin < 0,
+            "comparable": True,
+            "note": "" if margin >= 0 else "Selling price is below the recorded supplier cost.",
+        })
+        return payload
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -394,3 +521,125 @@ class MenuModifierManageSerializer(serializers.ModelSerializer):
     class Meta:
         model = MenuModifier
         fields = ["id", "menu_item", "name", "price_delta", "is_active", "sort_order"]
+
+
+class PosOrderReturnLineInputSerializer(serializers.Serializer):
+    order_line_id = serializers.IntegerField(min_value=1)
+    quantity_returned = serializers.IntegerField(min_value=1, max_value=1000)
+
+
+class PosOrderReturnCreateSerializer(serializers.Serializer):
+    """Validated shape of an unopened-item return request.
+
+    Money is never accepted from the client: ``refund_method`` chooses how an
+    already-computed refund is paid, and every amount is derived server-side.
+    """
+
+    lines = PosOrderReturnLineInputSerializer(many=True, allow_empty=False, max_length=100)
+    reason = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
+    notes = serializers.CharField(max_length=2000, required=False, allow_blank=True, default="")
+    refund_method = serializers.ChoiceField(
+        choices=PosOrderReturn.RefundMethod.choices, required=False, default=PosOrderReturn.RefundMethod.NONE
+    )
+    cash_session_reference = serializers.CharField(max_length=64, required=False, allow_blank=True, default="")
+    restock_location = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    received_by = serializers.CharField(max_length=120, required=False, allow_blank=True, default="")
+    idempotency_key = serializers.CharField(max_length=120, required=False, allow_blank=True, default="")
+
+
+class PosOrderReturnRefundConfirmSerializer(serializers.Serializer):
+    refund_method = serializers.ChoiceField(choices=PosOrderReturn.RefundMethod.choices, required=False)
+    provider_reference = serializers.CharField(max_length=120, required=False, allow_blank=True, default="")
+    cash_session_reference = serializers.CharField(max_length=64, required=False, allow_blank=True, default="")
+    succeeded = serializers.BooleanField(required=False, default=True)
+    failure_reason = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+
+class PosOrderReturnLineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PosOrderReturnLine
+        fields = [
+            "id", "order_line", "item_name", "item_sku", "quantity_returned", "unit_net_price",
+            "line_net_amount", "restock_quantity",
+        ]
+        read_only_fields = fields
+
+
+class PosOrderReturnSerializer(serializers.ModelSerializer):
+    order_reference = serializers.CharField(source="order.reference", read_only=True)
+    order_mode = serializers.CharField(source="order.mode", read_only=True)
+    order_status = serializers.CharField(source="order.status", read_only=True)
+    guest_name = serializers.CharField(source="order.guest_name", read_only=True)
+    table_number = serializers.CharField(source="order.table_number", read_only=True)
+    currency = serializers.CharField(source="order.currency", read_only=True)
+    settlement_status = serializers.CharField(source="order.settlement_status", read_only=True)
+    recorded_by_email = serializers.CharField(source="recorded_by.email", read_only=True)
+    refund_recorded_by_email = serializers.CharField(source="refund_recorded_by.email", read_only=True)
+    restock_location_code = serializers.CharField(source="restock_location.code", read_only=True)
+    approval_reference = serializers.CharField(source="approval.reference", read_only=True)
+    approval_status = serializers.CharField(source="approval.status", read_only=True)
+    lines = PosOrderReturnLineSerializer(many=True, read_only=True)
+    outstanding_balance = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PosOrderReturn
+        fields = [
+            "id", "reference", "order", "order_reference", "order_mode", "order_status", "guest_name",
+            "table_number", "currency", "settlement_status", "reason", "notes", "received_by",
+            "restock_location", "restock_location_code", "original_total", "returned_amount",
+            "final_total", "amount_paid", "refund_due", "outstanding_balance", "refund_method",
+            "refund_status", "refund_reference", "refund_failure_reason", "refund_recorded_by_email",
+            "refund_recorded_at", "recorded_by_email", "approval_reference", "approval_status",
+            "created_at", "lines",
+        ]
+        read_only_fields = fields
+
+    def get_outstanding_balance(self, obj):
+        from decimal import Decimal
+
+        balance = Decimal(obj.final_total or 0) - Decimal(obj.amount_paid or 0)
+        return str(balance.quantize(Decimal("0.01")) if balance > 0 else Decimal("0.00"))
+
+
+class PosReturnableOrderSerializer(serializers.ModelSerializer):
+    """One bar order as the return screen lists it."""
+
+    staff_email = serializers.CharField(source="created_by.email", read_only=True)
+    amount_paid = serializers.SerializerMethodField()
+    net_total = serializers.SerializerMethodField()
+    outstanding_balance = serializers.SerializerMethodField()
+    returned_amount = serializers.SerializerMethodField()
+    return_count = serializers.IntegerField(read_only=True)
+    line_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = PosOrder
+        fields = [
+            "id", "reference", "mode", "status", "settlement_status", "guest_name", "table_number",
+            "staff_email", "currency", "total_amount", "returned_amount", "net_total", "amount_paid",
+            "outstanding_balance", "return_count", "line_count", "delivered_at", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_amount_paid(self, obj):
+        paid = getattr(obj, "paid_total", None)
+        return str(paid if paid is not None else "0.00")
+
+    def get_net_total(self, obj):
+        return str(obj.net_total)
+
+    def get_returned_amount(self, obj):
+        from .services.return_service import returned_amount_total
+
+        cached = getattr(obj, "_returned_amount_cache", None)
+        if cached is None:
+            cached = returned_amount_total(obj)
+            obj._returned_amount_cache = cached
+        return str(cached)
+
+    def get_outstanding_balance(self, obj):
+        from decimal import Decimal
+
+        paid = Decimal(str(getattr(obj, "paid_total", 0) or 0))
+        balance = obj.net_total - paid
+        return str(balance if balance > Decimal("0.00") else Decimal("0.00"))

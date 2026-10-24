@@ -136,10 +136,12 @@
     "receipts.html": { roles: FINANCE },
     "receipt-details.html": { roles: FINANCE },
     "accounting.html": { roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant"] },
-    "payroll.html": { roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant", "hr_manager"] },
+    "payroll.html": { roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant",
+      "hr_manager", "hr_officer"] },
     "reports.html": { roles: MANAGEMENT },
     "approvals.html": { roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant",
-      "hr_manager", "inventory_clerk", "storekeeper", "procurement_officer", "front_desk_supervisor"] },
+      "hr_manager", "hr_officer", "inventory_clerk", "storekeeper", "procurement_officer",
+      "front_desk_supervisor"] },
 
     /* Guest services. */
     "service-requests.html": { roles: SERVICE_DEPARTMENTS },
@@ -164,10 +166,10 @@
       "receptionist", "cashier", "housekeeping", "maintenance", "inventory_clerk",
       "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef",
       "kitchen_assistant", "housekeeping_manager", "housekeeper", "porter",
-      "maintenance_technician", "accounts_manager", "accountant", "hr_manager", "security",
+      "maintenance_technician", "accounts_manager", "accountant", "hr_manager", "hr_officer", "security",
       "procurement_officer", "storekeeper", "staff"] },
     "staff.html": { roles: ADMIN_ONLY },
-    "staff-profile.html": { roles: ["admin", "general_manager", "manager", "hr_manager"] },
+    "staff-profile.html": { roles: ["admin", "general_manager", "manager", "hr_manager", "hr_officer"] },
 
     /* Content, communication and administration. */
     "facilities.html": { roles: MANAGEMENT },

@@ -18,8 +18,8 @@ from apps.guest_services.services.request_service import service_request_queryse
 from apps.stays.models import Stay, StayRoom
 
 from .models import (
-    KitchenTicket, MenuCategory, MenuItem, MenuModifier, PosOrder, PosOrderEvent, PosTender,
-    RestaurantTable, RestaurantTableSession,
+    KitchenTicket, MenuCategory, MenuItem, MenuModifier, PosOrder, PosOrderEvent, PosOrderReturn,
+    PosTender, RestaurantTable, RestaurantTableSession,
 )
 from .serializers import (
     BarcodeLookupSerializer,
@@ -35,8 +35,12 @@ from .serializers import (
     PosOrderDetailSerializer,
     PosRoomServiceStaySerializer,
     PosOrderListSerializer,
+    PosOrderReturnCreateSerializer,
+    PosOrderReturnRefundConfirmSerializer,
+    PosOrderReturnSerializer,
     PosOrderStatusSerializer,
     PosOrderSubmitSerializer,
+    PosReturnableOrderSerializer,
     PosTenderCaptureSerializer,
     RestaurantTableSerializer,
     RestaurantTableSessionCloseSerializer,
@@ -45,6 +49,7 @@ from .serializers import (
     RestaurantTableSessionTransferSerializer,
 )
 from .services import order_service
+from .services import return_service
 from .services import table_service
 
 
@@ -267,18 +272,105 @@ class PosBarcodeLookupView(APIView):
         return success_response(BarcodeLookupSerializer(payload).data)
 
 
+CATEGORY_ORDERINGS = {
+    "name": ("name",),
+    "-name": ("-name",),
+    "slug": ("slug",),
+    "-slug": ("-slug",),
+    "service_area": ("service_area", "sort_order", "name"),
+    "-service_area": ("-service_area", "sort_order", "name"),
+    "sort_order": ("sort_order", "name"),
+    "-sort_order": ("-sort_order", "name"),
+    "items": ("item_count", "name"),
+    "-items": ("-item_count", "name"),
+    "updated": ("-updated_at",),
+    "-updated": ("updated_at",),
+}
+
+ITEM_ORDERINGS = {
+    "name": ("name",),
+    "-name": ("-name",),
+    "sku": ("sku",),
+    "-sku": ("-sku",),
+    "barcode": ("barcode",),
+    "-barcode": ("-barcode",),
+    "price": ("base_price", "name"),
+    "-price": ("-base_price", "name"),
+    "category": ("category__name", "name"),
+    "-category": ("-category__name", "name"),
+    "sort_order": ("sort_order", "name"),
+    "-sort_order": ("-sort_order", "name"),
+    "updated": ("-updated_at",),
+    "-updated": ("updated_at",),
+}
+
+
+def _boolean_param(request, name):
+    raw = (request.query_params.get(name) or "").strip().lower()
+    if raw in {"", "all"}:
+        return None
+    if raw in {"1", "true", "yes"}:
+        return True
+    if raw in {"0", "false", "no"}:
+        return False
+    from rest_framework.exceptions import ValidationError
+
+    raise ValidationError({name: "Use true, false, or all."})
+
+
 @extend_schema(tags=["Admin · POS"], summary="Manage POS menu categories")
 class PosMenuCategoryManagementView(APIView):
+    """Menu categories with server-side search, filtering, sorting, pagination.
+
+    The table is paginated only when the caller asks for a page (``page`` or
+    ``page_size``), so the historical contract — a plain list for the order-entry
+    screen and older clients — keeps working unchanged.
+    """
+
     permission_classes = [HasCapability]
     required_capabilities = ("pos.menu.manage", "restaurant.menu.manage", "bar.menu.manage")
     require_any_capability = True
+    pagination_class = StandardPagination
 
     def get(self, request):
         queryset = MenuCategory.objects.all()
         areas = _allowed_menu_areas(request.user)
         if areas is not None:
             queryset = queryset.filter(service_area__in=areas)
-        queryset = queryset.order_by("service_area", "sort_order", "name")
+        search = (request.query_params.get("search") or "").strip()
+        if search:
+            if len(search) > 100:
+                from rest_framework.exceptions import ValidationError
+
+                raise ValidationError({"search": "Search is limited to 100 characters."})
+            queryset = queryset.filter(
+                Q(name__icontains=search) | Q(slug__icontains=search) | Q(description__icontains=search)
+            )
+        area_param = (request.query_params.get("service_area") or "").strip().upper()
+        if area_param:
+            if area_param not in MenuCategory.ServiceArea.values:
+                from rest_framework.exceptions import ValidationError
+
+                raise ValidationError({"service_area": "Area must be RESTAURANT or BAR."})
+            _ensure_menu_area(request.user, area_param)
+            queryset = queryset.filter(service_area=area_param)
+        is_active = _boolean_param(request, "is_active")
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active)
+        ordering = (request.query_params.get("ordering") or "service_area").strip()
+        fields = CATEGORY_ORDERINGS.get(ordering)
+        if fields is None:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError({"ordering": f"Use one of: {', '.join(sorted(CATEGORY_ORDERINGS))}."})
+        queryset = queryset.annotate(item_count=Count("items")).order_by(*fields)
+        wants_page = any(
+            (request.query_params.get(key) or "").strip() for key in ("page", "page_size")
+        )
+        if wants_page:
+            paginator = self.pagination_class()
+            page = paginator.paginate_queryset(queryset, request, view=self)
+            return paginator.get_paginated_response(MenuCategoryManageSerializer(page, many=True).data)
         return success_response(MenuCategoryManageSerializer(queryset, many=True).data)
 
     def post(self, request):
@@ -315,20 +407,67 @@ class PosMenuItemManagementView(APIView):
     pagination_class = StandardPagination
 
     def get(self, request):
-        items = MenuItem.objects.select_related("category")
+        items = MenuItem.objects.select_related("category").prefetch_related(
+            "stock_recipes__location", "direct_sale_stock_items__direct_sale_location"
+        )
         areas = _allowed_menu_areas(request.user)
         if areas is not None:
             items = items.filter(category__service_area__in=areas)
-        items = items.order_by("category__service_area", "category__sort_order", "sort_order", "name")
+        search = (request.query_params.get("search") or "").strip()
+        if search:
+            if len(search) > 100:
+                from rest_framework.exceptions import ValidationError
+
+                raise ValidationError({"search": "Search is limited to 100 characters."})
+            items = items.filter(
+                Q(name__icontains=search)
+                | Q(sku__icontains=search)
+                | Q(barcode__icontains=search)
+                | Q(category__name__icontains=search)
+            )
+        category_param = (request.query_params.get("category") or "").strip()
+        if category_param:
+            try:
+                category_id = int(category_param)
+            except (TypeError, ValueError) as exc:
+                from rest_framework.exceptions import ValidationError
+
+                raise ValidationError({"category": "Category must be an integer identifier."}) from exc
+            items = items.filter(category_id=category_id)
+        area_param = (request.query_params.get("service_area") or "").strip().upper()
+        if area_param:
+            if area_param not in MenuCategory.ServiceArea.values:
+                from rest_framework.exceptions import ValidationError
+
+                raise ValidationError({"service_area": "Area must be RESTAURANT or BAR."})
+            _ensure_menu_area(request.user, area_param)
+            items = items.filter(category__service_area=area_param)
+        for flag, field in (("is_active", "is_active"), ("is_available", "is_available")):
+            value = _boolean_param(request, flag)
+            if value is not None:
+                items = items.filter(**{field: value})
+        ordering = (request.query_params.get("ordering") or "category").strip()
+        fields = ITEM_ORDERINGS.get(ordering)
+        if fields is None:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError({"ordering": f"Use one of: {', '.join(sorted(ITEM_ORDERINGS))}."})
+        items = items.order_by(*fields)
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(items, request, view=self)
-        return paginator.get_paginated_response(MenuItemManageSerializer(page, many=True).data)
+        context = {"request": request, "include_margin": bool(_boolean_param(request, "with_margin"))}
+        return paginator.get_paginated_response(
+            MenuItemManageSerializer(page, many=True, context=context).data
+        )
 
     def post(self, request):
         serializer = MenuItemManageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         _ensure_menu_area(request.user, serializer.validated_data["category"].service_area)
-        return success_response(MenuItemManageSerializer(serializer.save()).data, message="Menu item created.", status=status.HTTP_201_CREATED)
+        return success_response(
+            MenuItemManageSerializer(serializer.save(), context={"request": request, "include_margin": True}).data,
+            message="Menu item created.", status=status.HTTP_201_CREATED,
+        )
 
 
 class PosMenuItemManagementDetailView(APIView):
@@ -344,7 +483,10 @@ class PosMenuItemManagementDetailView(APIView):
         serializer = MenuItemManageSerializer(item, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         _ensure_menu_area(request.user, serializer.validated_data.get("category", item.category).service_area)
-        return success_response(MenuItemManageSerializer(serializer.save()).data, message="Menu item updated.")
+        return success_response(
+            MenuItemManageSerializer(serializer.save(), context={"request": request, "include_margin": True}).data,
+            message="Menu item updated.",
+        )
 
 
 @extend_schema(tags=["Admin · POS"], summary="Manage POS item modifiers")
@@ -822,3 +964,179 @@ class CashSessionCloseView(APIView):
             "counted_cash": str(session.counted_cash) if session.counted_cash is not None else None,
             "variance": str(session.variance) if session.variance is not None else None,
         }, message="Cash session closing count recorded.")
+
+
+# ---------------------------------------------------------------------------
+# Bar unopened-item returns
+#
+# The owner's workflow: a guest orders twelve bottles, leaves five unopened,
+# and the hotel must charge for seven, put five bottles back, and refund the
+# difference. Every amount is derived on the server from the frozen order line
+# and the captured tenders; the browser only chooses quantities and a method.
+# ---------------------------------------------------------------------------
+
+
+def _return_scope(request):
+    """Authorize the caller and confine the query to their service areas."""
+    modes = _allowed_order_modes(request.user)
+    allowed = set(return_service.RETURNABLE_MODES) & modes
+    if not allowed:
+        from rest_framework.exceptions import PermissionDenied
+
+        raise PermissionDenied("You do not have permission to record unopened-item returns.")
+    return allowed
+
+
+@extend_schema(tags=["Admin · POS"], summary="Bar/restaurant orders that can take an unopened-item return")
+class PosReturnableOrderListView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("pos.return.record", "pos.order.manage")
+    require_any_capability = True
+
+    def get(self, request):
+        allowed = _return_scope(request)
+        orders = [
+            order
+            for order in return_service.eligible_orders(
+                search=request.query_params.get("search", ""),
+                order_reference=request.query_params.get("order", ""),
+                unsettled_only=(request.query_params.get("unsettled") or "").lower() in {"1", "true", "yes"},
+                limit=request.query_params.get("limit", 200),
+            )
+            if order.mode in allowed
+        ]
+        return success_response(PosReturnableOrderSerializer(orders, many=True).data)
+
+
+@extend_schema(tags=["Admin · POS"], summary="Per-line returnable quantities and money for one order")
+class PosOrderReturnPreviewView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("pos.return.record", "pos.order.manage")
+    require_any_capability = True
+
+    def get(self, request, reference):
+        order = _get_order(reference, detail=True)
+        _ensure_order_access(request.user, order)
+        if order.mode not in return_service.RETURNABLE_MODES:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError(
+                "Unopened-item returns are recorded against bar and restaurant service only."
+            )
+        return success_response(return_service.return_preview(order))
+
+
+@extend_schema(tags=["Admin · POS"], summary="Record an unopened-item return and its stock/refund effect")
+class PosOrderReturnListCreateView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("pos.return.record", "pos.order.manage")
+    require_any_capability = True
+    pagination_class = StandardPagination
+
+    def get(self, request):
+        modes = _return_scope(request)
+        queryset = return_service.return_queryset().filter(order__mode__in=modes)
+        status_filter = (request.query_params.get("refund_status") or "").strip().upper()
+        if status_filter:
+            if status_filter not in PosOrderReturn.RefundStatus.values:
+                from rest_framework.exceptions import ValidationError
+
+                raise ValidationError({"refund_status": "Use a valid refund status."})
+            queryset = queryset.filter(refund_status=status_filter)
+        if search := (request.query_params.get("search") or "").strip()[:100]:
+            queryset = queryset.filter(
+                Q(reference__icontains=search)
+                | Q(order__reference__icontains=search)
+                | Q(order__guest_name__icontains=search)
+            )
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        return paginator.get_paginated_response(PosOrderReturnSerializer(page, many=True).data)
+
+    def post(self, request, reference):
+        order = _get_order(reference)
+        _ensure_order_access(request.user, order)
+        serializer = PosOrderReturnCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        cash_session = None
+        session_reference = (data.get("cash_session_reference") or "").strip()
+        if session_reference:
+            cash_session = CashSession.objects.filter(reference=session_reference).first()
+            if cash_session is None:
+                from rest_framework.exceptions import ValidationError
+
+                raise ValidationError({"cash_session_reference": "That cashier session does not exist."})
+        restock_location = None
+        if data.get("restock_location"):
+            from apps.inventory.models import StockLocation
+
+            restock_location = StockLocation.objects.filter(pk=data["restock_location"], is_active=True).first()
+            if restock_location is None:
+                from rest_framework.exceptions import ValidationError
+
+                raise ValidationError({"restock_location": "Choose an active stock location."})
+        record, created = return_service.record_unopened_return(
+            order=order,
+            lines=data["lines"],
+            actor=request.user,
+            reason=data.get("reason", ""),
+            notes=data.get("notes", ""),
+            idempotency_key=data.get("idempotency_key") or request.headers.get("Idempotency-Key", ""),
+            restock_location=restock_location,
+            received_by=data.get("received_by", ""),
+            refund_method=data.get("refund_method") or PosOrderReturn.RefundMethod.NONE,
+            cash_session=cash_session,
+        )
+        payload = PosOrderReturnSerializer(
+            return_service.return_queryset().get(pk=record.pk)
+        ).data
+        message = (
+            f"Unopened items returned on {order.reference}. Final charge {record.final_total} "
+            f"{order.currency}; refund {record.refund_due} ({record.get_refund_status_display().lower()})."
+            if created
+            else "This return was already recorded; nothing was changed."
+        )
+        return success_response(
+            payload, message=message, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        )
+
+
+@extend_schema(tags=["Admin · POS"], summary="Complete or fail a return refund")
+class PosOrderReturnRefundConfirmView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("pos.return.refund",)
+
+    def post(self, request, reference):
+        modes = _return_scope(request)
+        record = return_service.return_queryset().filter(reference=reference).first()
+        if record is None or record.order.mode not in modes:
+            raise NotFound("Unopened-item return not found.")
+        if record.order.mode not in _allowed_order_modes(request.user):
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied("You do not have permission to refund this order's service area.")
+        serializer = PosOrderReturnRefundConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        cash_session = None
+        session_reference = (data.get("cash_session_reference") or "").strip()
+        if session_reference:
+            cash_session = CashSession.objects.filter(reference=session_reference).first()
+            if cash_session is None:
+                from rest_framework.exceptions import ValidationError
+
+                raise ValidationError({"cash_session_reference": "That cashier session does not exist."})
+        record = return_service.confirm_return_refund(
+            record=record,
+            actor=request.user,
+            refund_method=data.get("refund_method", ""),
+            provider_reference=data.get("provider_reference", ""),
+            succeeded=data.get("succeeded", True),
+            failure_reason=data.get("failure_reason", ""),
+            cash_session=cash_session,
+        )
+        return success_response(
+            PosOrderReturnSerializer(return_service.return_queryset().get(pk=record.pk)).data,
+            message=f"Refund for {record.reference} is now {record.get_refund_status_display().lower()}.",
+        )

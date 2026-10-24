@@ -95,15 +95,25 @@ class RoleGateTests(StaffBase):
         self.assertEqual(new_user.role, "RECEPTIONIST")
         self.assertTrue(AuditLog.objects.filter(action="USER_CREATED").exists())
 
+        # One role per department: the HR department's standard role is
+        # HR_OFFICER, and the retired "HR manager" title is refused outright so
+        # no new hierarchy can be recreated through this endpoint.
         specialist = self.client.post("/api/admin/users/", {
             "email": "hrlead@staff.dev", "first_name": "People", "last_name": "Lead",
-            "role": "HR_MANAGER", "password": "Str0ng!Pass",
+            "role": "HR_OFFICER", "password": "Str0ng!Pass",
         })
         self.assertEqual(specialist.status_code, 201, specialist.json())
-        self.assertEqual(User.objects.get(email="hrlead@staff.dev").role, User.Role.HR_MANAGER)
-        roles = self.client.get("/api/admin/users/?role__in=HR_MANAGER,RESTAURANT_MANAGER")
+        self.assertEqual(User.objects.get(email="hrlead@staff.dev").role, User.Role.HR_OFFICER)
+        retired = self.client.post("/api/admin/users/", {
+            "email": "hrlegacy@staff.dev", "first_name": "People", "last_name": "Legacy",
+            "role": "HR_MANAGER", "password": "Str0ng!Pass",
+        })
+        self.assertEqual(retired.status_code, 400, retired.json())
+        self.assertIn("retired departmental title", retired.json()["errors"]["role"][0])
+        self.assertFalse(User.objects.filter(email="hrlegacy@staff.dev").exists())
+        roles = self.client.get("/api/admin/users/?role__in=HR_OFFICER,RESTAURANT_MANAGER")
         self.assertEqual(roles.status_code, 200, roles.content)
-        self.assertEqual({row["role"] for row in roles.json()["data"]}, {"HR_MANAGER"})
+        self.assertEqual({row["role"] for row in roles.json()["data"]}, {"HR_OFFICER"})
 
         patch = self.client.patch(f"/api/admin/users/{new_user.pk}/", {"role": "MANAGER"}, format="json")
         self.assertEqual(patch.status_code, 200)

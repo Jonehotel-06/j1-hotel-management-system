@@ -176,36 +176,148 @@ class OutgoingEmail:
         self.inline_images = inline_images or []
 
 
+class _InlineImageMessage(EmailMultiAlternatives):
+    """An EmailMessage that builds an RFC-correct ``multipart/related`` tree.
+
+    WHY THIS CLASS EXISTS
+    ---------------------
+    A ``cid:`` reference in the HTML part only renders when the part sits in a
+    ``multipart/related`` container. Django has never exposed a public API for
+    that: the old approach was to set the undocumented ``mixed_subtype``
+    attribute, and Django 6 removed it — ``message()`` now raises
+    ``AttributeError`` as soon as anything is attached, which made **every**
+    receipt email fail (a 502 on "Send receipt") on any Django ≥ 6 runtime.
+
+    So the container is built explicitly here, once, instead of depending on a
+    removed private attribute. The tree is what mail clients expect:
+
+        multipart/mixed            (only when a real attachment exists)
+        └── multipart/related
+            ├── multipart/alternative
+            │   ├── text/plain
+            │   └── text/html
+            └── image/*            Content-ID: <cid>, inline
+
+    Everything else (headers, the text/HTML alternative, attachments, the
+    backend, TLS, SMTP credentials) keeps using Django's own machinery, so this
+    works unchanged on Django 5.x and 6.x, on SMTP, console and locmem
+    backends, and with no vendor named.
+    """
+
+    def __init__(self, *args, inline_images=(), **kwargs):
+        self.inline_images = list(inline_images or ())
+        super().__init__(*args, **kwargs)
+
+    def message(self, *, policy=None):
+        """Return the MIME tree: multipart/mixed → related → alternative."""
+        import email.policy
+        from email.encoders import encode_base64
+        from email.mime.base import MIMEBase
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+        from email.utils import formatdate, make_msgid
+
+        from django.conf import settings as django_settings
+
+        policy = policy or email.policy.default
+        if not self.inline_images:
+            # Nothing to nest: Django's own single-part/alternative builder.
+            return super().message(policy=policy)
+
+        charset = self.encoding or django_settings.DEFAULT_CHARSET
+        body = self.body or " "
+
+        # multipart/alternative — plain text first (the fallback), HTML second.
+        alternative = MIMEMultipart("alternative", policy=policy)
+        alternative.attach(MIMEText(body, "plain", charset, policy=policy))
+        for content, mimetype in self.alternatives:
+            alternative.attach(
+                MIMEText(content, mimetype.split("/", 1)[-1], charset, policy=policy)
+            )
+
+        # multipart/related — the alternative plus the cid: images it refers to.
+        related = MIMEMultipart("related", policy=policy)
+        related.attach(alternative)
+        for cid, filename, content, mimetype in self.inline_images:
+            maintype, _, subtype = mimetype.partition("/")
+            part = MIMEBase(maintype or "image", subtype or "png", policy=policy)
+            part.set_payload(content)
+            encode_base64(part)
+            part.add_header("Content-ID", f"<{cid}>")
+            part.add_header("Content-Disposition", "inline", filename=filename)
+            related.attach(part)
+
+        # multipart/mixed — the related tree plus real attachments (receipt PDF).
+        if self.attachments:
+            root = MIMEMultipart("mixed", policy=policy)
+            root.attach(related)
+            for filename, content, mimetype in self.attachments:
+                maintype, _, subtype = mimetype.partition("/")
+                if isinstance(content, str):
+                    content = content.encode(charset, "surrogateescape")
+                part = MIMEBase(maintype or "application", subtype or "octet-stream", policy=policy)
+                part.set_payload(content)
+                encode_base64(part)
+                part.add_header("Content-Disposition", "attachment", filename=filename)
+                root.attach(part)
+        else:
+            root = related
+
+        self._copy_headers_onto(root, make_msgid, formatdate)
+        return root
+
+    def _copy_headers_onto(self, msg, make_msgid, formatdate):
+        """Recreate the headers Django's own ``message()`` would have set."""
+        from django.conf import settings as django_settings
+
+        def clean(value):
+            # Header-injection guard: a CR/LF in a header is never legitimate.
+            return str(value).replace("\r", " ").replace("\n", " ")
+
+        msg["Subject"] = clean(self.subject)
+        msg["From"] = clean(self.extra_headers.get("From", self.from_email))
+        for header, values in (("To", self.to), ("Cc", self.cc), ("Reply-To", self.reply_to)):
+            values = [clean(value) for value in (values or []) if value]
+            if values:
+                msg[header] = ", ".join(values)
+        extra = {str(key).lower() for key in self.extra_headers}
+        if "date" not in extra:
+            msg["Date"] = formatdate(
+                localtime=bool(getattr(django_settings, "EMAIL_USE_LOCALTIME", False))
+            )
+        if "message-id" not in extra:
+            msg["Message-ID"] = make_msgid()
+        for name, value in self.extra_headers.items():
+            if str(name).lower() in {"from", "to", "cc", "reply-to", "bcc"}:
+                continue
+            msg[str(name)] = clean(value)
+
+
 class DjangoProvider(BaseProvider):
     """Django's configured EMAIL_BACKEND — SMTP, console or locmem.
 
     This covers EVERY SMTP vendor (Gmail, Zoho, Amazon SES, Brevo SMTP,
     Mailgun SMTP …): they differ only in host/port/credentials, which Django
-    already models. Inline CID images work over real MIME.
+    already models. Inline CID images work over real MIME (see
+    :class:`_InlineImageMessage`, which owns the multipart/related tree so the
+    logo inline-renders without depending on a private Django attribute).
     """
 
     name = "django"
     supports_inline_images = True
 
     def send(self, message):
-        from email.mime.image import MIMEImage
-
         connection = get_connection(fail_silently=False)
         if message.html_body:
-            email = EmailMultiAlternatives(
+            email = _InlineImageMessage(
                 subject=message.subject,
                 body=message.text_body,
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 to=[message.to_email],
                 connection=connection,
+                inline_images=message.inline_images,
             )
             email.attach_alternative(message.html_body, "text/html")
-            for cid, filename, content, mimetype in message.inline_images:
-                image = MIMEImage(content, _subtype=mimetype.split("/")[-1])
-                image.add_header("Content-ID", f"<{cid}>")
-                image.add_header("Content-Disposition", "inline", filename=filename)
-                email.mixed_subtype = "related"
-                email.attach(image)
         else:
             email = EmailMessage(
                 subject=message.subject,

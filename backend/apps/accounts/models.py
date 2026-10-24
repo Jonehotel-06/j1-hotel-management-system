@@ -60,7 +60,8 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         MAINTENANCE_TECHNICIAN = "MAINTENANCE_TECHNICIAN", "Maintenance Technician"
         ACCOUNTS_MANAGER = "ACCOUNTS_MANAGER", "Accounts Manager"
         ACCOUNTANT = "ACCOUNTANT", "Accountant"
-        HR_MANAGER = "HR_MANAGER", "HR Manager"
+        HR_MANAGER = "HR_MANAGER", "HR Manager"  # retired title — see accounts.departments
+        HR_OFFICER = "HR_OFFICER", "HR Officer"  # the HR department's one standard role
         SECURITY = "SECURITY", "Security"
         PROCUREMENT_OFFICER = "PROCUREMENT_OFFICER", "Procurement Officer"
         STOREKEEPER = "STOREKEEPER", "Storekeeper"
@@ -98,6 +99,24 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     def full_name(self):
         parts = [p.strip() for p in (self.first_name, getattr(self, "middle_name", ""), self.last_name) if p and p.strip()]
         return " ".join(parts) or self.email
+
+    @property
+    def department(self) -> str:
+        """This account's single department context (see ``accounts.departments``).
+
+        Stored records only: the role and, when present, the staff profile's
+        department. A request may never choose this value.
+        """
+        from .departments import department_for_user
+
+        return department_for_user(self)
+
+    @property
+    def department_role(self) -> str:
+        """The department's ONE standard role for this account."""
+        from .departments import canonical_role
+
+        return canonical_role(self.role)
 
     @property
     def is_admin(self):
@@ -138,6 +157,10 @@ class Workstation(TimeStampedModel):
     class Department(models.TextChoices):
         SHARED = "SHARED", "Shared"
         FRONT_DESK = "FRONT_DESK", "Front desk"
+        # The cashier is its own till function, not a supervisory rung inside the
+        # front desk: adding it here is what lets ONE role per department hold
+        # for both (see apps.accounts.departments).
+        CASHIER = "CASHIER", "Cashier / till"
         RESTAURANT = "RESTAURANT", "Restaurant"
         BAR = "BAR", "Bar"
         KITCHEN = "KITCHEN", "Kitchen"

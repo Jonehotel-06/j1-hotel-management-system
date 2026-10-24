@@ -170,6 +170,18 @@
       "description": "Maintain bar-category menu items."
     },
     {
+      "code": "pos.return.record",
+      "name": "Record unopened-item returns",
+      "category": "POS",
+      "description": "Record untouched, unopened items returned by a guest against a delivered bar/restaurant order."
+    },
+    {
+      "code": "pos.return.refund",
+      "name": "Pay out return refunds",
+      "category": "POS",
+      "description": "Complete the refund owed when unopened items are returned, within the configured money controls."
+    },
+    {
       "code": "kitchen.queue.view",
       "name": "View production queues",
       "category": "Kitchen",
@@ -336,6 +348,12 @@
       "name": "Manage hotel settings",
       "category": "Administration",
       "description": "Manage hotel-wide configuration."
+    },
+    {
+      "code": "sign_in.any_device",
+      "name": "Sign in from any device",
+      "category": "Identity",
+      "description": "Sign in, refresh a session and use operational screens from any device instead of only from an enrolled front-desk desktop. Granted to management by default and to anyone else only as an explicit, audited grant \u2014 it is authority, not a rung on a departmental ladder."
     }
   ],
   "departments": {
@@ -469,6 +487,8 @@
         "payroll.view",
         "pos.menu.manage",
         "pos.order.manage",
+        "pos.return.record",
+        "pos.return.refund",
         "procurement.approve",
         "procurement.manage",
         "reports.financial.view",
@@ -478,6 +498,7 @@
         "service_qr.manage",
         "settings.manage",
         "shift.manage",
+        "sign_in.any_device",
         "staff.manage",
         "staff.profile.manage",
         "staff.view",
@@ -648,6 +669,8 @@
         "payroll.view",
         "pos.menu.manage",
         "pos.order.manage",
+        "pos.return.record",
+        "pos.return.refund",
         "procurement.approve",
         "procurement.manage",
         "reports.financial.view",
@@ -656,6 +679,7 @@
         "restaurant.table.manage",
         "service_qr.manage",
         "shift.manage",
+        "sign_in.any_device",
         "staff.manage",
         "staff.profile.manage",
         "staff.view",
@@ -886,7 +910,9 @@
         "leave.request",
         "payment.capture",
         "payment.refund.request",
-        "pos.order.manage"
+        "pos.order.manage",
+        "pos.return.record",
+        "pos.return.refund"
       ],
       "login_destination": "/dashboard/pos.html",
       "visible_nav": {
@@ -1194,6 +1220,8 @@
         "payroll.view",
         "pos.menu.manage",
         "pos.order.manage",
+        "pos.return.record",
+        "pos.return.refund",
         "procurement.approve",
         "procurement.manage",
         "reports.financial.view",
@@ -1202,6 +1230,7 @@
         "restaurant.table.manage",
         "service_qr.manage",
         "shift.manage",
+        "sign_in.any_device",
         "staff.manage",
         "staff.profile.manage",
         "staff.view",
@@ -1331,6 +1360,8 @@
         "kitchen.queue.view",
         "leave.request",
         "payment.capture",
+        "pos.return.record",
+        "pos.return.refund",
         "restaurant.menu.manage",
         "restaurant.order.manage",
         "restaurant.table.manage",
@@ -1375,6 +1406,7 @@
         "guest_request.manage",
         "leave.request",
         "payment.capture",
+        "pos.return.record",
         "restaurant.order.manage"
       ],
       "login_destination": "/dashboard/pos.html",
@@ -1423,6 +1455,8 @@
         "kitchen.queue.view",
         "leave.request",
         "payment.capture",
+        "pos.return.record",
+        "pos.return.refund",
         "shift.manage"
       ],
       "login_destination": "/dashboard/pos.html",
@@ -1464,7 +1498,8 @@
         "bar.order.manage",
         "guest_request.manage",
         "leave.request",
-        "payment.capture"
+        "payment.capture",
+        "pos.return.record"
       ],
       "login_destination": "/dashboard/pos.html",
       "visible_nav": {
@@ -1912,6 +1947,26 @@
         "staff-profile.html",
         "workforce.html"
       ],
+      "is_guest": false
+    },
+    {
+      "role": "HR_OFFICER",
+      "label": "HR Officer",
+      "departments": [],
+      "capabilities": [
+        "attendance.clock",
+        "attendance.manage",
+        "leave.request",
+        "payroll.manage",
+        "payroll.view",
+        "shift.manage",
+        "staff.manage",
+        "staff.profile.manage",
+        "staff.view"
+      ],
+      "login_destination": "/dashboard/index.html",
+      "visible_nav": null,
+      "dashboard_pages": [],
       "is_guest": false
     },
     {
@@ -3785,6 +3840,32 @@
       "login_required": true
     },
     {
+      "path": "/api/admin/pos/orders/<str:reference>/return-preview/",
+      "view": "PosOrderReturnPreviewView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.return.record",
+        "pos.order.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/orders/<str:reference>/returns/",
+      "view": "PosOrderReturnListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.return.record",
+        "pos.order.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
       "path": "/api/admin/pos/orders/<str:reference>/status/",
       "view": "PosOrderStatusView",
       "permission_classes": [
@@ -3822,6 +3903,32 @@
         "payment.capture"
       ],
       "require_any": false,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/orders/returns/",
+      "view": "PosOrderReturnListCreateView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.return.record",
+        "pos.order.manage"
+      ],
+      "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/orders/returns/eligible/",
+      "view": "PosReturnableOrderListView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.return.record",
+        "pos.order.manage"
+      ],
+      "require_any": true,
       "login_required": true
     },
     {
@@ -3896,6 +4003,18 @@
         "restaurant.table.manage"
       ],
       "require_any": true,
+      "login_required": true
+    },
+    {
+      "path": "/api/admin/pos/returns/<str:reference>/refund/",
+      "view": "PosOrderReturnRefundConfirmView",
+      "permission_classes": [
+        "HasCapability"
+      ],
+      "required_capabilities": [
+        "pos.return.refund"
+      ],
+      "require_any": false,
       "login_required": true
     },
     {

@@ -85,11 +85,46 @@ def clear_desktop_key(workstation: Workstation) -> None:
     workstation.sign_in_key_issued_at = None
 
 
+#: Capability that authorizes signing in from any device. Management holds it by
+#: default; anyone else receives it only as an explicit, audited grant
+#: (``UserCapabilityOverride``). This is why the exemption is not a rung on a
+#: departmental ladder — see ``apps.accounts.departments``.
+ANY_DEVICE_CAPABILITY = "sign_in.any_device"
+
+
+def may_sign_in_anywhere(user: User) -> bool:
+    """True when this account is exempt from the front-desk desktop sign-in rule.
+
+    Two routes, both server-side and both checked on every sign-in and refresh:
+
+    * the global management roles, which are outside every department; and
+    * the explicit ``sign_in.any_device`` capability, which the persisted
+      capability matrix resolves for management by default and for anybody else
+      only through an individually granted (and audited) override.
+
+    The capability route exists so that authority is expressed as authority:
+    collapsing a departmental "manager" title into the department's one role
+    must never silently confine a real manager to a front-desk PC, and adding
+    device freedom for a night-shift supervisor must never require inventing a
+    new role or a new hierarchy.
+    """
+    if not user:
+        return False
+    if user.role in STAFF_SIGN_IN_EXEMPT_ROLES:
+        return True
+    try:
+        from apps.accounts.capabilities import has_capability
+
+        return has_capability(user, ANY_DEVICE_CAPABILITY)
+    except Exception:  # noqa: BLE001 - fail closed: still use the desk
+        return False
+
+
 def sign_in_policy_applies(user: User) -> bool:
     """True when this account must sign in through the Receptionist Desktop."""
     if not user or not getattr(user, "is_staff_member", False):
         return False
-    return user.role not in STAFF_SIGN_IN_EXEMPT_ROLES
+    return not may_sign_in_anywhere(user)
 
 
 def receptionist_desktop_required(user: User) -> bool:

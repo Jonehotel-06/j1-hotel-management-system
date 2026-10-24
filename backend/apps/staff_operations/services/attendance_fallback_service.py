@@ -36,7 +36,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
-from apps.accounts.desktop_policy import STAFF_SIGN_IN_EXEMPT_ROLES
+from apps.accounts.desktop_policy import may_sign_in_anywhere
 from apps.accounts.models import User
 from apps.audit.services import log_action
 
@@ -67,16 +67,20 @@ def _fallback_window() -> timedelta:
 def manual_fallback_authority(actor: User | None) -> str:
     """Return what kind of fallback authority this account carries.
 
-    Management roles are exactly the accounts the Receptionist Desktop sign-in
-    policy already treats as management (``STAFF_SIGN_IN_EXEMPT_ROLES``), and a
+    Management accounts are exactly the accounts the Receptionist Desktop
+    sign-in policy already treats as management (``may_sign_in_anywhere``: a
+    global management role, or an explicit ``sign_in.any_device`` grant), and a
     manager must additionally hold ``attendance.manage``. Everybody else gets
-    ``NONE`` — including every ordinary operational role.
+    ``NONE`` — including every ordinary operational role. Delegating to the same
+    predicate the sign-in policy uses is deliberate: "who counts as management"
+    is asked in one place, so it can never drift between signing in and
+    recording attendance.
     """
     if actor is None or not getattr(actor, "is_authenticated", False) or not getattr(actor, "is_active", False):
         return AUTHORITY_NONE
     if actor.role == User.Role.ADMIN:
         return AUTHORITY_ADMINISTRATOR
-    if actor.role in STAFF_SIGN_IN_EXEMPT_ROLES and has_capability(actor, "attendance.manage"):
+    if may_sign_in_anywhere(actor) and has_capability(actor, "attendance.manage"):
         return AUTHORITY_MANAGER
     return AUTHORITY_NONE
 

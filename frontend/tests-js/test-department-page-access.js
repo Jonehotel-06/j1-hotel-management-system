@@ -334,6 +334,11 @@ test("each department is admitted to its own screens and refused the others", ()
       ["check-out.html", "bookings.html", "pos.html", "barcode-labels.html", "settings.html", "audit-logs.html", "inventory.html"]],
     hr_manager: [["payroll.html", "approvals.html", "staff-profile.html", "workforce.html"],
       ["payments.html", "check-out.html", "pos.html", "inventory.html", "staff.html", "settings.html", "audit-logs.html"]],
+    /* The HR department's ONE standard role (one role per department): the same
+       people surfaces as the retired "HR manager" title, because the work is the
+       work — and still none of the money or payroll-approval pages. */
+    hr_officer: [["payroll.html", "approvals.html", "staff-profile.html", "workforce.html"],
+      ["payments.html", "check-out.html", "pos.html", "inventory.html", "staff.html", "settings.html", "audit-logs.html"]],
     security: [["service-requests.html", "laundry.html", "workforce.html"],
       ["bookings.html", "check-out.html", "guests.html", "payments.html", "pos.html", "settings.html"]],
     porter: [["laundry.html", "service-requests.html", "workforce.html"],

@@ -212,6 +212,12 @@ class StockMovement(models.Model):
         TRANSFER_IN = "TRANSFER_IN", "Transfer in"
         ADJUSTMENT = "ADJUSTMENT", "Approved stock adjustment"
         WRITE_OFF = "WRITE_OFF", "Write-off"
+        # An untouched, unopened item leaving the guest's bill and coming back
+        # into the store (a bar bottle returned by the table). It is its own
+        # type so a POS return can never be confused with an operational
+        # issue return or a supplier return, and so stock reports can show the
+        # returned quantity on its own line instead of netting it into sales.
+        POS_RETURN = "POS_RETURN", "POS unopened-item return"
 
     reference = models.CharField(max_length=64, unique=True, db_index=True)
     source_key = models.CharField(max_length=180, unique=True)

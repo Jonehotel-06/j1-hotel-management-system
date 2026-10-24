@@ -34,7 +34,7 @@
     BARTENDER: "bartender", KITCHEN_MANAGER: "kitchen_manager", CHEF: "chef",
     HOUSEKEEPING_MANAGER: "housekeeping_manager", HOUSEKEEPER: "housekeeper",
     MAINTENANCE_TECHNICIAN: "maintenance_technician", ACCOUNTS_MANAGER: "accounts_manager",
-    ACCOUNTANT: "accountant", HR_MANAGER: "hr_manager", SECURITY: "security",
+    ACCOUNTANT: "accountant", HR_MANAGER: "hr_manager", HR_OFFICER: "hr_officer", SECURITY: "security",
     PROCUREMENT_OFFICER: "procurement_officer", STOREKEEPER: "storekeeper",
     PORTER: "porter", KITCHEN_ASSISTANT: "kitchen_assistant",
     GUEST: "guest", STAFF: "staff"
@@ -107,7 +107,7 @@
        /403.html after a successful sign-in. */
     if (r === "security") return "dashboard/workforce.html";
     if (["accounts_manager", "accountant"].includes(r)) return "dashboard/payments.html";
-    if (["hr_manager"].includes(r)) return "dashboard/workforce.html";
+    if (["hr_manager", "hr_officer"].includes(r)) return "dashboard/workforce.html";
     return "dashboard/index.html";
   }
 

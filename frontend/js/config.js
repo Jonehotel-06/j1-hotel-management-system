@@ -103,7 +103,7 @@
       label: "Management",
       portalTitle: "Executive & General Management Portal",
       landingPath: "/dashboard/index.html",
-      allowedRoles: ["admin", "general_manager", "manager", "hr_manager"]
+      allowedRoles: ["admin", "general_manager", "manager", "hr_manager", "hr_officer"]
     },
     accountant: {
       subdomain: "accountant",
@@ -241,6 +241,11 @@
     posRestaurantTableSessions: "/api/admin/pos/restaurant-table-sessions/",
     posRoomServiceStays: "/api/admin/pos/room-service-stays/",
     posOrders:           "/api/admin/pos/orders/",
+    // Bar/restaurant unopened-item returns (delivered order → stock back →
+    // final charge → eligible refund). Literal segments must stay ahead of the
+    // order-detail route on the server, which the URLconf already guarantees.
+    posOrderReturns:     "/api/admin/pos/orders/returns/",
+    posOrderReturnEligible: "/api/admin/pos/orders/returns/eligible/",
     posKitchenTickets:   "/api/admin/pos/kitchen-tickets/",
     /* Cash sessions have ONE model (apps.finance.models.CashSession) with two
        distinct route surfaces on the backend, so both keys are deliberate:

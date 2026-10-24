@@ -964,6 +964,35 @@ const API = (() => {
   const submitPosOrder = (reference, payload, opts = {}) => posOrderAction(reference, "submit", payload || {}, opts);
   const updatePosOrderStatus = (reference, status, opts = {}) => posOrderAction(reference, "status", { status }, opts);
   const capturePosTender = (reference, payload, opts = {}) => posOrderAction(reference, "tenders", payload, opts);
+  /* --- Bar/restaurant unopened-item returns ------------------------------ */
+  function posReturnAction(reference, action, payload, opts = {}) {
+    const base = resourceEp("posOrders");
+    if (!base) throw notConfigured("posOrders");
+    return post(`${base}/${encodeURIComponent(reference)}/${action}/`, payload || {}, opts);
+  }
+  /* Orders that can still take an unopened-item return (delivered, bar or
+     restaurant, charged, within the caller's service area). */
+  function listReturnablePosOrders(params = {}, opts = {}) {
+    const base = POS_ORDERS_EP();
+    if (!base) throw notConfigured("posOrders");
+    return get(`${base}/returns/eligible/`, { params, ...opts });
+  }
+  function listPosOrderReturns(params = {}, opts = {}) {
+    const base = POS_ORDERS_EP();
+    if (!base) throw notConfigured("posOrders");
+    return get(`${base}/returns/`, { params, ...opts });
+  }
+  function previewPosOrderReturn(reference, opts = {}) {
+    return posReturnAction(reference, "return-preview", {}, opts);
+  }
+  function recordPosOrderReturn(reference, payload, opts = {}) {
+    return posReturnAction(reference, "returns", payload, opts);
+  }
+  function confirmPosReturnRefund(returnReference, payload, opts = {}) {
+    const base = POS_ORDERS_EP();
+    if (!base) throw notConfigured("posOrders");
+    return post(`${base}/returns/${encodeURIComponent(returnReference)}/refund/`, payload || {}, opts);
+  }
   function updatePosKitchenTicketStatus(id, status, opts = {}) {
     const base = resourceEp("posKitchenTickets");
     if (!base) throw notConfigured("posKitchenTickets");
@@ -1098,6 +1127,7 @@ const API = (() => {
     noShowBooking, assignRoom, recordPayment, listPayrollSalaryPayments,
     recordPayrollSalaryPayment, reversePayrollSalaryPayment, searchBookings, searchCheckout,
     submitPosOrder, updatePosOrderStatus, capturePosTender, updatePosKitchenTicketStatus, openPosCashSession, closePosCashSession,
+    listReturnablePosOrders, listPosOrderReturns, previewPosOrderReturn, recordPosOrderReturn, confirmPosReturnRefund,
     reviewCancellationRequest, approveCancellationRequest, rejectCancellationRequest, processCancellationRefund, closeCancellationRequest, listRefunds,
     getStaffProfile, sendReceipt, getEmailLog, listEmailLogs, getRoomTypeRooms,
     // Helpers

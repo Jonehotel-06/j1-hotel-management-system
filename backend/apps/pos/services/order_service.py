@@ -551,7 +551,11 @@ def capture_direct_tender(*, order, method: str, amount, actor, cash_session=Non
         .values_list("amount", flat=True),
         Decimal("0.00"),
     )
-    if captured + amount > order.total_amount:
+    # Returns of untouched, unopened items reduce what the guest actually owes.
+    # ``total_amount`` stays frozen as the originally charged amount, so the
+    # collection ceiling is the live ``net_total`` and over-collection after a
+    # return is refused instead of silently banking the difference.
+    if captured + amount > order.net_total:
         raise ValidationError("Tender exceeds the order's unpaid balance.")
     session = None
     if method == PosTender.Method.CASH:
@@ -621,7 +625,7 @@ def capture_direct_tender(*, order, method: str, amount, actor, cash_session=Non
     new_captured = captured + amount
     order.settlement_status = (
         PosOrder.SettlementStatus.PAID
-        if new_captured == order.total_amount
+        if new_captured == order.net_total
         else PosOrder.SettlementStatus.PARTIALLY_PAID
     )
     order.save(update_fields=["settlement_status", "updated_at"])
