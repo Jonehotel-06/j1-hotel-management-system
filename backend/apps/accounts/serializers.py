@@ -488,29 +488,16 @@ class AdminUserCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        from .departments import DEPARTMENT_ROLES, _normalize_department_code, department_for_role
+        from .departments import validate_role_department
 
         department = str(attrs.get("department") or "").strip()
-        role = str(attrs.get("role") or "").strip()
+        role = str(attrs.get("role") or User.Role.RECEPTIONIST).strip()
+        try:
+            canonical_department = validate_role_department(role, department)
+        except ValueError as exc:
+            raise serializers.ValidationError({"department": str(exc)}) from exc
         if department:
-            code = _normalize_department_code(department)
-            if code not in DEPARTMENT_ROLES:
-                raise serializers.ValidationError({
-                    "department": (
-                        "Choose a configured department: "
-                        + ", ".join(DEPARTMENT_ROLES)
-                        + "."
-                    )
-                })
-            role_department = department_for_role(role or User.Role.RECEPTIONIST)
-            if role_department and code != role_department:
-                raise serializers.ValidationError({
-                    "department": (
-                        f"A {role or User.Role.RECEPTIONIST} account belongs to {role_department}; "
-                        "the request payload cannot place it in a different team."
-                    )
-                })
-            attrs["department"] = code
+            attrs["department"] = canonical_department
         return attrs
 
     def create(self, validated_data):
@@ -636,4 +623,42 @@ class AdminUserUpdateSerializer(serializers.ModelSerializer):
             except RetiredDepartmentalRole as exc:
                 raise serializers.ValidationError({"role": str(exc)}) from exc
         return attrs
+
+    def update(self, instance, validated_data):
+        # Role is the authoritative department identity. Keep an existing
+        # profile in step when an administrator transfers the account; a stale
+        # profile department must never override the newly assigned role.
+        from django.db import transaction
+        from .departments import department_for_role
+
+        with transaction.atomic():
+            user = super().update(instance, validated_data)
+            if "role" in validated_data:
+                try:
+                    profile = user.staff_profile
+                except Exception:  # noqa: BLE001 - accounts need not have profiles
+                    profile = None
+                if profile is not None:
+                    from .departments import _normalize_department_code
+                    from apps.staff_operations.models import Department
+
+                    department = department_for_role(user.role)
+                    profile.department = department
+                    if profile.department_ref_id:
+                        current_ref_code = _normalize_department_code(profile.department_ref.code)
+                        ref_matches = current_ref_code == department or (
+                            current_ref_code == "RESTAURANT_BAR" and department in {"RESTAURANT", "BAR"}
+                        )
+                        if not ref_matches:
+                            profile.department_ref = None
+                    if department and not profile.department_ref_id:
+                        for candidate in Department.objects.all():
+                            if department in {
+                                _normalize_department_code(candidate.code),
+                                _normalize_department_code(candidate.name),
+                            }:
+                                profile.department_ref = candidate
+                                break
+                    profile.save(update_fields=["department", "department_ref", "updated_at"])
+            return user
 

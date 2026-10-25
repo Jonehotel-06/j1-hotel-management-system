@@ -1,12 +1,21 @@
 # J-ONE Hotel & Lodge — Role & Permission Matrix
 
-**Generated:** 2026-10-22  ·  **Roles:** 28  ·  **API endpoints:** 321  ·  **Capabilities:** 56  ·  **Departments:** 9
+**Snapshot generated:** 2026-10-22  ·  **Persisted role codes:** 28  ·  **API endpoints:** 321  ·  **Capabilities:** 56  ·  **Canonical operational departments:** 14
 
 This document is the human-readable half of `docs/role_permission_matrix.json`.
 Both are derived, never hand-maintained: endpoint rows come from a live walk of
 the Django URL resolver, grants from `apps.accounts.capabilities`, page
 visibility from `frontend/js/dashboard.js` `PAGE_ACCESS`, and landing pages
 from `frontend/js/auth.js` `defaultStaffLanding()`.
+
+> **Current source-of-truth note (2026-10-25):** the role inventory below lists
+> persisted role codes for compatibility and audit, including retired titles.
+> Only the 14 canonical departmental roles in Section 2 are assignable as new
+> standard staff roles. The `DEPARTMENT_ROLES` registry in
+> `backend/apps/accounts/departments.py` is authoritative; `RoleCapability`
+> rows for retired aliases are historical compatibility data, not assignable
+> identities. The JSON/report snapshot may contain older department labels and
+> should not be used as an account-creation catalog.
 
 Regenerate:
 
@@ -21,10 +30,12 @@ python ../docs/tools/build_role_permission_matrix.py
 ```
 
 **Authority.** The API is the security boundary. `PAGE_ACCESS` and the sidebar
-decide what a person is *shown*; every endpoint carries its own server-side
-permission class and capability requirement, and a page is never proof that its
-data is readable. Section 7 lists every place where the two disagreed and what
-was done about it.
+decide what a person is *shown*; protected endpoints must enforce their
+appropriate server-side authentication, role/capability, ownership, and object
+scope checks. Not every public or legacy endpoint uses a capability class, and a
+page is never proof that its data is readable. This matrix is a 2026-10-22
+snapshot; Section 2 is the current department-role registry, while sections on
+endpoint counts retain the snapshot's audit scope and limitations.
 
 ---
 
@@ -32,7 +43,7 @@ was done about it.
 
 | Column | Meaning |
 | --- | --- |
-| **Department** | Operational department(s) the role belongs to (`apps/staff_operations` department registry). A role can serve more than one. |
+| **Department** | Department association shown by the matrix snapshot. The canonical current mapping is the registry in Section 2; historical aliases and global roles are explained there. |
 | **Login destination** | The page `defaultStaffLanding()` sends the role to after sign-in. A department subdomain can override it via `APP_CONFIG.DEPARTMENT_SUBDOMAINS.landingPath`. |
 | **View** | Read access, derived from read capabilities (`*.view`, `*.read`). |
 | **Create / Edit** | Mutation access, derived from the `*.manage`, `*.capture`, `*.post`, `*.check_in/out` and `*.assign` capabilities. The catalogue has no separate create/edit distinction — a holder of `booking.manage` can do both. |
@@ -46,7 +57,50 @@ role, and (where relevant) object ownership.
 
 ---
 
-## 2. Role inventory
+## 2. Authoritative department → standard-role mapping
+
+The registry defines one standard role for each operational department. The
+current code is authoritative over the legacy snapshot rows below.
+
+| Department | One standard role | Notes |
+| --- | --- | --- |
+| Management | `MANAGER` | Department role. `GENERAL_MANAGER` and `ADMIN` remain global oversight identities under existing policy. |
+| Accounts | `ACCOUNTANT` | Cashier remains a separate operational department. |
+| Admin Management / Procurement | `PROCUREMENT_OFFICER` | One combined department, represented internally by `Workstation.Department.PROCUREMENT`; never separate Admin and Procurement standard roles. |
+| Kitchen | `CHEF` | Kitchen Assistant is a staff-profile `job_title`/designation under `CHEF`, not another role. |
+| Restaurant | `WAITER` | Waiters and waitresses share the canonical role. |
+| Porter | `PORTER` | — |
+| Front Desk | `RECEPTIONIST` | — |
+| Housekeeping | `HOUSEKEEPING` | — |
+| Inventory / Stores | `STOREKEEPER` | — |
+| Security | `SECURITY` | Only `guest_request.manage` and `attendance.clock` by default; no guest-booking, finance, payroll, or inventory grants. |
+| Cashier | `CASHIER` | Preserved as a distinct operational department. |
+| Bar | `BARTENDER` | Preserved as a distinct operational department. |
+| Maintenance | `MAINTENANCE` | Preserved as a distinct operational department. |
+| Human Resources | `HR_OFFICER` | Existing operational department retained; sensitive approvals remain explicit. |
+
+Retired departmental titles are rejected by account creation, role update,
+profile creation/update, and department-transfer APIs. For historical records,
+`canonical_role()` resolves aliases without rewriting stored values at runtime:
+`FRONT_DESK_SUPERVISOR→RECEPTIONIST`, `BAR_MANAGER→BARTENDER`,
+`RESTAURANT_MANAGER→WAITER`, `KITCHEN_MANAGER` / `KITCHEN_ASSISTANT→CHEF`,
+`HOUSEKEEPING_MANAGER` / `HOUSEKEEPER→HOUSEKEEPING`,
+`MAINTENANCE_TECHNICIAN→MAINTENANCE`, `ACCOUNTS_MANAGER→ACCOUNTANT`,
+`HR_MANAGER→HR_OFFICER`, and `INVENTORY_CLERK→STOREKEEPER`.
+
+Role/department identity is read from persisted account and staff-profile data.
+Conflicting operational identity fails closed for capability checks and the
+existing DRF permission classes. Explicit global oversight roles keep their
+existing global policy. This is not a blanket row filter: each protected API
+still relies on its established capability, role, object-scope, ownership, and
+approval checks; shared workflows are not automatically blocked by department.
+
+## 3. Role inventory (persisted codes, including retired compatibility aliases)
+
+This generated inventory is a compatibility/audit view, **not** the current role
+picker. The subsequent matrix rows include historical grants for retired titles
+so existing rows and migration history remain reviewable. A retired title is not
+an assignable role; Section 2 is the canonical assignment policy.
 
 | Role | Label | Department(s) | Landing | Capabilities | Pages |
 | --- | --- | --- | --- | --- | --- |
@@ -81,7 +135,7 @@ role, and (where relevant) object ownership.
 
 ---
 
-## 3. Master matrix
+## 4. Master matrix (includes historical compatibility rows)
 
 | Department | Role | Login destination | View | Create | Edit | Delete | Approval | Restrictions |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -116,7 +170,7 @@ role, and (where relevant) object ownership.
 
 ---
 
-## 4. Department detail
+## 5. Department detail
 
 Each role below lists the menu its own account renders after the capability
 read settles (`navItemAllowed()`), not the raw `NAV` table. Page names in the
@@ -273,7 +327,7 @@ Capabilities (4): `attendance.clock`, `inventory.manage`, `leave.request`, `proc
 
 ---
 
-## 5. Page visibility (`PAGE_ACCESS`)
+## 6. Page visibility (`PAGE_ACCESS`)
 
 45 dashboard pages carry an access rule. The personal surfaces
 (`notifications.html`, `notification-details.html`, `profile.html`) are open to
@@ -301,7 +355,7 @@ never silently appear for a page nobody has graded.
 
 ---
 
-## 6. API authorization model
+## 7. API authorization model
 
 Four layers, all server-side:
 
@@ -399,7 +453,7 @@ Permission classes in use (316 normalised endpoint rows):
 
 ---
 
-## 7. UI visibility vs API enforcement
+## 8. UI visibility vs API enforcement
 
 The audit ran a live GET probe as each of the 25 staff roles against 13
 representative endpoints and compared the result with `PAGE_ACCESS`. Six
@@ -428,7 +482,7 @@ landing page — and all six are fixed and covered by tests.
 
 ---
 
-## 8. Direct-URL access
+## 9. Direct-URL access
 
 A dashboard page is plain HTML. Opening `dashboard/hr.html` by hand is not
 itself a breach: the page's boot gate bounces a role it does not admit to
@@ -448,7 +502,7 @@ Two consequences worth stating plainly:
 
 ---
 
-## 9. Verification
+## 10. Verification
 
 **Live probe** (25 staff roles × 13 endpoints, GET, temporary harness during the
 audit) compared status codes across dashboard, bookings, rooms, housekeeping,

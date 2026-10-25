@@ -3,6 +3,45 @@
 **Date:** 2026-10-24  ·  **Scope:** `backend/apps/accounts`, `backend/apps/notifications`,
 `backend/apps/pos`, `frontend/`  ·  **Migrations added:** 4 (accounts), 1 (pos), 1 (inventory)
 
+> **Current-source audit addendum — 2026-10-25:** The earlier notes below describe
+> the implementation at that report's date and overstated which account-write
+> paths enforced the rule. The current authoritative registry and verified
+> corrections are recorded immediately below. Do not treat legacy role rows in
+> the generated matrix or older UI as assignable roles.
+>
+> `DEPARTMENT_ROLES` currently has one unique canonical role for each of 14
+> operational departments: Management—`MANAGER`; Accounts—`ACCOUNTANT`;
+> Admin Management / Procurement—`PROCUREMENT_OFFICER`; Kitchen—`CHEF`;
+> Restaurant—`WAITER`; Porter—`PORTER`; Front Desk—`RECEPTIONIST`;
+> Housekeeping—`HOUSEKEEPING`; Inventory / Stores—`STOREKEEPER`;
+> Security—`SECURITY`; Cashier—`CASHIER`; Bar—`BARTENDER`;
+> Maintenance—`MAINTENANCE`; Human Resources—`HR_OFFICER`. `ADMIN` and
+> `GENERAL_MANAGER` remain global oversight roles, not departmental roles.
+> Admin Management / Procurement is represented once by the existing
+> `PROCUREMENT` department code and has no separate Admin role. Security's
+> default grants are only `guest_request.manage` and `attendance.clock`; the
+> procurement role retains `procurement.manage`, `attendance.clock`, and
+> `leave.request`, with no procurement approval grant. Kitchen Assistant is a
+> `StaffProfile.job_title` designation under the `CHEF` role; the old
+> `KITCHEN_ASSISTANT` role code remains only for historical compatibility and
+> is rejected by current account writers.
+>
+> The source audit found that the earlier API/admin guards did not cover the
+> secondary staff-profile create/patch and lifecycle transfer paths, and that a
+> persisted profile department could override a conflicting canonical role.
+> Those specific gaps are now closed: create/update/profile/transfer paths
+> validate department-role pairs; role changes synchronize the profile; Django
+> admin profile edits validate the same pair; and the permission-matrix writer
+> refuses retired role aliases. Conflicting operational account/profile identity
+> returns no department and fails capability/DRF authorization checks closed. The staff form now offers
+> canonical roles only while retaining historical role filters. Existing
+> capability grants, override records, approval rules, and business workflow
+> endpoints were not rewritten. No schema migration was added: existing
+> `StaffProfile.job_title`, department, role, and capability tables suffice.
+> Automated evidence for this focused change is in the 2026-10-25 final report
+> and `backend/tests/test_department_roles.py`; it is not a claim that every
+> endpoint in the hotel system has undergone a fresh object-scope review.
+
 This report covers four changes that were asked for directly by the owner and two
 defects found while making them. Every claim here is backed by a test in
 `backend/tests/` or `frontend/tests-js/`; the commands are at the end.

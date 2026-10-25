@@ -26,6 +26,7 @@ from apps.accounts.departments import (
 )
 from apps.accounts.models import Capability, RoleCapability, User, UserCapabilityOverride, Workstation
 from apps.audit.models import AuditLog
+from apps.staff_operations.models import StaffProfile
 
 from .base import BaseAPITestCase
 from .factories import make_staff, make_user
@@ -57,9 +58,52 @@ class DepartmentRoleModelTests(BaseAPITestCase):
                 assert_assignable_role(retired)
 
     def test_global_oversight_roles_are_outside_every_department(self):
-        for role in GLOBAL_ROLES:
+        for index, role in enumerate(GLOBAL_ROLES):
             self.assertEqual(department_for_role(role), "")
             self.assertNotIn(role, DEPARTMENT_ROLES.values())
+            user = make_staff(f"dept.global{index}@staff.dev", role=role)
+            self.assertFalse(is_cross_department(user, Workstation.Department.ACCOUNTS))
+
+    def test_combined_procurement_and_security_are_single_canonical_departments(self):
+        self.assertEqual(
+            [dept for dept in DEPARTMENT_ROLES if dept == Workstation.Department.PROCUREMENT],
+            [Workstation.Department.PROCUREMENT],
+        )
+        self.assertEqual(DEPARTMENT_ROLES[Workstation.Department.PROCUREMENT], User.Role.PROCUREMENT_OFFICER)
+        self.assertEqual(DEPARTMENT_ROLES[Workstation.Department.SECURITY], User.Role.SECURITY)
+        self.assertEqual(DEPARTMENT_ROLES[Workstation.Department.KITCHEN], User.Role.CHEF)
+        self.assertNotIn(User.Role.KITCHEN_ASSISTANT, DEPARTMENT_ROLES.values())
+
+    def test_profile_department_conflict_fails_closed_for_backend_capabilities(self):
+        from apps.accounts.capabilities import has_capability
+
+        manager = make_staff("dept.conflict@staff.dev", role=User.Role.MANAGER)
+        profile = StaffProfile.objects.create(
+            user=manager, employee_code="SEC-CONFLICT-1", department="ACCOUNTS"
+        )
+        self.assertEqual(department_for_user(manager), "")
+        self.assertTrue(is_cross_department(manager, Workstation.Department.MANAGEMENT))
+        self.assertTrue(is_cross_department(manager, Workstation.Department.ACCOUNTS))
+        self.assertFalse(has_capability(manager, "staff.profile.manage"))
+        # Keep the row reference explicit: a conflicting persisted profile is
+        # what invalidates the account context, not request data.
+        self.assertEqual(profile.user_id, manager.pk)
+
+    def test_security_and_procurement_role_grants_stay_narrow(self):
+        from apps.accounts.capabilities import capability_codes_for_user
+
+        security = make_staff("dept.security.permissions@staff.dev", role=User.Role.SECURITY)
+        procurement = make_staff("dept.procurement.permissions@staff.dev", role=User.Role.PROCUREMENT_OFFICER)
+        self.assertEqual(
+            capability_codes_for_user(security),
+            frozenset({"guest_request.manage", "attendance.clock"}),
+        )
+        self.assertEqual(
+            capability_codes_for_user(procurement),
+            frozenset({"procurement.manage", "attendance.clock", "leave.request"}),
+        )
+        self.assertNotIn("procurement.approve", capability_codes_for_user(procurement))
+        self.assertNotIn("booking.read", capability_codes_for_user(security))
 
     def test_department_context_is_read_from_stored_records_only(self):
         bartender = make_staff("dept.bartender@staff.dev", role=User.Role.BARTENDER)
@@ -129,6 +173,116 @@ class StaffAssignmentApiTests(BaseAPITestCase):
         )
         self.assertEqual(mismatched.status_code, 400, mismatched.content)
         self.assertIn("belongs to", mismatched.content.decode())
+
+    def test_secondary_staff_profile_creation_path_rejects_retired_and_conflicting_assignments(self):
+        self.auth(self.admin)
+        base = {
+            "email": "dept.profile-create@staff.dev", "first_name": "Kitchen", "last_name": "Staff",
+            "password": "Str0ngPass!234", "role": "CHEF", "department": "ACCOUNTS",
+        }
+        mismatch = self.client.post("/api/admin/staff-operations/profiles/", base, format="json")
+        self.assertEqual(mismatch.status_code, 400, mismatch.content)
+        self.assertFalse(User.objects.filter(email=base["email"]).exists())
+
+        retired = dict(base, email="dept.profile-retired@staff.dev", role="KITCHEN_ASSISTANT", department="KITCHEN")
+        refused = self.client.post("/api/admin/staff-operations/profiles/", retired, format="json")
+        self.assertEqual(refused.status_code, 400, refused.content)
+        self.assertIn("retired departmental title", refused.content.decode())
+        self.assertFalse(User.objects.filter(email=retired["email"]).exists())
+
+    def test_kitchen_assistant_is_a_job_title_under_the_chef_role(self):
+        self.auth(self.admin)
+        response = self._create(
+            email="dept.kitchen-assistant@staff.dev", role=User.Role.CHEF,
+            department="KITCHEN", job_title="Kitchen Assistant",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        staff = User.objects.get(email="dept.kitchen-assistant@staff.dev")
+        self.assertEqual(staff.role, User.Role.CHEF)
+        self.assertEqual(staff.staff_profile.job_title, "Kitchen Assistant")
+        self.assertEqual(staff.department, Workstation.Department.KITCHEN)
+
+    def test_conflicting_persisted_profile_blocks_capability_and_legacy_role_endpoints(self):
+        manager = make_staff("dept.conflict-endpoint@staff.dev", role=User.Role.MANAGER)
+        StaffProfile.objects.create(
+            user=manager, employee_code="SEC-CONFLICT-2", department="ACCOUNTS"
+        )
+        self.auth(manager)
+        self.assertEqual(self.client.get("/api/admin/staff-operations/profiles/").status_code, 403)
+        self.assertEqual(self.client.get("/api/admin/dashboard/").status_code, 403)
+
+    def test_profile_patch_cannot_spoof_role_or_department_and_role_transfer_syncs_profile(self):
+        self.auth(self.admin)
+        waiter = make_staff("dept.profile-patch@staff.dev", role=User.Role.WAITER)
+        profile = StaffProfile.objects.create(
+            user=waiter, employee_code="PROFILE-PATCH-1", department="RESTAURANT"
+        )
+        url = f"/api/admin/staff-operations/profiles/{profile.pk}/"
+        retired = self.client.patch(url, {"role": "RESTAURANT_MANAGER"}, format="json")
+        self.assertEqual(retired.status_code, 400, retired.content)
+        mismatch = self.client.patch(url, {"department": "ACCOUNTS"}, format="json")
+        self.assertEqual(mismatch.status_code, 400, mismatch.content)
+        changed = self.client.patch(
+            url, {"role": "CHEF", "department": "KITCHEN", "job_title": "Kitchen Assistant"}, format="json"
+        )
+        self.assertEqual(changed.status_code, 200, changed.content)
+        waiter.refresh_from_db()
+        profile.refresh_from_db()
+        self.assertEqual(waiter.role, User.Role.CHEF)
+        self.assertEqual(profile.department, Workstation.Department.KITCHEN)
+        self.assertEqual(profile.job_title, "Kitchen Assistant")
+
+    def test_lifecycle_transfer_enforces_department_role_pair_and_rejects_retired_titles(self):
+        self.auth(self.admin)
+        waiter = make_staff("dept.transfer@staff.dev", role=User.Role.WAITER)
+        profile = StaffProfile.objects.create(
+            user=waiter, employee_code="PROFILE-TRANSFER-1", department="RESTAURANT"
+        )
+        url = f"/api/admin/users/{waiter.pk}/actions/"
+        mismatch = self.client.post(url, {
+            "action": "transfer_department", "department": "ACCOUNTS", "role": "CHEF",
+        }, format="json")
+        self.assertEqual(mismatch.status_code, 400, mismatch.content)
+        waiter.refresh_from_db()
+        self.assertEqual(waiter.role, User.Role.WAITER)
+        retired = self.client.post(url, {
+            "action": "transfer_department", "department": "RESTAURANT", "role": "RESTAURANT_MANAGER",
+        }, format="json")
+        self.assertEqual(retired.status_code, 400, retired.content)
+        moved = self.client.post(url, {
+            "action": "transfer_department", "department": "KITCHEN", "role": "CHEF",
+            "job_title": "Kitchen Assistant",
+        }, format="json")
+        self.assertEqual(moved.status_code, 200, moved.content)
+        waiter.refresh_from_db()
+        profile.refresh_from_db()
+        self.assertEqual(waiter.role, User.Role.CHEF)
+        self.assertEqual(profile.department, Workstation.Department.KITCHEN)
+        self.assertEqual(profile.job_title, "Kitchen Assistant")
+
+    def test_account_role_update_keeps_existing_staff_profile_in_sync(self):
+        self.auth(self.admin)
+        waiter = make_staff("dept.role-sync@staff.dev", role=User.Role.WAITER)
+        profile = StaffProfile.objects.create(
+            user=waiter, employee_code="PROFILE-ROLE-SYNC-1", department="RESTAURANT"
+        )
+        response = self.client.patch(
+            f"/api/admin/users/{waiter.pk}/", {"role": "CHEF"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        waiter.refresh_from_db()
+        profile.refresh_from_db()
+        self.assertEqual(waiter.role, User.Role.CHEF)
+        self.assertEqual(profile.department, Workstation.Department.KITCHEN)
+        self.assertEqual(department_for_user(waiter), Workstation.Department.KITCHEN)
+
+    def test_permission_matrix_cannot_grant_capabilities_to_a_retired_role_alias(self):
+        self.auth(self.admin)
+        response = self.client.post("/api/admin/users/permissions-matrix/", {
+            "role": "BAR_MANAGER", "capability_code": "bar.order.manage", "effect": "GRANT",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("retired departmental title", response.content.decode())
 
     def test_role_change_cannot_restore_a_retired_title(self):
         self.auth(self.admin)
@@ -304,3 +458,36 @@ class AdminSiteRoleFormTests(BaseAPITestCase):
         form = JOneUserChangeForm(instance=waiter)
         form.cleaned_data = {"role": User.Role.CHEF}
         self.assertEqual(form.clean_role(), User.Role.CHEF)
+
+    def test_staff_profile_admin_rejects_department_mismatch_and_user_admin_syncs_role(self):
+        from django import forms as django_forms
+        from django.contrib import admin
+        from django.test import RequestFactory
+
+        from apps.accounts.admin import UserAdmin
+        from apps.staff_operations.admin import StaffProfileAdminForm
+
+        waiter = make_staff("adminform.profile-waiter@staff.dev", role=User.Role.WAITER)
+        profile = StaffProfile.objects.create(
+            user=waiter, employee_code="ADMIN-PROFILE-1", department="RESTAURANT"
+        )
+        profile_form = StaffProfileAdminForm(instance=profile)
+        profile_form.cleaned_data = {
+            "user": waiter, "department": "ACCOUNTS", "department_ref": None,
+        }
+        with self.assertRaises(django_forms.ValidationError):
+            profile_form.clean()
+
+        admin_user = make_user(
+            "adminform.role-sync@staff.dev", role=User.Role.ADMIN,
+            is_superuser=True, is_staff=True,
+        )
+        request = RequestFactory().post("/admin/")
+        request.user = admin_user
+        target = User.objects.get(pk=waiter.pk)
+        target.role = User.Role.CHEF
+        user_admin = admin.site._registry[User]
+        self.assertIsInstance(user_admin, UserAdmin)
+        user_admin.save_model(request, target, form=None, change=True)
+        profile.refresh_from_db()
+        self.assertEqual(profile.department, Workstation.Department.KITCHEN)

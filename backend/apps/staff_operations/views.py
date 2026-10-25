@@ -227,8 +227,9 @@ class StaffProfileListCreateView(APIView):
                 role_val = (data.get("role") or User.Role.RECEPTIONIST).upper()
                 if role_val not in User.Role.values or role_val == User.Role.GUEST:
                     raise DRFValidationError({"role": ["Select a valid staff role."]})
-                if role_val == User.Role.ADMIN and request.user.role != User.Role.ADMIN:
-                    raise PermissionDenied("Only an Administrator can create another Administrator account.")
+                from apps.accounts.departments import GLOBAL_ROLES
+                if role_val in GLOBAL_ROLES and request.user.role != User.Role.ADMIN:
+                    raise PermissionDenied("Only an Administrator can assign a global oversight role.")
                 raw_pw = (data.get("password") or "").strip() or f"Jone#{secrets.token_hex(4)}!9"
                 staff = User.objects.create_user(
                     email=email,
@@ -349,32 +350,76 @@ class StaffProfileDetailView(APIView):
         return success_response(StaffProfileSerializer(profile, context={"request": request}).data)
 
     def patch(self, request, pk):
+        from django.db import transaction
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        from apps.accounts.departments import (
+            RetiredDepartmentalRole, assert_assignable_role, department_for_role,
+            validate_role_department,
+        )
+
         profile = _profile_queryset().filter(pk=pk).first()
-        if profile is None: raise NotFound("Staff profile not found.")
+        if profile is None:
+            raise NotFound("Staff profile not found.")
         user = profile.user
-        user_updated = False
-        for ufield in ("first_name", "middle_name", "last_name", "phone"):
-            if ufield in request.data:
-                setattr(user, ufield, request.data.get(ufield) or "")
-                user_updated = True
-        if "role" in request.data and request.user.role == User.Role.ADMIN:
-            new_role = str(request.data.get("role") or "").upper()
-            if new_role in User.Role.values and new_role != User.Role.GUEST:
+        payload = request.data.copy()
+        new_role = user.role
+        role_changed = False
+        if "role" in request.data:
+            if request.user.role != User.Role.ADMIN:
+                raise PermissionDenied("Only an Administrator can change a staff member's role.")
+            try:
+                new_role = assert_assignable_role(request.data.get("role"))
+                if new_role not in User.Role.values or new_role == User.Role.GUEST:
+                    raise ValueError("Select a valid staff role.")
+                role_changed = new_role != user.role
+                submitted_department = request.data.get("department", "")
+                validate_role_department(new_role, submitted_department)
+            except (RetiredDepartmentalRole, ValueError) as exc:
+                raise DRFValidationError({"role": str(exc)}) from exc
+            payload.pop("role", None)  # User.role is not a StaffProfile field.
+            if role_changed and "department" not in payload:
+                payload["department"] = department_for_role(new_role)
+                if not payload["department"]:
+                    payload["department"] = ""
+                # A ref to the previous department would conflict with the new role.
+                payload["department_ref"] = None
+        elif "department" in payload or "department_ref" in payload:
+            # Profile department changes cannot transfer an account by themselves.
+            ref_value = payload.get("department_ref", "")
+            if isinstance(ref_value, int):
+                ref = Department.objects.filter(pk=ref_value).first()
+                if ref is None:
+                    raise DRFValidationError({"department_ref": "Choose an existing configured department."})
+                ref_value = ref.code
+            try:
+                validate_role_department(new_role, payload.get("department", profile.department), department_ref=ref_value or "")
+            except ValueError as exc:
+                raise DRFValidationError({"department": str(exc)}) from exc
+
+        serializer = StaffProfileSerializer(
+            profile, data=payload, partial=True,
+            context={"request": request, "assignment_role": new_role},
+        )
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            profile = serializer.save()
+            user_updated = False
+            for ufield in ("first_name", "middle_name", "last_name", "phone"):
+                if ufield in request.data:
+                    setattr(user, ufield, request.data.get(ufield) or "")
+                    user_updated = True
+            if role_changed:
                 user.role = new_role
                 user_updated = True
-        if user_updated:
-            user.save()
-
-        serializer = StaffProfileSerializer(profile, data=request.data, partial=True, context={"request": request})
-        serializer.is_valid(raise_exception=True)
-        profile = serializer.save()
-        if profile.department and not profile.department_ref_id:
-            dept_obj = Department.objects.filter(
-                Q(code__iexact=profile.department) | Q(name__iexact=profile.department)
-            ).first()
-            if dept_obj:
-                profile.department_ref = dept_obj
-                profile.save(update_fields=["department_ref", "updated_at"])
+            if user_updated:
+                user.save()
+            if profile.department and not profile.department_ref_id:
+                dept_obj = Department.objects.filter(
+                    Q(code__iexact=profile.department) | Q(name__iexact=profile.department)
+                ).first()
+                if dept_obj:
+                    profile.department_ref = dept_obj
+                    profile.save(update_fields=["department_ref", "updated_at"])
         log_action(actor=request.user, action="STAFF_PROFILE_UPDATED", instance=profile, request=request)
         return success_response(
             StaffProfileSerializer(_profile_queryset().get(pk=profile.pk), context={"request": request}).data,

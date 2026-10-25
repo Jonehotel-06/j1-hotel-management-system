@@ -91,6 +91,23 @@ class StaffProfileSerializer(serializers.ModelSerializer):
             "fingerprint_status", "attendance_status", "created_at", "updated_at",
         ]
 
+    def validate(self, attrs):
+        # The profile may describe a job position, but it cannot assign the
+        # account to a department that conflicts with its canonical role.
+        if "department" not in attrs and "department_ref" not in attrs and not self.context.get("assignment_role"):
+            return attrs
+        from apps.accounts.departments import validate_role_department
+
+        role = self.context.get("assignment_role") or self.instance.user.role
+        department = attrs.get("department", self.instance.department)
+        department_ref = attrs.get("department_ref", self.instance.department_ref)
+        ref_code = getattr(department_ref, "code", "") if department_ref else ""
+        try:
+            validate_role_department(role, department, department_ref=ref_code)
+        except ValueError as exc:
+            raise serializers.ValidationError({"department": str(exc)}) from exc
+        return attrs
+
     def get_profile_image_url(self, obj):
         return absolute_media_url(obj.user.profile_image, self.context.get("request"))
 
@@ -184,6 +201,38 @@ class StaffProfileCreateSerializer(serializers.Serializer):
         if not attrs.get("user_id"):
             if not attrs.get("first_name") or not attrs.get("last_name"):
                 raise serializers.ValidationError({"first_name": "First name and last name are required when registering a new staff member."})
+
+        from apps.accounts.departments import assert_assignable_role, validate_role_department
+        from apps.accounts.models import User
+
+        if attrs.get("user_id"):
+            account = User.objects.filter(pk=attrs["user_id"]).first()
+            if account is None:
+                return attrs  # the view returns its established 404 response
+            role = account.role
+            if attrs.get("role") and str(attrs["role"]).upper() != account.role:
+                raise serializers.ValidationError({"role": "An existing account's role must be changed through the authorized account update path."})
+        else:
+            role = str(attrs.get("role") or User.Role.RECEPTIONIST).strip().upper()
+        try:
+            role = assert_assignable_role(role)
+            attrs["role"] = role
+            department_ref = None
+            if attrs.get("department_ref"):
+                department_ref = Department.objects.filter(pk=attrs["department_ref"]).first()
+                if department_ref is None:
+                    raise ValueError("Choose an existing configured department.")
+            expected = validate_role_department(
+                role,
+                attrs.get("department", ""),
+                department_ref=getattr(department_ref, "code", ""),
+            )
+        except ValueError as exc:
+            raise serializers.ValidationError({"role": str(exc)}) from exc
+        if expected and not attrs.get("department") and not attrs.get("department_ref"):
+            # Leave department display compatible with current profiles; the
+            # role-derived department remains authoritative either way.
+            attrs["department"] = expected
         return attrs
 
 

@@ -4,6 +4,7 @@ Attendance, leave and disciplinary events are audit trails; they are exposed
 read-only so an administrator can investigate without being able to rewrite
 the record.
 """
+from django import forms
 from django.contrib import admin
 
 from .models import (
@@ -42,8 +43,38 @@ class DepartmentAdmin(admin.ModelAdmin):
     search_fields = ("code", "name", "slug")
 
 
+class StaffProfileAdminForm(forms.ModelForm):
+    """Keep department edits in the Django admin consistent with User.role."""
+
+    class Meta:
+        model = StaffProfile
+        fields = "__all__"
+
+    def clean(self):
+        cleaned = super().clean()
+        user = cleaned.get("user")
+        if user is None and self.instance.user_id:
+            user = self.instance.user
+        if user is None:
+            return cleaned
+        department = cleaned.get("department", self.instance.department)
+        department_ref = cleaned.get("department_ref", self.instance.department_ref)
+        from apps.accounts.departments import validate_role_department
+
+        try:
+            validate_role_department(
+                user.role,
+                department,
+                department_ref=getattr(department_ref, "code", "") if department_ref else "",
+            )
+        except ValueError as exc:
+            raise forms.ValidationError(str(exc)) from exc
+        return cleaned
+
+
 @admin.register(StaffProfile)
 class StaffProfileAdmin(admin.ModelAdmin):
+    form = StaffProfileAdminForm
     list_display = ("employee_code", "user", "department", "department_ref", "job_title", "employment_status")
     list_filter = ("department", "employment_type", "employment_status")
     search_fields = ("employee_code", "user__email", "user__first_name", "user__last_name", "job_title")

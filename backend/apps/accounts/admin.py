@@ -70,3 +70,31 @@ class UserAdmin(BaseUserAdmin):
             "fields": ("email", "first_name", "last_name", "password1", "password2", "role", "is_staff"),
         }),
     )
+
+    def save_model(self, request, obj, form, change):
+        old_role = None
+        if change and obj.pk:
+            old_role = User.objects.filter(pk=obj.pk).values_list("role", flat=True).first()
+        super().save_model(request, obj, form, change)
+        if old_role is None or old_role == obj.role:
+            return
+        try:
+            profile = obj.staff_profile
+        except Exception:  # noqa: BLE001 - profile is optional
+            return
+        from .departments import _normalize_department_code, department_for_role
+        from apps.staff_operations.models import Department
+
+        department = department_for_role(obj.role)
+        profile.department = department
+        if profile.department_ref_id and _normalize_department_code(profile.department_ref.code) != department:
+            profile.department_ref = None
+        if department and not profile.department_ref_id:
+            for candidate in Department.objects.all():
+                if department in {
+                    _normalize_department_code(candidate.code),
+                    _normalize_department_code(candidate.name),
+                }:
+                    profile.department_ref = candidate
+                    break
+        profile.save(update_fields=["department", "department_ref", "updated_at"])

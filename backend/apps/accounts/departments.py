@@ -137,46 +137,151 @@ def department_for_role(role: str) -> str:
     return ROLE_TO_DEPARTMENT.get(canonical, "")
 
 
-def department_for_user(user) -> str:
-    """The department context of a staff account.
-
-    A staff profile may record a department explicitly; when it does and that
-    department has a canonical role, the ROLE must agree with it. When it does
-    not, the role decides. Nothing here lets a request payload choose a
-    department: this reads stored records only.
-    """
-    if user is None:
-        return ""
-    profile_department = ""
-    try:
-        profile_department = str(getattr(user.staff_profile, "department", "") or "")
-    except Exception:  # noqa: BLE001 - no profile is a normal state
-        profile_department = ""
-    from_role = department_for_role(getattr(user, "role", ""))
-    if profile_department:
-        code = _normalize_department_code(profile_department)
-        if code in DEPARTMENT_ROLES:
-            return code
-    return from_role
-
-
 def _normalize_department_code(value: str) -> str:
-    raw = str(value or "").strip().upper().replace("-", "_").replace(" ", "_").replace("&", "AND")
+    """Normalize persisted department codes and established display aliases.
+
+    Staff profiles historically stored both department codes and role/display
+    labels. These aliases preserve those records while keeping the role as the
+    authority. Ambiguous Restaurant & Bar labels are handled against the user's
+    canonical role below; they never create a third shared role.
+    """
+    import re
+
+    raw = re.sub(r"[^A-Z0-9]+", "_", str(value or "").strip().upper()).strip("_")
     aliases = {
         "FRONT_OFFICE": Workstation.Department.FRONT_DESK,
         "RECEPTION": Workstation.Department.FRONT_DESK,
         "FRONT_DESK_AND_RECEPTION": Workstation.Department.FRONT_DESK,
+        "FRONT_DESK_RECEPTION": Workstation.Department.FRONT_DESK,
         "FOOD_AND_BEVERAGE": Workstation.Department.RESTAURANT,
         "F_AND_B": Workstation.Department.RESTAURANT,
         "KITCHEN_AND_RESTAURANT": Workstation.Department.KITCHEN,
+        "KITCHEN_CULINARY_PRODUCTION": Workstation.Department.KITCHEN,
+        "CASHIER_TILL": Workstation.Department.CASHIER,
         "STORES": Workstation.Department.INVENTORY,
         "STORE": Workstation.Department.INVENTORY,
+        "INVENTORY_STORES": Workstation.Department.INVENTORY,
+        "ACCOUNTS_FINANCE": Workstation.Department.ACCOUNTS,
         "FINANCE": Workstation.Department.ACCOUNTS,
         "HUMAN_RESOURCES": Workstation.Department.HR,
         "ADMIN": Workstation.Department.MANAGEMENT,
         "ADMINISTRATION": Workstation.Department.MANAGEMENT,
+        "ADMINISTRATION_PROCUREMENT": Workstation.Department.PROCUREMENT,
+        "ADMIN_MANAGEMENT_PROCUREMENT": Workstation.Department.PROCUREMENT,
+        "ADMIN_PROCUREMENT": Workstation.Department.PROCUREMENT,
+        "PORTERING": Workstation.Department.PORTER,
+        "RESTAURANT_BAR": "RESTAURANT_BAR",
+        "RESTAURANT_BAR_SERVICE": "RESTAURANT_BAR",
+        "ADMINISTRATOR": "",
+        "RESTAURANT_SERVICE": Workstation.Department.RESTAURANT,
+        "BAR_SERVICE": Workstation.Department.BAR,
     }
-    return aliases.get(raw, raw)
+    if raw in aliases:
+        return aliases[raw]
+    if raw in DEPARTMENT_ROLES:
+        return raw
+    # Compatibility with profile rows that stored a role's human-facing label
+    # instead of the department. Retired role labels resolve only to the same
+    # canonical department and never restore a retired assignment.
+    for role, label in User.Role.choices:
+        if raw == re.sub(r"[^A-Z0-9]+", "_", str(label).upper()).strip("_"):
+            return department_for_role(role)
+    return raw
+
+
+def _profile_department(user) -> tuple[str, bool]:
+    """Return the normalized persisted profile department and its validity."""
+    try:
+        profile = user.staff_profile
+    except Exception:  # noqa: BLE001 - a missing profile is normal
+        return "", True
+    text_value = str(getattr(profile, "department", "") or "").strip()
+    ref = getattr(profile, "department_ref", None)
+    ref_value = str(getattr(ref, "code", "") or "").strip() if ref else ""
+    text_code = _normalize_department_code(text_value) if text_value else ""
+    ref_code = _normalize_department_code(ref_value) if ref_value else ""
+    if text_value and not text_code:
+        return "", False
+    if ref_value and not ref_code:
+        return "", False
+    if text_code and ref_code and text_code != ref_code:
+        # A generic Restaurant & Bar historical label is compatible with
+        # either specific service department; role validation below resolves it.
+        if "RESTAURANT_BAR" not in {text_code, ref_code}:
+            return "", False
+    return ref_code or text_code, True
+
+
+def department_for_user(user) -> str:
+    """Resolve department from stored identity and fail closed on conflicts.
+
+    A department role is authoritative when no profile exists. If persisted
+    profile department data exists, it must normalize to that role's department.
+    Global oversight roles remain outside departmental scope by policy.
+    """
+    if user is None:
+        return ""
+    role = str(getattr(user, "role", "") or "")
+    from_role = department_for_role(role)
+    if role in GLOBAL_ROLES:
+        return ""
+    if not from_role:
+        return ""
+    profile_code, valid = _profile_department(user)
+    if not valid:
+        return ""
+    if profile_code:
+        if profile_code == "RESTAURANT_BAR" and from_role in {
+            Workstation.Department.RESTAURANT, Workstation.Department.BAR,
+        }:
+            return from_role
+        if profile_code != from_role:
+            return ""
+    return from_role
+
+
+def department_context_is_valid(user) -> bool:
+    """Whether an account's persisted role/profile identity is internally safe."""
+    if user is None:
+        return False
+    role = str(getattr(user, "role", "") or "")
+    if role in GLOBAL_ROLES or role == User.Role.GUEST:
+        return True
+    return bool(department_for_role(role) and department_for_user(user))
+
+
+def validate_role_department(role: str, department: str = "", *, department_ref: str = "") -> str:
+    """Validate the one canonical role against optional submitted department data.
+
+    Returns the canonical department code. This is used by every account/profile
+    writer; global oversight roles remain outside the departmental role map.
+    """
+    role = str(role or "").strip().upper()
+    if role in RETIRED_DEPARTMENTAL_ROLES:
+        assert_assignable_role(role)  # raises a clear retired-title error
+    if role not in ASSIGNABLE_ROLES or role == User.Role.GUEST:
+        raise ValueError(f"'{role}' is not an assignable staff role.")
+    expected = department_for_role(role)
+    supplied = [str(value or "").strip() for value in (department, department_ref) if str(value or "").strip()]
+    normalized = [_normalize_department_code(value) for value in supplied]
+    if any(not code for code in normalized):
+        raise ValueError("Choose a configured department.")
+    if role in GLOBAL_ROLES:
+        if any(code not in {Workstation.Department.MANAGEMENT} for code in normalized):
+            raise ValueError(f"{role} is a global oversight role and cannot be assigned to an operational department.")
+        return Workstation.Department.MANAGEMENT if normalized else ""
+    if not expected:
+        raise ValueError(f"'{role}' has no configured operational department.")
+    for code in normalized:
+        if code == "RESTAURANT_BAR" and expected in {
+            Workstation.Department.RESTAURANT, Workstation.Department.BAR,
+        }:
+            continue
+        if code != expected:
+            raise ValueError(
+                f"A {role} account belongs to {expected}; the request cannot place it in {code}."
+            )
+    return expected
 
 
 def department_of_role(role: str) -> str:
@@ -191,10 +296,14 @@ def is_cross_department(user, department: str) -> bool:
     capability grant — never because the caller sent a different department in
     the request body or URL.
     """
+    if user is not None and str(getattr(user, "role", "") or "") in GLOBAL_ROLES:
+        return False  # explicit global policy, not a departmental exception
     own = department_for_user(user)
     target = _normalize_department_code(department)
+    # Unknown identity or an unrecognized target is not evidence of same-team
+    # access. Treat it as cross-department so callers can safely deny it.
     if not own or not target:
-        return False
+        return True
     return own != target
 
 

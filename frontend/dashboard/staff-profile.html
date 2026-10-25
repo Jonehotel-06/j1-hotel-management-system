@@ -565,17 +565,39 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
       submitText: "Transfer",
       fields: [
         { name: "department", label: "New Department", type: "select", required: true, options: [
-          { value: "Management", label: "Management" },
-          { value: "Accounts & Finance", label: "Accounts & Finance" },
-          { value: "Administration & Procurement", label: "Administration & Procurement" },
-          { value: "Front Desk / Reception", label: "Front Desk / Reception" },
-          { value: "Kitchen", label: "Kitchen" },
-          { value: "Restaurant & Bar Service", label: "Restaurant & Bar Service" },
-          { value: "Housekeeping", label: "Housekeeping" },
-          { value: "Portering", label: "Portering" },
-          { value: "Stores & Inventory", label: "Stores & Inventory" }
+          { value: "MANAGEMENT", label: "Management" },
+          { value: "ACCOUNTS", label: "Accounts" },
+          { value: "PROCUREMENT", label: "Admin Management / Procurement" },
+          { value: "KITCHEN", label: "Kitchen" },
+          { value: "RESTAURANT", label: "Restaurant" },
+          { value: "BAR", label: "Bar" },
+          { value: "PORTER", label: "Porter" },
+          { value: "FRONT_DESK", label: "Front Desk" },
+          { value: "HOUSEKEEPING", label: "Housekeeping" },
+          { value: "INVENTORY", label: "Inventory / Stores" },
+          { value: "SECURITY", label: "Security" },
+          { value: "CASHIER", label: "Cashier" },
+          { value: "MAINTENANCE", label: "Maintenance" },
+          { value: "HR", label: "Human Resources" }
         ] },
-        { name: "job_title", label: "New Job Title", type: "text", required: true }
+        { name: "role", label: "Canonical role", type: "select", required: true, options: [
+          { value: "MANAGER", label: "Management · Manager" },
+          { value: "ACCOUNTANT", label: "Accounts · Accountant" },
+          { value: "PROCUREMENT_OFFICER", label: "Admin Management / Procurement · Procurement Officer" },
+          { value: "CHEF", label: "Kitchen · Chef (Kitchen Assistant is a designation)" },
+          { value: "WAITER", label: "Restaurant · Waiter / Waitress" },
+          { value: "PORTER", label: "Porter · Porter" },
+          { value: "RECEPTIONIST", label: "Front Desk · Receptionist" },
+          { value: "HOUSEKEEPING", label: "Housekeeping · Housekeeping" },
+          { value: "STOREKEEPER", label: "Inventory / Stores · Storekeeper" },
+          { value: "SECURITY", label: "Security · Security" },
+          { value: "CASHIER", label: "Cashier · Cashier" },
+          { value: "BARTENDER", label: "Bar · Bartender" },
+          { value: "MAINTENANCE", label: "Maintenance · Maintenance" },
+          { value: "HR_OFFICER", label: "Human Resources · HR Officer" },
+          { value: "GENERAL_MANAGER", label: "General Manager (global oversight)" }
+        ] },
+        { name: "job_title", label: "New Job Title / Designation", type: "text", required: true }
       ],
       onSubmit: async function(vals){
         await runUserLifecycleAction("transfer_department", vals);

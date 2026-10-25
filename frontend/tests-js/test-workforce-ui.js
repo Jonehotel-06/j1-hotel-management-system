@@ -73,22 +73,23 @@ test("workforce navigation serves every staff role while planning controls remai
   assert.match(page, /data-wf-manager/);
 });
 
-test("admin staff management can create, filter, and list every supported operational role", () => {
+test("staff assignment offers one canonical role per department and preserves legacy filters", () => {
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "staff.html"), "utf8");
-  const roles = [
-    "ADMIN", "MANAGER", "GENERAL_MANAGER", "FRONT_DESK_SUPERVISOR", "RECEPTIONIST", "CASHIER",
-    "RESTAURANT_MANAGER", "WAITER", "BAR_MANAGER", "BARTENDER", "KITCHEN_MANAGER", "CHEF",
-    "HOUSEKEEPING_MANAGER", "HOUSEKEEPER", "HOUSEKEEPING", "MAINTENANCE_TECHNICIAN", "MAINTENANCE",
-    "ACCOUNTS_MANAGER", "ACCOUNTANT", "HR_MANAGER", "SECURITY", "PROCUREMENT_OFFICER", "STOREKEEPER", "INVENTORY_CLERK",
+  const roleField = page.match(/name: "role", label: "Canonical role"[\s\S]*?options: \[([\s\S]*?)\]\s*\}/);
+  assert.ok(roleField, "canonical role picker must exist");
+  const assignable = [
+    "ADMIN", "GENERAL_MANAGER", "MANAGER", "ACCOUNTANT", "PROCUREMENT_OFFICER", "CHEF", "WAITER",
+    "PORTER", "RECEPTIONIST", "HOUSEKEEPING", "STOREKEEPER", "SECURITY", "CASHIER", "BARTENDER",
+    "MAINTENANCE", "HR_OFFICER",
   ];
-  roles.forEach((role) => assert.match(page, new RegExp('value: "' + role + '"')));
-  /* Every operational role can be filtered for EXCEPT the Administrator: the
-     owner (CEO) is not a staff row and must not be listed or filtered as one
-     (see tests-js/test-owner-ceo-profile-ui.js). The role stays assignable
-     when an account is created or edited. */
-  roles.filter((role) => role !== "ADMIN")
-    .forEach((role) => assert.match(page, new RegExp('option value="' + role + '"')));
-  assert.equal(/option value="ADMIN"/.test(page), false, "the owner is not a roster filter");
+  assignable.forEach((role) => assert.match(roleField[1], new RegExp('value: "' + role + '"')));
+  const retired = [
+    "FRONT_DESK_SUPERVISOR", "RESTAURANT_MANAGER", "BAR_MANAGER", "KITCHEN_MANAGER", "KITCHEN_ASSISTANT",
+    "HOUSEKEEPING_MANAGER", "HOUSEKEEPER", "MAINTENANCE_TECHNICIAN", "ACCOUNTS_MANAGER", "HR_MANAGER", "INVENTORY_CLERK",
+  ];
+  retired.forEach((role) => assert.doesNotMatch(roleField[1], new RegExp('value: "' + role + '"')));
+  /* Historical records remain findable, but retired titles are not assignable. */
   assert.match(page, /role__in: "MANAGER,GENERAL_MANAGER,FRONT_DESK_SUPERVISOR,[^"]*INVENTORY_CLERK"/);
-  assert.equal(/role__in: "ADMIN,/.test(page), false, "the roster never asks for the owner");
+  assert.match(page, /Kitchen Assistant is recorded here as a position/);
+  assert.match(roleField[1], /Kitchen · Chef/);
 });

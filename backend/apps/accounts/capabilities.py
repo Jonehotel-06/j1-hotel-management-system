@@ -263,6 +263,14 @@ def capability_codes_for_user(user: "User") -> frozenset[str]:
     """Return active capability codes resolved from persisted server grants."""
     if not user or not getattr(user, "is_authenticated", False) or not getattr(user, "is_active", False):
         return frozenset()
+    # A departmental capability is meaningful only when the persisted role and
+    # staff-profile department agree. This is a server-side guard used by API
+    # permissions and service-layer checks; a stale/conflicting profile fails
+    # closed rather than lending authority from a different team.
+    from .departments import GLOBAL_ROLES, department_context_is_valid
+
+    if user.role not in GLOBAL_ROLES and user.role != "GUEST" and not department_context_is_valid(user):
+        return frozenset()
     cached = getattr(user, "_jone_capability_codes", None)
     if cached is not None:
         return cached

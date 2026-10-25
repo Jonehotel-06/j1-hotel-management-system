@@ -478,24 +478,46 @@ class AdminUserAccountActionView(APIView):
             return success_response(res_payload, message=f"Credentials updated ({delivery_status.lower().replace('_', ' ')}).")
 
         if action == "transfer_department":
+            from apps.accounts.departments import (
+                RetiredDepartmentalRole, assert_assignable_role, validate_role_department,
+            )
+
             new_dept = (request.data.get("department") or "").strip()
             new_title = (request.data.get("job_title") or "").strip()
-            new_role = (request.data.get("role") or "").strip().upper()
-            if not new_dept and not new_role:
-                raise ValidationError({"department": "Specify a new department or role for the transfer."})
+            requested_role = (request.data.get("role") or "").strip().upper()
+            if not new_dept and not requested_role:
+                raise ValidationError({"department": "Specify a new department or canonical role for the transfer."})
             old_dept = profile.department if profile else ""
             old_role = target.role
-            if new_role and new_role in User.Role.values and new_role != User.Role.GUEST:
-                if new_role == User.Role.ADMIN and request.user.role != User.Role.ADMIN:
-                    from rest_framework.exceptions import PermissionDenied
-                    raise PermissionDenied("Only an Administrator can assign the ADMIN role.")
+            try:
+                new_role = assert_assignable_role(requested_role or target.role)
+                canonical_department = validate_role_department(new_role, new_dept)
+            except (RetiredDepartmentalRole, ValueError) as exc:
+                raise ValidationError({"role": str(exc)}) from exc
+            if new_role != target.role and request.user.role != User.Role.ADMIN:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("Only an Administrator can change an employee's assigned role.")
+            if new_role != target.role:
                 target.role = new_role
                 target.save(update_fields=["role", "updated_at"])
             if profile:
-                if new_dept:
-                    dept_obj = Department.objects.filter(Q(code__iexact=new_dept) | Q(name__iexact=new_dept)).first()
-                    profile.department = dept_obj.name if dept_obj else new_dept
-                    profile.department_ref = dept_obj
+                # Store the validated canonical department, never the unchecked
+                # browser label. Keep the optional lookup relation only when it
+                # resolves to the same authoritative department.
+                profile.department = canonical_department
+                if canonical_department:
+                    matching = None
+                    from apps.accounts.departments import _normalize_department_code
+                    for candidate in Department.objects.all():
+                        if canonical_department in {
+                            _normalize_department_code(candidate.code),
+                            _normalize_department_code(candidate.name),
+                        }:
+                            matching = candidate
+                            break
+                    profile.department_ref = matching
+                else:
+                    profile.department_ref = None
                 if new_title:
                     profile.job_title = new_title
                 profile.save()
@@ -572,13 +594,18 @@ class AdminPermissionMatrixView(APIView):
 
     def post(self, request):
         from .models import Capability, RoleCapability, UserCapabilityOverride
+        from .departments import RetiredDepartmentalRole, assert_assignable_role
 
         role = (request.data.get("role") or "").strip().upper()
         capability_code = (request.data.get("capability_code") or "").strip()
         effect = (request.data.get("effect") or "GRANT").strip().upper()
 
+        try:
+            role = assert_assignable_role(role)
+        except RetiredDepartmentalRole as exc:
+            raise ValidationError({"role": str(exc)}) from exc
         if not role or role not in User.Role.values or role == User.Role.GUEST:
-            raise ValidationError({"role": "Select a valid staff role."})
+            raise ValidationError({"role": "Select a valid assignable staff role."})
         if role == User.Role.ADMIN:
             raise ValidationError({"role": "The ADMIN role permanently holds all active capabilities."})
         cap = Capability.objects.filter(code=capability_code, is_active=True).first()

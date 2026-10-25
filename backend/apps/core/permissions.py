@@ -32,7 +32,18 @@ LEGACY_READ_ROLES = STAFF_ROLES + ("FRONT_DESK_SUPERVISOR", "GENERAL_MANAGER")
 
 
 def _active(user):
-    return bool(user and user.is_authenticated and user.is_active)
+    if not (user and user.is_authenticated and user.is_active):
+        return False
+    # The role/profile pair is trusted identity, not display metadata. A
+    # conflicting stored department fails closed across the existing permission
+    # classes as well as capability-gated views. Global oversight roles retain
+    # their established policy in department_context_is_valid().
+    if getattr(user, "is_staff_member", False):
+        from apps.accounts.departments import department_context_is_valid
+
+        if not department_context_is_valid(user):
+            return False
+    return True
 
 
 class HasCapability(BasePermission):
