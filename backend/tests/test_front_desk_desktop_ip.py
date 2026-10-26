@@ -22,37 +22,24 @@ wrong-department workstation, forged forwarding headers) still holds.
 Nothing here weakens the other departments: an operational role still needs the
 desk, and management still keeps its any-device exception.
 """
-<<<<<<< Updated upstream
-from django.core.cache import cache
-from django.test import override_settings
-=======
 from unittest import mock
 
 from django.core.cache import cache
 from django.test import override_settings
 from rest_framework.test import APIClient
->>>>>>> Stashed changes
 
 from apps.accounts.desktop_policy import (
     DESKTOP_BY_SETTINGS_IP,
     DESKTOP_HEADER,
-<<<<<<< Updated upstream
-    issue_desktop_key,
-=======
     hash_desktop_key,
     issue_desktop_key,
     resolve_receptionist_desktop,
->>>>>>> Stashed changes
 )
 from apps.accounts.models import User, Workstation
 from apps.audit.models import AuditLog
 from apps.hotel.models import HotelSettings
-<<<<<<< Updated upstream
-from apps.staff_operations.models import AttendanceRecord
-=======
 from apps.staff_operations.models import AttendanceRecord, StaffProfile
 from apps.staff_operations.services import fingerprint_service
->>>>>>> Stashed changes
 
 from .base import BaseAPITestCase
 from .factories import hotel_settings, make_staff, make_user
@@ -67,16 +54,11 @@ PROXY_PEER = "10.0.0.14"         # the deployment's own proxy (private range)
 LOGIN_URL = "/api/auth/login/"
 REFRESH_URL = "/api/auth/token/refresh/"
 LOGOUT_URL = "/api/auth/logout/"
-<<<<<<< Updated upstream
-SETTINGS_URL = "/api/admin/settings/"
-CLOCK_URL = "/api/admin/staff-operations/attendance/clock/"
-=======
 PROFILE_URL = "/api/auth/profile/"
 CLIENT_ADDRESS_URL = "/api/auth/client-address/"
 SETTINGS_URL = "/api/admin/settings/"
 CLOCK_URL = "/api/admin/staff-operations/attendance/clock/"
 TERMINAL_URL = "/api/admin/staff-operations/biometrics/reception-terminal/"
->>>>>>> Stashed changes
 WORKSTATIONS_URL = "/api/admin/users/terminals/"
 
 
@@ -85,16 +67,6 @@ class FrontDeskLoginTestCase(BaseAPITestCase):
 
     def setUp(self):
         super().setUp()
-<<<<<<< Updated upstream
-        cache.clear()
-        self.admin = make_user("fd-admin@jone.test", password=PASSWORD, role=User.Role.ADMIN)
-        self.receptionist = make_user("fd-one@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST)
-        self.colleague = make_user("fd-two@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST)
-        # The desktop as an administrator configures it in Settings, and the
-        # desk record that makes the hotel's front desk a real, deactivatable
-        # registration. Its own ip_address is deliberately left blank: this is
-        # the deployment in which the address was only ever saved in Settings.
-=======
         cache.clear()
         self.admin = make_user("fd-admin@jone.test", password=PASSWORD, role=User.Role.ADMIN)
         self.receptionist = make_user("fd-one@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST)
@@ -505,4 +477,3 @@ class DesktopConfigurationApiTests(FrontDeskLoginTestCase):
         self.assertEqual(stale.status_code, 403, stale.content)
         current = self.login(self.receptionist, ip=OTHER_IP, key=second.data["data"]["receptionist_desktop_key"])
         self.assertEqual(current.status_code, 200, current.content)
->>>>>>> Stashed changes
