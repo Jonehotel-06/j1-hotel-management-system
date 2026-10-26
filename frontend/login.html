@@ -227,7 +227,7 @@
       } else if (meta.reason === "front_desk_ip_mismatch") {
         lines.push("The front desk is pinned to a fixed address or network in hotel settings and this browser is outside it. An administrator can widen that entry to the network the desk sits on (for example 102.89.34.0/24).");
       } else if (ip) {
-        lines.push("An administrator can register that address (or the network it belongs to) for the front desk workstation so front desk staff sign in here with just their email and password.");
+        lines.push("An administrator can register that address (or the network it belongs to) for the front desk workstation \u2014 in Settings \u2192 Front Desk desktop, or on the workstation itself \u2014 so front desk staff sign in here with just their email and password. If the address changes between shifts, register the network the desk sits on instead (for example 102.89.34.0/24). Nothing has been saved automatically: this page only reports the address it saw, and only an administrator can change the registration.");
       }
       lines.push("You can also sign in with the 6-digit code issued at the Reception Attendance Workstation after clock-in.");
       box.textContent = lines.join(" ");

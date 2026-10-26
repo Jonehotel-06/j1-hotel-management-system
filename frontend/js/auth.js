@@ -374,13 +374,73 @@
     return true;
   }
 
+  /* Sign-in failures are NOT interchangeable, and reporting the wrong one sends
+     the person to the wrong fix: "we couldn't reach our servers" makes a
+     receptionist check their connection when the real answer was "this device
+     is not the Front Desk", and an authorization problem must never be dressed
+     up as a network problem. Each condition below gets its own sentence; the
+     backend's own authored message wins whenever it named the reason, and none
+     of these strings reveals credentials, tokens or server internals. */
+  const SIGN_IN_MESSAGES = {
+    credentials: "Incorrect email or password.",
+    restricted: "Staff sign-in is available only from the Receptionist Desktop. Ask the front desk to sign you in, or contact an administrator.",
+    permission: "Your account is not allowed to sign in here. Contact an administrator.",
+    inactive: "This account is inactive or disabled. Contact an administrator.",
+    csrf: "Your sign-in form has expired. Reload the page and try again.",
+    rateLimited: "Too many sign-in attempts. Please wait a moment and try again.",
+    server: "Our server could not complete the sign-in just now. Please try again in a moment.",
+    timeout: "The sign-in request is taking longer than expected. Please try again.",
+    offline: "You appear to be offline. Reconnect and try again.",
+    network: "We couldn't reach our servers. Your connection or our service may be unavailable — please try again.",
+    unexpected: "The server sent a response we couldn't read. Please try again.",
+    fallback: "Sign-in failed. Please try again."
+  };
+
+  function signInErrorMessage(err) {
+    const status = Number(err && err.status) || 0;
+    const kind = String((err && err.kind) || "");
+    const code = String((err && err.code) || "").toUpperCase();
+    const serverMessage = typeof (err && err.message) === "string" ? err.message.trim() : "";
+    // 1. Reasons only the server knows, in the order that matters.
+    if (code === "STAFF_SIGN_IN_RESTRICTED") return serverMessage || SIGN_IN_MESSAGES.restricted;
+    if (/INACTIVE|DISABLED|SUSPENDED/.test(code)) return serverMessage || SIGN_IN_MESSAGES.inactive;
+    if (/CSRF/.test(code)) return SIGN_IN_MESSAGES.csrf;
+    if (code === "RATE_LIMITED" || status === 429) return serverMessage || SIGN_IN_MESSAGES.rateLimited;
+    // 2. HTTP answers. 401 is deliberately identical for a wrong password and an
+    //    account that may not sign in, so this page never enumerates accounts.
+    if (status === 401) return SIGN_IN_MESSAGES.credentials;
+    if (status === 403) return serverMessage || SIGN_IN_MESSAGES.permission;
+    if (status === 400 || status === 422) return serverMessage || SIGN_IN_MESSAGES.fallback;
+    if (status >= 500) return serverMessage || SIGN_IN_MESSAGES.server;
+    // 3. No HTTP answer at all — the only group that may say "network".
+    if (kind === "offline") return SIGN_IN_MESSAGES.offline;
+    if (kind === "timeout") return serverMessage || SIGN_IN_MESSAGES.timeout;
+    if (kind === "network") return serverMessage || SIGN_IN_MESSAGES.network;
+    if (kind === "parse") return SIGN_IN_MESSAGES.unexpected;
+    if (!status) return serverMessage || SIGN_IN_MESSAGES.unexpected;
+    return serverMessage || SIGN_IN_MESSAGES.fallback;
+  }
+
   function bindLoginForm(formSel, opts = {}) {
     const form = document.querySelector(formSel);
     if (!form) return;
+    /* Each attempt starts from a clean page state: a message left over from the
+       previous failure must never be mistaken for this attempt's result, and a
+       refusal's notice must be cleared the moment the person tries again. */
+    function resetAttempt() {
+      const errBox = form.querySelector("[data-form-error]");
+      if (errBox) { errBox.textContent = ""; errBox.style.display = "none"; }
+      const notice = form.querySelector("[data-desktop-notice]");
+      if (notice) { notice.textContent = ""; notice.style.display = "none"; }
+      if (typeof opts.onReset === "function") { try { opts.onReset(); } catch (_) {} }
+    }
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+      resetAttempt();
       const btn = form.querySelector("[type=submit]");
-      if (!JONE.guardSubmit(btn)) return;
+      // One submission in flight at a time (the guard is released below for
+      // EVERY outcome, so a failure never leaves the form unsubmittable).
+      if (btn && !JONE.guardSubmit(btn)) return;
       const fd = new FormData(form);
       const email = String(fd.get("email") != null ? fd.get("email") : (fd.get("username") || "")).trim();
       const password = fd.get("password") || "";
@@ -395,15 +455,23 @@
           ? defaultStaffLanding(session && session.user && session.user.role) : "index.html";
         location.href = next;
       } catch (err) {
-        JONE.releaseGuard(btn);
         // The refusal carries the address the request came from (err.data.errors),
         // which is the only thing an administrator needs in order to register the
-        // desk. Pass the error through so the page can show it.
-        if (err.code === "STAFF_SIGN_IN_RESTRICTED" && typeof opts.onRestricted === "function") opts.onRestricted(err);
-        const msg = err.status === 401 ? "Incorrect email or password." : (err.message || "Sign-in failed. Please try again.");
-        JONE.ui.toast(msg, "error");
+        // desk. Pass the error through so the page can show it — and never let a
+        // page callback turn a backend answer into a silent, unreported failure.
+        if (err && err.code === "STAFF_SIGN_IN_RESTRICTED" && typeof opts.onRestricted === "function") {
+          try { opts.onRestricted(err); } catch (_) {}
+        }
+        const msg = signInErrorMessage(err);
+        try { JONE.ui.toast(msg, "error"); } catch (_) {}
         const errBox = form.querySelector("[data-form-error]");
         if (errBox) { errBox.textContent = msg; errBox.style.display = "block"; }
+      } finally {
+        // Released whatever happened: a refused credential, a 500, a timeout, a
+        // thrown callback or an unreadable response. This is what keeps the next
+        // person able to sign in without reloading the page. On success the page
+        // is already navigating, so releasing here is harmless.
+        if (btn) JONE.releaseGuard(btn);
       }
     });
   }
