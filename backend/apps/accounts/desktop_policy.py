@@ -65,8 +65,6 @@ import ipaddress
 import secrets
 
 from django.utils import timezone
-<<<<<<< Updated upstream
-=======
 
 from apps.core.client_ip import (
     address_in_network,
@@ -436,4 +434,3 @@ def register_desktop_ip(workstation: Workstation, value) -> str:
     workstation.desktop_ip_registered_at = timezone.now() if cleaned else None
     return cleaned
 
->>>>>>> Stashed changes
