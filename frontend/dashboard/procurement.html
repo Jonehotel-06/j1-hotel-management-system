@@ -143,7 +143,14 @@ function linesToBaseUnits(lines){
    Orders
 --------------------------------------------------------------------------- */
 function canEdit(status){return status==="DRAFT"||status==="SUBMITTED";}
-function canAttachReceipt(status){return ["APPROVED","ORDERED","PARTIALLY_RECEIVED","RECEIVED"].indexOf(status)!==-1;}
+function canAttachReceipt(status){return ["APPROVED","ORDERED","PARTIALLY_RECEIVED","RECEIVED","PAID"].indexOf(status)!==-1;}
+function canReceive(order){
+  if(["APPROVED","ORDERED","PARTIALLY_RECEIVED","PAID"].indexOf(order.status)===-1)return false;
+  return (order.lines||[]).some(function(line){
+    var remaining=line.quantity_outstanding!=null?Number(line.quantity_outstanding):Number(line.quantity_ordered)-Number(line.quantity_received||0);
+    return remaining>0;
+  });
+}
 /* Payment is recorded once the order is authorised; a cancelled order
    can no longer be paid and a fully paid one has nothing left to pay. */
 function canPay(status){return ["APPROVED","ORDERED","PARTIALLY_RECEIVED","RECEIVED"].indexOf(status)!==-1;}
@@ -321,7 +328,7 @@ async function viewOrder(reference){
     if(order.status==="DRAFT")action("Submit for approval","",function(){JONE.ui.modal.close();transitionOrder(reference,"submit");});
     if(order.status==="SUBMITTED"&&manager())action("Approve","btn-accent",function(){JONE.ui.modal.close();approveOrder(order);});
     if(order.status==="APPROVED")action("Mark ordered","",function(){JONE.ui.modal.close();transitionOrder(reference,"ordered");});
-    if(["ORDERED","PARTIALLY_RECEIVED"].indexOf(order.status)!==-1)action("Record receipt","",function(){JONE.ui.modal.close();recordReceipt(reference,order);});
+    if(canReceive(order))action("Record receipt","",function(){JONE.ui.modal.close();recordReceipt(reference,order);});
     if(canAttachReceipt(order.status)&&manager())action("Upload invoice / receipt","btn-outline",function(){JONE.ui.modal.close();uploadApprovalReceipt(reference,order);});
     if(canPay(order.status)&&manager())action("Record supplier payment","btn-accent",function(){JONE.ui.modal.close();recordPayment(reference,order);});
   }catch(err){
@@ -547,13 +554,16 @@ async function recordReceipt(reference,known){
   var order=known;
   try{if(!order||!order.lines)order=await getOrder(reference);}
   catch(err){JONE.ui.toast((err&&err.message)||"The purchase order couldn't be loaded.","error");return;}
+  // Reuse one key if a request times out and this same dialog is retried.
+  var receiptContext={};
+  receiptContext.idempotency_key=OPS.newIdempotencyKey("goods-receipt");
   var result=await JONE.dashboard.formModal({title:"Record goods receipt · "+reference,submitText:"Post receipt",wide:true,
     fields:[receiptField(order),{name:"received_on",label:"Received on",type:"date"},
       {name:"supplier_delivery_reference",label:"Supplier delivery reference",type:"text"},
       {name:"notes",label:"Receipt notes",type:"textarea",rows:2}],
     onSubmit:async function(values){
       values=OPS.omitEmpty(values);
-      values.idempotency_key=OPS.newIdempotencyKey("goods-receipt");
+      values.idempotency_key=receiptContext.idempotency_key;
       await window.API.resourceAction("purchaseOrders",reference,"receipts",values);
       return{message:"Goods receipt posted."};
     }});

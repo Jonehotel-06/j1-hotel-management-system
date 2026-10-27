@@ -46,7 +46,19 @@
 /version.json
   Cache-Control: no-store, no-cache, max-age=0, must-revalidate
 
+# Cloudflare Pages serves these HTML documents at extensionless URLs after
+# redirecting their .html paths. Protect both the redirect and final response.
+/qr-service
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
 /qr-service.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/payment-verify
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer
@@ -56,7 +68,17 @@
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer
 
+/booking-review
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
 /booking-review.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/my-bookings
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer
@@ -66,12 +88,32 @@
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer
 
+/booking-confirmation
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
 /booking-confirmation.html
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer
 
+/cancellation-result
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
 /cancellation-result.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/reset-password
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/reset-password.html
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer

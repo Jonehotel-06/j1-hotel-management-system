@@ -381,7 +381,7 @@ def attach_purchase_order_receipt(*, purchase_order, actor, upload, payment_refe
     po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
     if po.status not in {
         PurchaseOrder.Status.APPROVED, PurchaseOrder.Status.ORDERED,
-        PurchaseOrder.Status.PARTIALLY_RECEIVED, PurchaseOrder.Status.RECEIVED,
+        PurchaseOrder.Status.PARTIALLY_RECEIVED, PurchaseOrder.Status.RECEIVED, PurchaseOrder.Status.PAID,
     }:
         raise ValidationError("Approve the purchase order before attaching a payment receipt or invoice.")
     if upload is not None:
@@ -423,6 +423,11 @@ def record_purchase_order_payment(
     reference = str(reference or "").strip()[:160]
     if method != PurchaseOrderPayment.PaymentMethod.CASH and not reference:
         raise ValidationError({"reference": "Enter the bank, card or cheque reference for this payment."})
+    # The order row is locked above. Prevent the same non-empty reference from
+    # recording the same supplier money twice on this order. This is not a
+    # substitute for an idempotency key or cross-order bank reconciliation.
+    if reference and po.payments.filter(reference__iexact=reference).exists():
+        raise ValidationError({"reference": "This payment reference is already recorded on this purchase order."})
 
     paid_on = paid_on or hotel_today()
     if paid_on > hotel_today():
@@ -438,6 +443,8 @@ def record_purchase_order_payment(
     if amount is None or not amount.is_finite() or amount <= 0:
         raise ValidationError({"amount": "Enter a payment amount greater than zero."})
     amount = amount.quantize(MONEY, rounding=ROUND_HALF_UP)
+    if amount <= Decimal("0.00"):
+        raise ValidationError({"amount": "Enter a payment amount of at least 0.01."})
     if amount > outstanding:
         raise ValidationError({
             "amount": f"The payment cannot exceed the outstanding balance of {outstanding} {po.currency}.",
@@ -461,7 +468,8 @@ def record_purchase_order_payment(
         payment.evidence_uploaded_at = timezone.now()
     payment.save()
 
-    if (po.total_paid + amount) >= total:
+    # total_paid queries all persisted rows, including the payment just saved.
+    if po.total_paid >= total:
         po.status = PurchaseOrder.Status.PAID
         po.paid_at = timezone.now()
         po.paid_by = actor
@@ -524,17 +532,49 @@ def mark_purchase_order_ordered(*, purchase_order, actor):
     return po
 
 
+def _validate_receipt_retry(existing, *, po, raw_lines, received_on, supplier_delivery_reference, notes):
+    """A source key may only replay the same receipt on the same order."""
+    mismatch = ValidationError({"idempotency_key": "This receipt key was already used for different receipt details."})
+    if existing.purchase_order_id != po.pk or not 1 <= len(raw_lines) <= 200:
+        raise mismatch
+    stored = {line.purchase_order_line_id: line for line in existing.lines.select_related("purchase_order_line")}
+    if len(stored) != len(raw_lines):
+        raise mismatch
+    seen = set()
+    for raw in raw_lines:
+        try:
+            line_id = int(raw["purchase_order_line_id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise mismatch from exc
+        line = stored.get(line_id)
+        if line is None or line_id in seen:
+            raise mismatch
+        seen.add(line_id)
+        quantity = _quantity(raw.get("quantity_received"), field="quantity_received", positive=True)
+        unit_cost = _cost(raw.get("unit_cost", line.purchase_order_line.unit_cost))
+        if quantity != line.quantity_received or unit_cost != line.unit_cost:
+            raise mismatch
+    if received_on is not None and existing.received_on != received_on:
+        raise mismatch
+    if existing.supplier_delivery_reference != (supplier_delivery_reference or "")[:120] or existing.notes != (notes or ""):
+        raise mismatch
+
+
 @transaction.atomic
 def receive_goods(*, purchase_order, receipt_lines, actor, source_key, received_on=None, supplier_delivery_reference="", notes=""):
     """Receive bounded PO quantities and append stock receipts exactly once."""
     po = PurchaseOrder.objects.select_for_update().select_related("supplier", "delivery_location").get(pk=purchase_order.pk)
-    if po.status not in {PurchaseOrder.Status.APPROVED, PurchaseOrder.Status.ORDERED, PurchaseOrder.Status.PARTIALLY_RECEIVED}:
-        raise ValidationError(f"Goods cannot be received for purchase order status {po.status}.")
     source_key = str(source_key or "").strip()
     if not source_key: raise ValidationError("A stable receipt source key is required.")
-    existing = GoodsReceipt.objects.select_for_update().filter(source_key=source_key).first()
-    if existing: return existing, False
     raw_lines = list(receipt_lines or ())
+    existing = GoodsReceipt.objects.select_for_update().filter(source_key=source_key).first()
+    if existing:
+        _validate_receipt_retry(existing, po=po, raw_lines=raw_lines, received_on=received_on,
+                                supplier_delivery_reference=supplier_delivery_reference, notes=notes)
+        return existing, False
+    if po.status not in {PurchaseOrder.Status.APPROVED, PurchaseOrder.Status.ORDERED,
+                         PurchaseOrder.Status.PARTIALLY_RECEIVED, PurchaseOrder.Status.PAID}:
+        raise ValidationError(f"Goods cannot be received for purchase order status {po.status}.")
     if not 1 <= len(raw_lines) <= 200: raise ValidationError({"lines": "A receipt needs between 1 and 200 lines."})
     line_ids=[]
     for raw in raw_lines:
@@ -561,7 +601,10 @@ def receive_goods(*, purchase_order, receipt_lines, actor, source_key, received_
             break
         except IntegrityError:
             existing=GoodsReceipt.objects.select_for_update().filter(source_key=source_key).first()
-            if existing: return existing, False
+            if existing:
+                _validate_receipt_retry(existing, po=po, raw_lines=raw_lines, received_on=received_on,
+                                        supplier_delivery_reference=supplier_delivery_reference, notes=notes)
+                return existing, False
     else: raise ValidationError("Could not allocate a unique goods-receipt reference; please retry.")
     for po_line, qty, unit_cost in normalized:
         movement, _ = record_stock_movement(
@@ -575,8 +618,11 @@ def receive_goods(*, purchase_order, receipt_lines, actor, source_key, received_
         po_line.quantity_received = (Decimal(po_line.quantity_received) + qty).quantize(QTY)
         po_line.save(update_fields=["quantity_received"])
     all_received = not PurchaseOrderLine.objects.filter(purchase_order=po, quantity_received__lt=F("quantity_ordered")).exists()
-    # Import locally to keep the hot stock path's imports simple.
-    if all_received:
+    # Payment and physical receipt are independent. Preserve an actually paid
+    # order's status when advance-paid stock arrives, including partial arrivals.
+    if po.paid_at is not None and po.total_paid >= po.total_amount:
+        po.status = PurchaseOrder.Status.PAID
+    elif all_received:
         po.status = PurchaseOrder.Status.RECEIVED
     else:
         po.status = PurchaseOrder.Status.PARTIALLY_RECEIVED

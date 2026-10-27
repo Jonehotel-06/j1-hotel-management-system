@@ -221,7 +221,13 @@ class _InlineImageMessage(EmailMultiAlternatives):
 
         policy = policy or email.policy.default
         if not self.inline_images:
-            # Nothing to nest: Django's own single-part/alternative builder.
+            # Django 5.2's public EmailMessage.message() takes no policy
+            # argument; Django 6 accepts it. Use the declared runtime's API
+            # rather than catching TypeError from unrelated message failures.
+            from django import VERSION as django_version
+
+            if django_version < (6, 0):
+                return super().message()
             return super().message(policy=policy)
 
         charset = self.encoding or django_settings.DEFAULT_CHARSET

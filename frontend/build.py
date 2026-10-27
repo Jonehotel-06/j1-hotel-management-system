@@ -100,6 +100,9 @@ PUBLIC_PAGES = [
 # scripts. They still receive release asset stamps.
 PORTAL_PAGES = ["portal/login.html", "portal/index.html"]
 QR_SERVICE_PAGES = ["qr-service.html"]
+# Password-reset credentials live only in memory after the URL is cleaned.
+# Stamp release assets but do not inject reload-capable update/PWA scripts.
+RESET_PASSWORD_PAGES = ["reset-password.html"]
 
 # The installable PWA is the staff dashboard only. Public guest pages and the
 # guest portal intentionally receive no manifest link and no standalone-web-app
@@ -259,7 +262,7 @@ def build(path, version):
         return False
     raw = f.read_text(encoding="utf-8")
     is_portal = path.startswith("portal/")
-    is_memory_only_page = is_portal or path in QR_SERVICE_PAGES
+    is_memory_only_page = is_portal or path in QR_SERVICE_PAGES or path in RESET_PASSWORD_PAGES
     depth = "../" if path.startswith(("dashboard/", "portal/")) else ""
 
     # --- Re-inject shared chrome idempotently -------------------------------
@@ -317,9 +320,9 @@ def build(path, version):
             raw = re.sub(r'(<link rel="stylesheet" href="css/main\.css(?:\?[^"]*)?">)', r'\1' + "\n" + THEME_BOOT, raw, count=1)
         raw = re.sub(r"<!--JS-->", JS_BLOCK, raw)
 
-    # Portal/QR pages retain deliberate minimal shells. Do not inject pwa.js,
-    # localStorage theme boot, or update-checker there: a reload could discard
-    # an opaque portal session or an issued QR bearer before it is printed.
+    # Portal, QR and password-reset pages retain deliberate minimal shells.
+    # Do not inject pwa.js, a theme boot, or update-checker there: a reload
+    # could discard an in-memory session or one-use credential.
     if not is_memory_only_page:
         raw = _ensure_pwa(raw, depth=depth, is_dashboard=path.startswith("dashboard/"))
         raw = _ensure_version_scripts(raw, depth)
@@ -421,7 +424,7 @@ def main():
     # their own shells. Every intentional page gets asset stamps; public and
     # dashboard pages also get version/update-checker wiring.
     built = []
-    pages = list(PUBLIC_PAGES) + list(PORTAL_PAGES) + list(QR_SERVICE_PAGES) + sorted(
+    pages = list(PUBLIC_PAGES) + list(PORTAL_PAGES) + list(QR_SERVICE_PAGES) + list(RESET_PASSWORD_PAGES) + sorted(
         p.relative_to(ROOT).as_posix() for p in (ROOT / "dashboard").glob("*.html")
     )
     for p in pages:

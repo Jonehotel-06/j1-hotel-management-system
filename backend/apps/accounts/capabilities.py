@@ -304,8 +304,9 @@ def capability_codes_for_user(user: "User") -> frozenset[str]:
             RoleCapability.objects.filter(role=user.role, capability__is_active=True)
             .values_list("capability__code", flat=True)
         )
-        if not role_codes and user.role in ROLE_CAPABILITY_CODES:
-            role_codes = set(ROLE_CAPABILITY_CODES[user.role])
+        # An empty persisted role is an explicit deny, not a signal to restore
+        # the Python defaults. Restoring them here would undo the administrator's
+        # last revocation and could resurrect inactive capabilities.
         for effect, cap_code in (
             UserCapabilityOverride.objects.filter(user=user, capability__is_active=True)
             .values_list("effect", "capability__code")
