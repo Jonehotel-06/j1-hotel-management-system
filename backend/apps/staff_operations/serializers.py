@@ -40,6 +40,33 @@ class DepartmentSerializer(serializers.ModelSerializer):
             user__is_active=True,
         ).count()
 
+    def validate(self, attrs):
+        """Do not recreate the removed standalone Cashier department."""
+        from apps.accounts.departments import is_removed_cashier_department
+
+        instance = self.instance
+        for field in ("code", "name", "slug"):
+            value = attrs.get(field, getattr(instance, field, "") if instance else "")
+            if value and is_removed_cashier_department(value):
+                raise serializers.ValidationError({
+                    field: "The Cashier department was merged into Restaurants; use RESTAURANT_BAR instead."
+                })
+        supported_roles = attrs.get(
+            "supported_roles", getattr(instance, "supported_roles", []) if instance else []
+        ) or []
+        if any(str(role).strip().upper() == "CASHIER" for role in supported_roles):
+            raise serializers.ValidationError({
+                "supported_roles": "CASHIER is retired; use the existing WAITER role for Restaurants."
+            })
+        job_positions = attrs.get(
+            "job_positions", getattr(instance, "job_positions", []) if instance else []
+        ) or []
+        if any(str(position).strip().upper() == "CASHIER" for position in job_positions):
+            raise serializers.ValidationError({
+                "job_positions": "Use 'POS Cashier' as a designation under Restaurants, not a standalone Cashier department."
+            })
+        return attrs
+
 
 class StaffProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source="user.email", read_only=True)

@@ -381,6 +381,12 @@ def staff_department_code(staff: User) -> str:
             "FRONT_DESK": "FRONT_DESK",
             "RECEPTION": "FRONT_DESK",
             "KITCHEN": "KITCHEN",
+            # Historical Cashier department labels resolve to Restaurants for
+            # stored-profile sign-in checks; no standalone Cashier portal exists.
+            "CASHIER": "RESTAURANT_BAR",
+            "CASHIER_TILL": "RESTAURANT_BAR",
+            "CASHIER TILL": "RESTAURANT_BAR",
+            "CASHIER / TILL": "RESTAURANT_BAR",
             "RESTAURANT": "RESTAURANT_BAR",
             "BAR": "RESTAURANT_BAR",
             "RESTAURANT & BAR": "RESTAURANT_BAR",
@@ -409,7 +415,8 @@ def staff_department_code(staff: User) -> str:
         "HR_MANAGER": "MANAGEMENT",
         "ACCOUNTS_MANAGER": "ACCOUNTS",
         "ACCOUNTANT": "ACCOUNTS",
-        "CASHIER": "ACCOUNTS",
+        # CASHIER is retired: a historical account resolves to Restaurants.
+        "CASHIER": "RESTAURANT_BAR",
         "PROCUREMENT_OFFICER": "ADMIN_PROCUREMENT",
         "FRONT_DESK_SUPERVISOR": "FRONT_DESK",
         "RECEPTIONIST": "FRONT_DESK",

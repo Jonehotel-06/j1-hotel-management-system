@@ -111,7 +111,7 @@
       label: "Accounts & Finance",
       portalTitle: "Accounts & Financial Control Portal",
       landingPath: "/dashboard/accounting.html",
-      allowedRoles: ["admin", "accounts_manager", "accountant", "cashier", "general_manager", "manager"]
+      allowedRoles: ["admin", "accounts_manager", "accountant", "general_manager", "manager"]
     },
     admin: {
       subdomain: "admin",
@@ -151,7 +151,7 @@
       label: "Restaurant Service",
       portalTitle: "Restaurant & Dining Service Portal",
       landingPath: "/dashboard/pos.html",
-      allowedRoles: ["admin", "restaurant_manager", "waiter", "cashier", "general_manager", "manager"]
+      allowedRoles: ["admin", "restaurant_manager", "waiter", "general_manager", "manager"]
     },
     bar: {
       subdomain: "bar",
@@ -159,7 +159,7 @@
       label: "Bar Service",
       portalTitle: "Bar & Beverage Service Portal",
       landingPath: "/dashboard/pos.html",
-      allowedRoles: ["admin", "bar_manager", "bartender", "cashier", "general_manager", "manager"]
+      allowedRoles: ["admin", "bar_manager", "bartender", "waiter", "general_manager", "manager"]
     },
     housekeeping: {
       subdomain: "housekeeping",
@@ -249,7 +249,7 @@
     posKitchenTickets:   "/api/admin/pos/kitchen-tickets/",
     /* Cash sessions have ONE model (apps.finance.models.CashSession) with two
        distinct route surfaces on the backend, so both keys are deliberate:
-         posCashSessions      → the cashier ACTIONS (open / {ref}/close/)
+         posCashSessions      → the cash-session actions (open / {ref}/close/)
                                 mounted under the POS namespace;
          financeCashSessions  → the canonical LISTING/reconciliation
                                 collection mounted under the finance namespace.

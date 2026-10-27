@@ -27,7 +27,7 @@
   };
 
   const ROLES = {
-    ADMIN: "admin", MANAGER: "manager", RECEPTIONIST: "receptionist", CASHIER: "cashier",
+    ADMIN: "admin", MANAGER: "manager", RECEPTIONIST: "receptionist",
     HOUSEKEEPING: "housekeeping", MAINTENANCE: "maintenance", INVENTORY_CLERK: "inventory_clerk",
     FRONT_DESK_SUPERVISOR: "front_desk_supervisor", GENERAL_MANAGER: "general_manager",
     RESTAURANT_MANAGER: "restaurant_manager", WAITER: "waiter", BAR_MANAGER: "bar_manager",
@@ -40,9 +40,13 @@
     GUEST: "guest", STAFF: "staff"
   };
 
-  /* Backend sends UPPERCASE roles; normalize once at the boundary. */
+  /* Backend sends UPPERCASE roles; normalize once at the boundary. CASHIER is
+     a retired stored role: stale sessions/JWT claims resolve to the existing
+     Restaurants WAITER role rather than recreating a second active identity. */
+  const RETIRED_ROLE_ALIASES = Object.freeze({ cashier: "waiter" });
   function normRole(role) {
-    return role ? String(role).toLowerCase() : null;
+    const value = role ? String(role).toLowerCase() : null;
+    return value && RETIRED_ROLE_ALIASES[value] ? RETIRED_ROLE_ALIASES[value] : value;
   }
 
   /* Every operational role code. The department roles do NOT form a privilege
@@ -94,7 +98,7 @@
     if (subCtx && isAuthorizedForSubdomain(r, subCtx) && subCtx.landingPath) {
       return subCtx.landingPath.replace(/^\//, "");
     }
-    if (["cashier", "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "kitchen_assistant"].includes(r)) {
+    if (["restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "kitchen_assistant"].includes(r)) {
       return "dashboard/pos.html";
     }
     if (["housekeeping", "housekeeping_manager", "housekeeper"].includes(r)) return "dashboard/housekeeping.html";
@@ -160,7 +164,7 @@
   }
 
   // Exact operational-role visibility guard. It is deliberately separate from
-  // hasRole(): CASHIER / HOUSEKEEPING / MAINTENANCE / INVENTORY_CLERK do not
+  // hasRole(): HOUSEKEEPING / MAINTENANCE / INVENTORY_CLERK do not
   // form a privilege hierarchy, and server-side capabilities remain decisive.
   function hasAnyRole(roles) {
     if (!state.role || !Array.isArray(roles)) return false;

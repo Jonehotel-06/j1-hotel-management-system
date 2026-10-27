@@ -235,6 +235,10 @@ class AdminAuditLogPaginationTests(PageContractMixin, BaseAPITestCase):
             first_name="Audit", last_name="Admin", role=User.Role.ADMIN,
         )
         self.auth(self.admin)
+        # Migration 0029 records one configuration audit row on a fresh test
+        # database. Keep this pagination fixture independent of migration-time
+        # audit evidence by starting from a clean log.
+        AuditLog.objects.all().delete()
         today = hotel_today()
         for i in range(25):
             AuditLog.objects.create(

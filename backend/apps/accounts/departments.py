@@ -57,7 +57,6 @@ from .models import User, Workstation
 #: runs appears exactly once, and every entry points at a single role code.
 DEPARTMENT_ROLES: dict[str, str] = {
     Workstation.Department.FRONT_DESK: User.Role.RECEPTIONIST,
-    Workstation.Department.CASHIER: User.Role.CASHIER,
     Workstation.Department.BAR: User.Role.BARTENDER,
     Workstation.Department.RESTAURANT: User.Role.WAITER,
     Workstation.Department.KITCHEN: User.Role.CHEF,
@@ -89,7 +88,24 @@ RETIRED_DEPARTMENTAL_ROLES: dict[str, str] = {
     User.Role.ACCOUNTS_MANAGER: User.Role.ACCOUNTANT,
     User.Role.HR_MANAGER: User.Role.HR_OFFICER,
     User.Role.INVENTORY_CLERK: User.Role.STOREKEEPER,
+    # Cashier was a standalone department/role. Its duties now belong to the
+    # existing Restaurants department and its existing WAITER role; CASHIER is
+    # retained only as a historical stored value for audit/financial records.
+    User.Role.CASHIER: User.Role.WAITER,
 }
+
+#: Historical labels for the removed standalone Cashier department. Stored rows
+#: normalize to Restaurants for authorization, but new assignments must use the
+#: canonical Restaurants department instead of recreating this alias.
+REMOVED_CASHIER_DEPARTMENT_CODES = frozenset({"CASHIER", "CASHIER_TILL"})
+
+
+def is_removed_cashier_department(value: str) -> bool:
+    """True for a stored or submitted label of the removed Cashier department."""
+    import re
+
+    raw = re.sub(r"[^A-Z0-9]+", "_", str(value or "").strip().upper()).strip("_")
+    return raw in REMOVED_CASHIER_DEPARTMENT_CODES
 
 #: Global oversight roles. These are NOT department roles and deliberately keep
 #: their own policy: an administrator or general manager is not a rung above the
@@ -157,7 +173,10 @@ def _normalize_department_code(value: str) -> str:
         "F_AND_B": Workstation.Department.RESTAURANT,
         "KITCHEN_AND_RESTAURANT": Workstation.Department.KITCHEN,
         "KITCHEN_CULINARY_PRODUCTION": Workstation.Department.KITCHEN,
-        "CASHIER_TILL": Workstation.Department.CASHIER,
+        # Historical Cashier rows resolve to Restaurants; new assignments are
+        # rejected by validate_role_department before reaching these aliases.
+        "CASHIER": Workstation.Department.RESTAURANT,
+        "CASHIER_TILL": Workstation.Department.RESTAURANT,
         "STORES": Workstation.Department.INVENTORY,
         "STORE": Workstation.Department.INVENTORY,
         "INVENTORY_STORES": Workstation.Department.INVENTORY,
@@ -263,6 +282,12 @@ def validate_role_department(role: str, department: str = "", *, department_ref:
         raise ValueError(f"'{role}' is not an assignable staff role.")
     expected = department_for_role(role)
     supplied = [str(value or "").strip() for value in (department, department_ref) if str(value or "").strip()]
+    for value in supplied:
+        if is_removed_cashier_department(value):
+            raise ValueError(
+                "The Cashier department was merged into Restaurants; choose RESTAURANT "
+                "and assign the existing WAITER role."
+            )
     normalized = [_normalize_department_code(value) for value in supplied]
     if any(not code for code in normalized):
         raise ValueError("Choose a configured department.")

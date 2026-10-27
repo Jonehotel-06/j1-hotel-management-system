@@ -108,7 +108,7 @@
   <div class="filter-bar">
     <div class="field"><label class="field-label" for="q">Search</label><input class="input" id="q" placeholder="Name, code, email, phone"></div>
     <div class="field"><label class="field-label" for="department-filter">Department</label><select class="select" id="department-filter"><option value="">All departments</option><option value="MANAGEMENT">Management</option><option value="ACCOUNTS">Accounts &amp; Finance</option><option value="ADMIN_PROCUREMENT">Administration &amp; Procurement</option><option value="FRONT_DESK">Front Desk / Reception</option><option value="KITCHEN">Kitchen</option><option value="RESTAURANT_BAR">Restaurant &amp; Bar Service</option><option value="HOUSEKEEPING">Housekeeping</option><option value="PORTERING">Portering</option><option value="STORES_INVENTORY">Stores &amp; Inventory</option></select></div>
-    <div class="field"><label class="field-label" for="role">Role</label><select class="select" id="role"><option value="">All staff</option><optgroup label="Management and front desk"><option value="MANAGER">Managers</option><option value="GENERAL_MANAGER">General managers</option><option value="FRONT_DESK_SUPERVISOR">Front-desk supervisors</option><option value="RECEPTIONIST">Receptionists</option><option value="CASHIER">Cashiers</option></optgroup><optgroup label="Restaurant, bar, and kitchen"><option value="RESTAURANT_MANAGER">Restaurant managers</option><option value="WAITER">Waiters / servers</option><option value="BAR_MANAGER">Bar managers</option><option value="BARTENDER">Bartenders</option><option value="KITCHEN_MANAGER">Kitchen managers</option><option value="CHEF">Chefs / kitchen staff</option><option value="KITCHEN_ASSISTANT">Kitchen assistants</option></optgroup><optgroup label="Hotel operations"><option value="HOUSEKEEPING_MANAGER">Housekeeping managers</option><option value="HOUSEKEEPER">Housekeepers</option><option value="HOUSEKEEPING">Legacy housekeeping</option><option value="PORTER">Porters</option><option value="MAINTENANCE_TECHNICIAN">Maintenance technicians</option><option value="MAINTENANCE">Legacy maintenance</option><option value="SECURITY">Security</option></optgroup><optgroup label="Finance, people, and stock"><option value="ACCOUNTS_MANAGER">Accounts managers</option><option value="ACCOUNTANT">Accountants</option><option value="HR_MANAGER">HR managers</option><option value="PROCUREMENT_OFFICER">Procurement officers</option><option value="STOREKEEPER">Storekeepers</option><option value="INVENTORY_CLERK">Legacy inventory clerks</option></optgroup></select></div>
+    <div class="field"><label class="field-label" for="role">Role</label><select class="select" id="role"><option value="">All staff</option><optgroup label="Management and front desk"><option value="MANAGER">Managers</option><option value="GENERAL_MANAGER">General managers</option><option value="FRONT_DESK_SUPERVISOR">Front-desk supervisors</option><option value="RECEPTIONIST">Receptionists</option></optgroup><optgroup label="Restaurant, bar, and kitchen"><option value="RESTAURANT_MANAGER">Restaurant managers</option><option value="WAITER">Waiters / servers</option><option value="BAR_MANAGER">Bar managers</option><option value="BARTENDER">Bartenders</option><option value="KITCHEN_MANAGER">Kitchen managers</option><option value="CHEF">Chefs / kitchen staff</option><option value="KITCHEN_ASSISTANT">Kitchen assistants</option></optgroup><optgroup label="Hotel operations"><option value="HOUSEKEEPING_MANAGER">Housekeeping managers</option><option value="HOUSEKEEPER">Housekeepers</option><option value="HOUSEKEEPING">Legacy housekeeping</option><option value="PORTER">Porters</option><option value="MAINTENANCE_TECHNICIAN">Maintenance technicians</option><option value="MAINTENANCE">Legacy maintenance</option><option value="SECURITY">Security</option></optgroup><optgroup label="Finance, people, and stock"><option value="ACCOUNTS_MANAGER">Accounts managers</option><option value="ACCOUNTANT">Accountants</option><option value="HR_MANAGER">HR managers</option><option value="PROCUREMENT_OFFICER">Procurement officers</option><option value="STOREKEEPER">Storekeepers</option><option value="INVENTORY_CLERK">Legacy inventory clerks</option></optgroup></select></div>
     <div class="field"><label class="field-label" for="active">Status</label><select class="select" id="active"><option value="">All statuses</option><option value="true">Active</option><option value="false">Inactive</option></select></div>
   </div>
   <p class="caption" style="margin:0.75rem 0 0;">This roster lists staff accounts. The Administrator is the hotel owner, not a staff member: the owner account is never offered for a shift, an attendance record, leave or a disciplinary case, and it is managed from the owner's own profile page.</p>
@@ -260,7 +260,7 @@
     if (page != null) state.page = Math.max(1, page);
     JONE.dashboard.DATA.loading(rows);
     try {
-      var params = { page: state.page, page_size: JONE.dashboard.pageSize(), role__in: "MANAGER,GENERAL_MANAGER,FRONT_DESK_SUPERVISOR,RECEPTIONIST,CASHIER,RESTAURANT_MANAGER,WAITER,BAR_MANAGER,BARTENDER,KITCHEN_MANAGER,CHEF,KITCHEN_ASSISTANT,HOUSEKEEPING_MANAGER,HOUSEKEEPER,HOUSEKEEPING,PORTER,MAINTENANCE_TECHNICIAN,MAINTENANCE,ACCOUNTS_MANAGER,ACCOUNTANT,HR_MANAGER,SECURITY,PROCUREMENT_OFFICER,STOREKEEPER,INVENTORY_CLERK" };
+      var params = { page: state.page, page_size: JONE.dashboard.pageSize(), role__in: "MANAGER,GENERAL_MANAGER,FRONT_DESK_SUPERVISOR,RECEPTIONIST,RESTAURANT_MANAGER,WAITER,BAR_MANAGER,BARTENDER,KITCHEN_MANAGER,CHEF,KITCHEN_ASSISTANT,HOUSEKEEPING_MANAGER,HOUSEKEEPER,HOUSEKEEPING,PORTER,MAINTENANCE_TECHNICIAN,MAINTENANCE,ACCOUNTS_MANAGER,ACCOUNTANT,HR_MANAGER,SECURITY,PROCUREMENT_OFFICER,STOREKEEPER,INVENTORY_CLERK" };
       if (q && q.value.trim()) params.search = q.value.trim();
       if (role && role.value) params.role = role.value;
       if (active && active.value !== "") params.is_active = active.value;
@@ -365,11 +365,10 @@
         { value: "HOUSEKEEPING", label: "Housekeeping" },
         { value: "INVENTORY", label: "Inventory / Stores" },
         { value: "SECURITY", label: "Security" },
-        { value: "CASHIER", label: "Cashier" },
         { value: "MAINTENANCE", label: "Maintenance" },
         { value: "HR", label: "Human Resources" },
       ] },
-      { name: "job_title", label: "Staff position / designation", type: "text", placeholder: "e.g. Receptionist, Chef, Kitchen Assistant, Porter, Storekeeper", help: "Kitchen Assistant is recorded here as a position; the canonical department role remains Chef." },
+      { name: "job_title", label: "Staff position / designation", type: "text", placeholder: "e.g. Receptionist, Chef, Kitchen Assistant, POS Cashier, Porter, Storekeeper", help: "Kitchen Assistant is recorded here as a position; the canonical department role remains Chef. POS Cashier is a designation under the Restaurant Waiter role." },
       { name: "employment_type", label: "Employment type", type: "select", options: [
         { value: "FULL_TIME", label: "Full-time" },
         { value: "PART_TIME", label: "Part-time" },
@@ -395,7 +394,6 @@
         { value: "HOUSEKEEPING", label: "Housekeeping · Housekeeping" },
         { value: "STOREKEEPER", label: "Inventory / Stores · Storekeeper" },
         { value: "SECURITY", label: "Security · Security" },
-        { value: "CASHIER", label: "Cashier · Cashier" },
         { value: "BARTENDER", label: "Bar · Bartender" },
         { value: "MAINTENANCE", label: "Maintenance · Maintenance" },
         { value: "HR_OFFICER", label: "Human Resources · HR Officer" },

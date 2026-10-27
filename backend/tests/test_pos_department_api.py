@@ -1,7 +1,7 @@
 """Department-scoped restaurant/bar menu, order, and production API tests."""
 from decimal import Decimal
 
-from apps.accounts.models import User
+from apps.accounts.models import Capability, User, UserCapabilityOverride
 from apps.pos.models import KitchenTicket, MenuCategory, MenuItem, PosOrder
 
 from .base import BaseAPITestCase
@@ -13,6 +13,15 @@ class PosDepartmentApiTests(BaseAPITestCase):
         super().setUp()
         self.restaurant_manager = make_staff("pos-dept-restaurant-manager@staff.dev", role=User.Role.RESTAURANT_MANAGER)
         self.waiter = make_staff("pos-dept-waiter@staff.dev", role=User.Role.WAITER)
+        # This suite verifies department-scoped restaurant/bar access. The
+        # default WAITER now also holds the transferred Cashier-wide
+        # pos.order.manage grant, so revoke it for this scoped fixture only.
+        UserCapabilityOverride.objects.create(
+            user=self.waiter,
+            capability=Capability.objects.get(code="pos.order.manage"),
+            effect=UserCapabilityOverride.Effect.REVOKE,
+            reason="Isolate the department-scoped waiter fixture from merged cashier duties.",
+        )
         self.bar_manager = make_staff("pos-dept-bar-manager@staff.dev", role=User.Role.BAR_MANAGER)
         self.bartender = make_staff("pos-dept-bartender@staff.dev", role=User.Role.BARTENDER)
         self.chef = make_staff("pos-dept-chef@staff.dev", role=User.Role.CHEF)

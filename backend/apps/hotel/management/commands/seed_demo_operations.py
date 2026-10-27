@@ -155,7 +155,8 @@ DEMO_STAFF = [
     ("Demo", "Chef", User.Role.CHEF, "Kitchen", "Chef"),
     ("Demo", "RestaurantManager", User.Role.RESTAURANT_MANAGER, "Restaurant", "Restaurant Manager"),
     ("Demo", "BarManager", User.Role.BAR_MANAGER, "Bar", "Bar Manager"),
-    ("Demo", "Cashier", User.Role.CASHIER, "Restaurant", "POS Cashier"),
+    # POS Cashier is now a job designation under the Restaurants WAITER role.
+    ("Demo", "Cashier", User.Role.WAITER, "Restaurant", "POS Cashier"),
     ("Demo", "HousekeepingManager", User.Role.HOUSEKEEPING_MANAGER, "Housekeeping", "Housekeeping Manager"),
     ("Demo", "Housekeeper", User.Role.HOUSEKEEPER, "Housekeeping", "Housekeeper"),
     ("Demo", "MaintenanceTech", User.Role.MAINTENANCE_TECHNICIAN, "Maintenance", "Maintenance Technician"),

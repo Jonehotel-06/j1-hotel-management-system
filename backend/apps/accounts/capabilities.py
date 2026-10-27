@@ -105,6 +105,9 @@ ROLE_CAPABILITY_CODES = {
         "guest_request.manage", "guest_request.assign", "housekeeping.task.manage", "housekeeping.task.assign",
         "maintenance.work_order.manage", "maintenance.work_order.assign", "attendance.clock", "leave.request",
     }),
+    # Historical role: no new assignment can select CASHIER. Its persisted
+    # grants are retained for old rows and are copied to WAITER by migration
+    # 0029 so the Restaurants role inherits the cashier workflow unchanged.
     "CASHIER": frozenset({
         "folio.charge.post", "payment.capture", "payment.refund.request", "cash_session.open",
         "cash_session.close", "expense.manage", "pos.order.manage", "attendance.clock", "leave.request",
@@ -148,6 +151,11 @@ ROLE_CAPABILITY_CODES = {
     "WAITER": frozenset({
         "restaurant.order.manage", "payment.capture", "guest_request.manage", "attendance.clock", "leave.request",
         "pos.return.record",
+        # Transferred from the retired standalone Cashier role. Sensitive
+        # approvals, financial reports, payroll and administration are NOT
+        # included; existing maker-checker and reconciliation rules remain.
+        "folio.charge.post", "payment.refund.request", "cash_session.open", "cash_session.close",
+        "expense.manage", "pos.order.manage", "pos.return.refund",
     }),
     "BAR_MANAGER": frozenset({
         "bar.order.manage", "bar.menu.manage", "payment.capture", "kitchen.queue.view", "attendance.clock",

@@ -667,7 +667,14 @@ class DepartmentListCreateView(APIView):
     require_any_capability = True
 
     def get(self, request):
-        queryset = Department.objects.select_related("head").all()
+        # A historical standalone Cashier row may remain for old references,
+        # but it is no longer an active department and never appears in the
+        # department-management listing.
+        queryset = Department.objects.select_related("head").exclude(
+            Q(code__iexact="CASHIER") | Q(code__iexact="CASHIER_TILL")
+            | Q(name__iexact="Cashier") | Q(name__iexact="Cashier / till")
+            | Q(slug__iexact="cashier") | Q(slug__iexact="cashier-till")
+        )
         if request.query_params.get("active") == "true":
             queryset = queryset.filter(is_active=True)
         if search := request.query_params.get("search"):
@@ -737,6 +744,10 @@ class DepartmentDashboardSummaryView(APIView):
             or request.headers.get("X-JONE-Department")
             or staff_department_code(request.user)
         ).strip().upper()
+
+        from apps.accounts.departments import is_removed_cashier_department
+        if is_removed_cashier_department(target_dept):
+            raise NotFound("The Cashier department was merged into Restaurants.")
 
         if not is_staff_authorized_for_department(request.user, target_dept):
             raise PermissionDenied("Your account is not authorized to access this department dashboard.")

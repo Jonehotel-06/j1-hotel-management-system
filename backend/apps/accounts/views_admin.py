@@ -543,7 +543,9 @@ class AdminPermissionMatrixView(APIView):
         )
         role_grants = {}
         for role_val, _label in User.Role.choices:
-            if role_val == User.Role.GUEST:
+            # CASHIER is a retired historical code. It is not offered in the
+            # active permission matrix and cannot be granted new capabilities.
+            if role_val in (User.Role.GUEST, User.Role.CASHIER):
                 continue
             role_grants[role_val] = set()
         for rc in RoleCapability.objects.select_related("capability").filter(capability__is_active=True):
@@ -587,7 +589,7 @@ class AdminPermissionMatrixView(APIView):
                     "default_capabilities": sorted(ROLE_CAPABILITY_CODES.get(role_val, frozenset())),
                 }
                 for role_val, role_label in User.Role.choices
-                if role_val != User.Role.GUEST
+                if role_val not in (User.Role.GUEST, User.Role.CASHIER)
             ],
             "user_overrides": overrides,
         })

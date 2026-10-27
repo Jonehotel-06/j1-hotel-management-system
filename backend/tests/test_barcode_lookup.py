@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 
-from apps.accounts.models import User
+from apps.accounts.models import Capability, User, UserCapabilityOverride
 from apps.inventory.models import StockBalance, StockItem, StockLocation, StockMovement
 from apps.inventory.services.inventory_service import create_stock_recipe, record_stock_movement
 from apps.pos.barcode import gtin_check_digit_is_valid, validate_barcode
@@ -36,6 +36,14 @@ class BarcodeLookupApiTests(BaseAPITestCase):
         super().setUp()
         self.bartender = make_staff("barcode-bartender@staff.dev", role=User.Role.BARTENDER)
         self.waiter = make_staff("barcode-waiter@staff.dev", role=User.Role.WAITER)
+        # Keep this fixture's cross-service-area assertion scoped to a waiter
+        # without the Cashier-wide POS grant transferred to the real role.
+        UserCapabilityOverride.objects.create(
+            user=self.waiter,
+            capability=Capability.objects.get(code="pos.order.manage"),
+            effect=UserCapabilityOverride.Effect.REVOKE,
+            reason="Isolate the service-area barcode fixture from merged cashier duties.",
+        )
         self.manager = make_staff("barcode-manager@staff.dev", role=User.Role.MANAGER)
         bar = MenuCategory.objects.create(name="Barcode bar", slug="barcode-bar", service_area=MenuCategory.ServiceArea.BAR)
         restaurant = MenuCategory.objects.create(name="Barcode dining", slug="barcode-dining", service_area=MenuCategory.ServiceArea.RESTAURANT)

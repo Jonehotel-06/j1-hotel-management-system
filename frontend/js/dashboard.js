@@ -109,6 +109,12 @@
   const SERVICE_DEPARTMENTS = ["admin", "manager", "general_manager", "front_desk_supervisor",
     "receptionist", "housekeeping", "housekeeping_manager", "housekeeper", "porter",
     "maintenance", "maintenance_technician", "waiter", "bartender", "security"];
+  /* Laundry is a priced guest service with its own page, not a Restaurants
+     feature. Waiters and bartenders keep Guest Requests and POS, but the
+     Restaurants dashboard no longer promises them the Laundry workspace. */
+  const LAUNDRY_DEPARTMENTS = ["admin", "manager", "general_manager", "front_desk_supervisor",
+    "receptionist", "housekeeping", "housekeeping_manager", "housekeeper", "porter",
+    "maintenance", "maintenance_technician", "security"];
 
   const PAGE_ACCESS = {
     /* Personal surfaces — every signed-in staff member. */
@@ -145,15 +151,15 @@
 
     /* Guest services. */
     "service-requests.html": { roles: SERVICE_DEPARTMENTS },
-    "laundry.html": { roles: SERVICE_DEPARTMENTS },
+    "laundry.html": { roles: LAUNDRY_DEPARTMENTS },
     "housekeeping.html": { roles: ["admin", "manager", "general_manager", "front_desk_supervisor",
       "receptionist", "housekeeping", "housekeeping_manager", "housekeeper"] },
     "maintenance.html": { roles: ["admin", "manager", "general_manager", "front_desk_supervisor",
       "receptionist", "maintenance", "maintenance_technician"] },
-    "pos.html": { roles: ["admin", "manager", "general_manager", "cashier", "restaurant_manager",
+    "pos.html": { roles: ["admin", "manager", "general_manager", "restaurant_manager",
       "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "kitchen_assistant"] },
     "barcode-labels.html": { roles: ["admin", "manager", "general_manager", "inventory_clerk",
-      "storekeeper", "cashier"] },
+      "storekeeper", "waiter"] },
     "service-qr.html": { roles: MANAGEMENT },
 
     /* Stores and procurement. */
@@ -163,7 +169,7 @@
 
     /* People. */
     "workforce.html": { roles: ["admin", "manager", "general_manager", "front_desk_supervisor",
-      "receptionist", "cashier", "housekeeping", "maintenance", "inventory_clerk",
+      "receptionist", "housekeeping", "maintenance", "inventory_clerk",
       "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef",
       "kitchen_assistant", "housekeeping_manager", "housekeeper", "porter",
       "maintenance_technician", "accounts_manager", "accountant", "hr_manager", "hr_officer", "security",

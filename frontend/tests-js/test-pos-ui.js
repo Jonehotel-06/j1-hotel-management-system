@@ -119,9 +119,14 @@ test("operational department roles are staff and POS navigation uses resolved ca
   loadScript(ctx, "js/auth.js");
   const auth = ctx.window.Auth;
 
-  ["CASHIER", "HOUSEKEEPING", "MAINTENANCE", "INVENTORY_CLERK", "WAITER", "BARTENDER", "CHEF"].forEach((role) => {
+  ["HOUSEKEEPING", "MAINTENANCE", "INVENTORY_CLERK", "WAITER", "BARTENDER", "CHEF"].forEach((role) => {
     assert.equal(auth.isStaffRole(role), true, `${role} should use staff-shell routing`);
   });
+  /* Stored CASHIER sessions resolve to the existing Restaurants WAITER role,
+     not a second active identity or a guest session. */
+  assert.equal(auth.isStaffRole("CASHIER"), true);
+  assert.equal(auth.defaultStaffLanding("CASHIER"), "dashboard/pos.html");
+  assert.equal(auth.OPERATIONAL_ROLES.includes("cashier"), false);
   const nav = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
   assert.match(nav, /POS & Room Service[\s\S]*capabilities: \["pos.order.manage", "restaurant.order.manage", "bar.order.manage", "kitchen.queue.view", "kitchen.ticket.manage"\]/);
   assert.match(nav, /Auth\.loadCapabilities\(\)\.then/);

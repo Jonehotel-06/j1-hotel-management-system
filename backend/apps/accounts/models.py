@@ -43,6 +43,8 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
         ADMIN = "ADMIN", "Administrator"
         MANAGER = "MANAGER", "Manager"
         RECEPTIONIST = "RECEPTIONIST", "Receptionist"
+        # Retired for new assignments: resolves to WAITER/Restaurants. Kept as
+        # a stored value so historical accounts, JWTs and audit rows stay valid.
         CASHIER = "CASHIER", "Cashier"
         HOUSEKEEPING = "HOUSEKEEPING", "Housekeeping"
         MAINTENANCE = "MAINTENANCE", "Maintenance"
@@ -157,10 +159,8 @@ class Workstation(TimeStampedModel):
     class Department(models.TextChoices):
         SHARED = "SHARED", "Shared"
         FRONT_DESK = "FRONT_DESK", "Front desk"
-        # The cashier is its own till function, not a supervisory rung inside the
-        # front desk: adding it here is what lets ONE role per department hold
-        # for both (see apps.accounts.departments).
-        CASHIER = "CASHIER", "Cashier / till"
+        # CASHIER was removed as a standalone workstation department. Existing
+        # rows are migrated to RESTAURANT; the code survives only in history.
         RESTAURANT = "RESTAURANT", "Restaurant"
         BAR = "BAR", "Bar"
         KITCHEN = "KITCHEN", "Kitchen"

@@ -316,10 +316,10 @@ test("each department is admitted to its own screens and refused the others", ()
       ["pos.html", "accounting.html", "payroll.html", "settings.html", "audit-logs.html", "reviews.html", "staff.html", "terminals.html", "inventory.html"]],
     front_desk_supervisor: [["check-out.html", "payments.html", "workforce.html", "approvals.html"],
       ["settings.html", "audit-logs.html", "payroll.html", "pos.html"]],
-    cashier: [["pos.html", "barcode-labels.html", "workforce.html"],
-      ["payments.html", "receipts.html", "check-out.html", "bookings.html", "accounting.html", "settings.html"]],
-    waiter: [["pos.html", "laundry.html", "service-requests.html", "workforce.html"],
-      ["payments.html", "check-out.html", "housekeeping.html", "maintenance.html", "inventory.html", "accounting.html", "settings.html"]],
+    waiter: [["pos.html", "barcode-labels.html", "service-requests.html", "workforce.html"],
+      ["laundry.html", "payments.html", "check-out.html", "housekeeping.html", "maintenance.html", "inventory.html", "accounting.html", "settings.html"]],
+    bartender: [["pos.html", "service-requests.html", "workforce.html"],
+      ["laundry.html", "barcode-labels.html", "payments.html", "check-out.html", "housekeeping.html", "maintenance.html", "inventory.html", "accounting.html", "settings.html"]],
     chef: [["pos.html", "workforce.html"],
       ["payments.html", "check-out.html", "bookings.html", "housekeeping.html", "settings.html"]],
     inventory_clerk: [["inventory.html", "procurement.html", "barcode-labels.html", "workforce.html"],
@@ -627,4 +627,23 @@ test("every cross-department link resolves its target through the registry", () 
   assert.equal(asRole("inventory_clerk").canOpenPage("pos.html"), false);
   assert.equal(asRole("waiter").canOpenPage("pos.html"), true);
   assert.equal(asRole("waiter").canOpenPage("check-out.html"), false);
+});
+
+test("Laundry stays available to its own staff but is no longer a Restaurants link", () => {
+  const laundryItem = JONE.dashboard.NAV.flatMap((group) => group.items)
+    .find((item) => item.href === "laundry.html");
+  assert.ok(laundryItem, "Laundry remains a real navigation entry for authorized staff");
+  for (const role of ["waiter", "bartender"]) {
+    asRole(role);
+    Auth.state.capabilitiesLoaded = true;
+    Auth.state.capabilities = ["guest_request.manage", "guest_request.assign"];
+    assert.equal(JONE.dashboard.canOpenPage("laundry.html"), false, `${role} must not open Laundry`);
+    assert.equal(JONE.dashboard.navItemAllowed(laundryItem), false, `${role} must not be shown the Laundry link`);
+    assert.equal(JONE.dashboard.canOpenPage("service-requests.html"), true, `${role} keeps Guest Requests`);
+    assert.equal(JONE.dashboard.canOpenPage("pos.html"), true, `${role} keeps the POS workspace`);
+  }
+  for (const role of ["receptionist", "housekeeper", "porter", "security"]) {
+    asRole(role);
+    assert.equal(JONE.dashboard.canOpenPage("laundry.html"), true, `${role} keeps authorized Laundry access`);
+  }
 });

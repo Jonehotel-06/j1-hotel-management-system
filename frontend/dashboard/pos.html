@@ -239,7 +239,7 @@
 <script src="../js/thermal-receipt.js?v=1.1.27"></script>
 <script>
 JONE.ui.initChrome();
-var __posAllowed=JONE.dashboard.boot(["admin","manager","general_manager","cashier","restaurant_manager","waiter","bar_manager","bartender","kitchen_manager","chef","kitchen_assistant"]);
+var __posAllowed=JONE.dashboard.boot(["admin","manager","general_manager","restaurant_manager","waiter","bar_manager","bartender","kitchen_manager","chef","kitchen_assistant"]);
 document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
 
 (function(){
@@ -285,7 +285,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   }
   function allowedModes(){
     var modes=[];
-    if(hasCapability("pos.order.manage",["admin","manager","general_manager","cashier"])) return ["ROOM_SERVICE","RESTAURANT","BAR","TAKEAWAY"];
+    if(hasCapability("pos.order.manage",["admin","manager","general_manager","waiter"])) return ["ROOM_SERVICE","RESTAURANT","BAR","TAKEAWAY"];
     if(hasCapability("restaurant.order.manage",["admin","manager","general_manager","restaurant_manager","waiter"])) modes.push("RESTAURANT","TAKEAWAY");
     if(hasCapability("bar.order.manage",["admin","manager","general_manager","bar_manager","bartender"])) modes.push("BAR");
     return modes;
@@ -298,11 +298,11 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     return areas;
   }
   function canManageMenu(){return allowedMenuAreas().length>0;}
-  function canRecordReturns(){return hasCapability("pos.return.record",["admin","manager","general_manager","bar_manager","bartender","restaurant_manager","waiter","cashier"]);}
-  function canRefundReturns(){return hasCapability("pos.return.refund",["admin","manager","general_manager","bar_manager","restaurant_manager","cashier"]);}
-  function canTender(){return hasCapability("payment.capture",["admin","manager","general_manager","cashier","accounts_manager","accountant","receptionist","restaurant_manager","waiter","bar_manager","bartender"]);}
-  function canOpenCash(){return hasCapability("cash_session.open",["admin","manager","general_manager","cashier","accounts_manager"]);}
-  function canCloseCash(){return hasCapability("cash_session.close",["admin","manager","general_manager","cashier","accounts_manager"]);}
+  function canRecordReturns(){return hasCapability("pos.return.record",["admin","manager","general_manager","bar_manager","bartender","restaurant_manager","waiter"]);}
+  function canRefundReturns(){return hasCapability("pos.return.refund",["admin","manager","general_manager","bar_manager","restaurant_manager","waiter"]);}
+  function canTender(){return hasCapability("payment.capture",["admin","manager","general_manager","accounts_manager","accountant","receptionist","restaurant_manager","waiter","bar_manager","bartender"]);}
+  function canOpenCash(){return hasCapability("cash_session.open",["admin","manager","general_manager","waiter","accounts_manager"]);}
+  function canCloseCash(){return hasCapability("cash_session.close",["admin","manager","general_manager","waiter","accounts_manager"]);}
   function applyAccess(){
     var modes=allowedModes();
     var createMode=document.getElementById("pos-mode");
@@ -339,7 +339,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(addTableButton)addTableButton.hidden=!hasCapability("restaurant.table.manage",["admin","manager","general_manager","restaurant_manager"]);
     var queueTitle=document.querySelector("[data-pos-queue-title]");
     if(queueTitle){
-      var all=hasCapability("pos.order.manage",["admin","manager","general_manager","cashier"]);
+      var all=hasCapability("pos.order.manage",["admin","manager","general_manager","waiter"]);
       var bar=hasCapability("bar.order.manage",["admin","manager","general_manager","bar_manager","bartender"]);
       var restaurant=hasCapability("restaurant.order.manage",["admin","manager","general_manager","restaurant_manager","waiter"]);
       queueTitle.textContent=all||bar&&restaurant?"Kitchen & bar production queue":bar?"Bar production queue":"Kitchen production queue";
@@ -602,7 +602,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   }
   function canProgressTickets(){
     return hasCapability("kitchen.ticket.manage",["kitchen_manager","chef"])||
-      hasCapability("pos.order.manage",["admin","manager","general_manager","cashier"])||
+      hasCapability("pos.order.manage",["admin","manager","general_manager","waiter"])||
       hasCapability("restaurant.order.manage",["admin","manager","general_manager","restaurant_manager","waiter"])||
       hasCapability("bar.order.manage",["admin","manager","general_manager","bar_manager","bartender"]);
   }

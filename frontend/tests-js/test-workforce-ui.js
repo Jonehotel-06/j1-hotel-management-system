@@ -65,7 +65,8 @@ test("workforce page uses bounded lists, skeleton errors, idempotency, and no po
 test("workforce navigation serves every staff role while planning controls remain management-only", () => {
   const nav = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "workforce.html"), "utf8");
-  assert.match(nav, /Workforce[\s\S]*"cashier"[\s\S]*"housekeeping"[\s\S]*"maintenance"[\s\S]*"inventory_clerk"/);
+  assert.match(nav, /Workforce[\s\S]*"housekeeping"[\s\S]*"maintenance"[\s\S]*"inventory_clerk"/);
+  assert.doesNotMatch(nav, /"cashier"/, "the retired Cashier role is not an active navigation identity");
   /* Planning (shifts, employment profiles) is the management tier: a general
      manager holds shift.manage and staff.profile.manage exactly as a manager
      does, so the tier is admin + manager + general_manager. */
@@ -79,13 +80,13 @@ test("staff assignment offers one canonical role per department and preserves le
   assert.ok(roleField, "canonical role picker must exist");
   const assignable = [
     "ADMIN", "GENERAL_MANAGER", "MANAGER", "ACCOUNTANT", "PROCUREMENT_OFFICER", "CHEF", "WAITER",
-    "PORTER", "RECEPTIONIST", "HOUSEKEEPING", "STOREKEEPER", "SECURITY", "CASHIER", "BARTENDER",
+    "PORTER", "RECEPTIONIST", "HOUSEKEEPING", "STOREKEEPER", "SECURITY", "BARTENDER",
     "MAINTENANCE", "HR_OFFICER",
   ];
   assignable.forEach((role) => assert.match(roleField[1], new RegExp('value: "' + role + '"')));
   const retired = [
     "FRONT_DESK_SUPERVISOR", "RESTAURANT_MANAGER", "BAR_MANAGER", "KITCHEN_MANAGER", "KITCHEN_ASSISTANT",
-    "HOUSEKEEPING_MANAGER", "HOUSEKEEPER", "MAINTENANCE_TECHNICIAN", "ACCOUNTS_MANAGER", "HR_MANAGER", "INVENTORY_CLERK",
+    "HOUSEKEEPING_MANAGER", "HOUSEKEEPER", "MAINTENANCE_TECHNICIAN", "ACCOUNTS_MANAGER", "HR_MANAGER", "INVENTORY_CLERK", "CASHIER",
   ];
   retired.forEach((role) => assert.doesNotMatch(roleField[1], new RegExp('value: "' + role + '"')));
   /* Historical records remain findable, but retired titles are not assignable. */
