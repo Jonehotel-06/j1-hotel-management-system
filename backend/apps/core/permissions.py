@@ -112,6 +112,29 @@ class IsManagerOrAdmin(BasePermission):
         return _active(request.user) and request.user.role in MANAGER_ROLES
 
 
+#: Roles that may read and work the guest enquiry queue.
+#:
+#: The front desk answers guests (RECEPTIONIST) and management oversees that
+#: queue (ADMIN, MANAGER, GENERAL_MANAGER). ``GENERAL_MANAGER`` is
+#: manager-equivalent: it holds the same capability catalogue as MANAGER and the
+#: sidebar shows it the Enquiries workspace, but it was absent from
+#: ``STAFF_ROLES`` — so the person running the hotel received 403 from every
+#: enquiries endpoint while every other management surface accepted them.
+#: Widening is limited to this one queue: no operational worker (chef, waiter,
+#: housekeeper, storekeeper, security, accountant) gains access, and the
+#: refund/approval paths keep their own stricter ``IsManagerOrAdmin`` gate.
+ENQUIRY_ROLES = STAFF_ROLES + ("GENERAL_MANAGER",)
+
+
+class IsEnquiryStaff(BasePermission):
+    """The front desk and management, for the guest enquiry queue."""
+
+    message = "Staff access is required."
+
+    def has_permission(self, request, view):
+        return _active(request.user) and request.user.role in ENQUIRY_ROLES
+
+
 # ---------------------------------------------------------------------------
 # Reservations
 #

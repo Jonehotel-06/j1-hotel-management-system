@@ -8,7 +8,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsManagerOrAdmin, IsStaffRole
+from apps.core.permissions import IsEnquiryStaff, IsManagerOrAdmin
 from apps.core.responses import success_response
 
 from .models import Enquiry
@@ -72,7 +72,7 @@ class CancellationStatusView(APIView):
 
 @extend_schema(tags=["Admin · Enquiries"])
 class EnquiryAdminListView(generics.ListAPIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [IsEnquiryStaff]
     serializer_class = EnquiryAdminSerializer
 
     def get_queryset(self):
@@ -114,7 +114,7 @@ class EnquiryAdminListView(generics.ListAPIView):
 
 @extend_schema(tags=["Admin · Enquiries"])
 class EnquiryAdminDetailView(generics.RetrieveUpdateAPIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [IsEnquiryStaff]
     http_method_names = ["get", "patch", "head", "options"]
     serializer_class = EnquiryAdminSerializer
 
@@ -142,7 +142,7 @@ class EnquiryAdminDetailView(generics.RetrieveUpdateAPIView):
 
 
 class _CancellationActionView(APIView):
-    permission_classes = [IsStaffRole]
+    permission_classes = [IsEnquiryStaff]
     serializer_class = CancellationActionSerializer
 
     def post(self, request, pk):

@@ -44,8 +44,20 @@ test("option labels carry the store and availability, unconfigured items say so"
 
 test("untracked kitchen items show no invented figures", () => {
   const hint = POS.slice(POS.indexOf("function renderItemStockHint"), POS.indexOf("function renderItemChoices"));
-  assert.match(hint, /if\(!stock\|\|\(!stock\.tracked&&!stock\.unconfigured\)\)\{node\.textContent="";return;\}/,
-    "an item with no stock rules shows nothing rather than a fabricated figure");
+  /* The old contract was silence. Silence was the bug: an operator adding a
+     product with no stock recipe and no direct-sale link had no way to see that
+     the sale would never draw down a store (drafts are accepted, and the
+     delivery hand-off is parked for inventory review). The hint now NAMES that
+     state — still without inventing a store, a quantity or a unit. */
+  assert.match(hint, /if\(!stock\)\{node\.textContent="";return;\}/,
+    "a missing stock payload still renders nothing");
+  assert.match(hint, /if\(unconfiguredForStock\(stock\)\)\{[\s\S]*?No stock control is configured for /,
+    "an entirely unconfigured product says so in words");
+  assert.match(hint, /if\(!stock\.tracked\)\{node\.textContent="Stock tracking: this product is explicitly marked as not stock-tracked in its recipe\.";return;\}/,
+    "an explicit NO_STOCK recipe is reported as a decision, not as a shortage");
+  const untrackedBranch = hint.slice(hint.indexOf("if(!stock.tracked)"), hint.indexOf("if(stock.unconfigured)"));
+  assert.doesNotMatch(untrackedBranch, /Stock location:|Available stock:|saleable_quantity/,
+    "no store, quantity or availability figure is invented for an untracked product");
 });
 
 test("unconfigured stock location is a hard, specific refusal", () => {
@@ -89,6 +101,13 @@ test("zero stock and insufficient stock each get the exact required message", ()
   assert.match(addLine,
     /"Insufficient stock: only "\+available\+" "\+unit\+" of "\+item\.name\+" are available at "\+location\+", but "\+quantity\+" were requested\. Reduce the quantity or replenish stock before adding this item\."/,
     "insufficient stock shows the available figure, the store, and what was requested");
+  /* The order, not the line, is what the server validates, so the same product
+     already in the cart is named as the reason when it is the reason. */
+  assert.match(addLine, /var alreadyCarted=state\.cart\.reduce/,
+    "the add is measured against the whole order");
+  assert.match(addLine,
+    /"Insufficient stock: only "\+available\+" "\+unit\+" of "\+item\.name\+" are available at "\+location\+" and "\+alreadyCarted\+" "/,
+    "when the cart already holds the product, its quantity is stated");
 });
 
 test("a stock-tracked product cannot be double-added while the check is in flight", () => {
@@ -110,9 +129,15 @@ test("cart lines remember and display their stock source", () => {
 });
 
 test("the + button cannot push a line past the available stock", () => {
-  assert.match(POS, /var stockCeiling=il\.stock_available==null\?100:Math\.min\(100,il\.stock_available\);/,
-    "untracked lines keep the old limit of 100, tracked lines are capped by stock");
-  assert.match(POS, /"Insufficient stock: only "\+stockCeiling\+" "\+unitWord\(il\.stock_unit,stockCeiling\)\+" of "\+il\.item_name\+" are available at "/,
+  /* The ceiling is the store's availability MINUS the same product's quantity
+     on the order's other lines: the picker pushes a new line every time, and the
+     server validates the whole order, so incrementing one line against the full
+     availability could build an unfulfillable cart. */
+  assert.match(POS, /var incOthers=state\.cart\.reduce/,
+    "the + button subtracts what the other lines already hold");
+  assert.match(POS, /var stockCeiling=il\.stock_available==null\?100:Math\.min\(100,Math\.max\(0,Number\(il\.stock_available\)-incOthers\)\);/,
+    "untracked lines keep the old limit of 100, tracked lines are capped by the remaining stock");
+  assert.match(POS, /"Insufficient stock: only "\+\(il\.stock_available==null\?"":String\(il\.stock_available\)\+" "\)\+unitWord\(il\.stock_unit,stockCeiling\)\+" of "\+il\.item_name\+" are available at "/,
     "hitting the ceiling explains itself with the real figures");
 });
 

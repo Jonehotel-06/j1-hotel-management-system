@@ -1681,16 +1681,27 @@
   });
   if(range) range.addEventListener("change",function(){
     var custom=range.value==="custom";
-    if(fromEl) fromEl.disabled=!custom;
-    if(toEl) toEl.disabled=!custom;
     if(!custom){
       if(fromEl) fromEl.value="";
       if(toEl) toEl.value="";
       load();
     }
   });
-  if(fromEl) fromEl.disabled=true;
-  if(toEl) toEl.disabled=true;
+  /* The From/To fields are ALWAYS editable: choosing a date IS choosing a custom
+     range. They used to be disabled as soon as this script ran and re-enabled
+     only when "Custom dates" was selected in the Period selector FIRST, so a
+     click on the field did nothing (a disabled input cannot take focus or
+     keyboard entry) and activeDates() ignored the dates anyway. Typing a date
+     now moves the selector to Custom — the single fact activeDates() reads — and
+     reloads once both ends of an ordered range are present. Apply keeps its own
+     validation for an incomplete or reversed range. */
+  function selectCustomRange(){
+    if(!range) return;
+    if(range.value!=="custom") range.value="custom";
+    if(fromEl&&toEl&&fromEl.value&&toEl.value&&fromEl.value<=toEl.value) load();
+  }
+  if(fromEl) fromEl.addEventListener("change",selectCustomRange);
+  if(toEl) toEl.addEventListener("change",selectCustomRange);
 
   // The browser creates the CSV from the exact values already returned by the
   // APIs; it never recomputes financial amounts client-side.

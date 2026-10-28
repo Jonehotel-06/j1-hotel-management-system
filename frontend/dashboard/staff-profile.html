@@ -385,7 +385,7 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
       JONE.dashboard.DATA.empty(attRows, "clock", "No attendance records", "No clock-in records found for this employee.", 6);
     } else {
       attRows.innerHTML = attList.map(function(a){
-        return '<tr><td><code>' + JONE.esc(a.reference) + '</code></td><td>' + JONE.esc(a.business_date) + '</td><td>' + JONE.dashboard.statusPill(a.status) + '</td><td>' + JONE.esc(a.clock_in_at ? JONE.formatDateTime(a.clock_in_at) : "—") + '</td><td>' + JONE.esc(a.clock_out_at ? JONE.formatDateTime(a.clock_out_at) : "—") + '</td><td>' + JONE.esc(a.worked_minutes || 0) + '</td></tr>';
+        return '<tr><td><code>' + JONE.esc(a.reference) + '</code></td><td>' + JONE.esc(a.business_date) + '</td><td>' + JONE.dashboard.statusPill(a.status) + '</td><td>' + JONE.esc(a.clock_in_at ? JONE.formatDateTime(a.clock_in_at) : "—") + '</td><td>' + JONE.esc(a.clock_out_at ? JONE.formatDateTime(a.clock_out_at) : "—") + '</td><td>' + JONE.esc(a.worked_minutes == null ? "—" : a.worked_minutes) + '</td></tr>';
       }).join("");
     }
 

@@ -162,6 +162,46 @@ class EnquiryLifecycleRegressionTests(BaseAPITestCase):
             self.assertEqual(self.enquiry.status, status, "the lifecycle change must persist")
             self.assertEqual(self.enquiry.internal_notes, f"Moved to {status}.")
 
+    def test_general_manager_can_work_the_enquiry_queue(self):
+        """Targeted repair (bug 2): the General Manager's enquires workspace.
+
+        ``GENERAL_MANAGER`` is manager-equivalent — it holds the same capability
+        catalogue as MANAGER and the sidebar routes it to enquiries.html — but it
+        was missing from the legacy ``STAFF_ROLES`` allowlist the enquiry views
+        used, so the person running the hotel received 403 from the list, the
+        detail and every lifecycle action while the front desk and MANAGER were
+        accepted. The queue now admits it without widening any other endpoint.
+        """
+        gm = make_staff("d15.general.manager@staff.dev", role=User.Role.GENERAL_MANAGER)
+        self.auth(gm)
+        listed = self.client.get("/api/admin/enquiries/")
+        self.assertEqual(listed.status_code, 200, listed.content)
+        self.assertEqual(
+            [row["id"] for row in listed.json()["data"]], [self.enquiry.pk],
+            "the General Manager sees the same queue the front desk sees",
+        )
+        detail = self.client.get(f"/api/admin/enquiries/{self.enquiry.pk}/")
+        self.assertEqual(detail.status_code, 200, detail.content)
+        updated = self.client.patch(
+            f"/api/admin/enquiries/{self.enquiry.pk}/",
+            {"status": "IN_PROGRESS", "internal_notes": "Picked up by the GM."},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.content)
+        self.enquiry.refresh_from_db()
+        self.assertEqual(self.enquiry.status, "IN_PROGRESS")
+
+    def test_the_enquiry_queue_still_refuses_operational_roles(self):
+        """The same repair must not hand the guest queue to every staff role."""
+        self.auth(make_staff("d15.reception@staff.dev", role=User.Role.RECEPTIONIST))
+        self.assertEqual(self.client.get("/api/admin/enquiries/").status_code, 200)
+        for role in (User.Role.WAITER, User.Role.HOUSEKEEPING, User.Role.ACCOUNTANT, User.Role.STOREKEEPER):
+            self.auth(make_staff(f"d15.{role.value.lower()}@staff.dev", role=role))
+            denied = self.client.get("/api/admin/enquiries/")
+            self.assertEqual(
+                denied.status_code, 403, f"{role.value} must not read the guest enquiry queue"
+            )
+
     def test_unimplemented_action_routes_stay_unrouted(self):
         self.auth(self.manager)
         for action in ("acknowledge", "resolve", "reply"):
