@@ -95,23 +95,23 @@
     ? runtimeConfig.BIOMETRIC_READER_MODE.trim().toLowerCase()
     : "hardware",
 
-  /* Department subdomain routing map (Priority 5 / Part F2) */
+  /* Department subdomain routing map (Approved 11 Departments & 11 Roles) */
   DEPARTMENT_SUBDOMAINS: {
     manager: {
       subdomain: "manager",
       code: "MANAGEMENT",
-      label: "Management",
+      label: "General Manager",
       portalTitle: "Executive & General Management Portal",
       landingPath: "/dashboard/index.html",
-      allowedRoles: ["admin", "general_manager", "manager", "hr_manager", "hr_officer"]
+      allowedRoles: ["admin", "general_manager"]
     },
     accountant: {
       subdomain: "accountant",
       code: "ACCOUNTS",
-      label: "Accounts & Finance",
+      label: "Accountant",
       portalTitle: "Accounts & Financial Control Portal",
       landingPath: "/dashboard/accounting.html",
-      allowedRoles: ["admin", "accounts_manager", "accountant", "general_manager", "manager"]
+      allowedRoles: ["admin", "accountant", "general_manager"]
     },
     admin: {
       subdomain: "admin",
@@ -124,66 +124,82 @@
     procurement: {
       subdomain: "procurement",
       code: "ADMIN_PROCUREMENT",
-      label: "Administration & Procurement",
+      label: "Admin Manager/Procurement",
       portalTitle: "Procurement & Vendor Operations Portal",
       landingPath: "/dashboard/procurement.html",
-      allowedRoles: ["admin", "procurement_officer", "manager", "general_manager", "storekeeper"]
+      allowedRoles: ["admin", "procurement_officer", "general_manager", "storekeeper"]
     },
     frontdesk: {
       subdomain: "frontdesk",
       code: "FRONT_DESK",
-      label: "Front Desk / Reception",
+      label: "Receptionist",
       portalTitle: "Front Desk & Reception Operations Portal",
       landingPath: "/dashboard/bookings.html",
-      allowedRoles: ["admin", "front_desk_supervisor", "receptionist", "general_manager", "manager"]
+      allowedRoles: ["admin", "receptionist", "general_manager"]
     },
     kitchen: {
       subdomain: "kitchen",
       code: "KITCHEN",
-      label: "Kitchen",
+      label: "Chefs",
       portalTitle: "Kitchen & Culinary Production Portal",
       landingPath: "/dashboard/pos.html",
-      allowedRoles: ["admin", "kitchen_manager", "chef", "kitchen_assistant", "general_manager", "manager"]
+      allowedRoles: ["admin", "chef", "kitchen_assistant", "general_manager"]
+    },
+    "kitchen-assistant": {
+      subdomain: "kitchen-assistant",
+      code: "KITCHEN_ASSISTANT",
+      label: "Kitchen Assistant",
+      portalTitle: "Kitchen Preparation & Support Portal",
+      landingPath: "/dashboard/pos.html",
+      allowedRoles: ["admin", "kitchen_assistant", "chef", "general_manager"]
     },
     restaurant: {
       subdomain: "restaurant",
       code: "RESTAURANT_BAR",
-      label: "Restaurant Service",
+      label: "Waiters/Waitresses",
       portalTitle: "Restaurant & Dining Service Portal",
       landingPath: "/dashboard/pos.html",
-      allowedRoles: ["admin", "restaurant_manager", "waiter", "general_manager", "manager"]
+      allowedRoles: ["admin", "waiter", "general_manager"]
     },
     bar: {
       subdomain: "bar",
       code: "RESTAURANT_BAR",
-      label: "Bar Service",
+      label: "Waiters/Waitresses",
       portalTitle: "Bar & Beverage Service Portal",
       landingPath: "/dashboard/pos.html",
-      allowedRoles: ["admin", "bar_manager", "bartender", "waiter", "general_manager", "manager"]
+      allowedRoles: ["admin", "waiter", "general_manager"]
     },
     housekeeping: {
       subdomain: "housekeeping",
       code: "HOUSEKEEPING",
-      label: "Housekeeping",
+      label: "Housekeepers",
       portalTitle: "Housekeeping & Room Readiness Portal",
       landingPath: "/dashboard/housekeeping.html",
-      allowedRoles: ["admin", "housekeeping_manager", "housekeeper", "housekeeping", "general_manager", "manager"]
+      allowedRoles: ["admin", "housekeeping", "general_manager"]
     },
     porter: {
       subdomain: "porter",
       code: "PORTERING",
-      label: "Portering & Guest Assistance",
+      label: "Porters",
       portalTitle: "Porters & Guest Services Portal",
       landingPath: "/dashboard/service-requests.html",
-      allowedRoles: ["admin", "porter", "maintenance", "maintenance_technician", "security", "general_manager", "manager"]
+      allowedRoles: ["admin", "porter", "security", "general_manager"]
     },
     store: {
       subdomain: "store",
       code: "STORES_INVENTORY",
-      label: "Stores & Inventory",
+      label: "Store Keeper",
       portalTitle: "Central Stores & Inventory Control Portal",
       landingPath: "/dashboard/inventory.html",
-      allowedRoles: ["admin", "storekeeper", "inventory_clerk", "general_manager", "manager"]
+      allowedRoles: ["admin", "storekeeper", "general_manager"]
+    },
+    security: {
+      subdomain: "security",
+      code: "SECURITY",
+      label: "Security",
+      portalTitle: "Security & Access Control Portal",
+      landingPath: "/dashboard/workforce.html",
+      allowedRoles: ["admin", "security", "general_manager"]
     }
   },
 

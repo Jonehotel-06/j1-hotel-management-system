@@ -142,9 +142,19 @@ def create_compensation(
 
 
 def _department_staff_profiles(department, *, for_update=False):
+    from apps.accounts.departments import _normalize_department_code
+
     queryset = StaffProfile.objects.select_related("user", "department_ref")
     if for_update:
         queryset = queryset.select_for_update()
+    ws_code = _normalize_department_code(department.code)
+    dept_match = (
+        Q(department_ref=department)
+        | Q(department__iexact=department.name)
+        | Q(department__iexact=department.code)
+    )
+    if ws_code:
+        dept_match |= Q(department__iexact=ws_code)
     return list(
         queryset.filter(
             user__is_active=True,
@@ -154,11 +164,7 @@ def _department_staff_profiles(department, *, for_update=False):
             ],
         )
         .exclude(user__role=User.Role.GUEST)
-        .filter(
-            Q(department_ref=department)
-            | Q(department__iexact=department.name)
-            | Q(department__iexact=department.code)
-        )
+        .filter(dept_match)
         .order_by("employee_code", "user_id")
     )
 

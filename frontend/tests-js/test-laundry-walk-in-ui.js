@@ -83,12 +83,12 @@ test("authorized Laundry roles keep access while restaurant roles are excluded",
   assert.match(DASHBOARD, /"laundry\.html": \{ roles: LAUNDRY_DEPARTMENTS \}/);
   const gate = LAUNDRY.match(/JONE\.dashboard\.boot\(\[([^\]]+)\]\)/);
   assert.ok(gate, "laundry page has no role gate");
-  for (const role of ["admin", "manager", "receptionist", "housekeeper", "porter", "security"]) {
+  for (const role of ["admin", "general_manager", "receptionist", "housekeeping", "porter", "security"]) {
     assert.ok(laundry[1].includes(`"${role}"`), `laundry page lost access for ${role}`);
     // The page's own gate lists the same roles, so the entry and the page agree.
     assert.ok(gate[1].includes(`"${role}"`), `laundry page gate is missing ${role}`);
   }
-  for (const role of ["waiter", "bartender"]) {
+  for (const role of ["waiter"]) {
     assert.ok(service[1].includes(`"${role}"`), `${role} keeps Guest Requests`);
     assert.ok(!laundry[1].includes(`"${role}"`), `${role} must not have Laundry page access`);
     assert.ok(!gate[1].includes(`"${role}"`), `${role} must not pass the Laundry page gate`);

@@ -234,7 +234,14 @@ class StockMovementSerializer(serializers.ModelSerializer):
     def get_department_label(self, obj):
         if not obj.department:
             return ""
-        return dict(StockDepartment.choices).get(obj.department, obj.department)
+        historical_labels = {
+            "BAR": "Bar (consolidated into Waiters/Waitresses)",
+            "MAINTENANCE": "Maintenance (consolidated into Housekeepers)",
+            "HR": "Human Resources (consolidated into Admin Manager/Procurement)",
+        }
+        return dict(StockDepartment.choices).get(
+            obj.department, historical_labels.get(obj.department, obj.department)
+        )
 
 
 class IssueStockSerializer(serializers.Serializer):

@@ -153,37 +153,31 @@
 <script src="../js/runtime-config.js?v=1.1.27"></script><script src="../js/config.js?v=1.1.27"></script><script src="../js/utils.js?v=1.1.27"></script><script src="../js/icons.js?v=1.1.27"></script><script src="../js/api.js?v=1.1.27"></script><script src="../js/theme.js?v=1.1.27"></script><script src="../js/ui.js?v=1.1.27"></script><script src="../js/auth.js?v=1.1.27"></script><script src="../js/navigation.js?v=1.1.27"></script><script src="../js/dashboard.js?v=1.1.27"></script><script src="../js/table-fit.js?v=1.1.27"></script><script src="../js/operations.js?v=1.1.27"></script><script src="../js/biometrics.js?v=1.1.27"></script>
 <script>
 JONE.ui.initChrome();
-var __workforceAllowed=JONE.dashboard.boot(["admin","manager","general_manager","front_desk_supervisor","receptionist","housekeeping","maintenance","inventory_clerk","restaurant_manager","waiter","bar_manager","bartender","kitchen_manager","chef","kitchen_assistant","housekeeping_manager","housekeeper","porter","maintenance_technician","accounts_manager","accountant","hr_manager","hr_officer","security","procurement_officer","storekeeper","staff"]);
+var __workforceAllowed=JONE.dashboard.boot(["admin","general_manager","accountant","procurement_officer","chef","kitchen_assistant","waiter","porter","receptionist","housekeeping","storekeeper","security"]);
 document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
 (function(){
 "use strict";
 if(!__workforceAllowed)return;
 var DATA=JONE.dashboard.DATA,OPS=JONE.operations;
 /* Planning tabs, team scope and the editing controls are the management tier:
-   a general manager holds shift.manage and staff.profile.manage exactly as a
-   manager does, so the tier is admin + manager + general_manager. */
-var isManager=window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager","general_manager"]);
+   the General Manager and Administrator hold shift.manage and staff.profile.manage. */
+var isManager=window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","general_manager"]);
 /* The Reception Biometric Terminal is the FRONT DESK console — it drives the
    enrolled Receptionist Desktop, or a management-authorised supervised
-   fallback. Only management (administrator, manager, general manager) and the
-   front desk (receptionist, front desk supervisor) may see it; every other
-   department clocks in on its own screen and is offered no tab, no panel and
-   no action for it. The server re-checks the terminal on every request. */
-var deskTerminal=!!(window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager","general_manager","receptionist","front_desk_supervisor"]));
+   fallback. Only management (administrator, general manager) and the front
+   desk (receptionist) may see it; every other department clocks in on its own
+   screen and is offered no tab, no panel and no action for it. */
+var deskTerminal=!!(window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","general_manager","receptionist"]));
 document.querySelectorAll("[data-wf-desk-terminal]").forEach(function(el){el.hidden=!deskTerminal;});
 var me=(window.Auth&&window.Auth.state&&window.Auth.state.user)||{};
 var state={tab:"attendance",pages:{attendance:1,leave:1,payslips:1,shifts:1,templates:1,profiles:1},attendanceItems:[],myOpenRecord:null,templateCache:{},profileCache:{}};
 var attendanceRows=document.querySelector("[data-wf-attendance-rows]"),leaveRows=document.querySelector("[data-wf-leave-rows]"),shiftRows=document.querySelector("[data-wf-shift-rows]"),templateRows=document.querySelector("[data-wf-template-rows]"),profileRows=document.querySelector("[data-wf-profile-rows]");
 var allManagerEls=document.querySelectorAll("[data-wf-manager]");allManagerEls.forEach(function(el){el.hidden=!isManager;});
 /* The Attendance tab is the workforce view for anybody the SERVER lets read it:
-   attendance.manage (front desk supervisor, department managers, HR, GM...).
-   The scope control used to be tied to the admin/manager/general_manager role
-   list alone, so a housekeeping or front-desk manager could not switch to team
-   attendance at all even though the API authorises them — the tab then opened
-   on "My attendance" and showed an empty table while the team was clocked in.
+   attendance.manage (General Manager, Admin Manager/Procurement, Admin).
    The capability is the deciding fact; the role list is only the pre-load
    fallback so the control is usable before /api/auth/capabilities/ answers. */
-var ATTENDANCE_TEAM_ROLES=["admin","manager","general_manager","front_desk_supervisor","restaurant_manager","bar_manager","kitchen_manager","housekeeping_manager","hr_manager"];
+var ATTENDANCE_TEAM_ROLES=["admin","general_manager","procurement_officer"];
 var canViewTeam=!!(window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(ATTENDANCE_TEAM_ROLES));
 var scopeField=document.querySelector("[data-wf-attendance-scope-field]"),scopeSelect=document.getElementById("wf-attendance-scope");
 function applyAttendanceScope(){if(scopeField)scopeField.hidden=!canViewTeam;if(scopeSelect&&canViewTeam&&!scopeSelect.dataset.userChoice)scopeSelect.value="team";}
@@ -238,7 +232,7 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
 (function(){
   var stateLine=document.querySelector("[data-wf-rt-desktop-state]");
   var enrol=!!(window.Auth&&window.Auth.receptionistDesktopKey&&window.Auth.receptionistDesktopKey());
-  var management=!!(window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager","general_manager"]));
+  var management=!!(window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","general_manager"]));
   function say(text){if(stateLine)stateLine.dataset.base=text;renderState();}
   function renderState(){
     if(!stateLine)return;

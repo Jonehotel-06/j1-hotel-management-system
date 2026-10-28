@@ -25,7 +25,7 @@ class WorkstationAttributionApiTests(BaseAPITestCase):
 
     def test_authenticated_requests_report_terminal_and_trace_id_in_audit(self):
         response = self.client.post("/api/admin/users/terminals/", {
-            "name": "Bar tablet 1", "department": "BAR", "location": "Lounge",
+            "name": "Bar tablet 1", "department": "RESTAURANT", "location": "Lounge",
         }, format="json")
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(response["X-Request-ID"], "audit-request-001")

@@ -114,7 +114,8 @@ ROLE_CAPABILITY_CODES = {
         "pos.return.record", "pos.return.refund",
     }),
     "HOUSEKEEPING": frozenset({
-        "housekeeping.task.manage", "guest_request.manage", "attendance.clock", "leave.request",
+        "housekeeping.task.manage", "maintenance.work_order.manage",
+        "guest_request.manage", "attendance.clock", "leave.request",
     }),
     "MAINTENANCE": frozenset({
         "maintenance.work_order.manage", "guest_request.manage", "attendance.clock", "leave.request",
@@ -149,9 +150,9 @@ ROLE_CAPABILITY_CODES = {
         "kitchen.queue.view", "attendance.clock", "attendance.manage", "shift.manage", "leave.request",
     }),
     "WAITER": frozenset({
-        "restaurant.order.manage", "payment.capture", "guest_request.manage", "attendance.clock", "leave.request",
-        "pos.return.record",
-        # Transferred from the retired standalone Cashier role. Sensitive
+        "restaurant.order.manage", "bar.order.manage", "payment.capture", "guest_request.manage",
+        "attendance.clock", "leave.request", "pos.return.record",
+        # Transferred from the retired standalone Cashier & Bar roles. Sensitive
         # approvals, financial reports, payroll and administration are NOT
         # included; existing maker-checker and reconciliation rules remain.
         "folio.charge.post", "payment.refund.request", "cash_session.open", "cash_session.close",
@@ -176,7 +177,8 @@ ROLE_CAPABILITY_CODES = {
         "attendance.clock", "attendance.manage", "shift.manage", "leave.request",
     }),
     "HOUSEKEEPER": frozenset({
-        "housekeeping.task.manage", "guest_request.manage", "attendance.clock", "leave.request",
+        "housekeeping.task.manage", "maintenance.work_order.manage",
+        "guest_request.manage", "attendance.clock", "leave.request",
     }),
     "MAINTENANCE_TECHNICIAN": frozenset({
         "maintenance.work_order.manage", "guest_request.manage", "attendance.clock", "leave.request",
@@ -215,7 +217,15 @@ ROLE_CAPABILITY_CODES = {
         "payroll.view", "payroll.manage",
     }),
     "SECURITY": frozenset({"guest_request.manage", "attendance.clock"}),
-    "PROCUREMENT_OFFICER": frozenset({"procurement.manage", "attendance.clock", "leave.request"}),
+    # Admin Manager/Procurement consolidates Procurement and non-approval HR
+    # administration (staff records, shifts, attendance administration, payroll
+    # preparation). Maker-checker approvals (procurement.approve, payroll.approve,
+    # leave.approve, expense.approve) are intentionally excluded by default.
+    "PROCUREMENT_OFFICER": frozenset({
+        "procurement.manage", "staff.profile.manage", "staff.view", "staff.manage",
+        "shift.manage", "attendance.clock", "attendance.manage", "leave.request",
+        "payroll.view", "payroll.manage",
+    }),
     "STOREKEEPER": frozenset({"inventory.manage", "procurement.manage", "attendance.clock", "leave.request"}),
     "PORTER": frozenset({"guest_request.manage", "attendance.clock", "leave.request"}),
     "KITCHEN_ASSISTANT": frozenset({"kitchen.queue.view", "kitchen.ticket.manage", "attendance.clock", "leave.request"}),
@@ -250,10 +260,11 @@ CANONICAL_HOUSEKEEPING_ROLE = "HOUSEKEEPING"
 HOUSEKEEPING_ROLE_ALIASES = frozenset({"HOUSEKEEPER"})
 HOUSEKEEPING_WORKER_ROLES = frozenset({CANONICAL_HOUSEKEEPING_ROLE}) | HOUSEKEEPING_ROLE_ALIASES
 
-# The same shape for the maintenance worker pair (MAINTENANCE / MAINTENANCE_TECHNICIAN),
-# so the identical latent defect cannot appear in the maintenance workflow.
-CANONICAL_MAINTENANCE_ROLE = "MAINTENANCE"
-MAINTENANCE_ROLE_ALIASES = frozenset({"MAINTENANCE_TECHNICIAN"})
+# Maintenance staff/departments consolidated into Housekeepers (HOUSEKEEPING),
+# while keeping historical MAINTENANCE / MAINTENANCE_TECHNICIAN worker aliases
+# valid for legacy test fixtures and reversible migrations.
+CANONICAL_MAINTENANCE_ROLE = "HOUSEKEEPING"
+MAINTENANCE_ROLE_ALIASES = frozenset({"HOUSEKEEPER", "MAINTENANCE", "MAINTENANCE_TECHNICIAN"})
 MAINTENANCE_WORKER_ROLES = frozenset({CANONICAL_MAINTENANCE_ROLE}) | MAINTENANCE_ROLE_ALIASES
 
 

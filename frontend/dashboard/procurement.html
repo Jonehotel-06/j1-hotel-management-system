@@ -47,7 +47,7 @@
 <script src="../js/runtime-config.js?v=1.1.23"></script><script src="../js/config.js?v=1.1.23"></script><script src="../js/utils.js?v=1.1.23"></script><script src="../js/icons.js?v=1.1.23"></script><script src="../js/api.js?v=1.1.23"></script><script src="../js/theme.js?v=1.1.23"></script><script src="../js/ui.js?v=1.1.23"></script><script src="../js/auth.js?v=1.1.23"></script><script src="../js/navigation.js?v=1.1.23"></script><script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script><script src="../js/operations.js?v=1.1.23"></script>
 <script>
 JONE.ui.initChrome();
-var __procurementAllowed = JONE.dashboard.boot(["admin","manager","general_manager","inventory_clerk","storekeeper","procurement_officer"]);
+var __procurementAllowed = JONE.dashboard.boot(["admin","general_manager","storekeeper","procurement_officer"]);
 document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
 (function(){
 if(!__procurementAllowed)return;
@@ -57,7 +57,7 @@ var orderRows=document.querySelector("[data-proc-order-rows]"),supplierRows=docu
 
 /* Approving a submitted purchase order is the server's procurement.approve.
    The role list is that capability's holders until the capability read lands. */
-function manager(){var auth=window.Auth;if(auth&&auth.state&&auth.state.capabilitiesLoaded)return !!(auth.hasCapability&&auth.hasCapability("procurement.approve"));return !!(auth&&auth.hasAnyRole&&auth.hasAnyRole(["admin","manager","general_manager"]));}
+function manager(){var auth=window.Auth;if(auth&&auth.state&&auth.state.capabilitiesLoaded)return !!(auth.hasCapability&&auth.hasCapability("procurement.approve"));return !!(auth&&auth.hasAnyRole&&auth.hasAnyRole(["admin","general_manager"]));}
 function qty(value,unit){return JONE.formatQuantity(value,{unit:unit});}
 function money(value,currency){return JONE.formatMoney(value,{currency:currency||"NGN"});}
 function date(value){return value?JONE.formatDate(value):"—";}

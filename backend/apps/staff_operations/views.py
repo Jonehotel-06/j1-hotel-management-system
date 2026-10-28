@@ -667,15 +667,17 @@ class DepartmentListCreateView(APIView):
     require_any_capability = True
 
     def get(self, request):
-        # A historical standalone Cashier row may remain for old references,
-        # but it is no longer an active department and never appears in the
-        # department-management listing.
+        # Historical standalone rows (Cashier, Bar, Maintenance, HR) remain
+        # archived for FK history, never appearing in the active department list.
         queryset = Department.objects.select_related("head").exclude(
             Q(code__iexact="CASHIER") | Q(code__iexact="CASHIER_TILL")
             | Q(name__iexact="Cashier") | Q(name__iexact="Cashier / till")
             | Q(slug__iexact="cashier") | Q(slug__iexact="cashier-till")
+            | Q(code__iexact="BAR") | Q(code__iexact="BAR_SERVICE")
+            | Q(code__iexact="MAINTENANCE")
+            | Q(code__iexact="HR") | Q(code__iexact="HUMAN_RESOURCES")
         )
-        if request.query_params.get("active") == "true":
+        if request.query_params.get("include_archived") != "true":
             queryset = queryset.filter(is_active=True)
         if search := request.query_params.get("search"):
             queryset = queryset.filter(
@@ -745,17 +747,25 @@ class DepartmentDashboardSummaryView(APIView):
             or staff_department_code(request.user)
         ).strip().upper()
 
-        from apps.accounts.departments import is_removed_cashier_department
+        from apps.accounts.departments import (
+            _normalize_department_code,
+            is_removed_cashier_department,
+            removed_department_message,
+        )
         if is_removed_cashier_department(target_dept):
             raise NotFound("The Cashier department was merged into Restaurants.")
+        if consolidation_msg := removed_department_message(target_dept):
+            raise NotFound(consolidation_msg)
 
         if not is_staff_authorized_for_department(request.user, target_dept):
             raise PermissionDenied("Your account is not authorized to access this department dashboard.")
 
         dept_obj = Department.objects.filter(
-            Q(code__iexact=target_dept) | Q(slug__iexact=target_dept) | Q(name__iexact=target_dept)
+            Q(code__iexact=target_dept) | Q(slug__iexact=target_dept) | Q(name__iexact=target_dept),
+            is_active=True,
         ).first()
         canonical_code = dept_obj.code if dept_obj else target_dept
+        ws_code = _normalize_department_code(canonical_code)
 
         today = timezone.localdate()
         my_att = (
@@ -763,16 +773,20 @@ class DepartmentDashboardSummaryView(APIView):
             .order_by("-clock_in_at")
             .first()
         )
-        dept_staff_qs = StaffProfile.objects.select_related("user").filter(
-            Q(department_ref=dept_obj) if dept_obj else Q(department__icontains=canonical_code)
-        )
+        if dept_obj:
+            staff_filter = Q(department_ref=dept_obj) | Q(department__iexact=dept_obj.code) | Q(department__iexact=dept_obj.name)
+            if ws_code:
+                staff_filter |= Q(department__iexact=ws_code)
+            dept_staff_qs = StaffProfile.objects.select_related("user").filter(staff_filter)
+        else:
+            dept_staff_qs = StaffProfile.objects.select_related("user").filter(Q(department__icontains=canonical_code))
         on_duty_count = AttendanceRecord.objects.filter(
             clock_out_at__isnull=True,
             staff_id__in=dept_staff_qs.values_list("user_id", flat=True),
         ).count()
 
         metrics = {}
-        if canonical_code in ("FRONT_DESK", "FRONTDESK"):
+        if canonical_code in ("FRONT_DESK", "FRONTDESK", "RECEPTIONIST"):
             from apps.bookings.models import Booking
             from apps.rooms.models import Room
 
@@ -782,7 +796,7 @@ class DepartmentDashboardSummaryView(APIView):
                 "in_house_guests": Booking.objects.filter(status="CHECKED_IN").count(),
                 "available_rooms": Room.objects.filter(is_active=True, status="AVAILABLE").count(),
             }
-        elif canonical_code == "KITCHEN":
+        elif canonical_code in ("KITCHEN", "CHEFS", "KITCHEN_ASSISTANT"):
             from apps.pos.models import KitchenTicket
 
             metrics = {
@@ -790,7 +804,7 @@ class DepartmentDashboardSummaryView(APIView):
                 "ready_tickets": KitchenTicket.objects.filter(status="READY").count(),
                 "completed_today": KitchenTicket.objects.filter(status="SERVED", updated_at__date=today).count(),
             }
-        elif canonical_code in ("RESTAURANT_BAR", "RESTAURANT", "BAR"):
+        elif canonical_code in ("RESTAURANT_BAR", "RESTAURANT", "WAITERS_WAITRESSES"):
             from apps.pos.models import PosOrder, RestaurantTableSession
 
             metrics = {
@@ -798,7 +812,7 @@ class DepartmentDashboardSummaryView(APIView):
                 "active_tables": RestaurantTableSession.objects.filter(status="OPEN").count(),
                 "paid_orders_today": PosOrder.objects.filter(status="PAID", updated_at__date=today).count(),
             }
-        elif canonical_code == "HOUSEKEEPING":
+        elif canonical_code in ("HOUSEKEEPING", "HOUSEKEEPERS"):
             from apps.housekeeping.models import HousekeepingTask
             from apps.maintenance.models import MaintenanceWorkOrder
             from apps.rooms.models import Room
@@ -809,7 +823,7 @@ class DepartmentDashboardSummaryView(APIView):
                 "completed_tasks_today": HousekeepingTask.objects.filter(status="COMPLETED", updated_at__date=today).count(),
                 "open_maintenance": MaintenanceWorkOrder.objects.filter(status__in=["OPEN", "ASSIGNED", "IN_PROGRESS"]).count(),
             }
-        elif canonical_code in ("PORTERING", "PORTER"):
+        elif canonical_code in ("PORTERING", "PORTER", "PORTERS", "SECURITY"):
             from apps.guest_services.models import ServiceRequest
 
             open_cnt = ServiceRequest.objects.filter(status__in=["OPEN", "ASSIGNED", "IN_PROGRESS"]).count()
@@ -821,7 +835,7 @@ class DepartmentDashboardSummaryView(APIView):
                 ).count(),
                 "completed_today": ServiceRequest.objects.filter(status="COMPLETED", updated_at__date=today).count(),
             }
-        elif canonical_code in ("STORES_INVENTORY", "STORE", "INVENTORY"):
+        elif canonical_code in ("STORES_INVENTORY", "STORE", "INVENTORY", "STORE_KEEPER"):
             from apps.inventory.models import StockConsumptionRequest, StockItem
 
             metrics = {

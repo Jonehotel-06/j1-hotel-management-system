@@ -42,13 +42,13 @@
       { label: "Payments", href: "payments.html", icon: "creditCard", view: "payments", capabilities: ["payment.read"] },
       { label: "Receipts", href: "receipts.html", icon: "receipt", view: "receipts", capabilities: ["payment.read"] },
       { label: "Accounting", href: "accounting.html", icon: "wallet", view: "accounting", capabilities: ["reports.financial.view"] },
-      { label: "Reports", href: "reports.html", icon: "barChart", view: "reports", minRole: "manager" },
+      { label: "Reports", href: "reports.html", icon: "barChart", view: "reports", minRole: "general_manager" },
       { label: "Payroll", href: "payroll.html", icon: "creditCard", view: "payroll", capabilities: ["payroll.view", "payroll.manage", "payroll.approve"] },
     ]},
     { group: "Content", items: [
-      { label: "Facilities", href: "facilities.html", icon: "building", view: "facilities", minRole: "manager" },
-      { label: "Gallery", href: "gallery.html", icon: "image", view: "gallery", minRole: "manager" },
-      { label: "Offers", href: "offers.html", icon: "tag", view: "offers", minRole: "manager" },
+      { label: "Facilities", href: "facilities.html", icon: "building", view: "facilities", minRole: "general_manager" },
+      { label: "Gallery", href: "gallery.html", icon: "image", view: "gallery", minRole: "general_manager" },
+      { label: "Offers", href: "offers.html", icon: "tag", view: "offers", minRole: "general_manager" },
     ]},
     { group: "Communication", items: [
       { label: "Enquiries", href: "enquiries.html", icon: "message", view: "enquiries" },
@@ -100,21 +100,18 @@
      never disagree with the page it points at. Capability and rank clauses that
      do remain on an item only ever NARROW what this table allows.
      ======================================================================== */
-  const FRONT_DESK = ["receptionist", "front_desk_supervisor", "staff", "manager", "general_manager", "admin"];
-  const MANAGEMENT = ["manager", "general_manager", "admin"];
+  const FRONT_DESK = ["receptionist", "general_manager", "admin"];
+  const MANAGEMENT = ["general_manager", "admin"];
   const ADMIN_ONLY = ["admin"];
-  const FRONT_OF_HOUSE = ["admin", "manager", "general_manager", "front_desk_supervisor", "receptionist"];
-  const FINANCE = ["admin", "manager", "receptionist", "front_desk_supervisor", "general_manager",
-    "accounts_manager", "accountant"];
-  const SERVICE_DEPARTMENTS = ["admin", "manager", "general_manager", "front_desk_supervisor",
-    "receptionist", "housekeeping", "housekeeping_manager", "housekeeper", "porter",
-    "maintenance", "maintenance_technician", "waiter", "bartender", "security"];
+  const FRONT_OF_HOUSE = ["admin", "general_manager", "receptionist"];
+  const FINANCE = ["admin", "general_manager", "receptionist", "accountant"];
+  const SERVICE_DEPARTMENTS = ["admin", "general_manager", "receptionist",
+    "housekeeping", "porter", "waiter", "security"];
   /* Laundry is a priced guest service with its own page, not a Restaurants
-     feature. Waiters and bartenders keep Guest Requests and POS, but the
-     Restaurants dashboard no longer promises them the Laundry workspace. */
-  const LAUNDRY_DEPARTMENTS = ["admin", "manager", "general_manager", "front_desk_supervisor",
-    "receptionist", "housekeeping", "housekeeping_manager", "housekeeper", "porter",
-    "maintenance", "maintenance_technician", "security"];
+     feature. Waiters/Waitresses keep Guest Requests and POS, while Laundry
+     serves Front Desk, Housekeepers, Porters, and Security. */
+  const LAUNDRY_DEPARTMENTS = ["admin", "general_manager", "receptionist",
+    "housekeeping", "porter", "security"];
 
   const PAGE_ACCESS = {
     /* Personal surfaces — every signed-in staff member. */
@@ -141,41 +138,31 @@
     "payments.html": { roles: FINANCE },
     "receipts.html": { roles: FINANCE },
     "receipt-details.html": { roles: FINANCE },
-    "accounting.html": { roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant"] },
-    "payroll.html": { roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant",
-      "hr_manager", "hr_officer"] },
+    "accounting.html": { roles: ["admin", "general_manager", "accountant"] },
+    "payroll.html": { roles: ["admin", "general_manager", "accountant", "procurement_officer"] },
     "reports.html": { roles: MANAGEMENT },
-    "approvals.html": { roles: ["admin", "manager", "general_manager", "accounts_manager", "accountant",
-      "hr_manager", "hr_officer", "inventory_clerk", "storekeeper", "procurement_officer",
-      "front_desk_supervisor"] },
+    "approvals.html": { roles: ["admin", "general_manager", "accountant",
+      "procurement_officer", "storekeeper", "receptionist"] },
 
     /* Guest services. */
     "service-requests.html": { roles: SERVICE_DEPARTMENTS },
     "laundry.html": { roles: LAUNDRY_DEPARTMENTS },
-    "housekeeping.html": { roles: ["admin", "manager", "general_manager", "front_desk_supervisor",
-      "receptionist", "housekeeping", "housekeeping_manager", "housekeeper"] },
-    "maintenance.html": { roles: ["admin", "manager", "general_manager", "front_desk_supervisor",
-      "receptionist", "maintenance", "maintenance_technician"] },
-    "pos.html": { roles: ["admin", "manager", "general_manager", "restaurant_manager",
-      "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "kitchen_assistant"] },
-    "barcode-labels.html": { roles: ["admin", "manager", "general_manager", "inventory_clerk",
-      "storekeeper", "waiter"] },
+    "housekeeping.html": { roles: ["admin", "general_manager", "receptionist", "housekeeping"] },
+    "maintenance.html": { roles: ["admin", "general_manager", "receptionist", "housekeeping"] },
+    "pos.html": { roles: ["admin", "general_manager", "waiter", "chef", "kitchen_assistant"] },
+    "barcode-labels.html": { roles: ["admin", "general_manager", "storekeeper", "waiter"] },
     "service-qr.html": { roles: MANAGEMENT },
 
     /* Stores and procurement. */
-    "inventory.html": { roles: ["admin", "manager", "general_manager", "inventory_clerk", "storekeeper"] },
-    "procurement.html": { roles: ["admin", "manager", "general_manager", "inventory_clerk",
-      "storekeeper", "procurement_officer"] },
+    "inventory.html": { roles: ["admin", "general_manager", "storekeeper"] },
+    "procurement.html": { roles: ["admin", "general_manager", "storekeeper", "procurement_officer"] },
 
     /* People. */
-    "workforce.html": { roles: ["admin", "manager", "general_manager", "front_desk_supervisor",
-      "receptionist", "housekeeping", "maintenance", "inventory_clerk",
-      "restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef",
-      "kitchen_assistant", "housekeeping_manager", "housekeeper", "porter",
-      "maintenance_technician", "accounts_manager", "accountant", "hr_manager", "hr_officer", "security",
-      "procurement_officer", "storekeeper", "staff"] },
+    "workforce.html": { roles: ["admin", "general_manager", "accountant",
+      "procurement_officer", "chef", "kitchen_assistant", "waiter", "porter",
+      "receptionist", "housekeeping", "storekeeper", "security"] },
     "staff.html": { roles: ADMIN_ONLY },
-    "staff-profile.html": { roles: ["admin", "general_manager", "manager", "hr_manager", "hr_officer"] },
+    "staff-profile.html": { roles: ["admin", "general_manager", "procurement_officer"] },
 
     /* Content, communication and administration. */
     "facilities.html": { roles: MANAGEMENT },
@@ -1981,9 +1968,17 @@
         {
           name: "role", label: "Role", type: "select", required: true,
           options: [
-            { value: "ADMIN", label: "Admin" },
-            { value: "MANAGER", label: "Manager" },
+            { value: "GENERAL_MANAGER", label: "General Manager" },
+            { value: "ACCOUNTANT", label: "Accountant" },
+            { value: "PROCUREMENT_OFFICER", label: "Admin Manager/Procurement" },
+            { value: "CHEF", label: "Chefs" },
+            { value: "KITCHEN_ASSISTANT", label: "Kitchen Assistant" },
+            { value: "WAITER", label: "Waiters/Waitresses" },
+            { value: "PORTER", label: "Porters" },
             { value: "RECEPTIONIST", label: "Receptionist" },
+            { value: "HOUSEKEEPING", label: "Housekeepers" },
+            { value: "STOREKEEPER", label: "Store Keeper" },
+            { value: "SECURITY", label: "Security" },
           ],
         },
       ],

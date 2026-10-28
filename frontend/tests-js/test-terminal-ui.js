@@ -11,7 +11,7 @@ test("workstation registry is API-backed and has an explicit local selection/cle
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "terminals.html"), "utf8");
   const nav = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
   const api = fs.readFileSync(path.join(FRONTEND, "js", "api.js"), "utf8");
-  assert.match(page, /boot\(\["admin","manager","general_manager"\]\)/);
+  assert.match(page, /boot\(\["admin","general_manager"\]\)/);
   assert.match(page, /API\.list\("workstations"/);
   assert.match(page, /API\.create\("workstations"/);
   assert.match(page, /API\.update\("workstations"/);

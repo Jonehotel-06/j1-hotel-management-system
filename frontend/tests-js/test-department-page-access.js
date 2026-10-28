@@ -95,8 +95,8 @@ const OPERATIONAL = Array.from(Auth.OPERATIONAL_ROLES);
    js/auth.js hasRole(). Department roles sit at -1 and only match when named. */
 const RANK = {
   guest: 0,
-  receptionist: 1, front_desk_supervisor: 1, staff: 1,
-  manager: 2, general_manager: 2, admin: 3,
+  receptionist: 1,
+  general_manager: 2, admin: 3,
 };
 function rolesAbove(minRole) {
   const floor = RANK[minRole];
@@ -273,8 +273,8 @@ test("every menu entry names a classified page and passes the registry", () => {
   }
   /* And the registry is the promise the sidebar keeps: staff never see the
      admin-only screens, guests see nothing at all. */
-  assert.equal(asRole("housekeeper").canOpenPage("settings.html"), false);
-  assert.equal(asRole("housekeeper").canOpenPage("audit-logs.html"), false);
+  assert.equal(asRole("housekeeping").canOpenPage("settings.html"), false);
+  assert.equal(asRole("housekeeping").canOpenPage("audit-logs.html"), false);
   assert.equal(asRole("guest").canOpenPage("index.html"), false);
   assert.equal(asRole(null).canOpenPage("index.html"), false);
 });
@@ -308,50 +308,28 @@ assert.equal(d.canOpenPage(undefined), false);
 test("each department is admitted to its own screens and refused the others", () => {
   const expectations = {
     /* role:      [allowed...]                                        [refused...] */
-    housekeeper: [["laundry.html", "workforce.html", "housekeeping.html", "service-requests.html", "profile.html", "notifications.html"],
+    housekeeping: [["laundry.html", "workforce.html", "housekeeping.html", "maintenance.html", "service-requests.html", "profile.html", "notifications.html"],
       ["payments.html", "accounting.html", "payroll.html", "pos.html", "check-out.html", "bookings.html", "settings.html", "audit-logs.html", "inventory.html", "terminals.html", "staff.html"]],
-    housekeeping_manager: [["laundry.html", "housekeeping.html", "workforce.html"],
-      ["payments.html", "pos.html", "check-out.html", "settings.html"]],
-    receptionist: [["index.html", "check-out.html", "bookings.html", "guests.html", "payments.html", "receipts.html", "workforce.html", "laundry.html"],
+    receptionist: [["index.html", "check-out.html", "bookings.html", "guests.html", "payments.html", "receipts.html", "workforce.html", "laundry.html", "approvals.html"],
       ["pos.html", "accounting.html", "payroll.html", "settings.html", "audit-logs.html", "reviews.html", "staff.html", "terminals.html", "inventory.html"]],
-    front_desk_supervisor: [["check-out.html", "payments.html", "workforce.html", "approvals.html"],
-      ["settings.html", "audit-logs.html", "payroll.html", "pos.html"]],
     waiter: [["pos.html", "barcode-labels.html", "service-requests.html", "workforce.html"],
       ["laundry.html", "payments.html", "check-out.html", "housekeeping.html", "maintenance.html", "inventory.html", "accounting.html", "settings.html"]],
-    bartender: [["pos.html", "service-requests.html", "workforce.html"],
-      ["laundry.html", "barcode-labels.html", "payments.html", "check-out.html", "housekeeping.html", "maintenance.html", "inventory.html", "accounting.html", "settings.html"]],
     chef: [["pos.html", "workforce.html"],
       ["payments.html", "check-out.html", "bookings.html", "housekeeping.html", "settings.html"]],
-    inventory_clerk: [["inventory.html", "procurement.html", "barcode-labels.html", "workforce.html"],
-      ["pos.html", "payments.html", "check-out.html", "housekeeping.html", "settings.html"]],
-    storekeeper: [["inventory.html", "procurement.html", "barcode-labels.html"],
+    kitchen_assistant: [["pos.html", "workforce.html"],
+      ["payments.html", "check-out.html", "bookings.html", "housekeeping.html", "settings.html"]],
+    storekeeper: [["inventory.html", "procurement.html", "barcode-labels.html", "approvals.html", "workforce.html"],
       ["pos.html", "payments.html", "bookings.html", "settings.html"]],
-    maintenance_technician: [["maintenance.html", "laundry.html", "service-requests.html", "workforce.html"],
-      ["housekeeping.html", "inventory.html", "payments.html", "pos.html", "settings.html"]],
+    procurement_officer: [["procurement.html", "payroll.html", "approvals.html", "staff-profile.html", "workforce.html"],
+      ["payments.html", "check-out.html", "pos.html", "inventory.html", "staff.html", "settings.html", "audit-logs.html"]],
     accountant: [["payments.html", "receipts.html", "accounting.html", "payroll.html", "approvals.html", "workforce.html"],
       ["check-out.html", "bookings.html", "guests.html", "pos.html", "housekeeping.html", "laundry.html", "settings.html", "audit-logs.html", "inventory.html"]],
-    accounts_manager: [["payments.html", "accounting.html", "payroll.html", "workforce.html"],
-      ["check-out.html", "bookings.html", "pos.html", "barcode-labels.html", "settings.html", "audit-logs.html", "inventory.html"]],
-    hr_manager: [["payroll.html", "approvals.html", "staff-profile.html", "workforce.html"],
-      ["payments.html", "check-out.html", "pos.html", "inventory.html", "staff.html", "settings.html", "audit-logs.html"]],
-    /* The HR department's ONE standard role (one role per department): the same
-       people surfaces as the retired "HR manager" title, because the work is the
-       work — and still none of the money or payroll-approval pages. */
-    hr_officer: [["payroll.html", "approvals.html", "staff-profile.html", "workforce.html"],
-      ["payments.html", "check-out.html", "pos.html", "inventory.html", "staff.html", "settings.html", "audit-logs.html"]],
     security: [["service-requests.html", "laundry.html", "workforce.html"],
       ["bookings.html", "check-out.html", "guests.html", "payments.html", "pos.html", "settings.html"]],
     porter: [["laundry.html", "service-requests.html", "workforce.html"],
       ["payments.html", "check-out.html", "pos.html", "inventory.html", "settings.html"]],
-    /* A plain "staff" account is the generic front-desk role. */
-    staff: [["index.html", "bookings.html", "guests.html", "availability.html", "enquiries.html", "profile.html"],
-      ["payments.html", "accounting.html", "settings.html", "audit-logs.html", "terminals.html", "staff.html", "pos.html", "inventory.html"]],
-    /* Management sees the whole shell, but still not a page it has no business
-       in: the public site pages are the only thing outside the table. */
-    manager: [["index.html", "bookings.html", "check-out.html", "payments.html", "accounting.html", "reports.html", "approvals.html", "staff-profile.html", "terminals.html", "workforce.html", "laundry.html", "pos.html", "inventory.html"],
+    general_manager: [["index.html", "bookings.html", "check-out.html", "payments.html", "accounting.html", "reports.html", "approvals.html", "staff-profile.html", "terminals.html", "service-qr.html", "workforce.html", "laundry.html", "pos.html", "inventory.html"],
       ["settings.html", "audit-logs.html", "audit-log-details.html", "reviews.html", "staff.html"]],
-    general_manager: [["index.html", "reports.html", "accounting.html", "staff-profile.html", "terminals.html", "service-qr.html"],
-      ["settings.html", "audit-logs.html", "reviews.html", "staff.html"]],
     admin: [["index.html", "settings.html", "audit-logs.html", "audit-log-details.html", "reviews.html", "staff.html", "payroll.html", "everything-else-listed-below"],
       []],
     guest: [[], ["index.html", "bookings.html", "check-out.html", "payments.html", "pos.html", "workforce.html", "profile.html", "notifications.html"]],
@@ -482,13 +460,15 @@ test("the POS-draft gate is the composite capability the server enforces", () =>
 });
 
 test("no frontend gate forgets the management or senior tier of a named role", () => {
-  /* Equality of capability sets is what makes these implications true. If the
-     matrix ever separates them, this test fails and tells you which pages to
-     revisit — the whole defect class was "a listing that forgot the tier". */
+  /* Equality or superset of capability sets makes these implications true:
+     General Manager holds a superset of frontline operational roles, and Admin
+     holds ALL capabilities. */
   const pairs = [
-    ["manager", "general_manager"],
-    ["receptionist", "front_desk_supervisor"],
-    ["housekeeper", "housekeeping_manager"],
+    ["receptionist", "general_manager"],
+    ["housekeeping", "general_manager"],
+    ["storekeeper", "general_manager"],
+    ["procurement_officer", "general_manager"],
+    ["general_manager", "admin"],
   ];
   const missing = [];
   for (const [junior, senior] of pairs) {
@@ -511,14 +491,13 @@ test("no frontend gate forgets the management or senior tier of a named role", (
 });
 
 test("a page's audience is closed under its senior tier", () => {
-  /* The rule that caught the real gaps: whoever holds a superset of an admitted
-     role's capabilities must be admitted too — otherwise the front desk
-     supervisor cannot open the housekeeping board they are allowed to dispatch
-     on, and the general manager cannot open the maintenance board, because the
-     page's own gate forgot them while the server granted them everything the
-     admitted role has. */
-  const pairs = [["manager", "general_manager"], ["receptionist", "front_desk_supervisor"],
-    ["housekeeper", "housekeeping_manager"]];
+  const pairs = [
+    ["receptionist", "general_manager"],
+    ["housekeeping", "general_manager"],
+    ["storekeeper", "general_manager"],
+    ["procurement_officer", "general_manager"],
+    ["general_manager", "admin"],
+  ];
   const problems = [];
   for (const [name, rule] of Object.entries(PAGE_ACCESS)) {
     if (!rule.roles) continue;
@@ -532,9 +511,9 @@ test("a page's audience is closed under its senior tier", () => {
     "a page gate omits the senior tier of a role it admits:\n  " + problems.join("\n  "));
 });
 
-test("workforce planning is the management tier, not two of its three roles", () => {
+test("workforce planning is the management tier", () => {
   const workforce = pageByName("workforce.html").source;
-  assert.match(workforce, /isManager=[\s\S]{0,140}\["admin","manager","general_manager"\]/,
+  assert.match(workforce, /isManager=[\s\S]{0,140}\["admin","general_manager"\]/,
     "shift/profile planning must include the general manager");
   assert.match(workforce, /if\(\(tab==="shifts"\|\|tab==="profiles"\)&&!isManager\)return;/);
 });
@@ -558,14 +537,15 @@ test("the staff-profile and workforce cross-links are gated", () => {
   assert.match(profile, /data-ss-workforce-link/, "the leave tab's link is marked");
   assert.match(profile, /canOpenPage\("workforce\.html"\)/, "and resolved through the registry");
 
-  /* The HR/management employment-profile page used to be unreachable: the only
-     entry that led towards staff data was the admin-only staff directory. */
-  assert.equal(PAGE_ACCESS["staff-profile.html"].roles.includes("hr_manager"), true);
+  /* Admin Manager/Procurement (consolidated HR/Procurement role) and General
+     Manager have access to employment profiles while the owner-only staff.html
+     remains Admin-only. */
+  assert.equal(PAGE_ACCESS["staff-profile.html"].roles.includes("procurement_officer"), true);
   const nav = JONE.dashboard.NAV.flatMap((g) => g.items.map((i) => i.href));
   assert.ok(nav.includes("staff-profile.html"), "Staff Profiles is a sidebar entry");
   assert.ok(nav.includes("staff.html"), "and the admin staff directory keeps its own entry");
-  assert.equal(asRole("hr_manager").canOpenPage("staff-profile.html"), true);
-  assert.equal(asRole("hr_manager").canOpenPage("staff.html"), false, "which HR is not promised");
+  assert.equal(asRole("procurement_officer").canOpenPage("staff-profile.html"), true);
+  assert.equal(asRole("procurement_officer").canOpenPage("staff.html"), false, "which non-admin staff are not promised");
 });
 
 test("the Reception Biometric Terminal is front desk + management only", () => {
@@ -578,7 +558,7 @@ test("the Reception Biometric Terminal is front desk + management only", () => {
   assert.match(tab, /\bhidden\b/, "the terminal tab starts hidden");
   assert.match(tab, /data-wf-desk-terminal/, "and carries the marker the gate resolves");
   assert.match(workforce,
-    /deskTerminal=[\s\S]{0,120}\["admin","manager","general_manager","receptionist","front_desk_supervisor"\]/,
+    /deskTerminal=[\s\S]{0,120}\["admin","general_manager","receptionist"\]/,
     "only management and the front desk may see it");
   assert.match(workforce, /document\.querySelectorAll\("\[data-wf-desk-terminal\]"\)\.forEach\(function\(el\)\{el\.hidden=!deskTerminal;\}\)/);
   assert.match(workforce, /if\(tab==="reception-terminal"&&!deskTerminal\)return;/,
@@ -621,10 +601,10 @@ test("every cross-department link resolves its target through the registry", () 
   assert.deepEqual(missing, [], "these links are shown without asking the registry: " + missing.join(", "));
 
   /* And the resolved check the pages perform really is the registry's answer:
-     a stores clerk may open the label page from the sidebar while the POS menu
+     a storekeeper may open the label page from the sidebar while the POS menu
      link inside pos.html never appears — pos.html itself is closed to them. */
-  assert.equal(asRole("inventory_clerk").canOpenPage("barcode-labels.html"), true);
-  assert.equal(asRole("inventory_clerk").canOpenPage("pos.html"), false);
+  assert.equal(asRole("storekeeper").canOpenPage("barcode-labels.html"), true);
+  assert.equal(asRole("storekeeper").canOpenPage("pos.html"), false);
   assert.equal(asRole("waiter").canOpenPage("pos.html"), true);
   assert.equal(asRole("waiter").canOpenPage("check-out.html"), false);
 });
@@ -633,7 +613,7 @@ test("Laundry stays available to its own staff but is no longer a Restaurants li
   const laundryItem = JONE.dashboard.NAV.flatMap((group) => group.items)
     .find((item) => item.href === "laundry.html");
   assert.ok(laundryItem, "Laundry remains a real navigation entry for authorized staff");
-  for (const role of ["waiter", "bartender"]) {
+  for (const role of ["waiter"]) {
     asRole(role);
     Auth.state.capabilitiesLoaded = true;
     Auth.state.capabilities = ["guest_request.manage", "guest_request.assign"];
@@ -642,7 +622,7 @@ test("Laundry stays available to its own staff but is no longer a Restaurants li
     assert.equal(JONE.dashboard.canOpenPage("service-requests.html"), true, `${role} keeps Guest Requests`);
     assert.equal(JONE.dashboard.canOpenPage("pos.html"), true, `${role} keeps the POS workspace`);
   }
-  for (const role of ["receptionist", "housekeeper", "porter", "security"]) {
+  for (const role of ["receptionist", "housekeeping", "porter", "security"]) {
     asRole(role);
     assert.equal(JONE.dashboard.canOpenPage("laundry.html"), true, `${role} keeps authorized Laundry access`);
   }

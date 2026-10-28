@@ -353,7 +353,7 @@ class InsufficientStockTests(SalesDepletionTestCase):
         record_stock_movement(
             item=self.bottle, location=self.bar, movement_type=StockMovement.Type.ISSUE,
             quantity_delta="-3", source_key="dep-short-drain", actor=self.clerk,
-            department="BAR", recipient="Bar handover",
+            department="RESTAURANT", recipient="Bar handover",
         )
         transition_order(order=order, target_status=PosOrder.Status.PREPARING, actor=self.cashier)
         transition_order(order=order, target_status=PosOrder.Status.READY, actor=self.cashier)
@@ -380,7 +380,7 @@ class InsufficientStockTests(SalesDepletionTestCase):
         record_stock_movement(
             item=self.bottle, location=self.bar, movement_type=StockMovement.Type.ISSUE,
             quantity_delta="-4", source_key="dep-short-drain-topup", actor=self.clerk,
-            department="BAR", recipient="Bar handover",
+            department="RESTAURANT", recipient="Bar handover",
         )
         transition_order(order=order, target_status=PosOrder.Status.PREPARING, actor=self.cashier)
         transition_order(order=order, target_status=PosOrder.Status.READY, actor=self.cashier)

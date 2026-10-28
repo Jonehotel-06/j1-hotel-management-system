@@ -412,7 +412,7 @@ class DraftIntegrityTests(PosStockValidationTestCase):
         record_stock_movement(
             item=self.malt_stock, location=self.bar_store, movement_type=StockMovement.Type.ISSUE,
             quantity_delta="-4", source_key="sv-malt-drain", actor=self.cashier,
-            department="BAR", recipient="Bar handover",
+            department="RESTAURANT", recipient="Bar handover",
         )
         with self.assertRaises(PosStockConflictError) as raised:
             submit_order(order=order, actor=self.cashier)
@@ -585,7 +585,7 @@ class PosStockApiTests(PosStockValidationTestCase):
         record_stock_movement(
             item=self.malt_stock, location=self.bar_store, movement_type=StockMovement.Type.ISSUE,
             quantity_delta="-4", source_key="sv-malt-api-drain", actor=self.cashier,
-            department="BAR", recipient="Bar handover",
+            department="RESTAURANT", recipient="Bar handover",
         )
         conflict = self.client.post(f"/api/admin/pos/orders/{reference}/submit/", {}, format="json")
         self.assertEqual(conflict.status_code, 409, conflict.content)

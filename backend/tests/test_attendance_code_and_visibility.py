@@ -28,6 +28,7 @@ from unittest import mock
 from django.core.exceptions import PermissionDenied
 from django.utils import timezone
 
+from apps.accounts.departments import department_for_role
 from apps.accounts.desktop_policy import issue_desktop_key
 from apps.accounts.models import User, Workstation
 from apps.staff_operations.models import AttendanceRecord, StaffProfile
@@ -57,10 +58,11 @@ class AttendanceCodeRoleTests(BaseAPITestCase):
         self.workstation.save(update_fields=["sign_in_key_hash", "sign_in_key_issued_at"])
         self.desk_headers = {"HTTP_X_JONE_DESKTOP_KEY": self.desk_key}
 
-    def enroll(self, staff, code, department="Operations", status=StaffProfile.EmploymentStatus.ACTIVE):
+    def enroll(self, staff, code, department=None, status=StaffProfile.EmploymentStatus.ACTIVE):
+        resolved_department = department if department is not None else (department_for_role(staff.role) or "MANAGEMENT")
         StaffProfile.objects.update_or_create(
             user=staff,
-            defaults={"employee_code": code, "department": department, "employment_status": status},
+            defaults={"employee_code": code, "department": resolved_department, "employment_status": status},
         )
         template = fingerprint_service.request_fingerprint_enrollment(
             staff=staff, actor=staff, minutiae=MINUTIAE

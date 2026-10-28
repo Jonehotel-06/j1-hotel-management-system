@@ -52,7 +52,7 @@ test("employee salary-payment API helpers escape nested references and keep requ
 
 test("payroll page uses simplified salary terms and controlled maker-checker/ledger actions", () => {
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "payroll.html"), "utf8");
-  assert.match(page, /boot\(\["admin","manager","general_manager","accounts_manager","accountant","hr_manager","hr_officer"\]\)/);
+  assert.match(page, /boot\(\["admin","general_manager","accountant","procurement_officer"\]\)/);
   assert.match(page, /loadCapabilities\(\)/);
   assert.match(page, /cache:"no-store"/);
   assert.match(page, /API\.create\("payrollPeriods"/);

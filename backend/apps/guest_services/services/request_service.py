@@ -35,20 +35,19 @@ _SLA = {
     ServiceRequest.Priority.HIGH: timedelta(hours=1),
     ServiceRequest.Priority.URGENT: timedelta(minutes=15),
 }
-_TEAM_FOR_ROLE = {
-    User.Role.WAITER: ServiceRequest.OwnerTeam.FOOD_BEVERAGE,
-    User.Role.BARTENDER: ServiceRequest.OwnerTeam.FOOD_BEVERAGE,
+_TEAMS_FOR_ROLE: dict[str, set[str]] = {
+    User.Role.WAITER: {ServiceRequest.OwnerTeam.FOOD_BEVERAGE},
+    User.Role.BARTENDER: {ServiceRequest.OwnerTeam.FOOD_BEVERAGE},
 }
-# Both spellings of each worker role route to the same team queue. An account
-# whose role is absent from this map cannot see an unassigned request and cannot
-# claim one, so a HOUSEKEEPER or MAINTENANCE_TECHNICIAN - both of which exist as
-# real accounts - would have been locked out of their own team's queue by the
-# canonical-only keys that used to be here (audit D5/N8). The alias sets are the
-# single definition in apps.accounts.capabilities.
+# Both spellings of each worker role route to the appropriate team queues.
+# Maintenance staff consolidated into Housekeepers (HOUSEKEEPING), so
+# HOUSEKEEPING / HOUSEKEEPER workers may see and claim both HOUSEKEEPING and
+# MAINTENANCE unassigned requests, while legacy MAINTENANCE / MAINTENANCE_TECHNICIAN
+# fixtures remain scoped to MAINTENANCE.
 for _role in HOUSEKEEPING_WORKER_ROLES:
-    _TEAM_FOR_ROLE[_role] = ServiceRequest.OwnerTeam.HOUSEKEEPING
+    _TEAMS_FOR_ROLE.setdefault(_role, set()).add(ServiceRequest.OwnerTeam.HOUSEKEEPING)
 for _role in MAINTENANCE_WORKER_ROLES:
-    _TEAM_FOR_ROLE[_role] = ServiceRequest.OwnerTeam.MAINTENANCE
+    _TEAMS_FOR_ROLE.setdefault(_role, set()).add(ServiceRequest.OwnerTeam.MAINTENANCE)
 del _role
 _TERMINAL_STATUSES = {ServiceRequest.Status.CLOSED, ServiceRequest.Status.CANCELLED}
 _ALLOWED_TRANSITIONS = {
@@ -335,7 +334,7 @@ def claim_service_request(*, service_request, actor):
         raise ValidationError("This request is already assigned to another staff user.")
     if _can_dispatch(actor):
         return assign_service_request(service_request=request, actor=actor, assigned_to=actor)
-    if _TEAM_FOR_ROLE.get(actor.role) != request.owner_team:
+    if request.owner_team not in _TEAMS_FOR_ROLE.get(actor.role, set()):
         raise PermissionDenied("This unassigned request is not in the caller's permitted team queue.")
     _validate_assignee(actor)
     request.assigned_to = actor
@@ -454,10 +453,10 @@ def service_request_queryset_for_staff(actor):
     queryset = ServiceRequest.objects.all()
     if _can_dispatch(actor):
         return queryset
-    team = _TEAM_FOR_ROLE.get(getattr(actor, "role", ""))
-    if team:
+    teams = _TEAMS_FOR_ROLE.get(getattr(actor, "role", ""))
+    if teams:
         return queryset.filter(
             Q(created_by=actor)
-            | (Q(owner_team=team) & (Q(assigned_to=actor) | Q(assigned_to__isnull=True)))
+            | (Q(owner_team__in=teams) & (Q(assigned_to=actor) | Q(assigned_to__isnull=True)))
         )
     return queryset.filter(Q(assigned_to=actor) | Q(created_by=actor))

@@ -257,7 +257,7 @@
 <script src="../js/biometrics.js?v=1.1.27"></script>
 <script>
 JONE.ui.initChrome();
-var __spAllowed = JONE.dashboard.boot(["admin", "general_manager", "manager", "hr_manager", "hr_officer"]);
+var __spAllowed = JONE.dashboard.boot(["admin", "general_manager", "procurement_officer"]);
 document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
 
 (function(){
@@ -565,35 +565,30 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
       submitText: "Transfer",
       fields: [
         { name: "department", label: "New Department", type: "select", required: true, options: [
-          { value: "MANAGEMENT", label: "Management" },
-          { value: "ACCOUNTS", label: "Accounts" },
-          { value: "PROCUREMENT", label: "Admin Management / Procurement" },
-          { value: "KITCHEN", label: "Kitchen" },
-          { value: "RESTAURANT", label: "Restaurant" },
-          { value: "BAR", label: "Bar" },
-          { value: "PORTER", label: "Porter" },
-          { value: "FRONT_DESK", label: "Front Desk" },
-          { value: "HOUSEKEEPING", label: "Housekeeping" },
-          { value: "INVENTORY", label: "Inventory / Stores" },
-          { value: "SECURITY", label: "Security" },
-          { value: "MAINTENANCE", label: "Maintenance" },
-          { value: "HR", label: "Human Resources" }
+          { value: "MANAGEMENT", label: "General Manager" },
+          { value: "ACCOUNTS", label: "Accountant" },
+          { value: "PROCUREMENT", label: "Admin Manager/Procurement" },
+          { value: "KITCHEN", label: "Chefs" },
+          { value: "KITCHEN_ASSISTANT", label: "Kitchen Assistant" },
+          { value: "RESTAURANT", label: "Waiters/Waitresses" },
+          { value: "PORTER", label: "Porters" },
+          { value: "FRONT_DESK", label: "Receptionist" },
+          { value: "HOUSEKEEPING", label: "Housekeepers" },
+          { value: "INVENTORY", label: "Store Keeper" },
+          { value: "SECURITY", label: "Security" }
         ] },
         { name: "role", label: "Canonical role", type: "select", required: true, options: [
-          { value: "MANAGER", label: "Management · Manager" },
-          { value: "ACCOUNTANT", label: "Accounts · Accountant" },
-          { value: "PROCUREMENT_OFFICER", label: "Admin Management / Procurement · Procurement Officer" },
-          { value: "CHEF", label: "Kitchen · Chef (Kitchen Assistant is a designation)" },
-          { value: "WAITER", label: "Restaurant · Waiter / Waitress" },
-          { value: "PORTER", label: "Porter · Porter" },
-          { value: "RECEPTIONIST", label: "Front Desk · Receptionist" },
-          { value: "HOUSEKEEPING", label: "Housekeeping · Housekeeping" },
-          { value: "STOREKEEPER", label: "Inventory / Stores · Storekeeper" },
-          { value: "SECURITY", label: "Security · Security" },
-          { value: "BARTENDER", label: "Bar · Bartender" },
-          { value: "MAINTENANCE", label: "Maintenance · Maintenance" },
-          { value: "HR_OFFICER", label: "Human Resources · HR Officer" },
-          { value: "GENERAL_MANAGER", label: "General Manager (global oversight)" }
+          { value: "GENERAL_MANAGER", label: "General Manager" },
+          { value: "ACCOUNTANT", label: "Accountant" },
+          { value: "PROCUREMENT_OFFICER", label: "Admin Manager/Procurement" },
+          { value: "CHEF", label: "Chefs" },
+          { value: "KITCHEN_ASSISTANT", label: "Kitchen Assistant" },
+          { value: "WAITER", label: "Waiters/Waitresses" },
+          { value: "PORTER", label: "Porters" },
+          { value: "RECEPTIONIST", label: "Receptionist" },
+          { value: "HOUSEKEEPING", label: "Housekeepers" },
+          { value: "STOREKEEPER", label: "Store Keeper" },
+          { value: "SECURITY", label: "Security" }
         ] },
         { name: "job_title", label: "New Job Title / Designation", type: "text", required: true }
       ],

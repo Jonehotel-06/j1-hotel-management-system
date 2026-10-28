@@ -131,12 +131,15 @@ class Priority1StaffDepartmentsDisciplinaryPermissionsTests(TestCase):
             "ADMIN_PROCUREMENT",
             "FRONT_DESK",
             "KITCHEN",
+            "KITCHEN_ASSISTANT",
             "RESTAURANT_BAR",
             "HOUSEKEEPING",
             "PORTERING",
             "STORES_INVENTORY",
+            "SECURITY",
         ):
             self.assertIn(expected, codes)
+        self.assertEqual(len(codes), 11)
 
         # Accountant can view ACCOUNTS dashboard summary, but NOT STORES_INVENTORY
         self.client.force_authenticate(user=self.accountant)
@@ -340,10 +343,10 @@ class Priority1StaffDepartmentsDisciplinaryPermissionsTests(TestCase):
         self.assertEqual(doc_resp.status_code, 201)
         doc_ref = doc_resp.data["data"]["reference"]
 
-        # Admin permission matrix
+        # Admin permission matrix: ADMIN + 11 approved staff roles = 12 roles
         matrix_resp = self.client.get("/api/admin/users/permissions-matrix/")
         self.assertEqual(matrix_resp.status_code, 200)
-        self.assertTrue(len(matrix_resp.data["data"]["roles"]) >= 20)
+        self.assertEqual(len(matrix_resp.data["data"]["roles"]), 12)
 
         # Per-user capability override: grant `inventory.manage` to waiter, then revoke
         self.assertNotIn("inventory.manage", capability_codes_for_user(self.waiter))

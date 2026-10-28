@@ -81,5 +81,5 @@ test("the desk key is enrolled from the authorised workstation administration pa
   assert.match(html, /Auth\.setReceptionistDesktopKey\(/, "the page stores the key through auth.js");
   assert.match(html, /setReceptionistDesktopKey\(""\)/, "the page can remove the key from this browser");
   // The page is already gated to the roles that hold terminal.manage.
-  assert.match(html, /boot\(\["admin","manager","general_manager"\]\)/);
+  assert.match(html, /boot\(\["admin","general_manager"\]\)/);
 });

@@ -118,7 +118,7 @@
 <script src="../js/dashboard.js?v=1.1.27"></script><script src="../js/table-fit.js?v=1.1.27"></script>
 <script>
   JONE.ui.initChrome();
-  var __approvalsAllowed = JONE.dashboard.boot(["admin", "manager", "general_manager", "accounts_manager", "accountant", "hr_manager", "hr_officer", "inventory_clerk", "storekeeper", "procurement_officer", "front_desk_supervisor"]);
+  var __approvalsAllowed = JONE.dashboard.boot(["admin", "general_manager", "accountant", "procurement_officer", "storekeeper", "receptionist"]);
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
 
 (function(){

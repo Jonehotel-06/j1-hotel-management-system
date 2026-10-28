@@ -28,36 +28,74 @@ class DepartmentSerializer(serializers.ModelSerializer):
 
     def get_staff_count(self, obj):
         from django.db.models import Q
-        return StaffProfile.objects.filter(
-            Q(department_ref=obj) | Q(department__iexact=obj.name) | Q(department__iexact=obj.code)
-        ).count()
+        from apps.accounts.departments import _normalize_department_code
+
+        ws_code = _normalize_department_code(obj.code)
+        q = Q(department_ref=obj) | Q(department__iexact=obj.name) | Q(department__iexact=obj.code)
+        if ws_code:
+            q |= Q(department__iexact=ws_code)
+        return StaffProfile.objects.filter(q).count()
 
     def get_active_staff_count(self, obj):
         from django.db.models import Q
+        from apps.accounts.departments import _normalize_department_code
+
+        ws_code = _normalize_department_code(obj.code)
+        q = Q(department_ref=obj) | Q(department__iexact=obj.name) | Q(department__iexact=obj.code)
+        if ws_code:
+            q |= Q(department__iexact=ws_code)
         return StaffProfile.objects.filter(
-            Q(department_ref=obj) | Q(department__iexact=obj.name) | Q(department__iexact=obj.code),
+            q,
             employment_status=StaffProfile.EmploymentStatus.ACTIVE,
             user__is_active=True,
         ).count()
 
     def validate(self, attrs):
-        """Do not recreate the removed standalone Cashier department."""
-        from apps.accounts.departments import is_removed_cashier_department
+        """Restrict department configuration to the 11 approved hotel departments."""
+        from apps.accounts.departments import (
+            DEPARTMENT_ROLES,
+            RETIRED_DEPARTMENTAL_ROLES,
+            _normalize_department_code,
+            is_removed_cashier_department,
+            removed_department_message,
+        )
 
         instance = self.instance
         for field in ("code", "name", "slug"):
             value = attrs.get(field, getattr(instance, field, "") if instance else "")
-            if value and is_removed_cashier_department(value):
+            if not value:
+                continue
+            if is_removed_cashier_department(value):
                 raise serializers.ValidationError({
                     field: "The Cashier department was merged into Restaurants; use RESTAURANT_BAR instead."
                 })
+            consolidation_msg = removed_department_message(value)
+            if consolidation_msg:
+                raise serializers.ValidationError({field: consolidation_msg})
+
+        code_val = attrs.get("code", getattr(instance, "code", "") if instance else "")
+        if code_val and _normalize_department_code(code_val) not in DEPARTMENT_ROLES:
+            raise serializers.ValidationError({
+                "code": (
+                    f"'{code_val}' is not one of the 11 approved hotel departments. "
+                    "Use an approved department code."
+                )
+            })
+
         supported_roles = attrs.get(
             "supported_roles", getattr(instance, "supported_roles", []) if instance else []
         ) or []
-        if any(str(role).strip().upper() == "CASHIER" for role in supported_roles):
-            raise serializers.ValidationError({
-                "supported_roles": "CASHIER is retired; use the existing WAITER role for Restaurants."
-            })
+        for role in supported_roles:
+            role_code = str(role).strip().upper()
+            if role_code == "CASHIER":
+                raise serializers.ValidationError({
+                    "supported_roles": "CASHIER is retired; use the existing WAITER role for Restaurants."
+                })
+            if role_code in RETIRED_DEPARTMENTAL_ROLES:
+                canonical = RETIRED_DEPARTMENTAL_ROLES[role_code]
+                raise serializers.ValidationError({
+                    "supported_roles": f"'{role_code}' is retired; use the approved '{canonical}' role instead."
+                })
         job_positions = attrs.get(
             "job_positions", getattr(instance, "job_positions", []) if instance else []
         ) or []

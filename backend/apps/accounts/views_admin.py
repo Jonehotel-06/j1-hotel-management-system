@@ -536,19 +536,19 @@ class AdminPermissionMatrixView(APIView):
 
     def get(self, request):
         from .capabilities import CAPABILITY_DEFINITIONS, ROLE_CAPABILITY_CODES
+        from .departments import ASSIGNABLE_ROLES, DEPARTMENT_ROLES
         from .models import Capability, RoleCapability, UserCapabilityOverride
 
         capabilities = list(
             Capability.objects.filter(is_active=True).order_by("category", "code")
         )
-        role_grants = {}
-        for role_val, _label in User.Role.choices:
-            # CASHIER is a retired historical code. It is not offered in the
-            # active permission matrix and cannot be granted new capabilities.
-            if role_val in (User.Role.GUEST, User.Role.CASHIER):
-                continue
-            role_grants[role_val] = set()
-        for rc in RoleCapability.objects.select_related("capability").filter(capability__is_active=True):
+        active_matrix_roles = [User.Role.ADMIN, *DEPARTMENT_ROLES.values()]
+        active_matrix_role_set = set(ASSIGNABLE_ROLES) - {User.Role.GUEST}
+        role_labels = dict(User.Role.choices)
+        role_grants = {role_val: set() for role_val in active_matrix_roles if role_val in active_matrix_role_set}
+        for rc in RoleCapability.objects.select_related("capability").filter(
+            role__in=active_matrix_role_set, capability__is_active=True
+        ):
             role_grants.setdefault(rc.role, set()).add(rc.capability.code)
         if User.Role.ADMIN in role_grants:
             role_grants[User.Role.ADMIN] = {c.code for c in capabilities}
@@ -584,12 +584,12 @@ class AdminPermissionMatrixView(APIView):
             "roles": [
                 {
                     "role": role_val,
-                    "label": role_label,
+                    "label": role_labels.get(role_val, role_val),
                     "capabilities": sorted(role_grants.get(role_val, set())),
                     "default_capabilities": sorted(ROLE_CAPABILITY_CODES.get(role_val, frozenset())),
                 }
-                for role_val, role_label in User.Role.choices
-                if role_val not in (User.Role.GUEST, User.Role.CASHIER)
+                for role_val in active_matrix_roles
+                if role_val in active_matrix_role_set
             ],
             "user_overrides": overrides,
         })

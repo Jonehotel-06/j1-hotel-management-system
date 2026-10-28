@@ -65,32 +65,29 @@ test("workforce page uses bounded lists, skeleton errors, idempotency, and no po
 test("workforce navigation serves every staff role while planning controls remain management-only", () => {
   const nav = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "workforce.html"), "utf8");
-  assert.match(nav, /Workforce[\s\S]*"housekeeping"[\s\S]*"maintenance"[\s\S]*"inventory_clerk"/);
+  assert.match(nav, /Workforce[\s\S]*"housekeeping"[\s\S]*"storekeeper"[\s\S]*"security"/);
   assert.doesNotMatch(nav, /"cashier"/, "the retired Cashier role is not an active navigation identity");
-  /* Planning (shifts, employment profiles) is the management tier: a general
-     manager holds shift.manage and staff.profile.manage exactly as a manager
-     does, so the tier is admin + manager + general_manager. */
-  assert.match(page, /hasAnyRole&&window\.Auth\.hasAnyRole\(\["admin","manager","general_manager"\]\)/);
+  /* Planning (shifts, employment profiles) is the management tier:
+     Administrator + General Manager. */
+  assert.match(page, /hasAnyRole&&window\.Auth\.hasAnyRole\(\["admin","general_manager"\]\)/);
   assert.match(page, /data-wf-manager/);
 });
 
-test("staff assignment offers one canonical role per department and preserves legacy filters", () => {
+test("staff assignment offers ONLY the 11 approved canonical roles and excludes retired titles", () => {
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "staff.html"), "utf8");
   const roleField = page.match(/name: "role", label: "Canonical role"[\s\S]*?options: \[([\s\S]*?)\]\s*\}/);
   assert.ok(roleField, "canonical role picker must exist");
   const assignable = [
-    "ADMIN", "GENERAL_MANAGER", "MANAGER", "ACCOUNTANT", "PROCUREMENT_OFFICER", "CHEF", "WAITER",
-    "PORTER", "RECEPTIONIST", "HOUSEKEEPING", "STOREKEEPER", "SECURITY", "BARTENDER",
-    "MAINTENANCE", "HR_OFFICER",
+    "GENERAL_MANAGER", "ACCOUNTANT", "PROCUREMENT_OFFICER", "CHEF", "KITCHEN_ASSISTANT",
+    "WAITER", "PORTER", "RECEPTIONIST", "HOUSEKEEPING", "STOREKEEPER", "SECURITY",
   ];
   assignable.forEach((role) => assert.match(roleField[1], new RegExp('value: "' + role + '"')));
   const retired = [
-    "FRONT_DESK_SUPERVISOR", "RESTAURANT_MANAGER", "BAR_MANAGER", "KITCHEN_MANAGER", "KITCHEN_ASSISTANT",
-    "HOUSEKEEPING_MANAGER", "HOUSEKEEPER", "MAINTENANCE_TECHNICIAN", "ACCOUNTS_MANAGER", "HR_MANAGER", "INVENTORY_CLERK", "CASHIER",
+    "ADMIN", "MANAGER", "FRONT_DESK_SUPERVISOR", "RESTAURANT_MANAGER", "BAR_MANAGER", "BARTENDER",
+    "KITCHEN_MANAGER", "HOUSEKEEPING_MANAGER", "HOUSEKEEPER", "MAINTENANCE", "MAINTENANCE_TECHNICIAN",
+    "ACCOUNTS_MANAGER", "HR_MANAGER", "HR_OFFICER", "INVENTORY_CLERK", "CASHIER", "STAFF", "GUEST",
   ];
   retired.forEach((role) => assert.doesNotMatch(roleField[1], new RegExp('value: "' + role + '"')));
-  /* Historical records remain findable, but retired titles are not assignable. */
-  assert.match(page, /role__in: "MANAGER,GENERAL_MANAGER,FRONT_DESK_SUPERVISOR,[^"]*INVENTORY_CLERK"/);
-  assert.match(page, /Kitchen Assistant is recorded here as a position/);
-  assert.match(roleField[1], /Kitchen · Chef/);
+  assert.match(page, /role__in: "GENERAL_MANAGER,ACCOUNTANT,PROCUREMENT_OFFICER,CHEF,KITCHEN_ASSISTANT,WAITER,PORTER,RECEPTIONIST,HOUSEKEEPING,STOREKEEPER,SECURITY"/);
+  assert.match(page, /POS Cashier is a designation under the Restaurant Waiter role/);
 });

@@ -109,14 +109,23 @@ class GuestServiceTests(BaseAPITestCase):
             channel=ServiceRequest.Channel.FRONT_DESK,
             summary="Repair lamp", actor=self.manager,
         )
+        food_request, _ = create_service_request(
+            guest=self.guest, stay=self.stay, room=self.room,
+            category=ServiceRequest.Category.FOOD_BEVERAGE,
+            channel=ServiceRequest.Channel.FRONT_DESK,
+            summary="Bring chilled water", actor=self.manager,
+        )
         self.auth(self.housekeeper)
         queue = self.client.get("/api/admin/service-requests/")
         self.assertEqual(queue.status_code, 200, queue.content)
         references = {row["reference"] for row in queue.json()["data"]}
         self.assertIn(house_request.reference, references)
-        self.assertNotIn(maintenance_request.reference, references)
+        # Maintenance consolidated into Housekeepers: housekeepers handle both
+        # housekeeping and maintenance requests, but remain blocked from F&B.
+        self.assertIn(maintenance_request.reference, references)
+        self.assertNotIn(food_request.reference, references)
         self.assertEqual(
-            self.client.get(f"/api/admin/service-requests/{maintenance_request.reference}/").status_code,
+            self.client.get(f"/api/admin/service-requests/{food_request.reference}/").status_code,
             404,
         )
         claimed = self.client.post(f"/api/admin/service-requests/{house_request.reference}/claim/", {}, format="json")
@@ -157,12 +166,20 @@ class GuestServiceTests(BaseAPITestCase):
             summary="Fix reading light", actor=self.manager,
         )
 
+        food_request, _ = create_service_request(
+            guest=self.guest, stay=self.stay, room=self.room,
+            category=ServiceRequest.Category.FOOD_BEVERAGE,
+            channel=ServiceRequest.Channel.FRONT_DESK,
+            summary="Tea service", actor=self.manager,
+        )
+
         self.auth(housekeeper_alias)
         queue = self.client.get("/api/admin/service-requests/")
         self.assertEqual(queue.status_code, 200, queue.content)
         references = {row["reference"] for row in queue.json()["data"]}
         self.assertIn(house_request.reference, references)
-        self.assertNotIn(maintenance_request.reference, references)
+        self.assertIn(maintenance_request.reference, references)
+        self.assertNotIn(food_request.reference, references)
         claimed = self.client.post(f"/api/admin/service-requests/{house_request.reference}/claim/", {}, format="json")
         self.assertEqual(claimed.status_code, 200, claimed.content)
         house_request.refresh_from_db()

@@ -17,27 +17,24 @@ POSITIVE = MinValueValidator(Decimal("0.0001"))
 class StockDepartment(models.TextChoices):
     """Receiving department for an internal stock issue or return.
 
-    The codes mirror ``accounts.Workstation.Department`` where the two lists
-    overlap (a workstation and a store issue must agree on what "KITCHEN"
-    means) and add the store-facing areas the workstation list does not carry.
-    ``OTHER`` exists so a legitimate but unlisted area can still be recorded
-    with a free-text recipient and reason rather than being blocked.
+    The codes mirror the 11 approved ``accounts.Workstation.Department`` codes
+    plus the store-facing ``LAUNDRY`` operational service area and ``OTHER``
+    so a legitimate unlisted service area can still be recorded with a
+    free-text recipient and reason rather than being blocked.
     """
 
-    KITCHEN = "KITCHEN", "Kitchen"
-    RESTAURANT = "RESTAURANT", "Restaurant"
-    BAR = "BAR", "Bar"
-    HOUSEKEEPING = "HOUSEKEEPING", "Housekeeping"
-    LAUNDRY = "LAUNDRY", "Laundry"
-    MAINTENANCE = "MAINTENANCE", "Maintenance"
-    FRONT_DESK = "FRONT_DESK", "Front desk"
-    ACCOUNTS = "ACCOUNTS", "Accounts"
-    INVENTORY = "INVENTORY", "Inventory / stores"
-    PROCUREMENT = "PROCUREMENT", "Administration & procurement"
-    PORTER = "PORTER", "Portering"
+    MANAGEMENT = "MANAGEMENT", "General Manager"
+    ACCOUNTS = "ACCOUNTS", "Accountant"
+    PROCUREMENT = "PROCUREMENT", "Admin Manager/Procurement"
+    KITCHEN = "KITCHEN", "Chefs"
+    KITCHEN_ASSISTANT = "KITCHEN_ASSISTANT", "Kitchen Assistant"
+    RESTAURANT = "RESTAURANT", "Waiters/Waitresses"
+    PORTER = "PORTER", "Porters"
+    FRONT_DESK = "FRONT_DESK", "Receptionist"
+    HOUSEKEEPING = "HOUSEKEEPING", "Housekeepers"
+    INVENTORY = "INVENTORY", "Store Keeper"
     SECURITY = "SECURITY", "Security"
-    HR = "HR", "Human resources"
-    MANAGEMENT = "MANAGEMENT", "Management"
+    LAUNDRY = "LAUNDRY", "Laundry"
     OTHER = "OTHER", "Other department"
 
 

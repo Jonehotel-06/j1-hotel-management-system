@@ -33,6 +33,13 @@ apps/accounts/migrations/0020_user_middle_name_user_must_change_password_and_mor
 apps/accounts/migrations/0021_staff_records_capabilities.py
 apps/accounts/migrations/0022_remove_payroll_statutory_capabilities.py
 apps/accounts/migrations/0023_workstation_registered_desktop_ip.py
+apps/accounts/migrations/0024_accounts_manager_attendance_clock.py
+apps/accounts/migrations/0025_pos_return_capabilities.py
+apps/accounts/migrations/0026_alter_rolecapability_role_alter_user_role_and_more.py
+apps/accounts/migrations/0027_normalize_department_roles.py
+apps/accounts/migrations/0028_sign_in_any_device_capability.py
+apps/accounts/migrations/0029_merge_cashier_into_restaurants.py
+apps/accounts/migrations/0030_consolidate_approved_departments_and_roles.py
 apps/audit/migrations/0001_initial.py
 apps/audit/migrations/0002_auditlog_actor_department_auditlog_actor_role_and_more.py
 apps/audit/migrations/0003_utf8mb4_auditlog_table.py
@@ -88,6 +95,8 @@ apps/inventory/migrations/0008_portable_direct_sale_unique.py
 apps/inventory/migrations/0009_purchaseorder_approval_receipt_and_more.py
 apps/inventory/migrations/0010_normalize_pack_counted_items.py
 apps/inventory/migrations/0011_purchaseorder_paid_at_purchaseorder_paid_by_and_more.py
+apps/inventory/migrations/0012_alter_stockmovement_type.py
+apps/inventory/migrations/0013_alter_stockmovement_department.py
 apps/maintenance/migrations/0001_maintenance_work_order_foundation.py
 apps/notifications/migrations/0001_initial.py
 apps/notifications/migrations/0002_alter_notification_type.py
@@ -120,6 +129,8 @@ apps/pos/migrations/0003_restauranttablesessionevent_restauranttable_and_more.py
 apps/pos/migrations/0004_posorder_service_request.py
 apps/pos/migrations/0005_menuitem_barcode.py
 apps/pos/migrations/0006_backfill_menuitem_sku_barcodes.py
+apps/pos/migrations/0007_alter_restauranttablesessionevent_type.py
+apps/pos/migrations/0008_posorder_returned_amount_and_more.py
 apps/reviews/migrations/0001_initial.py
 apps/rooms/migrations/0001_initial.py
 apps/rooms/migrations/0002_roomimage.py

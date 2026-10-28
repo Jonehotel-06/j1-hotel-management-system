@@ -38,36 +38,37 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
     class Role(models.TextChoices):
         # Existing roles stay byte-for-byte compatible with current JWT/API
-        # contracts. The operational roles are additive and are authorized by
-        # the persisted capability matrix rather than browser-provided claims.
-        ADMIN = "ADMIN", "Administrator"
-        MANAGER = "MANAGER", "Manager"
+        # contracts and historical audit/migration rows. Active staff creation
+        # and assignment offer ONLY the 11 approved staff roles (plus ADMIN for
+        # the hotel owner/superuser and GUEST for public customer accounts); see
+        # ``apps.accounts.departments``.
+        ADMIN = "ADMIN", "Hotel Owner / Administrator"
+        MANAGER = "MANAGER", "Manager"  # retired title → GENERAL_MANAGER
         RECEPTIONIST = "RECEPTIONIST", "Receptionist"
-        # Retired for new assignments: resolves to WAITER/Restaurants. Kept as
-        # a stored value so historical accounts, JWTs and audit rows stay valid.
+        # Retired for new assignments: resolves to WAITER / Waiters/Waitresses.
         CASHIER = "CASHIER", "Cashier"
-        HOUSEKEEPING = "HOUSEKEEPING", "Housekeeping"
-        MAINTENANCE = "MAINTENANCE", "Maintenance"
-        INVENTORY_CLERK = "INVENTORY_CLERK", "Inventory Clerk"
-        FRONT_DESK_SUPERVISOR = "FRONT_DESK_SUPERVISOR", "Front Desk Supervisor"
+        HOUSEKEEPING = "HOUSEKEEPING", "Housekeepers"
+        MAINTENANCE = "MAINTENANCE", "Maintenance"  # retired → HOUSEKEEPING
+        INVENTORY_CLERK = "INVENTORY_CLERK", "Inventory Clerk"  # retired → STOREKEEPER
+        FRONT_DESK_SUPERVISOR = "FRONT_DESK_SUPERVISOR", "Front Desk Supervisor"  # retired → RECEPTIONIST
         GENERAL_MANAGER = "GENERAL_MANAGER", "General Manager"
-        RESTAURANT_MANAGER = "RESTAURANT_MANAGER", "Restaurant Manager"
-        WAITER = "WAITER", "Waiter / Server"
-        BAR_MANAGER = "BAR_MANAGER", "Bar Manager"
-        BARTENDER = "BARTENDER", "Bartender"
-        KITCHEN_MANAGER = "KITCHEN_MANAGER", "Kitchen Manager"
-        CHEF = "CHEF", "Chef / Kitchen Staff"
-        HOUSEKEEPING_MANAGER = "HOUSEKEEPING_MANAGER", "Housekeeping Manager"
-        HOUSEKEEPER = "HOUSEKEEPER", "Housekeeper"
-        MAINTENANCE_TECHNICIAN = "MAINTENANCE_TECHNICIAN", "Maintenance Technician"
-        ACCOUNTS_MANAGER = "ACCOUNTS_MANAGER", "Accounts Manager"
+        RESTAURANT_MANAGER = "RESTAURANT_MANAGER", "Restaurant Manager"  # retired → WAITER
+        WAITER = "WAITER", "Waiters/Waitresses"
+        BAR_MANAGER = "BAR_MANAGER", "Bar Manager"  # retired → WAITER
+        BARTENDER = "BARTENDER", "Bartender"  # retired → WAITER
+        KITCHEN_MANAGER = "KITCHEN_MANAGER", "Kitchen Manager"  # retired → CHEF
+        CHEF = "CHEF", "Chefs"
+        HOUSEKEEPING_MANAGER = "HOUSEKEEPING_MANAGER", "Housekeeping Manager"  # retired → HOUSEKEEPING
+        HOUSEKEEPER = "HOUSEKEEPER", "Housekeeper"  # retired → HOUSEKEEPING
+        MAINTENANCE_TECHNICIAN = "MAINTENANCE_TECHNICIAN", "Maintenance Technician"  # retired → HOUSEKEEPING
+        ACCOUNTS_MANAGER = "ACCOUNTS_MANAGER", "Accounts Manager"  # retired → ACCOUNTANT
         ACCOUNTANT = "ACCOUNTANT", "Accountant"
-        HR_MANAGER = "HR_MANAGER", "HR Manager"  # retired title — see accounts.departments
-        HR_OFFICER = "HR_OFFICER", "HR Officer"  # the HR department's one standard role
+        HR_MANAGER = "HR_MANAGER", "HR Manager"  # retired → PROCUREMENT_OFFICER
+        HR_OFFICER = "HR_OFFICER", "HR Officer"  # retired → PROCUREMENT_OFFICER
         SECURITY = "SECURITY", "Security"
-        PROCUREMENT_OFFICER = "PROCUREMENT_OFFICER", "Procurement Officer"
-        STOREKEEPER = "STOREKEEPER", "Storekeeper"
-        PORTER = "PORTER", "Porter"
+        PROCUREMENT_OFFICER = "PROCUREMENT_OFFICER", "Admin Manager/Procurement"
+        STOREKEEPER = "STOREKEEPER", "Store Keeper"
+        PORTER = "PORTER", "Porters"
         KITCHEN_ASSISTANT = "KITCHEN_ASSISTANT", "Kitchen Assistant"
         GUEST = "GUEST", "Guest"
 
@@ -158,21 +159,17 @@ class Workstation(TimeStampedModel):
 
     class Department(models.TextChoices):
         SHARED = "SHARED", "Shared"
-        FRONT_DESK = "FRONT_DESK", "Front desk"
-        # CASHIER was removed as a standalone workstation department. Existing
-        # rows are migrated to RESTAURANT; the code survives only in history.
-        RESTAURANT = "RESTAURANT", "Restaurant"
-        BAR = "BAR", "Bar"
-        KITCHEN = "KITCHEN", "Kitchen"
-        HOUSEKEEPING = "HOUSEKEEPING", "Housekeeping"
-        MAINTENANCE = "MAINTENANCE", "Maintenance"
-        ACCOUNTS = "ACCOUNTS", "Accounts"
-        INVENTORY = "INVENTORY", "Inventory / stores"
-        PROCUREMENT = "PROCUREMENT", "Administration & procurement"
-        PORTER = "PORTER", "Portering"
-        HR = "HR", "Human resources"
+        MANAGEMENT = "MANAGEMENT", "General Manager"
+        ACCOUNTS = "ACCOUNTS", "Accountant"
+        PROCUREMENT = "PROCUREMENT", "Admin Manager/Procurement"
+        KITCHEN = "KITCHEN", "Chefs"
+        KITCHEN_ASSISTANT = "KITCHEN_ASSISTANT", "Kitchen Assistant"
+        RESTAURANT = "RESTAURANT", "Waiters/Waitresses"
+        PORTER = "PORTER", "Porters"
+        FRONT_DESK = "FRONT_DESK", "Receptionist"
+        HOUSEKEEPING = "HOUSEKEEPING", "Housekeepers"
+        INVENTORY = "INVENTORY", "Store Keeper"
         SECURITY = "SECURITY", "Security"
-        MANAGEMENT = "MANAGEMENT", "Management"
 
     reference = models.CharField(
         max_length=48,

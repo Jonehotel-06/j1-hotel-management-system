@@ -144,24 +144,25 @@ MENU_CATALOGUE = [
 
 
 DEMO_STAFF = [
-    # (first, last, role, department, job_title)
-    ("Demo", "GeneralManager", User.Role.GENERAL_MANAGER, "Management", "General Manager"),
-    ("Demo", "FrontDeskSupervisor", User.Role.MANAGER, "Reception", "Front Desk Supervisor"),
-    ("Demo", "Receptionist", User.Role.RECEPTIONIST, "Reception", "Receptionist"),
-    ("Demo", "AccountsManager", User.Role.ACCOUNTS_MANAGER, "Accounting", "Accounts Manager"),
-    ("Demo", "Accountant", User.Role.ACCOUNTANT, "Accounting", "Accountant"),
-    ("Demo", "HRManager", User.Role.HR_MANAGER, "Human Resources", "HR Manager"),
-    ("Demo", "KitchenManager", User.Role.KITCHEN_MANAGER, "Kitchen", "Kitchen Manager"),
-    ("Demo", "Chef", User.Role.CHEF, "Kitchen", "Chef"),
-    ("Demo", "RestaurantManager", User.Role.RESTAURANT_MANAGER, "Restaurant", "Restaurant Manager"),
-    ("Demo", "BarManager", User.Role.BAR_MANAGER, "Bar", "Bar Manager"),
-    # POS Cashier is now a job designation under the Restaurants WAITER role.
-    ("Demo", "Cashier", User.Role.WAITER, "Restaurant", "POS Cashier"),
-    ("Demo", "HousekeepingManager", User.Role.HOUSEKEEPING_MANAGER, "Housekeeping", "Housekeeping Manager"),
-    ("Demo", "Housekeeper", User.Role.HOUSEKEEPER, "Housekeeping", "Housekeeper"),
-    ("Demo", "MaintenanceTech", User.Role.MAINTENANCE_TECHNICIAN, "Maintenance", "Maintenance Technician"),
-    ("Demo", "SecurityOfficer", User.Role.SECURITY, "Security", "Security Officer"),
-    ("Demo", "Storekeeper", User.Role.STOREKEEPER, "Stores", "Storekeeper"),
+    # (first, last, role, department, job_title) — uses ONLY the 11 approved
+    # staff roles and 11 approved departments while retaining the 16-account
+    # demo dataset size across every hotel function.
+    ("Demo", "GeneralManager", User.Role.GENERAL_MANAGER, "MANAGEMENT", "General Manager"),
+    ("Demo", "SeniorReceptionist", User.Role.RECEPTIONIST, "FRONT_DESK", "Senior Receptionist"),
+    ("Demo", "Receptionist", User.Role.RECEPTIONIST, "FRONT_DESK", "Receptionist"),
+    ("Demo", "SeniorAccountant", User.Role.ACCOUNTANT, "ACCOUNTS", "Senior Accountant"),
+    ("Demo", "Accountant", User.Role.ACCOUNTANT, "ACCOUNTS", "Accountant"),
+    ("Demo", "AdminProcurement", User.Role.PROCUREMENT_OFFICER, "PROCUREMENT", "Admin Manager/Procurement"),
+    ("Demo", "HeadChef", User.Role.CHEF, "KITCHEN", "Head Chef"),
+    ("Demo", "Chef", User.Role.CHEF, "KITCHEN", "Chefs"),
+    ("Demo", "KitchenAssistant", User.Role.KITCHEN_ASSISTANT, "KITCHEN_ASSISTANT", "Kitchen Assistant"),
+    ("Demo", "Waiter", User.Role.WAITER, "RESTAURANT", "Waiters/Waitresses"),
+    ("Demo", "Cashier", User.Role.WAITER, "RESTAURANT", "POS Cashier"),
+    ("Demo", "Porter", User.Role.PORTER, "PORTER", "Porters"),
+    ("Demo", "Housekeeper", User.Role.HOUSEKEEPING, "HOUSEKEEPING", "Housekeepers"),
+    ("Demo", "FacilityHousekeeper", User.Role.HOUSEKEEPING, "HOUSEKEEPING", "Facility & Room Housekeeper"),
+    ("Demo", "SecurityOfficer", User.Role.SECURITY, "SECURITY", "Security"),
+    ("Demo", "Storekeeper", User.Role.STOREKEEPER, "INVENTORY", "Store Keeper"),
 ]
 
 
@@ -228,11 +229,11 @@ DEMO_RECIPES = [
 ]
 
 DEMO_SHIFT_TEMPLATES = [
-    ("DEMO-MORNING", "Demo Morning Shift", "Reception", "07:00", "15:00", 30),
-    ("DEMO-AFTERNOON", "Demo Afternoon Shift", "Restaurant", "15:00", "23:00", 30),
-    ("DEMO-NIGHT", "Demo Night Shift", "Security", "23:00", "07:00", 30),
-    ("DEMO-KITCHEN", "Demo Kitchen Day", "Kitchen", "08:00", "16:00", 30),
-    ("DEMO-HOUSEKEEPING", "Demo Housekeeping Day", "Housekeeping", "08:00", "16:00", 30),
+    ("DEMO-MORNING", "Demo Morning Shift", "FRONT_DESK", "07:00", "15:00", 30),
+    ("DEMO-AFTERNOON", "Demo Afternoon Shift", "RESTAURANT", "15:00", "23:00", 30),
+    ("DEMO-NIGHT", "Demo Night Shift", "SECURITY", "23:00", "07:00", 30),
+    ("DEMO-KITCHEN", "Demo Kitchen Day", "KITCHEN", "08:00", "16:00", 30),
+    ("DEMO-HOUSEKEEPING", "Demo Housekeeping Day", "HOUSEKEEPING", "08:00", "16:00", 30),
 ]
 
 

@@ -45,7 +45,7 @@ test("payment and receipt controls are gated by their distinct capabilities", ()
 
   assert.match(nav, /Payments[^\n]*capabilities: \["payment\.read"\]/);
   assert.match(nav, /Receipts[^\n]*capabilities: \["payment\.read"\]/);
-  assert.match(auth, /\["accounts_manager", "accountant"\]\.includes\(r\)\) return "dashboard\/payments\.html"/);
+  assert.match(auth, /if \(r === "accountant"\) return "dashboard\/payments\.html"/);
   assert.match(payments, /data-record-payment-panel hidden/);
   assert.match(payments, /hasCapability\("booking\.manage"\)[\s\S]*hasCapability\("payment\.capture"\)/);
   assert.match(payments, /hasCapability\("booking\.read"\)[\s\S]*hasCapability\("booking\.manage"\)/);

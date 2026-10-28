@@ -27,23 +27,42 @@
   };
 
   const ROLES = {
-    ADMIN: "admin", MANAGER: "manager", RECEPTIONIST: "receptionist",
-    HOUSEKEEPING: "housekeeping", MAINTENANCE: "maintenance", INVENTORY_CLERK: "inventory_clerk",
-    FRONT_DESK_SUPERVISOR: "front_desk_supervisor", GENERAL_MANAGER: "general_manager",
-    RESTAURANT_MANAGER: "restaurant_manager", WAITER: "waiter", BAR_MANAGER: "bar_manager",
-    BARTENDER: "bartender", KITCHEN_MANAGER: "kitchen_manager", CHEF: "chef",
-    HOUSEKEEPING_MANAGER: "housekeeping_manager", HOUSEKEEPER: "housekeeper",
-    MAINTENANCE_TECHNICIAN: "maintenance_technician", ACCOUNTS_MANAGER: "accounts_manager",
-    ACCOUNTANT: "accountant", HR_MANAGER: "hr_manager", HR_OFFICER: "hr_officer", SECURITY: "security",
-    PROCUREMENT_OFFICER: "procurement_officer", STOREKEEPER: "storekeeper",
-    PORTER: "porter", KITCHEN_ASSISTANT: "kitchen_assistant",
-    GUEST: "guest", STAFF: "staff"
+    ADMIN: "admin",
+    GENERAL_MANAGER: "general_manager",
+    ACCOUNTANT: "accountant",
+    PROCUREMENT_OFFICER: "procurement_officer",
+    CHEF: "chef",
+    KITCHEN_ASSISTANT: "kitchen_assistant",
+    WAITER: "waiter",
+    PORTER: "porter",
+    RECEPTIONIST: "receptionist",
+    HOUSEKEEPING: "housekeeping",
+    STOREKEEPER: "storekeeper",
+    SECURITY: "security",
+    GUEST: "guest"
   };
 
-  /* Backend sends UPPERCASE roles; normalize once at the boundary. CASHIER is
-     a retired stored role: stale sessions/JWT claims resolve to the existing
-     Restaurants WAITER role rather than recreating a second active identity. */
-  const RETIRED_ROLE_ALIASES = Object.freeze({ cashier: "waiter" });
+  /* Backend sends UPPERCASE roles; normalize once at the boundary. Retired
+     stored roles resolve to their consolidated approved role so stale sessions
+     and JWT claims remain seamless without exposing unapproved identities. */
+  const RETIRED_ROLE_ALIASES = Object.freeze({
+    cashier: "waiter",
+    manager: "general_manager",
+    front_desk_supervisor: "receptionist",
+    staff: "receptionist",
+    restaurant_manager: "waiter",
+    bar_manager: "waiter",
+    bartender: "waiter",
+    kitchen_manager: "chef",
+    housekeeping_manager: "housekeeping",
+    housekeeper: "housekeeping",
+    maintenance: "housekeeping",
+    maintenance_technician: "housekeeping",
+    accounts_manager: "accountant",
+    hr_manager: "procurement_officer",
+    hr_officer: "procurement_officer",
+    inventory_clerk: "storekeeper"
+  });
   function normRole(role) {
     const value = role ? String(role).toLowerCase() : null;
     return value && RETIRED_ROLE_ALIASES[value] ? RETIRED_ROLE_ALIASES[value] : value;
@@ -98,20 +117,18 @@
     if (subCtx && isAuthorizedForSubdomain(r, subCtx) && subCtx.landingPath) {
       return subCtx.landingPath.replace(/^\//, "");
     }
-    if (["restaurant_manager", "waiter", "bar_manager", "bartender", "kitchen_manager", "chef", "kitchen_assistant"].includes(r)) {
+    if (["waiter", "chef", "kitchen_assistant"].includes(r)) {
       return "dashboard/pos.html";
     }
-    if (["housekeeping", "housekeeping_manager", "housekeeper"].includes(r)) return "dashboard/housekeeping.html";
-    if (["porter"].includes(r)) return "dashboard/service-requests.html";
-    if (["maintenance", "maintenance_technician"].includes(r)) return "dashboard/maintenance.html";
-    if (["inventory_clerk", "storekeeper"].includes(r)) return "dashboard/inventory.html";
+    if (r === "housekeeping") return "dashboard/housekeeping.html";
+    if (r === "porter") return "dashboard/service-requests.html";
+    if (r === "storekeeper") return "dashboard/inventory.html";
     if (r === "procurement_officer") return "dashboard/procurement.html";
     /* Security officers clock in and pick up guest requests; they are not
        admitted to index.html, so landing them there bounced them straight to
        /403.html after a successful sign-in. */
     if (r === "security") return "dashboard/workforce.html";
-    if (["accounts_manager", "accountant"].includes(r)) return "dashboard/payments.html";
-    if (["hr_manager", "hr_officer"].includes(r)) return "dashboard/workforce.html";
+    if (r === "accountant") return "dashboard/payments.html";
     return "dashboard/index.html";
   }
 
@@ -156,19 +173,21 @@
     // Legacy hierarchy for the existing front-desk/management shell. Department
     // roles stay outside it and must pass exact-role or capability checks.
     if (!state.role) return false;
+    const current = normRole(state.role);
+    const target = normRole(minRole);
     const order = {
-      guest: 0, receptionist: 1, front_desk_supervisor: 1, staff: 1,
-      manager: 2, general_manager: 2, admin: 3,
+      guest: 0, receptionist: 1, general_manager: 2, admin: 3,
     };
-    return (order[state.role] != null ? order[state.role] : -1) >= (order[minRole] != null ? order[minRole] : 99);
+    return (order[current] != null ? order[current] : -1) >= (order[target] != null ? order[target] : 99);
   }
 
   // Exact operational-role visibility guard. It is deliberately separate from
-  // hasRole(): HOUSEKEEPING / MAINTENANCE / INVENTORY_CLERK do not
+  // hasRole(): HOUSEKEEPING / STOREKEEPER / WAITER do not
   // form a privilege hierarchy, and server-side capabilities remain decisive.
   function hasAnyRole(roles) {
     if (!state.role || !Array.isArray(roles)) return false;
-    return roles.map(normRole).includes(state.role);
+    const current = normRole(state.role);
+    return roles.map(normRole).includes(current);
   }
 
   function can(perm) {

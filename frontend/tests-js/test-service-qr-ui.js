@@ -47,7 +47,7 @@ test("QR guest page keeps the bearer in the fragment and memory, with no durable
 test("service QR admin page is capability-gated and supports create, rotate, revoke, and printable SVG", () => {
   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "service-qr.html"), "utf8");
   const dashboard = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
-  assert.match(page, /boot\(\["admin","manager","general_manager"\]\)/);
+  assert.match(page, /boot\(\["admin","general_manager"\]\)/);
   assert.match(page, /createRoom/);
   assert.match(page, /createTable/);
   assert.match(page, /API\.list\("posRestaurantTables",\{active:"true",page_size:100\}\)/);
@@ -64,7 +64,7 @@ test("food-and-beverage QR requests are visible in the specialist guest-request 
   assert.match(page, /item\.table_number/);
   assert.match(page, /"QR"/);
   assert.match(page, /"waiter"/);
-  assert.match(page, /"bartender"/);
+  assert.doesNotMatch(page, /"bartender"/);
   assert.match(page, /canCreatePosDraft/);
   assert.match(page, /data-sr-pos-draft/);
   assert.match(page, /pos\.html\?service_request=/);

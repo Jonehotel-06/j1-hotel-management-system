@@ -115,7 +115,7 @@ test("Laundry keeps its own page and authorized roles, but excludes restaurant r
     assert.equal(roles.includes(forbidden), false, `${forbidden} must not open the Laundry page`);
     assert.equal(dashboard.PAGE_ACCESS["laundry.html"].roles.includes(forbidden), false);
   }
-  for (const allowed of ["receptionist", "housekeeper", "porter", "security"]) {
+  for (const allowed of ["receptionist", "housekeeping", "porter", "security"]) {
     assert.equal(roles.includes(allowed), true, `${allowed} keeps Laundry access`);
     assert.equal(dashboard.PAGE_ACCESS["laundry.html"].roles.includes(allowed), true);
   }

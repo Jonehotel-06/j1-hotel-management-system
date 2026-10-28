@@ -369,38 +369,58 @@ def staff_department_code(staff: User) -> str:
         raw_dept = (profile.department or "").strip().upper()
         dept_aliases = {
             "MANAGEMENT": "MANAGEMENT",
+            "GENERAL MANAGER": "MANAGEMENT",
+            "GENERAL_MANAGER": "MANAGEMENT",
             "ACCOUNTS": "ACCOUNTS",
+            "ACCOUNTANT": "ACCOUNTS",
             "ACCOUNTS & FINANCE": "ACCOUNTS",
             "FINANCE": "ACCOUNTS",
             "ADMINISTRATION & PROCUREMENT": "ADMIN_PROCUREMENT",
+            "ADMIN MANAGER/PROCUREMENT": "ADMIN_PROCUREMENT",
+            "ADMIN_MANAGER_PROCUREMENT": "ADMIN_PROCUREMENT",
             "ADMIN_PROCUREMENT": "ADMIN_PROCUREMENT",
             "PROCUREMENT": "ADMIN_PROCUREMENT",
             "ADMINISTRATION": "ADMIN_PROCUREMENT",
+            "HR": "ADMIN_PROCUREMENT",
+            "HUMAN RESOURCES": "ADMIN_PROCUREMENT",
+            "HUMAN_RESOURCES": "ADMIN_PROCUREMENT",
             "FRONT DESK": "FRONT_DESK",
             "FRONT DESK / RECEPTION": "FRONT_DESK",
             "FRONT_DESK": "FRONT_DESK",
             "RECEPTION": "FRONT_DESK",
+            "RECEPTIONIST": "FRONT_DESK",
             "KITCHEN": "KITCHEN",
-            # Historical Cashier department labels resolve to Restaurants for
-            # stored-profile sign-in checks; no standalone Cashier portal exists.
+            "CHEFS": "KITCHEN",
+            "CHEF": "KITCHEN",
+            "KITCHEN ASSISTANT": "KITCHEN_ASSISTANT",
+            "KITCHEN_ASSISTANT": "KITCHEN_ASSISTANT",
+            # Historical Cashier & Bar department labels resolve to Waiters/Waitresses
+            # for stored-profile sign-in checks; no standalone Cashier or Bar portal exists.
             "CASHIER": "RESTAURANT_BAR",
             "CASHIER_TILL": "RESTAURANT_BAR",
             "CASHIER TILL": "RESTAURANT_BAR",
             "CASHIER / TILL": "RESTAURANT_BAR",
             "RESTAURANT": "RESTAURANT_BAR",
+            "WAITERS/WAITRESSES": "RESTAURANT_BAR",
+            "WAITERS_WAITRESSES": "RESTAURANT_BAR",
             "BAR": "RESTAURANT_BAR",
             "RESTAURANT & BAR": "RESTAURANT_BAR",
             "RESTAURANT & BAR SERVICE": "RESTAURANT_BAR",
             "RESTAURANT_BAR": "RESTAURANT_BAR",
             "HOUSEKEEPING": "HOUSEKEEPING",
+            "HOUSEKEEPERS": "HOUSEKEEPING",
+            "MAINTENANCE": "HOUSEKEEPING",
             "PORTERING": "PORTERING",
             "PORTER": "PORTERING",
             "PORTERS": "PORTERING",
-            "MAINTENANCE": "PORTERING",
             "STORES": "STORES_INVENTORY",
             "INVENTORY": "STORES_INVENTORY",
+            "STORE KEEPER": "STORES_INVENTORY",
+            "STORE_KEEPER": "STORES_INVENTORY",
+            "STOREKEEPER": "STORES_INVENTORY",
             "STORES & INVENTORY": "STORES_INVENTORY",
             "STORES_INVENTORY": "STORES_INVENTORY",
+            "SECURITY": "SECURITY",
         }
         if raw_dept in dept_aliases:
             return dept_aliases[raw_dept]
@@ -412,24 +432,29 @@ def staff_department_code(staff: User) -> str:
         "ADMIN": "ADMIN_PROCUREMENT",
         "GENERAL_MANAGER": "MANAGEMENT",
         "MANAGER": "MANAGEMENT",
-        "HR_MANAGER": "MANAGEMENT",
+        "HR_MANAGER": "ADMIN_PROCUREMENT",
+        "HR_OFFICER": "ADMIN_PROCUREMENT",
         "ACCOUNTS_MANAGER": "ACCOUNTS",
         "ACCOUNTANT": "ACCOUNTS",
-        # CASHIER is retired: a historical account resolves to Restaurants.
+        # CASHIER is retired: a historical account resolves to Waiters/Waitresses.
         "CASHIER": "RESTAURANT_BAR",
         "PROCUREMENT_OFFICER": "ADMIN_PROCUREMENT",
         "FRONT_DESK_SUPERVISOR": "FRONT_DESK",
         "RECEPTIONIST": "FRONT_DESK",
         "KITCHEN_MANAGER": "KITCHEN",
         "CHEF": "KITCHEN",
-        "KITCHEN_ASSISTANT": "KITCHEN",
+        "KITCHEN_ASSISTANT": "KITCHEN_ASSISTANT",
         "RESTAURANT_MANAGER": "RESTAURANT_BAR",
         "WAITER": "RESTAURANT_BAR",
         "BAR_MANAGER": "RESTAURANT_BAR",
         "BARTENDER": "RESTAURANT_BAR",
         "HOUSEKEEPING_MANAGER": "HOUSEKEEPING",
+        "HOUSEKEEPING": "HOUSEKEEPING",
+        "HOUSEKEEPER": "HOUSEKEEPING",
+        "MAINTENANCE": "HOUSEKEEPING",
+        "MAINTENANCE_TECHNICIAN": "HOUSEKEEPING",
         "PORTER": "PORTERING",
-        "SECURITY": "PORTERING",
+        "SECURITY": "SECURITY",
         "STOREKEEPER": "STORES_INVENTORY",
         "INVENTORY_CLERK": "STORES_INVENTORY",
     }
@@ -437,10 +462,8 @@ def staff_department_code(staff: User) -> str:
         return role_map[role]
     from apps.accounts.capabilities import is_housekeeping_worker, is_maintenance_worker
 
-    if is_housekeeping_worker(staff):
+    if is_housekeeping_worker(staff) or is_maintenance_worker(staff):
         return "HOUSEKEEPING"
-    if is_maintenance_worker(staff):
-        return "PORTERING"
     return "SHARED"
 
 
@@ -454,25 +477,41 @@ def is_staff_authorized_for_department(staff: User, target_department: str) -> b
     subdomain_to_dept = {
         "MANAGER": {"MANAGEMENT"},
         "MANAGEMENT": {"MANAGEMENT"},
+        "GENERAL_MANAGER": {"MANAGEMENT"},
+        "GENERAL-MANAGER": {"MANAGEMENT"},
         "ACCOUNTANT": {"ACCOUNTS"},
         "ACCOUNTS": {"ACCOUNTS"},
         "ADMIN": {"ADMIN_PROCUREMENT"},
         "PROCUREMENT": {"ADMIN_PROCUREMENT"},
         "ADMIN_PROCUREMENT": {"ADMIN_PROCUREMENT"},
+        "ADMIN-MANAGER-PROCUREMENT": {"ADMIN_PROCUREMENT"},
         "FRONTDESK": {"FRONT_DESK"},
         "FRONT_DESK": {"FRONT_DESK"},
         "RECEPTION": {"FRONT_DESK"},
+        "RECEPTIONIST": {"FRONT_DESK"},
         "KITCHEN": {"KITCHEN"},
+        "CHEFS": {"KITCHEN"},
+        "KITCHEN_ASSISTANT": {"KITCHEN_ASSISTANT"},
+        "KITCHEN-ASSISTANT": {"KITCHEN_ASSISTANT"},
         "RESTAURANT": {"RESTAURANT_BAR"},
         "BAR": {"RESTAURANT_BAR"},
         "RESTAURANT_BAR": {"RESTAURANT_BAR"},
+        "WAITERS": {"RESTAURANT_BAR"},
+        "WAITERS_WAITRESSES": {"RESTAURANT_BAR"},
+        "WAITERS-WAITRESSES": {"RESTAURANT_BAR"},
         "HOUSEKEEPING": {"HOUSEKEEPING"},
+        "HOUSEKEEPERS": {"HOUSEKEEPING"},
+        "MAINTENANCE": {"HOUSEKEEPING"},
         "PORTER": {"PORTERING"},
+        "PORTERS": {"PORTERING"},
         "PORTERING": {"PORTERING"},
         "STORE": {"STORES_INVENTORY"},
         "STORES": {"STORES_INVENTORY"},
+        "STORE_KEEPER": {"STORES_INVENTORY"},
+        "STORE-KEEPER": {"STORES_INVENTORY"},
         "INVENTORY": {"STORES_INVENTORY"},
         "STORES_INVENTORY": {"STORES_INVENTORY"},
+        "SECURITY": {"SECURITY"},
     }
     allowed_depts = subdomain_to_dept.get(target, {target})
     staff_dept = staff_department_code(staff)
@@ -480,7 +519,9 @@ def is_staff_authorized_for_department(staff: User, target_department: str) -> b
         return True
     # General Manager / Manager can access management dashboard and operational oversight,
     # except strictly Administrator-only "ADMIN" subdomain unless they hold ADMIN role.
-    if getattr(staff, "role", "") in (User.Role.GENERAL_MANAGER, User.Role.MANAGER) and target in ("MANAGER", "MANAGEMENT", "PROCUREMENT"):
+    if getattr(staff, "role", "") in (User.Role.GENERAL_MANAGER, User.Role.MANAGER) and target in (
+        "MANAGER", "MANAGEMENT", "GENERAL_MANAGER", "GENERAL-MANAGER", "PROCUREMENT", "ADMIN_PROCUREMENT",
+    ):
         return True
     return False
 

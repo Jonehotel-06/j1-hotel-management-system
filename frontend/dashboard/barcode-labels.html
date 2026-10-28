@@ -94,8 +94,7 @@
 <script src="../js/barcode-scanner.js?v=1.1.23"></script>
 <script>
   JONE.ui.initChrome();
-  JONE.dashboard.boot(["admin","manager","general_manager",
-    "inventory_clerk","storekeeper","waiter"]);
+  JONE.dashboard.boot(["admin", "general_manager", "storekeeper", "waiter"]);
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
   document.getElementById("print-labels") && document.getElementById("print-labels").addEventListener("click", function(){ window.print(); });
 

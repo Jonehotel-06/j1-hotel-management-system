@@ -89,8 +89,11 @@ test("an internal issue records the department, the custodian and the reason", (
   const codes = []; /* host-realm array: the page runs in its own vm realm */
   for (let i = 0; i < departments.length; i += 1) codes.push(String(departments[i].value));
   assert.equal(codes[0], "", "the department may be left as not recorded");
-  ["KITCHEN", "HOUSEKEEPING", "LAUNDRY", "MAINTENANCE", "BAR", "RESTAURANT"].forEach((code) => {
+  ["KITCHEN", "KITCHEN_ASSISTANT", "HOUSEKEEPING", "LAUNDRY", "RESTAURANT", "PROCUREMENT", "INVENTORY", "SECURITY", "PORTER", "FRONT_DESK", "ACCOUNTS", "MANAGEMENT"].forEach((code) => {
     assert.ok(codes.indexOf(code) !== -1, code + " must be issuable");
+  });
+  ["BAR", "MAINTENANCE", "HR"].forEach((retired) => {
+    assert.equal(codes.indexOf(retired), -1, retired + " was consolidated and must not be offered");
   });
   assert.match(INVENTORY, /title:"Record internal stock issue \/ wastage"/);
   assert.match(INVENTORY, /name:"department",label:"Receiving department",type:"select",required:true,options:departmentOptions\(\)/);

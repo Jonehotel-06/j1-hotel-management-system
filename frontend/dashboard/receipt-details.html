@@ -139,8 +139,7 @@
 <script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script>
 <script>
   JONE.ui.initChrome();
-  JONE.dashboard.boot(["admin","manager","general_manager",
-    "front_desk_supervisor","receptionist","accounts_manager","accountant"]);
+  JONE.dashboard.boot(["admin", "general_manager", "receptionist", "accountant"]);
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
   var receiptDetailCapabilitiesReady = window.Auth && typeof window.Auth.loadCapabilities === "function"
     ? window.Auth.loadCapabilities().catch(function(){ return []; })

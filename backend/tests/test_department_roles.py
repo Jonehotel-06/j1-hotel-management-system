@@ -72,7 +72,8 @@ class DepartmentRoleModelTests(BaseAPITestCase):
         self.assertEqual(DEPARTMENT_ROLES[Workstation.Department.PROCUREMENT], User.Role.PROCUREMENT_OFFICER)
         self.assertEqual(DEPARTMENT_ROLES[Workstation.Department.SECURITY], User.Role.SECURITY)
         self.assertEqual(DEPARTMENT_ROLES[Workstation.Department.KITCHEN], User.Role.CHEF)
-        self.assertNotIn(User.Role.KITCHEN_ASSISTANT, DEPARTMENT_ROLES.values())
+        self.assertEqual(DEPARTMENT_ROLES[Workstation.Department.KITCHEN_ASSISTANT], User.Role.KITCHEN_ASSISTANT)
+        self.assertEqual(len(DEPARTMENT_ROLES), 11)
 
     def test_profile_department_conflict_fails_closed_for_backend_capabilities(self):
         from apps.accounts.capabilities import has_capability
@@ -100,18 +101,23 @@ class DepartmentRoleModelTests(BaseAPITestCase):
         )
         self.assertEqual(
             capability_codes_for_user(procurement),
-            frozenset({"procurement.manage", "attendance.clock", "leave.request"}),
+            frozenset({
+                "procurement.manage", "staff.profile.manage", "staff.view", "staff.manage",
+                "shift.manage", "attendance.clock", "attendance.manage", "leave.request",
+                "payroll.view", "payroll.manage",
+            }),
         )
-        self.assertNotIn("procurement.approve", capability_codes_for_user(procurement))
+        for forbidden_approval in ("procurement.approve", "payroll.approve", "leave.approve", "expense.approve"):
+            self.assertNotIn(forbidden_approval, capability_codes_for_user(procurement))
         self.assertNotIn("booking.read", capability_codes_for_user(security))
 
     def test_department_context_is_read_from_stored_records_only(self):
-        bartender = make_staff("dept.bartender@staff.dev", role=User.Role.BARTENDER)
-        self.assertEqual(bartender.department, Workstation.Department.BAR)
-        self.assertEqual(department_for_user(bartender), Workstation.Department.BAR)
-        self.assertTrue(is_cross_department(bartender, Workstation.Department.ACCOUNTS))
-        self.assertFalse(is_cross_department(bartender, Workstation.Department.BAR))
-        manager = make_staff("dept.manager@staff.dev", role=User.Role.MANAGER)
+        waiter = make_staff("dept.waiter@staff.dev", role=User.Role.WAITER)
+        self.assertEqual(waiter.department, Workstation.Department.RESTAURANT)
+        self.assertEqual(department_for_user(waiter), Workstation.Department.RESTAURANT)
+        self.assertTrue(is_cross_department(waiter, Workstation.Department.ACCOUNTS))
+        self.assertFalse(is_cross_department(waiter, Workstation.Department.RESTAURANT))
+        manager = make_staff("dept.manager@staff.dev", role=User.Role.GENERAL_MANAGER)
         self.assertEqual(manager.department, Workstation.Department.MANAGEMENT)
 
     def test_grants_are_never_silently_widened_by_resolving_a_legacy_title(self):
@@ -119,20 +125,20 @@ class DepartmentRoleModelTests(BaseAPITestCase):
 
         A retired title is *displayed* as its department role, but it does not
         inherit that role's grants at request time: an authorization decision
-        has to be traceable to a row somebody can review. Migration 0027 is what
+        has to be traceable to a row somebody can review. Migration 0030 is what
         puts the account on the department role, and it preserves what the
         person already held as explicit, reasoned overrides.
         """
         legacy = make_staff("dept.legacy.barmanager@staff.dev", role=User.Role.BAR_MANAGER)
-        peer = make_staff("dept.peer.bartender@staff.dev", role=User.Role.BARTENDER)
-        self.assertEqual(legacy.department_role, User.Role.BARTENDER)
+        peer = make_staff("dept.peer.waiter@staff.dev", role=User.Role.WAITER)
+        self.assertEqual(legacy.department_role, User.Role.WAITER)
         legacy_codes = capability_codes_for_user(legacy)
         expected = set(
             RoleCapability.objects.filter(role=User.Role.BAR_MANAGER, capability__is_active=True)
             .values_list("capability__code", flat=True)
         )
         self.assertEqual(legacy_codes, frozenset(expected))
-        # The department roles themselves are what they always were.
+        # The department roles themselves carry their persisted grants.
         self.assertIn("bar.order.manage", capability_codes_for_user(peer))
         self.assertIn("bar.order.manage", legacy_codes)
 
@@ -163,12 +169,12 @@ class StaffAssignmentApiTests(BaseAPITestCase):
     def test_a_department_role_is_created_and_the_department_must_agree_with_the_role(self):
         self.auth(self.admin)
         created = self._create(
-            email="dept.bartender2@staff.dev", role=User.Role.BARTENDER,
-            department=Workstation.Department.BAR,
+            email="dept.waiter2@staff.dev", role=User.Role.WAITER,
+            department=Workstation.Department.RESTAURANT,
         )
         self.assertEqual(created.status_code, 201, created.content)
         mismatched = self._create(
-            email="dept.mismatch@staff.dev", role=User.Role.BARTENDER,
+            email="dept.mismatch@staff.dev", role=User.Role.WAITER,
             department=Workstation.Department.ACCOUNTS,
         )
         self.assertEqual(mismatched.status_code, 400, mismatched.content)
@@ -184,23 +190,23 @@ class StaffAssignmentApiTests(BaseAPITestCase):
         self.assertEqual(mismatch.status_code, 400, mismatch.content)
         self.assertFalse(User.objects.filter(email=base["email"]).exists())
 
-        retired = dict(base, email="dept.profile-retired@staff.dev", role="KITCHEN_ASSISTANT", department="KITCHEN")
+        retired = dict(base, email="dept.profile-retired@staff.dev", role="KITCHEN_MANAGER", department="KITCHEN")
         refused = self.client.post("/api/admin/staff-operations/profiles/", retired, format="json")
         self.assertEqual(refused.status_code, 400, refused.content)
         self.assertIn("retired departmental title", refused.content.decode())
         self.assertFalse(User.objects.filter(email=retired["email"]).exists())
 
-    def test_kitchen_assistant_is_a_job_title_under_the_chef_role(self):
+    def test_kitchen_assistant_is_an_independent_approved_department_and_role(self):
         self.auth(self.admin)
         response = self._create(
-            email="dept.kitchen-assistant@staff.dev", role=User.Role.CHEF,
-            department="KITCHEN", job_title="Kitchen Assistant",
+            email="dept.kitchen-assistant@staff.dev", role=User.Role.KITCHEN_ASSISTANT,
+            department=Workstation.Department.KITCHEN_ASSISTANT, job_title="Kitchen Assistant",
         )
         self.assertEqual(response.status_code, 201, response.content)
         staff = User.objects.get(email="dept.kitchen-assistant@staff.dev")
-        self.assertEqual(staff.role, User.Role.CHEF)
+        self.assertEqual(staff.role, User.Role.KITCHEN_ASSISTANT)
         self.assertEqual(staff.staff_profile.job_title, "Kitchen Assistant")
-        self.assertEqual(staff.department, Workstation.Department.KITCHEN)
+        self.assertEqual(staff.department, Workstation.Department.KITCHEN_ASSISTANT)
 
     def test_conflicting_persisted_profile_blocks_capability_and_legacy_role_endpoints(self):
         manager = make_staff("dept.conflict-endpoint@staff.dev", role=User.Role.MANAGER)
@@ -440,8 +446,12 @@ class AdminSiteRoleFormTests(BaseAPITestCase):
         form = self._admin_form_class()()
         offered = {value for value, _label in form.fields["role"].choices}
         self.assertEqual(offered & set(RETIRED_DEPARTMENTAL_ROLES), set())
-        self.assertIn(User.Role.BARTENDER, offered)
-        self.assertIn(User.Role.HR_OFFICER, offered)
+        self.assertNotIn(User.Role.BARTENDER, offered)
+        self.assertNotIn(User.Role.HR_OFFICER, offered)
+        self.assertIn(User.Role.WAITER, offered)
+        self.assertIn(User.Role.PROCUREMENT_OFFICER, offered)
+        self.assertIn(User.Role.KITCHEN_ASSISTANT, offered)
+        self.assertIn(User.Role.SECURITY, offered)
 
     def test_admin_forms_refuse_a_crafted_retired_title(self):
         from django import forms as django_forms

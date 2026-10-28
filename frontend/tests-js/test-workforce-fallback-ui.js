@@ -19,7 +19,7 @@ test("the fallback control is management-only and starts hidden", () => {
   assert.ok(block, "the fallback panel exists");
   assert.match(block[0], /\bhidden\b/, "it is hidden in the markup");
   assert.match(WORKFORCE, /fallback\.hidden=!management;/, "only management unhides it");
-  assert.match(WORKFORCE, /hasAnyRole\(\["admin","manager","general_manager"\]\)/, "management is the exemption set");
+  assert.match(WORKFORCE, /hasAnyRole\(\["admin","general_manager"\]\)/, "management is the exemption set");
 });
 
 test("the fallback needs an identifier and a substantive reason", () => {

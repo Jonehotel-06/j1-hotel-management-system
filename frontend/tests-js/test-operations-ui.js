@@ -75,8 +75,9 @@ test("operational queues use server pagination and visibility-aware live refresh
 
 test("navigation shows each specialist queue only to its operational roles", () => {
   const nav = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
-  assert.match(nav, /Guest Requests[\s\S]*housekeeping[\s\S]*maintenance/);
+  assert.match(nav, /Guest Requests[\s\S]*housekeeping\.html[\s\S]*maintenance\.html/);
   assert.match(nav, /Housekeeping[\s\S]*capabilities: \["housekeeping\.task\.manage", "housekeeping\.task\.assign"\]/);
   assert.match(nav, /Maintenance[\s\S]*capabilities: \["maintenance\.work_order\.manage", "maintenance\.work_order\.assign"\]/);
-  assert.match(nav, /housekeeping_manager[\s\S]*maintenance_technician/);
+  assert.match(nav, /"housekeeping\.html": \{ roles: \["admin", "general_manager", "receptionist", "housekeeping"\] \}/);
+  assert.match(nav, /"maintenance\.html": \{ roles: \["admin", "general_manager", "receptionist", "housekeeping"\] \}/);
 });

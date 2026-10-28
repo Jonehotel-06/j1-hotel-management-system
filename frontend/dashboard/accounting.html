@@ -317,7 +317,7 @@
   // boot() redirects receptionists to 403.html. If a navigation is ever
   // blocked (or the redirect races), the page must still never request or
   // render financial data — the backend is the real gate, this is the belt.
-  var __reportsAllowed = JONE.dashboard.boot(["admin", "manager", "general_manager", "accounts_manager", "accountant"]); // Accounting uses the same manager/admin/accountant gate.
+  var __reportsAllowed = JONE.dashboard.boot(["admin", "general_manager", "accountant"]); // Accounting uses the admin/general_manager/accountant gate.
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
 
 
@@ -1127,10 +1127,18 @@
       { name: "supplier_id", label: "Supplier / payee from system (optional)", type: "select", options: [{ value: "", label: "Type the payee below instead" }].concat(lookups.suppliers.map(function (row) { return { value: String(row.id), label: (row.name || "") + (row.reference ? " · " + row.reference : "") }; })) },
       { name: "payee", label: "Payee (if not chosen above)", type: "text" },
       { name: "department", label: "Department", type: "select", options: [
-        { value: "", label: "Not departmental" }, { value: "Kitchen", label: "Kitchen" },
-        { value: "Restaurant & Bar", label: "Restaurant & Bar" }, { value: "Housekeeping", label: "Housekeeping" },
-        { value: "Front Office", label: "Front Office" }, { value: "Maintenance", label: "Maintenance" },
-        { value: "Admin", label: "Admin" }, { value: "Security", label: "Security" }
+        { value: "", label: "Not departmental" },
+        { value: "General Manager", label: "General Manager" },
+        { value: "Accountant", label: "Accountant" },
+        { value: "Admin Manager/Procurement", label: "Admin Manager/Procurement" },
+        { value: "Chefs", label: "Chefs" },
+        { value: "Kitchen Assistant", label: "Kitchen Assistant" },
+        { value: "Waiters/Waitresses", label: "Waiters/Waitresses" },
+        { value: "Porters", label: "Porters" },
+        { value: "Receptionist", label: "Receptionist" },
+        { value: "Housekeepers", label: "Housekeepers" },
+        { value: "Store Keeper", label: "Store Keeper" },
+        { value: "Security", label: "Security" }
       ], help: "Used for departmental cost reporting; it does not change approval or posting." },
       { name: "amount", label: "Amount (NGN)", type: "number", step: "0.01", min: "0.01", required: true },
       { name: "payment_method", label: "Payment method", type: "select", required: true, options: [
