@@ -297,3 +297,82 @@ class PosRestaurantTableApiTests(BaseAPITestCase):
         self.assertEqual(occupied_response.status_code, 409, occupied_response.content)
         self.assertEqual(RestaurantTableSession.objects.get(reference=session["reference"]).table_id, source["id"])
         self.assertEqual(RestaurantTableSession.objects.get(reference=occupied_session.json()["data"]["reference"]).table_id, occupied["id"])
+
+    def test_table_session_summary_totals_orders_and_unpaid_balance(self):
+        table = self._register_table(code="T-SUMMARY", seats=4)
+        session = self._open_session(table, key="table-session-summary-01").json()["data"]
+        self.auth(self.waiter)
+
+        draft = self._create_order(session["reference"], key="table-summary-draft-001").json()["data"]
+        self.assertEqual(draft["status"], PosOrder.Status.DRAFT)
+
+        paid = self._create_order(session["reference"], key="table-summary-paid-001").json()["data"]
+        submitted = self.client.post(f"/api/admin/pos/orders/{paid['reference']}/submit/", {}, format="json")
+        self.assertEqual(submitted.status_code, 200, submitted.content)
+        for state in ("PREPARING", "READY", "DELIVERED"):
+            transition = self.client.post(
+                f"/api/admin/pos/orders/{paid['reference']}/status/", {"status": state}, format="json",
+            )
+            self.assertEqual(transition.status_code, 200, transition.content)
+        tender = self.client.post(
+            f"/api/admin/pos/orders/{paid['reference']}/tenders/",
+            {"method": "CARD", "amount": "3500.00"}, format="json",
+        )
+        self.assertEqual(tender.status_code, 201, tender.content)
+
+        listed = self.client.get("/api/admin/pos/restaurant-table-sessions/")
+        self.assertEqual(listed.status_code, 200, listed.content)
+        summary = [row for row in listed.json()["data"] if row["reference"] == session["reference"]][0]
+        self.assertEqual(summary["order_count"], 2)
+        self.assertEqual(summary["guest_order_count"], 2)
+        self.assertEqual(summary["total_ordered_amount"], "7000.00")
+        self.assertEqual(summary["returned_amount"], "0.00")
+        self.assertEqual(summary["captured_amount"], "3500.00")
+        self.assertEqual(summary["unpaid_balance"], "3500.00")
+
+        cancelled = self.client.post(
+            f"/api/admin/pos/orders/{draft['reference']}/status/", {"status": "CANCELLED"}, format="json",
+        )
+        self.assertEqual(cancelled.status_code, 200, cancelled.content)
+
+        detail = self.client.get(f"/api/admin/pos/restaurant-table-sessions/{session['reference']}/")
+        self.assertEqual(detail.status_code, 200, detail.content)
+        after = detail.json()["data"]
+        # A cancelled order is never counted as guest spending, but it remains in
+        # the raw order count so the session history stays complete.
+        self.assertEqual(after["order_count"], 2)
+        self.assertEqual(after["guest_order_count"], 1)
+        self.assertEqual(after["total_ordered_amount"], "3500.00")
+        self.assertEqual(after["captured_amount"], "3500.00")
+        self.assertEqual(after["unpaid_balance"], "0.00")
+
+    def test_restaurant_table_register_summary_tracks_spend_and_survives_transfer(self):
+        source = self._register_table(code="T-REG-A", seats=4)
+        destination = self._register_table(code="T-REG-B", seats=4)
+        session = self._open_session(source, key="register-summary-source").json()["data"]
+        self.auth(self.waiter)
+        self._create_order(session["reference"], key="register-summary-order-001")
+
+        listed = self.client.get("/api/admin/pos/restaurant-tables/", {"active": "all"}).json()["data"]
+        by_code = {row["code"]: row for row in listed}
+        self.assertEqual(by_code["T-REG-A"]["guest_order_count"], 1)
+        self.assertEqual(by_code["T-REG-A"]["total_ordered_amount"], "3500.00")
+        self.assertEqual(by_code["T-REG-A"]["unpaid_balance"], "3500.00")
+        self.assertEqual(by_code["T-REG-B"]["guest_order_count"], 0)
+        self.assertEqual(by_code["T-REG-B"]["total_ordered_amount"], "0.00")
+
+        moved = self.client.post(
+            f"/api/admin/pos/restaurant-table-sessions/{session['reference']}/transfer/",
+            {"destination_table_id": destination["id"]}, format="json",
+        )
+        self.assertEqual(moved.status_code, 200, moved.content)
+
+        after = self.client.get("/api/admin/pos/restaurant-tables/", {"active": "all"}).json()["data"]
+        after_by_code = {row["code"]: row for row in after}
+        # The session and its order moved exactly once: the source table is back
+        # to zero and the destination carries the whole amount.
+        self.assertEqual(after_by_code["T-REG-A"]["guest_order_count"], 0)
+        self.assertEqual(after_by_code["T-REG-A"]["total_ordered_amount"], "0.00")
+        self.assertEqual(after_by_code["T-REG-B"]["guest_order_count"], 1)
+        self.assertEqual(after_by_code["T-REG-B"]["total_ordered_amount"], "3500.00")
+        self.assertEqual(after_by_code["T-REG-B"]["unpaid_balance"], "3500.00")

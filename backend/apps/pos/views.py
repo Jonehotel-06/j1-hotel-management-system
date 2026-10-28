@@ -1,6 +1,9 @@
 """Capability-protected bounded POS operational API."""
+from decimal import Decimal
+
 from django.db import transaction
-from django.db.models import Count, Prefetch, Q
+from django.db.models import Count, DecimalField, OuterRef, Prefetch, Q, Subquery, Sum, Value
+from django.db.models.functions import Coalesce
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import NotFound
@@ -61,6 +64,79 @@ def _order_queryset():
     )
 
 
+def _table_session_captured_subquery():
+    """Total captured tender amount across the session's counted orders.
+
+    Built as a correlated subquery so the surrounding session queryset stays a
+    single aggregate pass (no N+1 and no multi-aggregation row multiplication).
+    """
+    return Subquery(
+        PosTender.objects.filter(
+            order__table_session=OuterRef("pk"),
+            order__status__in=table_service.COUNTED_ORDER_STATUSES,
+            status=PosTender.Status.CAPTURED,
+        )
+        .values("order__table_session")
+        .annotate(
+            captured=Coalesce(
+                Sum("amount"),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            )
+        )
+        .values("captured")[:1]
+    )
+
+
+def _table_summary_captured_subquery():
+    """Total captured tender amount across the orders of one table's sessions."""
+    return Subquery(
+        PosTender.objects.filter(
+            order__table_session__table=OuterRef("pk"),
+            order__status__in=table_service.COUNTED_ORDER_STATUSES,
+            status=PosTender.Status.CAPTURED,
+        )
+        .values("order__table_session__table")
+        .annotate(
+            captured=Coalesce(
+                Sum("amount"),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            )
+        )
+        .values("captured")[:1]
+    )
+
+
+def _table_summary_queryset():
+    """Per-registered-table order/money summary.
+
+    Orders are counted through the table's sessions, so a transferred session and
+    its orders move with it to the destination table exactly once — there is no
+    double count and no reliance on free-text table labels. Cancelled and voided
+    orders are excluded from the guest-spend figures.
+    """
+    counted = Q(sessions__orders__status__in=table_service.COUNTED_ORDER_STATUSES)
+    return RestaurantTable.objects.annotate(
+        guest_order_count=Count("sessions__orders", filter=counted, distinct=True),
+        total_ordered_amount=Coalesce(
+            Sum("sessions__orders__total_amount", filter=counted, output_field=DecimalField(max_digits=14, decimal_places=2)),
+            Value(Decimal("0.00")),
+            output_field=DecimalField(max_digits=14, decimal_places=2),
+        ),
+        returned_amount=Coalesce(
+            Sum("sessions__orders__returned_amount", filter=counted, output_field=DecimalField(max_digits=14, decimal_places=2)),
+            Value(Decimal("0.00")),
+            output_field=DecimalField(max_digits=14, decimal_places=2),
+        ),
+        captured_amount=Coalesce(
+            _table_summary_captured_subquery(),
+            Value(Decimal("0.00")),
+            output_field=DecimalField(max_digits=14, decimal_places=2),
+        ),
+    )
+
+
 def _table_session_queryset():
     return (
         RestaurantTableSession.objects.select_related("table", "opened_by", "closed_by")
@@ -76,6 +152,32 @@ def _table_session_queryset():
                     orders__settlement_status__in=table_service.UNSETTLED_STATUSES,
                 ),
                 distinct=True,
+            ),
+            guest_order_count=Count(
+                "orders", filter=Q(orders__status__in=table_service.COUNTED_ORDER_STATUSES), distinct=True
+            ),
+            total_ordered_amount=Coalesce(
+                Sum(
+                    "orders__total_amount",
+                    filter=Q(orders__status__in=table_service.COUNTED_ORDER_STATUSES),
+                    output_field=DecimalField(max_digits=14, decimal_places=2),
+                ),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            ),
+            returned_amount=Coalesce(
+                Sum(
+                    "orders__returned_amount",
+                    filter=Q(orders__status__in=table_service.COUNTED_ORDER_STATUSES),
+                    output_field=DecimalField(max_digits=14, decimal_places=2),
+                ),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            ),
+            captured_amount=Coalesce(
+                _table_session_captured_subquery(),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=14, decimal_places=2),
             ),
         )
         .order_by("-opened_at", "-pk")
@@ -556,7 +658,7 @@ class PosRestaurantTableListCreateView(APIView):
     pagination_class = StandardPagination
 
     def get(self, request):
-        queryset = RestaurantTable.objects.all()
+        queryset = _table_summary_queryset()
         active = (request.query_params.get("active") or "true").strip().lower()
         if active in {"true", "1", "yes"}:
             queryset = queryset.filter(is_active=True)

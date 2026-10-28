@@ -26,6 +26,13 @@
   .pos-stay-choice:hover,.pos-stay-choice.is-selected{border-color:var(--color-primary);background:var(--color-surface-alt)}.pos-ticket-list{display:grid;gap:.65rem}.pos-ticket{padding:.75rem;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface-alt)}
   .pos-ticket p{margin:.22rem 0 0;font-size:var(--fs-sm);color:var(--color-text-muted)}.pos-action-stack{display:flex;flex-wrap:wrap;gap:.4rem}.pos-summary{display:flex;gap:.65rem;flex-wrap:wrap;align-items:center}.pos-summary .caption{margin-left:auto}
   @media(max-width:1000px){.pos-workspace{grid-template-columns:1fr}}@media(max-width:560px){.pos-cart-row{align-items:flex-start}.pos-summary .caption{margin-left:0;width:100%}}
+  /* Menu management is a wide desktop surface, not a cramped sidebar widget:
+     categories and items sit side by side on wide screens and stack below
+     1100px. Every column is minmax(0,…) so the tables can never push the grid
+     wider than the viewport. */
+  .pos-menu-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:1.5rem;align-items:start}
+  .pos-menu-column{min-width:0}
+  @media(min-width:1101px){.pos-menu-grid{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)}}
 .pos-margin-warning{color:var(--danger,#b42318);font-weight:600;}
 </style>
 </head>
@@ -130,7 +137,7 @@
               <div class="form-grid fg-2">
                 <div class="field"><label class="field-label" for="pos-mode">Order mode</label><select class="select" id="pos-mode" required><option value="ROOM_SERVICE">Room service</option><option value="RESTAURANT">Restaurant / dine in</option><option value="BAR">Bar</option><option value="TAKEAWAY">Takeaway</option></select></div>
                 <div class="field" data-pos-direct-guest hidden><label class="field-label" for="pos-guest">Guest / customer</label><input class="input" id="pos-guest" maxlength="200" placeholder="Walk-in guest (optional)"></div>
-                <div class="field" data-pos-bar-table hidden><label class="field-label" for="pos-table">Bar table / pickup</label><input class="input" id="pos-table" maxlength="40" placeholder="Optional · e.g. B-4"></div>
+                <div class="field" data-pos-bar-table hidden><label class="field-label" for="pos-table">Bar table</label><select class="select" id="pos-table"><option value="">Pickup · no table</option></select><div class="hint">Choose the bar table the order belongs to. Only registered, active tables can be picked; leave it on Pickup for a walk-in at the bar.</div></div>
                 <div class="field" data-pos-restaurant-table-session hidden><label class="field-label" for="pos-table-session">Open restaurant table session</label><select class="select" id="pos-table-session"><option value="">Choose an open table session</option></select><div class="hint" data-pos-selected-session-hint>Select a session, or open a new one in Restaurant tables.</div></div>
                 <div class="field" data-pos-delivery><label class="field-label" for="pos-delivery">Delivery location</label><input class="input" id="pos-delivery" maxlength="160" placeholder="Room / pickup note"></div>
               </div>
@@ -182,12 +189,16 @@
             <div class="panel-head"><h2>Cash drawer</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-pos-refresh-drawer>Refresh</button></div></div>
             <div class="panel-body"><div data-pos-drawer class="caption" aria-live="polite">Loading drawer status…</div><div class="pos-action-stack" style="margin-top:.8rem;"><button class="btn btn-sm" type="button" data-pos-open-drawer>Open drawer</button><button class="btn btn-sm btn-outline" type="button" data-pos-drop-cash disabled>Record cash drop</button><button class="btn btn-sm btn-outline" type="button" data-pos-close-drawer disabled>Close drawer</button></div></div>
           </section>
-          <details class="panel" data-pos-menu-admin hidden>
+        </aside>
+      </div>
+
+      <details class="panel" data-pos-menu-admin hidden>
             <summary style="padding:1rem 1.25rem;cursor:pointer;font-weight:600;">Menu management</summary>
             <div class="panel-body">
               <p class="caption" style="margin-top:0;">Catalog actions are limited to your permitted menu service areas. Existing order prices remain frozen snapshots, so editing an item never rewrites a past sale.</p>
               <div class="pos-action-stack"><button class="btn btn-sm btn-outline" type="button" data-pos-add-category>Add category</button><button class="btn btn-sm btn-outline" type="button" data-pos-add-item>Add menu item</button><a class="btn btn-sm btn-outline" href="barcode-labels.html" data-pos-barcode-link hidden>Print barcode labels</a></div>
-
+              <div class="pos-menu-grid">
+            <section class="pos-menu-column">
               <h3 style="margin:1.25rem 0 .5rem;font-size:var(--fs-sm);">Categories</h3>
               <div class="filter-bar">
                 <div class="field"><label class="field-label" for="pos-category-search">Search categories</label><input class="input" id="pos-category-search" placeholder="Name, slug, description"></div>
@@ -201,7 +212,8 @@
                 </table>
               </div>
               <div class="pagination" data-pos-menu-categories-pagination></div>
-
+            </section>
+            <section class="pos-menu-column">
               <h3 style="margin:1.25rem 0 .5rem;font-size:var(--fs-sm);">Menu items</h3>
               <div class="filter-bar">
                 <div class="field"><label class="field-label" for="pos-item-search">Search items</label><input class="input" id="pos-item-search" placeholder="Name, SKU, barcode, category"></div>
@@ -216,11 +228,11 @@
                 </table>
               </div>
               <div class="pagination" data-pos-menu-items-pagination></div>
-              <p class="caption">Products without a manufacturer barcode automatically use their SKU as their barcode — print labels for them and stick one on each product or its shelf.</p>
-            </div>
-          </details>
-        </aside>
-      </div>
+            </section>
+          </div>
+          <p class="caption">Products without a manufacturer barcode automatically use their SKU as their barcode — print labels for them and stick one on each product or its shelf.</p>
+        </div>
+      </details>
     </main>
   </div>
 </div>
@@ -472,9 +484,25 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   function setTableError(message){var node=document.querySelector("[data-pos-table-error]");if(!node)return;node.hidden=!message;node.textContent=message||"";}
   function renderRestaurantTables(){
     var select=document.getElementById("pos-open-table"),register=document.querySelector("[data-pos-restaurant-table-register]");
+    renderBarTableChoices();
     var rows=state.restaurantTables||[],activeRows=rows.filter(function(table){return !!table.is_active;});
     if(select){select.innerHTML='<option value="">'+(activeRows.length?'Choose a table':'No active restaurant tables')+'</option>'+activeRows.map(function(table){return '<option value="'+JONE.esc(table.id)+'">'+JONE.esc(table.code)+(table.name?' · '+JONE.esc(table.name):'')+(table.section?' · '+JONE.esc(table.section):'')+' · '+JONE.esc(table.seats)+' seats</option>';}).join('');select.disabled=!activeRows.length;}
-    if(register){var canManage=hasCapability('restaurant.table.manage',['admin','manager','general_manager','restaurant_manager']);register.hidden=!canManage;if(!canManage)return;register.innerHTML=rows.length?rows.map(function(table){return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(table.code)+(table.name?' · '+JONE.esc(table.name):'')+'</strong>'+JONE.dashboard.statusPill(table.is_active?'ACTIVE':'INACTIVE')+'<span class="caption">'+JONE.esc(table.seats)+' seats · '+JONE.esc(table.section||'Main dining')+'</span></div><div class="pos-action-stack" style="margin-top:.45rem;"><button type="button" class="btn btn-sm btn-outline" data-pos-edit-restaurant-table="'+JONE.esc(table.id)+'">Edit / status</button></div></div>';}).join(''):'<div class="empty-state"><h3>No tables registered</h3><p>Register the restaurant floor plan before opening dine-in sessions.</p></div>';}
+    if(register){var canManage=hasCapability('restaurant.table.manage',['admin','manager','general_manager','restaurant_manager']);register.hidden=!canManage;if(!canManage)return;register.innerHTML=rows.length?rows.map(function(table){return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(table.code)+(table.name?' · '+JONE.esc(table.name):'')+'</strong>'+JONE.dashboard.statusPill(table.is_active?'ACTIVE':'INACTIVE')+'<span class="caption">'+JONE.esc(table.seats)+' seats · '+JONE.esc(table.section||'Main dining')+'</span></div><p>'+String(table.guest_order_count||0)+' order(s) · '+JONE.esc(money(table.total_ordered_amount,'NGN'))+' ordered'+(Number(table.unpaid_balance||0)>0?' · '+JONE.esc(money(table.unpaid_balance,'NGN'))+' unpaid':'')+'</p><div class="pos-action-stack" style="margin-top:.45rem;"><button type="button" class="btn btn-sm btn-outline" data-pos-edit-restaurant-table="'+JONE.esc(table.id)+'">Edit / status</button></div></div>';}).join(''):'<div class="empty-state"><h3>No tables registered</h3><p>Register the restaurant floor plan before opening dine-in sessions.</p></div>';}
+  }
+  function renderBarTableChoices(preferred){
+    // Bar orders carry a table NUMBER (there is no table session for the bar),
+    // so the operator picks from the registered, active tables instead of typing
+    // a free-form label that could never be matched to a real table later.
+    var select=document.getElementById("pos-table");
+    if(!select)return;
+    var rows=(state.restaurantTables||[]).filter(function(table){return !!table.is_active;});
+    var current=String(preferred!=null?preferred:(select.value||""));
+    select.innerHTML='<option value="">Pickup · no table</option>'+rows.map(function(table){return '<option value="'+JONE.esc(table.code)+'">'+JONE.esc(table.code)+(table.name?' · '+JONE.esc(table.name):'')+(table.section?' · '+JONE.esc(table.section):'')+'</option>';}).join('');
+    if(current){
+      var known=Array.prototype.some.call(select.options,function(option){return option.value===current;});
+      if(!known){var extra=document.createElement("option");extra.value=current;extra.textContent=current+" · not on the register";select.appendChild(extra);}
+      select.value=current;
+    }
   }
   function renderRestaurantSessions(){
     var select=document.getElementById("pos-table-session"),target=document.querySelector("[data-pos-table-sessions]"),hint=document.querySelector("[data-pos-selected-session-hint]");
@@ -484,7 +512,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     var selected=rows.find(function(row){return row.reference===state.selectedTableSession;});
     if(hint)hint.textContent=selected?'Selected '+selected.table_code+' · '+selected.covers+' cover(s). New restaurant orders will join this service session.':'Select an open session, or open a new one in Restaurant tables.';
     if(!target)return;
-    target.innerHTML=rows.length?rows.map(function(session){var selectedNow=session.reference===state.selectedTableSession;var detail=session.order_count+' order(s) · '+session.active_order_count+' in progress · '+session.unpaid_order_count+' unpaid';var transfer=hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter'])?'<button type="button" class="btn btn-sm btn-outline" data-pos-transfer-table-session="'+JONE.esc(session.reference)+'">Transfer table</button>':'';return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(session.table_code)+(session.table_name?' · '+JONE.esc(session.table_name):'')+'</strong><span class="badge">'+JONE.esc(session.covers)+' covers</span></div><p>'+JONE.esc(session.table_section||'Main dining')+' · opened '+JONE.esc(session.opened_at?JONE.formatDateTime(session.opened_at):'—')+'<br>'+JONE.esc(detail)+'</p><div class="pos-action-stack" style="margin-top:.55rem;"><button type="button" class="btn btn-sm '+(selectedNow?'':'btn-outline')+'" data-pos-select-table-session="'+JONE.esc(session.reference)+'">'+(selectedNow?'Selected for order':'Use this table')+'</button>'+transfer+'<button type="button" class="btn btn-sm btn-outline" data-pos-close-table-session="'+JONE.esc(session.reference)+'">Close session</button></div></div>';}).join(''):'<div class="empty-state"><h3>No open table sessions</h3><p>Choose a registered table and open a service session to begin dine-in orders.</p></div>';
+    target.innerHTML=rows.length?rows.map(function(session){var selectedNow=session.reference===state.selectedTableSession;var detail=session.order_count+' order(s) · '+session.active_order_count+' in progress · '+session.unpaid_order_count+' unpaid · '+JONE.esc(money(session.total_ordered_amount,'NGN'))+' ordered';var transfer=hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter'])?'<button type="button" class="btn btn-sm btn-outline" data-pos-transfer-table-session="'+JONE.esc(session.reference)+'">Transfer table</button>':'';return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(session.table_code)+(session.table_name?' · '+JONE.esc(session.table_name):'')+'</strong><span class="badge">'+JONE.esc(session.covers)+' covers</span></div><p>'+JONE.esc(session.table_section||'Main dining')+' · opened '+JONE.esc(session.opened_at?JONE.formatDateTime(session.opened_at):'—')+'<br>'+JONE.esc(detail)+'</p><div class="pos-action-stack" style="margin-top:.55rem;"><button type="button" class="btn btn-sm '+(selectedNow?'':'btn-outline')+'" data-pos-select-table-session="'+JONE.esc(session.reference)+'">'+(selectedNow?'Selected for order':'Use this table')+'</button>'+transfer+'<button type="button" class="btn btn-sm btn-outline" data-pos-close-table-session="'+JONE.esc(session.reference)+'">Close session</button></div></div>';}).join(''):'<div class="empty-state"><h3>No open table sessions</h3><p>Choose a registered table and open a service session to begin dine-in orders.</p></div>';
   }
   function selectRestaurantTableSession(reference){state.selectedTableSession=(state.tableSessions||[]).some(function(row){return row.reference===reference;})?reference:null;renderRestaurantSessions();}
   async function loadRestaurantTables(silent){
@@ -504,7 +532,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(!tableId){JONE.ui.toast('Choose a registered table first.','warning');return;}
     if(!Number.isInteger(covers)||covers<1||covers>60){JONE.ui.toast('Covers must be between 1 and 60.','warning');return;}
     if(!JONE.guardSubmit(button))return;
-    try{var res=await window.API.create('posRestaurantTableSessions',{table_id:tableId,covers:covers,notes:'',idempotency_key:state.openTableSessionKey});var session=res.data||{};state.selectedTableSession=session.reference||null;state.openTableSessionKey=newKey();JONE.ui.toast('Table session opened for '+(session.table_code||'table')+'.','success');await loadRestaurantSessions(true);}
+    try{var res=await window.API.create('posRestaurantTableSessions',{table_id:tableId,covers:covers,notes:'',idempotency_key:state.openTableSessionKey});var session=res.data||{};state.selectedTableSession=session.reference||null;state.openTableSessionKey=newKey();JONE.ui.toast('Table session opened for '+(session.table_code||'table')+'.','success');await loadRestaurantSessions(true);await loadRestaurantTables(true);}
     catch(err){JONE.ui.toast((err&&err.message)||'The table session could not be opened. Refresh and check the register.','error');loadRestaurantTables(true);loadRestaurantSessions(true);}
     finally{JONE.releaseGuard(button);}
   }
@@ -519,13 +547,13 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       if(!JONE.guardSubmit(button))throw new Error('A transfer is already in progress.');
       try{await window.API.resourceAction('posRestaurantTableSessions',reference,'transfer',{destination_table_id:Number(chosen.id)},{cache:'no-store'});return {message:'Table session transferred to '+chosen.code+'.'};}finally{JONE.releaseGuard(button);}
     }});
-    if(result){JONE.ui.toast('Table session transferred.','success');await loadRestaurantSessions(true);}
+    if(result){JONE.ui.toast('Table session transferred.','success');await loadRestaurantSessions(true);await loadRestaurantTables(true);}
   }
 
   async function closeRestaurantTableSession(reference,button){
     var confirmed=await JONE.ui.confirm({title:'Close table session?',message:'Every order must be finished, and delivered orders must be fully settled. The server will reject closure while anything remains open or unpaid.',confirmText:'Close session'});if(!confirmed)return;
     if(!JONE.guardSubmit(button))return;
-    try{await window.API.resourceAction('posRestaurantTableSessions',reference,'close',{close_note:''});if(state.selectedTableSession===reference)state.selectedTableSession=null;JONE.ui.toast('Restaurant table session closed.','success');await loadRestaurantSessions(true);}
+    try{await window.API.resourceAction('posRestaurantTableSessions',reference,'close',{close_note:''});if(state.selectedTableSession===reference)state.selectedTableSession=null;JONE.ui.toast('Restaurant table session closed.','success');await loadRestaurantSessions(true);await loadRestaurantTables(true);}
     catch(err){JONE.ui.toast((err&&err.message)||'The table session could not be closed.','error');loadRestaurantSessions(true);}
     finally{JONE.releaseGuard(button);}
   }
@@ -560,7 +588,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
         if(match.length===1)selectRestaurantTableSession(match[0].reference);
         showServiceRequestNotice("QR request "+item.reference+" · "+item.table_number+" · "+item.summary+(item.detail?" · "+item.detail:"")+". Confirm the guest's actual menu choices, then choose items and review the draft. Nothing is sent to production or charged until staff submit and deliver it.");
       }else{
-        document.getElementById("pos-table").value=item.table_number;
+        renderBarTableChoices(item.table_number);
         showServiceRequestNotice("QR request "+item.reference+" · "+item.table_number+" · "+item.summary+(item.detail?" · "+item.detail:"")+". Confirm the guest's actual menu choices, then choose items and review the draft. Nothing is sent to production or charged until staff submit and deliver it.");
       }
     }catch(err){
@@ -575,6 +603,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     document.querySelectorAll("[data-pos-room-service]").forEach(function(el){el.hidden=!room;});
     document.querySelectorAll("[data-pos-direct-guest]").forEach(function(el){el.hidden=room;});
     document.querySelectorAll("[data-pos-bar-table]").forEach(function(el){el.hidden=!bar;});
+    if(bar)renderBarTableChoices();
     document.querySelectorAll("[data-pos-restaurant-table-session]").forEach(function(el){el.hidden=!restaurant;});
     document.querySelectorAll("[data-pos-delivery]").forEach(function(el){el.hidden=takeaway;});
     document.getElementById("pos-delivery").placeholder=room?"Room / delivery note":restaurant?"Service note (optional)":bar?"Bar pickup / service note":"Pickup note (optional)";
@@ -685,10 +714,11 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   function actionButtons(order){
     var ref=JONE.esc(order.reference), status=String(order.status||"");
     var buttons='<button class="btn btn-sm btn-outline" type="button" data-pos-view="'+ref+'">View</button>';
-    if(status==="DRAFT")buttons+='<button class="btn btn-sm" type="button" data-pos-action="submit" data-pos-ref="'+ref+'">Submit</button>';
-    if(status==="SUBMITTED")buttons+='<button class="btn btn-sm" type="button" data-pos-action="PREPARING" data-pos-ref="'+ref+'">Start</button>';
-    if(status==="PREPARING")buttons+='<button class="btn btn-sm" type="button" data-pos-action="READY" data-pos-ref="'+ref+'">Ready</button>';
-    if(["SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-action="DELIVERED" data-pos-ref="'+ref+'">Deliver</button>';
+    // A draft that is served straight away (bar / takeaway / walk-in) is delivered
+    // in one step: the server submits it to its production station and then posts
+    // the immutable charge. The three separate Submit / Start / Ready controls were
+    // obsolete duplicates of the production-queue workflow and are gone.
+    if(["DRAFT","SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-action="DELIVERED" data-pos-ref="'+ref+'" data-pos-status="'+JONE.esc(status)+'">Deliver</button>';
     if(["DRAFT","SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-action="CANCELLED" data-pos-ref="'+ref+'">Cancel</button>';
     if(status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&order.settlement_status!=="PAID"&&canTender())buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-tender="'+ref+'">Tender</button>';
     if(status==="DELIVERED"&&order.settlement_status==="PAID")buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-thermal="'+ref+'">Print receipt</button>';
@@ -820,15 +850,16 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       JONE.icons.inject(body);
     }catch(err){body.innerHTML='<div class="empty-state"><h3>Order unavailable</h3><p>'+JONE.esc((err&&err.message)||"Please try again.")+'</p></div>';}
   }
-  async function advanceOrder(reference,action,button){
+  async function advanceOrder(reference,action,button,currentStatus){
+    var deliveringDraft=action==="DELIVERED"&&String(currentStatus||"")==="DRAFT";
     if(action==="DELIVERED"){
-      var confirmed=await JONE.ui.confirm({title:"Mark order delivered?",message:"Delivery posts the immutable POS charge. A delivered order cannot be cancelled.",confirmText:"Mark delivered"});if(!confirmed)return;
+      var confirmed=await JONE.ui.confirm({title:"Mark order delivered?",message:deliveringDraft?"A draft has no separate submission step: this sends it to its production station and posts the immutable POS charge in one action. A delivered order cannot be cancelled.":"Delivery posts the immutable POS charge. A delivered order cannot be cancelled.",confirmText:"Mark delivered"});if(!confirmed)return;
     }
     if(action==="CANCELLED"){
       var cancelConfirmed=await JONE.ui.confirm({title:"Cancel this order?",message:"This keeps an audit record and posts no charge. A delivered order must be corrected through the approved financial workflow.",confirmText:"Cancel order"});if(!cancelConfirmed)return;
     }
     if(!JONE.guardSubmit(button))return;
-    try{if(action==="submit")await window.API.submitPosOrder(reference,{});else await window.API.updatePosOrderStatus(reference,action);JONE.ui.toast(action==="submit"?"Order sent to its production station.":"Order status updated.","success");loadOrders();loadKitchen();}
+    try{if(deliveringDraft)await window.API.submitPosOrder(reference,{});await window.API.updatePosOrderStatus(reference,action);JONE.ui.toast(action==="DELIVERED"?"Order delivered and charged.":"Order status updated.","success");loadOrders();loadKitchen();loadRestaurantSessions(true);loadRestaurantTables(true);}
     catch(err){JONE.ui.toast((err&&err.message)||"The order could not be updated.","error");}
     finally{JONE.releaseGuard(button);}
   }
@@ -899,7 +930,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     var orderContent=JSON.stringify(payload);
     if(state.orderKeyContent!==orderContent){state.orderKey=newKey();state.orderKeyContent=orderContent;}
     payload.idempotency_key=state.orderKey;
-    try{var res=await window.API.create("posOrders",payload);var order=res.data||{};setCreateError("");JONE.ui.toast(state.serviceRequest?"POS draft "+(order.reference||"created")+" linked to request "+state.serviceRequest.reference+". Review it before submission.":"POS draft "+(order.reference||"created")+" created. Submit it when the order is final.","success");state.cart=[];state.selectedStay=null;state.orderKey=newKey();if(state.serviceRequestReference){state.serviceRequestReference="";state.serviceRequest=null;showServiceRequestNotice("");var cleanUrl=new URL(window.location.href);cleanUrl.searchParams.delete("service_request");window.history.replaceState(null,document.title,cleanUrl.pathname+cleanUrl.search+cleanUrl.hash);}selectedStayLabel.textContent="No in-house guest selected.";stayResults.innerHTML="";document.getElementById("pos-create-form").reset();document.getElementById("pos-mode").value=allowedModes()[0]||"";renderRestaurantSessions();state.menuArea=null;state.orderKeyContent="";updateMode();renderCart();loadOrders();}
+    try{var res=await window.API.create("posOrders",payload);var order=res.data||{};setCreateError("");JONE.ui.toast(state.serviceRequest?"POS draft "+(order.reference||"created")+" linked to request "+state.serviceRequest.reference+". Review it before submission.":"POS draft "+(order.reference||"created")+" created. Submit it when the order is final.","success");state.cart=[];state.selectedStay=null;state.orderKey=newKey();if(state.serviceRequestReference){state.serviceRequestReference="";state.serviceRequest=null;showServiceRequestNotice("");var cleanUrl=new URL(window.location.href);cleanUrl.searchParams.delete("service_request");window.history.replaceState(null,document.title,cleanUrl.pathname+cleanUrl.search+cleanUrl.hash);}selectedStayLabel.textContent="No in-house guest selected.";stayResults.innerHTML="";document.getElementById("pos-create-form").reset();document.getElementById("pos-mode").value=allowedModes()[0]||"";renderRestaurantSessions();state.menuArea=null;state.orderKeyContent="";updateMode();renderCart();loadOrders();loadRestaurantSessions(true);loadRestaurantTables(true);}
     catch(err){
       // The cart is deliberately preserved: the operator can correct the problem
       // and press Create draft again. The same idempotency key is reused while
@@ -939,7 +970,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     var result=await JONE.dashboard.formModal({title:"Record cash drop to safe",submitText:"Record drop",fields:[{name:"amount",label:"Amount dropped (NGN)",type:"number",step:"0.01",min:"0.01",required:true,help:"Cash physically moved from this drawer to the safe. The drawer's expected cash falls by the same amount."},{name:"notes",label:"Notes",type:"textarea",rows:2}],onSubmit:async function(values){await window.API.resourceAction("financeCashSessions",ref,"drop",values);return{message:"Cash drop recorded."};}});
     if(result){JONE.ui.toast("Cash drop recorded; expected cash updated.","success");await loadDrawer();}
   }
-  orderBody.addEventListener("click",function(event){var view=event.target.closest("[data-pos-view]");var action=event.target.closest("[data-pos-action]");var tender=event.target.closest("[data-pos-tender]");var thermal=event.target.closest("[data-pos-thermal]");if(view)viewOrder(view.getAttribute("data-pos-view"));else if(action)advanceOrder(action.getAttribute("data-pos-ref"),action.getAttribute("data-pos-action"),action);else if(tender)captureTender(tender.getAttribute("data-pos-tender"));else if(thermal)printThermalReceipt(thermal.getAttribute("data-pos-thermal"));});
+  orderBody.addEventListener("click",function(event){var view=event.target.closest("[data-pos-view]");var action=event.target.closest("[data-pos-action]");var tender=event.target.closest("[data-pos-tender]");var thermal=event.target.closest("[data-pos-thermal]");if(view)viewOrder(view.getAttribute("data-pos-view"));else if(action)advanceOrder(action.getAttribute("data-pos-ref"),action.getAttribute("data-pos-action"),action,action.getAttribute("data-pos-status"));else if(tender)captureTender(tender.getAttribute("data-pos-tender"));else if(thermal)printThermalReceipt(thermal.getAttribute("data-pos-thermal"));});
   /* ======================================================================
      UNOPENED-ITEM RETURNS
      A guest orders 12 bottles, drinks 7 and hands 5 back. The server values
@@ -1359,7 +1390,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     state.liveRefreshStop=JONE.dashboard.startLiveRefresh(function(){
       var refreshes=[loadKitchen(true)];
       if(allowedModes().length)refreshes.push(loadOrders(undefined,true));
-      if(hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter']))refreshes.push(loadRestaurantSessions(true));
+      if(hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter'])){refreshes.push(loadRestaurantSessions(true));refreshes.push(loadRestaurantTables(true));}
       return Promise.all(refreshes).then(function(results){
         if(liveStatus)liveStatus.textContent=results.every(Boolean)?"Live · just refreshed":"Refresh issue · last successful data retained";
       });

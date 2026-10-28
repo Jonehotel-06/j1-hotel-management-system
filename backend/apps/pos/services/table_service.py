@@ -26,6 +26,16 @@ ACTIVE_ORDER_STATUSES = (
     PosOrder.Status.PREPARING,
     PosOrder.Status.READY,
 )
+# Statuses that represent real guest spending for a table session. Cancelled and
+# voided orders are excluded so a table's displayed totals never claim spending
+# that did not happen (or that was reversed).
+COUNTED_ORDER_STATUSES = (
+    PosOrder.Status.DRAFT,
+    PosOrder.Status.SUBMITTED,
+    PosOrder.Status.PREPARING,
+    PosOrder.Status.READY,
+    PosOrder.Status.DELIVERED,
+)
 UNSETTLED_STATUSES = (
     PosOrder.SettlementStatus.UNPAID,
     PosOrder.SettlementStatus.PARTIALLY_PAID,

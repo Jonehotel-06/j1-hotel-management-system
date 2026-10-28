@@ -189,10 +189,63 @@ class KitchenTicketStatusSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=[KitchenTicket.Status.PREPARING, KitchenTicket.Status.READY])
 
 
-class RestaurantTableSerializer(serializers.ModelSerializer):
+class TableSummarySerializerMixin(serializers.Serializer):
+    """Read-only per-table order/money summaries shared by the table surfaces.
+
+    The values are computed by annotated querysets (see ``views``); a bare model
+    instance (for example the object returned right after a create or a PATCH)
+    simply renders zeroes instead of raising.
+    """
+
+    guest_order_count = serializers.SerializerMethodField()
+    total_ordered_amount = serializers.SerializerMethodField()
+    returned_amount = serializers.SerializerMethodField()
+    captured_amount = serializers.SerializerMethodField()
+    unpaid_balance = serializers.SerializerMethodField()
+
+    @staticmethod
+    def _money(obj, name):
+        value = getattr(obj, name, None)
+        if value is None:
+            return "0.00"
+        return str(Decimal(value).quantize(Decimal("0.01")))
+
+    @staticmethod
+    def _unpaid_balance(obj):
+        total = getattr(obj, "total_ordered_amount", None)
+        if total is None:
+            return "0.00"
+        returned = getattr(obj, "returned_amount", None) or Decimal("0.00")
+        captured = getattr(obj, "captured_amount", None) or Decimal("0.00")
+        outstanding = Decimal(total) - Decimal(returned) - Decimal(captured)
+        if outstanding < Decimal("0.00"):
+            outstanding = Decimal("0.00")
+        return str(outstanding.quantize(Decimal("0.01")))
+
+    def get_guest_order_count(self, obj):
+        value = getattr(obj, "guest_order_count", None)
+        return 0 if value is None else int(value)
+
+    def get_total_ordered_amount(self, obj):
+        return self._money(obj, "total_ordered_amount")
+
+    def get_returned_amount(self, obj):
+        return self._money(obj, "returned_amount")
+
+    def get_captured_amount(self, obj):
+        return self._money(obj, "captured_amount")
+
+    def get_unpaid_balance(self, obj):
+        return self._unpaid_balance(obj)
+
+
+class RestaurantTableSerializer(TableSummarySerializerMixin, serializers.ModelSerializer):
     class Meta:
         model = RestaurantTable
-        fields = ["id", "code", "name", "section", "seats", "is_active", "created_at", "updated_at"]
+        fields = [
+            "id", "code", "name", "section", "seats", "is_active", "created_at", "updated_at",
+            "guest_order_count", "total_ordered_amount", "returned_amount", "captured_amount", "unpaid_balance",
+        ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def validate_code(self, value):
@@ -234,13 +287,37 @@ class RestaurantTableSessionSerializer(serializers.ModelSerializer):
     order_count = serializers.IntegerField(read_only=True)
     active_order_count = serializers.IntegerField(read_only=True)
     unpaid_order_count = serializers.IntegerField(read_only=True)
+    guest_order_count = serializers.IntegerField(read_only=True)
+    total_ordered_amount = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    returned_amount = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    captured_amount = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    unpaid_balance = serializers.SerializerMethodField()
+
+    def get_unpaid_balance(self, obj):
+        """Outstanding amount for the session, kept separate from the ordered total.
+
+        Ordered total is what the guest was charged; the unpaid balance is what is
+        still owed after returns and captured tenders. It is never folded into the
+        ordered total so a reviewer can tell "how much was ordered" from "how much
+        is still to pay".
+        """
+        total = getattr(obj, "total_ordered_amount", None)
+        if total is None:
+            return None
+        returned = getattr(obj, "returned_amount", None) or Decimal("0.00")
+        captured = getattr(obj, "captured_amount", None) or Decimal("0.00")
+        outstanding = total - returned - captured
+        if outstanding < Decimal("0.00"):
+            outstanding = Decimal("0.00")
+        return str(outstanding.quantize(Decimal("0.01")))
 
     class Meta:
         model = RestaurantTableSession
         fields = [
             "reference", "table_id", "table_code", "table_name", "table_section", "table_seats", "covers",
             "status", "opened_at", "opened_by_email", "closed_at", "closed_by_email", "notes", "close_note",
-            "order_count", "active_order_count", "unpaid_order_count",
+            "order_count", "active_order_count", "unpaid_order_count", "guest_order_count",
+            "total_ordered_amount", "returned_amount", "captured_amount", "unpaid_balance",
         ]
         read_only_fields = fields
 
