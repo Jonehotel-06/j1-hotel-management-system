@@ -21,14 +21,35 @@ class MenuModifierSerializer(serializers.ModelSerializer):
 class MenuItemSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     modifiers = MenuModifierSerializer(many=True, read_only=True)
+    stock = serializers.SerializerMethodField()
 
     class Meta:
         model = MenuItem
         fields = [
             "id", "category", "category_name", "name", "sku", "barcode", "description", "base_price", "currency",
             "tax_rate_percent", "preparation_minutes", "is_available", "is_active", "sort_order", "modifiers",
+            "stock",
         ]
         read_only_fields = fields
+
+    def get_stock(self, obj):
+        """Live stock source and availability for order entry (read-only).
+
+        Computed from the inventory service's shared resolver, which is built
+        on the same recipe/direct-sale mapping the delivery-time deduction
+        uses, so ``stock.location_name``/``location_code`` is exactly the store
+        the sale will be deducted from. The menu view supplies pre-computed
+        summaries through the serializer context (one bulk resolution for the
+        whole menu); the fallback keeps the field correct for any caller that
+        serializes items without that context.
+        """
+        summaries = (self.context or {}).get("pos_stock_summaries") or {}
+        summary = summaries.get(obj.pk)
+        if summary is None:
+            from .services.barcode_service import stock_summary_for_menu_item
+
+            summary = stock_summary_for_menu_item(obj)
+        return summary
 
 
 class BarcodeLookupSerializer(serializers.Serializer):
@@ -43,7 +64,7 @@ class BarcodeLookupSerializer(serializers.Serializer):
     name = serializers.CharField()
     sku = serializers.CharField()
     barcode = serializers.CharField(allow_null=True)
-    matched_by = serializers.ChoiceField(choices=["barcode", "sku"])
+    matched_by = serializers.ChoiceField(choices=["barcode", "sku", "menu_item"])
     category_id = serializers.IntegerField()
     category_name = serializers.CharField()
     service_area = serializers.CharField()
@@ -68,7 +89,9 @@ class MenuCategoryMenuSerializer(serializers.ModelSerializer):
         items = getattr(obj, "_available_items", None)
         if items is None:
             items = obj.items.filter(is_active=True, is_available=True).prefetch_related("modifiers")
-        return MenuItemSerializer(items, many=True).data
+        # Forward the context so the per-item `stock` field can read the bulk
+        # stock summaries the view resolved for the whole menu.
+        return MenuItemSerializer(items, many=True, context=self.context).data
 
 
 class PosRoomServiceStaySerializer(serializers.ModelSerializer):

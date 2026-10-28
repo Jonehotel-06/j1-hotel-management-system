@@ -208,7 +208,20 @@ class PosMenuView(APIView):
                 to_attr="_available_items",
             )
         ).order_by("sort_order", "name")
-        return success_response(MenuCategoryMenuSerializer(categories, many=True).data)
+        # One bulk stock resolution for the whole menu: each item the picker
+        # shows carries its fulfilment store and current availability, computed
+        # from the same recipe/direct-sale mapping the delivery-time deduction
+        # uses (see apps.inventory.services.inventory_service.pos_stock_summaries).
+        from apps.inventory.services.inventory_service import pos_stock_summaries
+
+        menu_item_ids = [
+            item.pk for category in categories for item in category._available_items
+        ]
+        return success_response(
+            MenuCategoryMenuSerializer(
+                categories, many=True, context={"pos_stock_summaries": pos_stock_summaries(menu_item_ids)}
+            ).data
+        )
 
 
 @extend_schema(tags=["Admin · POS"], summary="Resolve one scanned barcode to a sellable menu item")
@@ -218,6 +231,13 @@ class PosBarcodeLookupView(APIView):
     One indexed query per scan (barcode/SKU) instead of downloading the
     whole catalogue. The response carries the server-stored selling price;
     checkout still re-prices every line in ``order_service``.
+
+    ``menu_item_id`` (optional) resolves a known menu item directly instead of
+    parsing a barcode: the POS page uses it to re-verify an item's CURRENT
+    stock before adding it to an order, instead of relying on the figures
+    embedded when the menu was loaded. It accepts the same ``mode``/``area``
+    permission scoping and returns the identical payload shape, so every
+    existing consumer keeps working unchanged.
     """
 
     permission_classes = [HasCapability]
@@ -227,11 +247,12 @@ class PosBarcodeLookupView(APIView):
     def get(self, request):
         from rest_framework.exceptions import ValidationError
 
-        from .services.barcode_service import barcode_lookup_payload
+        from .services.barcode_service import barcode_lookup_payload, resolve_menu_item
 
         code = request.query_params.get("barcode") or request.query_params.get("code") or ""
         mode = (request.query_params.get("mode") or "").strip().upper()
         area = (request.query_params.get("area") or "").strip().upper()
+        raw_menu_item_id = (request.query_params.get("menu_item_id") or "").strip()
         if mode and mode not in PosOrder.Mode.values:
             raise ValidationError({"mode": "Enter a valid POS order mode."})
         if area and area not in MenuCategory.ServiceArea.values:
@@ -268,7 +289,16 @@ class PosBarcodeLookupView(APIView):
                 service_areas.add(MenuCategory.ServiceArea.RESTAURANT)
             if has_capability(request.user, "pos.order.manage"):
                 service_areas = {MenuCategory.ServiceArea.RESTAURANT, MenuCategory.ServiceArea.BAR}
-        payload = barcode_lookup_payload(code, service_areas=service_areas)
+        if raw_menu_item_id:
+            try:
+                menu_item_id = int(raw_menu_item_id)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError({"menu_item_id": "menu_item_id must be an integer."}) from exc
+            payload = barcode_lookup_payload(
+                resolve_menu_item(menu_item_id, service_areas=service_areas)
+            )
+        else:
+            payload = barcode_lookup_payload(code, service_areas=service_areas)
         return success_response(BarcodeLookupSerializer(payload).data)
 
 

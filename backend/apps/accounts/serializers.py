@@ -18,6 +18,7 @@ from apps.core.storage import absolute_media_url
 from .capabilities import capability_codes_for_user, has_capability
 from .desktop_policy import (
     front_desk_desktop_ip_allowed,
+    front_desk_workstation_missing,
     request_client_ip,
     resolve_receptionist_desktop,
     sign_in_policy_applies,
@@ -127,6 +128,7 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
                 raise StaffSignInRestrictedError(
                     client_ip=request_client_ip(request),
                     unusable_saved_addresses=unusable,
+                    front_desk_workstation_missing=front_desk_workstation_missing(),
                 )
             if not front_desk_desktop_ip_allowed(request):
                 log_staff_sign_in_rejected(

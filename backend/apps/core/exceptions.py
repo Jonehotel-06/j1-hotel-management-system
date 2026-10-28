@@ -130,6 +130,32 @@ class RestaurantTableSessionConflictError(JOneAPIError):
     default_code = "TABLE_SESSION_CONFLICT"
 
 
+class PosStockConflictError(JOneAPIError):
+    """A POS/room-service order line cannot be fulfilled from its stock source.
+
+    Raised by POS order entry when stock validation finds an item out of stock,
+    a requested quantity beyond what its designated store can fulfil, or a
+    stock-tracked product whose inventory mapping/location is not configured.
+    The refusal carries the affected product, store and quantities in
+    ``errors`` (see :attr:`errors_payload`) so the POS page can show the exact
+    server-side figures without parsing prose. It deliberately uses HTTP 409 —
+    the same family as ``ROOM_UNAVAILABLE`` — because the request was
+    well-formed but the stock state conflicts with it.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "The requested quantity is not available from the item's stock location."
+    default_code = "POS_STOCK_CONFLICT"
+
+    def __init__(self, detail=None, *, context=None):
+        super().__init__(detail)
+        self.stock_context = dict(context or {})
+
+    @property
+    def errors_payload(self):
+        return self.stock_context or None
+
+
 class ServiceQRExpiredError(JOneAPIError):
     """A printed service QR token has passed its validity window (distinct from invalid/revoked)."""
 
@@ -159,13 +185,14 @@ class StaffSignInRestrictedError(JOneAPIError):
     )
 
     def __init__(self, detail=None, *, client_ip="", network_mismatch=False,
-                 unusable_saved_addresses=()):
+                 unusable_saved_addresses=(), front_desk_workstation_missing=False):
         if detail is None and network_mismatch:
             detail = self.network_mismatch_detail
         super().__init__(detail)
         self.client_ip = str(client_ip or "")
         self.network_mismatch = bool(network_mismatch)
         self.unusable_saved_addresses = [str(v) for v in (unusable_saved_addresses or []) if str(v).strip()]
+        self.front_desk_workstation_missing = bool(front_desk_workstation_missing)
 
     @property
     def errors_payload(self):
@@ -182,6 +209,13 @@ class StaffSignInRestrictedError(JOneAPIError):
                 payload["client_ip_is_infrastructure"] = True
         if self.network_mismatch:
             payload["reason"] = "front_desk_ip_mismatch"
+        if self.front_desk_workstation_missing:
+            # No active FRONT_DESK workstation exists, so NO address or key can
+            # authorize this browser yet: registering the address alone (the
+            # instruction the refusal otherwise gives) is a dead end until the
+            # workstation record exists. The UI uses this to say which step is
+            # actually missing instead of repeating the address advice.
+            payload["no_active_front_desk_workstation"] = True
         if self.unusable_saved_addresses:
             # The SAVED value (hotel settings and/or a workstation) is a hosting
             # or private address, so no public browser can ever match it.

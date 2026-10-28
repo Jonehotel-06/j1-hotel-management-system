@@ -1,0 +1,1003 @@
+diff --git a/backend/apps/accounts/desktop_policy.py b/backend/apps/accounts/desktop_policy.py
+index 4629c20..050f69b 100644
+--- a/backend/apps/accounts/desktop_policy.py
++++ b/backend/apps/accounts/desktop_policy.py
+@@ -386,6 +386,21 @@ def active_front_desk_workstation() -> Workstation | None:
+     )
+ 
+ 
++def front_desk_workstation_missing() -> bool:
++    """True when the hotel has no active FRONT_DESK workstation record at all.
++
++    Every Receptionist Desktop enrolment route dead-ends without one: a desktop
++    key can only be issued for a workstation record, ``Workstation.ip_address``
++    lives on that record, and the ``HotelSettings.front_desk_desktop_ip``
++    binding only takes effect while an active FRONT_DESK workstation exists.
++    A sign-in refusal that answers "register this address" while no workstation
++    exists sends the administrator in a circle — the address alone can never
++    be enough — so this flag lets the refusal say the one thing that is
++    actually missing.
++    """
++    return active_front_desk_workstation() is None
++
++
+ def resolve_receptionist_desktop(request) -> tuple[Workstation | None, str]:
+     """Identify the Receptionist Desktop behind this request.
+ 
+diff --git a/backend/apps/accounts/management/__init__.py b/backend/apps/accounts/management/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/apps/accounts/management/commands/__init__.py b/backend/apps/accounts/management/commands/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/backend/apps/accounts/management/commands/frontdesk_login_doctor.py b/backend/apps/accounts/management/commands/frontdesk_login_doctor.py
+new file mode 100644
+index 0000000..a570aee
+--- /dev/null
++++ b/backend/apps/accounts/management/commands/frontdesk_login_doctor.py
+@@ -0,0 +1,206 @@
++"""Read-only diagnosis of Front Desk email/password sign-in enrolment.
++
++Run on the server (production or staging):
++
++    python manage.py frontdesk_login_doctor
++    python manage.py frontdesk_login_doctor --observed-ip 102.89.34.7
++
++WHY THIS EXISTS
++===============
++Front-desk staff (other than management) may sign in with their email and
++password only from the enrolled Receptionist Desktop. Three enrolment routes
++exist, and every one of them requires an ACTIVE FRONT_DESK WORKSTATION RECORD
++to exist first:
++
++1. a desktop key issued for that workstation and installed in the desk browser;
++2. the address the desk reaches the API from, registered on the workstation
++   (``Workstation.ip_address``);
++3. the address/network saved in ``HotelSettings.front_desk_desktop_ip`` —
++   which only takes effect while an active FRONT_DESK workstation exists.
++
++An administrator who configures only the Settings address (the field the
++Settings page invites them to fill) therefore still has a desk where every
++password sign-in is refused: the configuration looks complete but nothing can
++match. This command prints the actual enrolment state from the database, says
++which single step is missing, and checks an observed address against the saved
++bindings — without changing anything. It is strictly read-only: no rows are
++created, saved or deleted, and no secret (key digest, password, token) is ever
++printed.
++"""
++from django.core.management.base import BaseCommand
++
++from apps.accounts.desktop_policy import (
++    active_front_desk_workstation,
++    configured_front_desk_desktop_ip,
++    configured_front_desk_desktop_networks,
++    front_desk_workstation_missing,
++    receptionist_desktops_for_ip,
++)
++from apps.accounts.models import Workstation
++from apps.core.client_ip import is_infrastructure_address, is_infrastructure_network
++
++
++class Command(BaseCommand):
++    help = (
++        "Report how (or whether) the Front Desk desktop is enrolled for "
++        "email/password staff sign-in, and what an administrator must register. "
++        "Read-only: changes nothing."
++    )
++
++    def add_arguments(self, parser):
++        parser.add_argument(
++            "--observed-ip",
++            default="",
++            help=(
++                "The address the server reports for the desk browser (Settings "
++                "page, 'IP address seen by the server'). Checked against the "
++                "saved bindings to show which enrolment route would match."
++            ),
++        )
++
++    def handle(self, *args, **options):
++        out = self.stdout
++        observed = str(options.get("observed_ip") or "").strip()
++
++        out.write("Front Desk login doctor (read-only)")
++        out.write("=" * 46)
++
++        # ---- 1. The workstation records: the foundation of every route ----
++        desks = list(Workstation.objects.filter(department=Workstation.Department.FRONT_DESK).order_by("pk"))
++        active_desks = [desk for desk in desks if desk.is_active]
++        if not desks:
++            out.write(
++                "\n1. FRONT DESK WORKSTATIONS: NONE REGISTERED"
++                "\n   >>> This is the blocking gap. No address and no desktop key can"
++                "\n       authorize the desk until a Front Desk workstation exists."
++                "\n   FIX: an administrator opens Dashboard -> Terminals and registers"
++                "\n        the Front Desk workstation (an active FRONT_DESK record)."
++            )
++        else:
++            out.write(f"\n1. FRONT DESK WORKSTATIONS: {len(active_desks)} active / {len(desks)} total")
++            for desk in desks:
++                state = "ACTIVE" if desk.is_active else "inactive (admits nobody)"
++                key = "desktop key issued" if desk.sign_in_key_hash else "no desktop key"
++                registered = (
++                    f"registered address {desk.ip_address}"
++                    if desk.ip_address else "no address registered"
++                )
++                routes = []
++                if desk.is_active and desk.sign_in_key_hash:
++                    routes.append("key route ready")
++                if desk.is_active and desk.ip_address:
++                    routes.append("address route ready")
++                out.write(
++                    f"   - {desk.name} [{desk.reference}] ({state})"
++                    f"\n     {key}; {registered}"
++                    + (f"; {'; '.join(routes)}" if routes else "")
++                )
++            if not active_desks:
++                out.write(
++                    "\n   >>> All Front Desk workstations are INACTIVE, so no route can"
++                    "\n       authorize sign-ins. FIX: activate one in Dashboard -> Terminals."
++                )
++
++        # ---- 2. The hotel-wide Settings binding ---------------------------
++        configured = configured_front_desk_desktop_ip()
++        networks = configured_front_desk_desktop_networks()
++        out.write("\n2. SETTINGS 'Front Desk desktop address' (hotel-wide pin/route 3):")
++        if not configured:
++            out.write(
++                "   (empty) — no network pin; the workstation routes above decide alone."
++            )
++        else:
++            unusable = [str(net) for net in networks if is_infrastructure_network(net)]
++            out.write(f"   saved value: {configured}")
++            if front_desk_workstation_missing():
++                out.write(
++                    "   >>> INEFFECTIVE RIGHT NOW: no active Front Desk workstation"
++                    "\n       exists, and this address only authorizes sign-ins while"
++                    "\n       one does. FIX: register the workstation first (step 1)."
++                )
++            if unusable:
++                plural = "ENTRIES" if len(unusable) > 1 else "ENTRY"
++                out.write(
++                    f"   >>> UNUSABLE {plural}: {', '.join(unusable)}"
++                    "\n       This is a hosting/private address no browser can arrive"
++                    "\n       from, so it can never match. FIX: replace it with the"
++                    "\n       address the Settings page reports when opened ON the desk."
++                )
++            if observed:
++                from apps.core.client_ip import address_in_network, parse_address
++
++                address = parse_address(observed)
++                if address is None:
++                    out.write(f"   observed address {observed!r} is not a valid IP — skipped.")
++                elif any(address_in_network(observed, str(net)) for net in networks):
++                    out.write(
++                        f"   observed address {observed} MATCHES this binding"
++                        + (
++                            " (but see the workstation gap above)"
++                            if front_desk_workstation_missing()
++                            else " — route 3 can authorize the desk."
++                        )
++                    )
++                else:
++                    out.write(
++                        f"   observed address {observed} does NOT match this binding."
++                    )
++
++        # ---- 3. What the observed address would authorize ------------------
++        if observed:
++            matches = receptionist_desktops_for_ip(observed)
++            out.write(f"\n3. OBSERVED ADDRESS {observed} (route 2, workstation records):")
++            if matches:
++                for desk in matches:
++                    out.write(
++                        f"   MATCHES workstation {desk.name} [{desk.reference}]"
++                        " — sign-in from this address needs only correct credentials."
++                    )
++                if len(matches) > 1:
++                    out.write(
++                        "   >>> AMBIGUOUS: the same address is registered on more than"
++                        "\n       one active Front Desk workstation, and an ambiguous"
++                        "\n       registration authorizes NOBODY. FIX: keep it on exactly"
++                        "\n       one workstation record."
++                    )
++            else:
++                out.write(
++                    "   matches no active Front Desk workstation record."
++                )
++            if is_infrastructure_address(observed):
++                out.write(
++                    "   >>> This looks like a hosting/private address, not a desk on the"
++                    "\n       internet: registering it cannot work. Read the address from"
++                    "\n       the Settings page opened ON the desk itself."
++                )
++
++        # ---- 4. The summary an administrator can act on --------------------
++        out.write("\n4. WHAT TO DO")
++        if front_desk_workstation_missing():
++            out.write(
++                "   STEP 1 (blocking): register an active Front Desk workstation in"
++                "\n   Dashboard -> Terminals. Until this exists, email/password sign-in"
++                "\n   for front-desk staff is refused from every device by design."
++            )
++        else:
++            desk = active_front_desk_workstation()
++            if desk.sign_in_key_hash or desk.ip_address:
++                out.write(
++                    "   The desk is enrolled (key and/or registered address). A"
++                    "\n   front-desk employee should be able to sign in with email and"
++                    "\n   password from that desk. If sign-in is still refused, read the"
++                    "\n   address the login refusal reports and compare it with the"
++                    "\n   registered values above (a moved desk needs re-registration)."
++                )
++            else:
++                out.write(
++                    "   An active workstation exists but NEITHER enrolment route is"
++                    "\n   configured: issue a desktop key for it (Terminals page) and"
++                    "\n   install that key in the desk browser, or register the desk's"
++                    "\n   address on the workstation (or in Settings)."
++                )
++        out.write(
++            "\n   Management (ADMIN / MANAGER / GENERAL_MANAGER) can always sign in"
++            "\n   from any device; this policy binds operational staff only."
++        )
++        out.write("\nDiagnosis complete. Nothing was changed.")
+diff --git a/backend/apps/accounts/serializers.py b/backend/apps/accounts/serializers.py
+index 7a08dda..b4bae94 100644
+--- a/backend/apps/accounts/serializers.py
++++ b/backend/apps/accounts/serializers.py
+@@ -18,6 +18,7 @@ from apps.core.storage import absolute_media_url
+ from .capabilities import capability_codes_for_user, has_capability
+ from .desktop_policy import (
+     front_desk_desktop_ip_allowed,
++    front_desk_workstation_missing,
+     request_client_ip,
+     resolve_receptionist_desktop,
+     sign_in_policy_applies,
+@@ -127,6 +128,7 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
+                 raise StaffSignInRestrictedError(
+                     client_ip=request_client_ip(request),
+                     unusable_saved_addresses=unusable,
++                    front_desk_workstation_missing=front_desk_workstation_missing(),
+                 )
+             if not front_desk_desktop_ip_allowed(request):
+                 log_staff_sign_in_rejected(
+diff --git a/backend/apps/accounts/views.py b/backend/apps/accounts/views.py
+index 3489b8c..d2882e1 100644
+--- a/backend/apps/accounts/views.py
++++ b/backend/apps/accounts/views.py
+@@ -31,7 +31,10 @@ from apps.core.serializers import EmptySerializer
+ 
+ from .capabilities import capability_codes_for_user
+ from .desktop_policy import (
+-    front_desk_desktop_ip_allowed, request_client_ip, resolve_receptionist_desktop,
++    front_desk_desktop_ip_allowed,
++    front_desk_workstation_missing,
++    request_client_ip,
++    resolve_receptionist_desktop,
+     sign_in_policy_applies,
+ )
+ from .models import User
+@@ -253,7 +256,10 @@ def _refuse_staff_refresh_outside_desk(request):
+         },
+         summary="Staff session refresh refused outside the Receptionist Desktop",
+     )
+-    raise StaffSignInRestrictedError(client_ip=request_client_ip(request))
++    raise StaffSignInRestrictedError(
++        client_ip=request_client_ip(request),
++        front_desk_workstation_missing=front_desk_workstation_missing(),
++    )
+ 
+ 
+ @extend_schema(tags=["Auth"], request=None, summary="Log out (blacklist refresh token)")
+diff --git a/backend/apps/core/exceptions.py b/backend/apps/core/exceptions.py
+index f20d4c8..4f733c8 100644
+--- a/backend/apps/core/exceptions.py
++++ b/backend/apps/core/exceptions.py
+@@ -185,13 +185,14 @@ class StaffSignInRestrictedError(JOneAPIError):
+     )
+ 
+     def __init__(self, detail=None, *, client_ip="", network_mismatch=False,
+-                 unusable_saved_addresses=()):
++                 unusable_saved_addresses=(), front_desk_workstation_missing=False):
+         if detail is None and network_mismatch:
+             detail = self.network_mismatch_detail
+         super().__init__(detail)
+         self.client_ip = str(client_ip or "")
+         self.network_mismatch = bool(network_mismatch)
+         self.unusable_saved_addresses = [str(v) for v in (unusable_saved_addresses or []) if str(v).strip()]
++        self.front_desk_workstation_missing = bool(front_desk_workstation_missing)
+ 
+     @property
+     def errors_payload(self):
+@@ -208,6 +209,13 @@ class StaffSignInRestrictedError(JOneAPIError):
+                 payload["client_ip_is_infrastructure"] = True
+         if self.network_mismatch:
+             payload["reason"] = "front_desk_ip_mismatch"
++        if self.front_desk_workstation_missing:
++            # No active FRONT_DESK workstation exists, so NO address or key can
++            # authorize this browser yet: registering the address alone (the
++            # instruction the refusal otherwise gives) is a dead end until the
++            # workstation record exists. The UI uses this to say which step is
++            # actually missing instead of repeating the address advice.
++            payload["no_active_front_desk_workstation"] = True
+         if self.unusable_saved_addresses:
+             # The SAVED value (hotel settings and/or a workstation) is a hosting
+             # or private address, so no public browser can ever match it.
+diff --git a/backend/apps/hotel/views_admin.py b/backend/apps/hotel/views_admin.py
+index 38583fc..d68e13d 100644
+--- a/backend/apps/hotel/views_admin.py
++++ b/backend/apps/hotel/views_admin.py
+@@ -65,6 +65,15 @@ class HotelSettingsAdminView(generics.RetrieveUpdateAPIView):
+         data["front_desk_desktop_ip_unusable"] = configured_front_desk_desktop_cannot_match(
+             client_ip
+         )
++        # Whether a real, active FRONT_DESK workstation record exists. The
++        # address below only authorizes sign-ins while one does (and a desktop
++        # key can only be issued for one), so an administrator who configures
++        # ONLY this field with no workstation registered has a binding that
++        # cannot work — the page says which step is missing instead of letting
++        # the configuration look complete.
++        from apps.accounts.desktop_policy import active_front_desk_workstation
++
++        data["front_desk_workstation_registered"] = active_front_desk_workstation() is not None
+         # Whether the hotel can actually take money online. A missing, public or
+         # malformed Paystack key turns EVERY guest payment into HTTP 503 while
+         # the rest of the booking flow keeps working — the failure surfaces only
+diff --git a/backend/tests/test_frontdesk_login_e2e.py b/backend/tests/test_frontdesk_login_e2e.py
+new file mode 100644
+index 0000000..102fec8
+--- /dev/null
++++ b/backend/tests/test_frontdesk_login_e2e.py
+@@ -0,0 +1,525 @@
++"""End-to-end regression matrix for Front Desk email/password staff sign-in.
++
++Pins the owner's required login behaviour against the REAL endpoints, in the
++exact order a front desk lives it, so a future change cannot quietly reopen any
++of these gaps:
++
++* an authorized Front Desk employee signs in with email + password from the
++  enrolled Receptionist Desktop (all three enrolment routes, including the
++  production proxy chain: Cloudflare-style edge header over a trusted proxy,
++  and the X-Forwarded-For walk with the CDN range explicitly trusted);
++* wrong password / unknown email / inactive account are each refused with the
++  same non-enumerating 401 envelope;
++* a desktop that is not registered, disabled, or merely "configured in
++  Settings" without a workstation record cannot authorize anybody — and the
++  refusal now SAYS which step is missing instead of advising an address that
++  cannot help (the dead-end this suite was written to close);
++* a staff member from another department is refused the Front Desk context;
++* one person's failed attempt, logout, or refused refresh never blocks the
++  next person's sign-in;
++* management keeps access from any device; the numeric-code and fingerprint
++  attendance workflows keep working untouched.
++
++No production system is touched: everything runs against the test database.
++"""
++from io import StringIO
++
++from django.core.cache import cache
++from django.core.management import call_command
++from django.test import override_settings
++from rest_framework.test import APIClient
++
++from apps.accounts.desktop_policy import issue_desktop_key
++from apps.accounts.models import User, Workstation
++from apps.hotel.models import HotelSettings
++from apps.staff_operations.models import StaffProfile
++from apps.staff_operations.services import fingerprint_service
++
++from .base import BaseAPITestCase
++from .factories import hotel_settings, make_staff, make_user
++from .test_attendance_workstation_policy import MATCHING_PROBE, MINUTIAE
++
++PASSWORD = "Str0ng!Desk-Pass"
++DESK_IP = "102.89.34.7"            # the address the desk reaches the API from
++OTHER_IP = "41.203.89.5"           # any other device on the internet
++HOME_IP = "197.210.44.12"          # a staff member's home connection
++PROXY_IP = "10.0.0.9"              # the deployment's own (trusted) proxy hop
++CF_EDGE_IP = "104.21.55.131"       # a public Cloudflare edge address
++LOGIN_URL = "/api/auth/login/"
++LOGOUT_URL = "/api/auth/logout/"
++REFRESH_URL = "/api/auth/token/refresh/"
++PROFILE_URL = "/api/auth/profile/"
++SETTINGS_URL = "/api/admin/settings/"
++ADMIN_BOOKINGS_URL = "/api/admin/bookings/"
++TERMINAL_URL = "/api/admin/staff-operations/biometrics/reception-terminal/"
++
++
++class FrontDeskLoginE2ECase(BaseAPITestCase):
++    """Shared fixture: the people, and one enrolled Receptionist Desktop."""
++
++    def setUp(self):
++        super().setUp()
++        cache.clear()
++        self.admin = make_user("e2e.admin@jone.test", password=PASSWORD, role=User.Role.ADMIN)
++        self.manager = make_user("e2e.manager@jone.test", password=PASSWORD, role=User.Role.MANAGER)
++        self.general_manager = make_user(
++            "e2e.gm@jone.test", password=PASSWORD, role=User.Role.GENERAL_MANAGER
++        )
++        self.receptionist = make_user(
++            "e2e.receptionist@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST
++        )
++        self.second_receptionist = make_user(
++            "e2e.receptionist2@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST
++        )
++        self.inactive_receptionist = make_user(
++            "e2e.inactive@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST, is_active=False,
++        )
++        self.waiter = make_user("e2e.waiter@jone.test", password=PASSWORD, role=User.Role.WAITER)
++        self.desk = Workstation.objects.create(
++            name="Front desk reception 1", department=Workstation.Department.FRONT_DESK,
++            location="Lobby", ip_address=DESK_IP,
++        )
++
++    # ------------------------------------------------------------------ helpers
++    def login(self, user=None, *, password=PASSWORD, ip=DESK_IP, headers=None, extra_body=None):
++        body = {"email": (user or self.receptionist).email, "password": password}
++        if extra_body:
++            body.update(extra_body)
++        return self.client.post(LOGIN_URL, body, format="json", REMOTE_ADDR=ip, **(headers or {}))
++
++    def clear_login_throttle(self):
++        # The login endpoint is throttled 5/min per client address; the many
++        # sign-ins inside one test are not an attack, so the counter is reset
++        # between them (the dedicated throttle test does the opposite).
++        cache.clear()
++
++    def tokens_of(self, response):
++        return response.data["data"]["tokens"]
++
++
++class HappyPathSignInTests(FrontDeskLoginE2ECase):
++    """Matrix 1 + 15: the requested behaviour, on every enrolment route."""
++
++    def test_authorized_receptionist_password_login_from_the_registered_desk(self):
++        response = self.login()
++        self.assertEqual(response.status_code, 200, response.content)
++        body = response.data["data"]
++        self.assertEqual(body["user"]["email"], self.receptionist.email)
++        self.assertEqual(body["user"]["role"], User.Role.RECEPTIONIST)
++        self.assertTrue(body["tokens"]["access"] and body["tokens"]["refresh"])
++
++    def test_password_login_via_the_desktop_key_route(self):
++        self.desk.ip_address = ""
++        self.desk.save(update_fields=["ip_address"])
++        raw_key = issue_desktop_key(self.desk)
++        self.desk.save(update_fields=["sign_in_key_hash", "sign_in_key_issued_at", "updated_at"])
++        response = self.login(ip=OTHER_IP, headers={"HTTP_X_JONE_DESKTOP_KEY": raw_key})
++        self.assertEqual(response.status_code, 200, response.content)
++        self.assertEqual(response.data["data"]["user"]["email"], self.receptionist.email)
++
++    def test_password_login_via_the_settings_address_route(self):
++        self.desk.ip_address = ""
++        self.desk.save(update_fields=["ip_address"])
++        hotel_settings(front_desk_desktop_ip=DESK_IP)
++        response = self.login()
++        self.assertEqual(response.status_code, 200, response.content)
++
++    def test_password_login_through_the_production_proxy_chain(self):
++        """The Cloudflare shape: trusted proxy hop + CF-Connecting-IP edge header."""
++        response = self.login(
++            ip=PROXY_IP,
++            headers={
++                "HTTP_CF_CONNECTING_IP": DESK_IP,
++                "HTTP_X_FORWARDED_FOR": f"{DESK_IP}, {CF_EDGE_IP}",
++            },
++        )
++        self.assertEqual(response.status_code, 200, response.content)
++
++    def test_password_login_when_only_the_cdn_range_is_trusted_as_a_proxy(self):
++        """The header-stripped shape: the XFF walk must be able to step over the
++        CDN when its range is explicitly trusted (the documented production
++        remedy — TRUSTED_PROXY_CIDRS), and must not when it is not."""
++        headers = {"HTTP_X_FORWARDED_FOR": f"{DESK_IP}, {CF_EDGE_IP}"}
++        # Default trust: the CDN address is not a trusted proxy, so the walk
++        # stops on it and the desk cannot be recognized (fail closed).
++        refused = self.login(ip=PROXY_IP, headers=headers)
++        self.assertEqual(refused.status_code, 403, refused.content)
++        with override_settings(
++            TRUSTED_PROXY_CIDRS=f"127.0.0.0/8,10.0.0.0/8,{CF_EDGE_IP}/32",
++            TRUSTED_CLIENT_IP_HEADERS="none",
++        ):
++            allowed = self.login(ip=PROXY_IP, headers=headers)
++        self.assertEqual(allowed.status_code, 200, allowed.content)
++
++    def test_management_signs_in_from_any_device(self):
++        for user, ip in (
++            (self.admin, HOME_IP), (self.manager, OTHER_IP), (self.general_manager, HOME_IP),
++        ):
++            with self.subTest(role=user.role):
++                self.clear_login_throttle()
++                response = self.login(user, ip=ip)
++                self.assertEqual(response.status_code, 200, response.content)
++
++    def test_guest_sign_in_is_unaffected_by_the_desk_policy(self):
++        guest = make_user("e2e.guest@jone.test", password=PASSWORD, role=User.Role.GUEST)
++        response = self.login(guest, ip=OTHER_IP)
++        self.assertEqual(response.status_code, 200, response.content)
++
++
++class CredentialFailureTests(FrontDeskLoginE2ECase):
++    """Matrix 2, 3, 4 + 14: refusals are accurate and never enumerate accounts."""
++
++    def test_wrong_password_is_rejected_with_the_credentials_envelope(self):
++        response = self.login(password="definitely-not-it")
++        self.assertEqual(response.status_code, 401, response.content)
++        body = response.data
++        self.assertFalse(body["success"])
++        self.assertEqual(body["code"], "UNAUTHORIZED")
++        self.assertEqual(body["message"], "Invalid email or password.")
++        self.assertNotIn("tokens", body.get("data") or {})
++
++    def test_unknown_email_is_rejected_identically(self):
++        response = self.client.post(
++            LOGIN_URL, {"email": "nobody-such-account@jone.test", "password": PASSWORD},
++            format="json", REMOTE_ADDR=DESK_IP,
++        )
++        self.assertEqual(response.status_code, 401, response.content)
++        self.assertEqual(response.data["message"], "Invalid email or password.")
++
++    def test_inactive_account_is_rejected_without_revealing_it_exists(self):
++        response = self.login(self.inactive_receptionist)
++        self.assertEqual(response.status_code, 401, response.content)
++        self.assertEqual(response.data["message"], "Invalid email or password.")
++
++    def test_the_desk_is_still_required_after_a_correct_password(self):
++        """A valid password from an unenrolled device is a DESK refusal (403),
++        not a credentials refusal (401): the two must stay distinguishable."""
++        response = self.login(ip=OTHER_IP)
++        self.assertEqual(response.status_code, 403, response.content)
++        self.assertEqual(response.data["code"], "STAFF_SIGN_IN_RESTRICTED")
++
++
++class DesktopEnforcementTests(FrontDeskLoginE2ECase):
++    """Matrix 6, 7, 16 + the configuration dead end this fix closes."""
++
++    def test_unregistered_desktop_is_refused_and_names_the_address_to_register(self):
++        response = self.login(ip=OTHER_IP)
++        self.assertEqual(response.status_code, 403, response.content)
++        body = response.data
++        self.assertEqual(body["code"], "STAFF_SIGN_IN_RESTRICTED")
++        self.assertEqual(body["errors"]["client_ip"], OTHER_IP)
++
++    def test_disabled_front_desk_workstation_stops_admitting_staff(self):
++        self.desk.is_active = False
++        self.desk.save(update_fields=["is_active"])
++        response = self.login()
++        self.assertEqual(response.status_code, 403, response.content)
++        self.assertEqual(response.data["code"], "STAFF_SIGN_IN_RESTRICTED")
++
++    def test_settings_address_alone_with_no_workstation_is_the_dead_end_now_named(self):
++        """The exact 'configured desktop' trap: the Settings field is filled in
++        (the Settings page invites it) but no Front Desk workstation record
++        exists, so NOTHING can match. The refusal must say which step is
++        missing; registering the workstation then makes the same address work."""
++        self.desk.delete()
++        hotel_settings(front_desk_desktop_ip=DESK_IP)
++        refused = self.login()
++        self.assertEqual(refused.status_code, 403, refused.content)
++        self.assertTrue(refused.data["errors"]["no_active_front_desk_workstation"])
++        self.assertIn("Receptionist Desktop", refused.data["message"])
++
++        # The administrator follows the instruction: register the workstation.
++        Workstation.objects.create(
++            name="Front desk reception 1", department=Workstation.Department.FRONT_DESK,
++        )
++        allowed = self.login()
++        self.assertEqual(allowed.status_code, 200, allowed.content)
++
++    def test_a_forged_desktop_key_from_any_device_is_refused(self):
++        response = self.login(
++            ip=OTHER_IP, headers={"HTTP_X_JONE_DESKTOP_KEY": "totally-forged-key"},
++        )
++        self.assertEqual(response.status_code, 403, response.content)
++        self.assertEqual(response.data["code"], "STAFF_SIGN_IN_RESTRICTED")
++
++    def test_a_browser_cannot_nominate_its_own_address_via_edge_headers(self):
++        response = self.login(
++            ip=OTHER_IP,
++            headers={
++                "HTTP_CF_CONNECTING_IP": DESK_IP,
++                "HTTP_TRUE_CLIENT_IP": DESK_IP,
++                "HTTP_X_REAL_IP": DESK_IP,
++            },
++        )
++        self.assertEqual(response.status_code, 403, response.content)
++        # The refusal reports the address the server actually saw, not the claim.
++        self.assertEqual(response.data["errors"]["client_ip"], OTHER_IP)
++
++    def test_a_browser_cannot_nominate_its_own_address_via_the_forwarding_chain(self):
++        response = self.login(
++            ip=OTHER_IP, headers={"HTTP_X_FORWARDED_FOR": f"{DESK_IP}, {CF_EDGE_IP}"},
++        )
++        self.assertEqual(response.status_code, 403, response.content)
++        self.assertEqual(response.data["errors"]["client_ip"], OTHER_IP)
++
++    def test_too_many_attempts_are_throttled_with_the_accurate_envelope(self):
++        for _ in range(5):
++            self.assertEqual(self.login(password="wrong").status_code, 401)
++        throttled = self.login()  # the 6th attempt, even with correct credentials
++        self.assertEqual(throttled.status_code, 429, throttled.content)
++        self.assertEqual(throttled.data["code"], "RATE_LIMITED")
++        self.assertIn("Too many", throttled.data["message"])
++        # The throttle is per client address and expires on its own: the NEXT
++        # person is not locked out forever (cache-based window).
++        self.clear_login_throttle()
++        self.assertEqual(self.login(self.second_receptionist).status_code, 200)
++
++
++class DepartmentAuthorizationTests(FrontDeskLoginE2ECase):
++    """Matrix 5: another department's staff cannot become Front Desk."""
++
++    def test_cross_department_sign_in_is_refused_for_the_front_desk_context(self):
++        response = self.login(
++            self.waiter, extra_body={"department": "frontdesk"},
++        )
++        self.assertEqual(response.status_code, 403, response.content)
++        self.assertEqual(response.data["code"], "FORBIDDEN")
++        self.assertIn("not authorized to sign in to this department", response.data["message"])
++
++    def test_a_receptionist_is_authorized_for_the_front_desk_context(self):
++        response = self.login(self.receptionist, extra_body={"department": "frontdesk"})
++        self.assertEqual(response.status_code, 200, response.content)
++
++    def test_another_departments_staff_cannot_reach_front_desk_data(self):
++        """Signed in AT the desk (allowed: the desk is the staff sign-in point),
++        a waiter still holds no Front Desk data access."""
++        response = self.login(self.waiter)
++        self.assertEqual(response.status_code, 200, response.content)
++        client = APIClient()
++        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.tokens_of(response)['access']}")
++        bookings = client.get(ADMIN_BOOKINGS_URL, REMOTE_ADDR=DESK_IP)
++        self.assertEqual(bookings.status_code, 403, bookings.content)
++
++    def test_a_receptionist_keeps_front_desk_data_access(self):
++        response = self.login(self.receptionist)
++        client = APIClient()
++        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.tokens_of(response)['access']}")
++        bookings = client.get(ADMIN_BOOKINGS_URL, REMOTE_ADDR=DESK_IP)
++        self.assertEqual(bookings.status_code, 200, bookings.content)
++
++
++class IndependentSessionTests(FrontDeskLoginE2ECase):
++    """Matrix 8-11: the exact shared-desk sequence, each login independent."""
++
++    def test_the_full_desk_sequence_receptionist_admin_receptionist(self):
++        # 1. A receptionist enters incorrect credentials.
++        self.assertEqual(self.login(password="wrong").status_code, 401)
++        # 2. She retries with the correct credentials.
++        self.clear_login_throttle()
++        first = self.login()
++        self.assertEqual(first.status_code, 200, first.content)
++        # 3. She logs out.
++        self.logout_with(self.tokens_of(first))
++        # 4. An administrator attempts to log in (same desk, same minute).
++        self.clear_login_throttle()
++        admin = self.login(self.admin)
++        self.assertEqual(admin.status_code, 200, admin.content)
++        # 5. The administrator logs out.
++        self.logout_with(self.tokens_of(admin))
++        # 6. Another authorized Front Desk employee logs in.
++        self.clear_login_throttle()
++        second = self.login(self.second_receptionist)
++        self.assertEqual(second.status_code, 200, second.content)
++        self.assertEqual(
++            self.tokens_of(second)["access"], self.tokens_of(second)["access"],
++        )
++
++    def test_a_receptionists_failed_login_does_not_block_the_administrator(self):
++        self.assertEqual(self.login(password="wrong").status_code, 401)
++        self.clear_login_throttle()
++        response = self.login(self.admin)
++        self.assertEqual(response.status_code, 200, response.content)
++
++    def test_an_administrators_failed_login_does_not_block_a_receptionist(self):
++        self.assertEqual(self.login(self.admin, password="wrong").status_code, 401)
++        self.clear_login_throttle()
++        response = self.login(self.receptionist)
++        self.assertEqual(response.status_code, 200, response.content)
++
++    def test_logout_is_idempotent_and_a_fresh_login_works_afterwards(self):
++        tokens = self.tokens_of(self.login())
++        client = APIClient()
++        client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
++        # First logout ends the session.
++        self.assertEqual(
++            client.post(LOGOUT_URL, {"refresh": tokens["refresh"]}, format="json").status_code, 200
++        )
++        # Repeating it (or a stale tab doing it again) stays graceful.
++        self.assertEqual(
++            client.post(LOGOUT_URL, {"refresh": tokens["refresh"]}, format="json").status_code, 200
++        )
++        # A refused refresh for the dead session does not lock the desk either.
++        refresh = self.client.post(
++            REFRESH_URL, {"refresh": tokens["refresh"]}, format="json", REMOTE_ADDR=DESK_IP
++        )
++        self.assertEqual(refresh.status_code, 401, refresh.content)
++        # The next person signs in normally.
++        self.clear_login_throttle()
++        self.assertEqual(self.login(self.second_receptionist).status_code, 200)
++
++    def logout_with(self, tokens):
++        client = APIClient()
++        client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
++        response = client.post(LOGOUT_URL, {"refresh": tokens["refresh"]}, format="json")
++        self.assertEqual(response.status_code, 200, response.content)
++        return response
++
++
++class SessionExpiryRecoveryTests(FrontDeskLoginE2ECase):
++    """Matrix 12: an expired access token recovers at the desk, and only there."""
++
++    def test_the_session_refreshes_at_the_desk(self):
++        tokens = self.tokens_of(self.login())
++        response = self.client.post(
++            REFRESH_URL, {"refresh": tokens["refresh"]}, format="json", REMOTE_ADDR=DESK_IP
++        )
++        self.assertEqual(response.status_code, 200, response.content)
++        refreshed = response.data["data"]["tokens"]
++        self.assertTrue(refreshed["access"])
++        # The new access token actually works.
++        client = APIClient()
++        client.credentials(HTTP_AUTHORIZATION=f"Bearer {refreshed['access']}")
++        self.assertEqual(client.get(PROFILE_URL).status_code, 200)
++
++    def test_a_refresh_from_outside_the_desk_is_refused_but_keeps_the_session(self):
++        tokens = self.tokens_of(self.login())
++        # Away from the desk the refresh is refused...
++        away = self.client.post(
++            REFRESH_URL, {"refresh": tokens["refresh"]}, format="json", REMOTE_ADDR=HOME_IP
++        )
++        self.assertEqual(away.status_code, 403, away.content)
++        self.assertEqual(away.data["code"], "STAFF_SIGN_IN_RESTRICTED")
++        # ...without consuming or rotating the token: back at the desk the very
++        # same refresh token still works (a refused refresh is not a logout).
++        back = self.client.post(
++            REFRESH_URL, {"refresh": tokens["refresh"]}, format="json", REMOTE_ADDR=DESK_IP
++        )
++        self.assertEqual(back.status_code, 200, back.content)
++
++    def test_relogin_after_session_loss_works_from_the_desk(self):
++        tokens = self.tokens_of(self.login())
++        client = APIClient()
++        client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
++        client.post(LOGOUT_URL, {"refresh": tokens["refresh"]}, format="json")
++        self.clear_login_throttle()
++        fresh = self.login(self.receptionist)
++        self.assertEqual(fresh.status_code, 200, fresh.content)
++
++
++class AttendanceWorkflowIntactTests(FrontDeskLoginE2ECase):
++    """Matrix 17: the numeric-code and fingerprint flows are untouched."""
++
++    def setUp(self):
++        super().setUp()
++        self.worker = make_staff("e2e.chef@staff.dev", role=User.Role.CHEF)
++        StaffProfile.objects.update_or_create(
++            user=self.worker,
++            defaults={
++                "employee_code": "STF-E2E-CHEF",
++                "department": "Kitchen",
++                "employment_status": StaffProfile.EmploymentStatus.ACTIVE,
++            },
++        )
++        template = fingerprint_service.request_fingerprint_enrollment(
++            staff=self.worker, actor=self.worker, minutiae=MINUTIAE
++        )
++        fingerprint_service.approve_fingerprint_enrollment(
++            template=template, approver=self.manager
++        )
++
++    def terminal(self, payload):
++        return self.client.post(TERMINAL_URL, payload, format="json", REMOTE_ADDR=DESK_IP)
++
++    def test_clock_in_issues_a_code_that_signs_the_staff_member_in(self):
++        issued = self.terminal(
++            {"action": "CLOCK_IN", "email": self.worker.email, "fingerprint_probe": MATCHING_PROBE}
++        )
++        self.assertEqual(issued.status_code, 200, issued.content)
++        code = issued.data["data"]["access_code"]
++        self.clear_login_throttle()
++        response = self.client.post(
++            LOGIN_URL, {"access_code": code, "email": self.worker.email},
++            format="json", REMOTE_ADDR=DESK_IP,
++        )
++        self.assertEqual(response.status_code, 200, response.content)
++        tokens = self.tokens_of(response)
++        client = APIClient()
++        client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
++        profile = client.get(PROFILE_URL)
++        self.assertEqual(profile.status_code, 200, profile.content)
++        self.assertEqual(profile.data["data"]["email"], self.worker.email)
++
++
++class FrontDeskDoctorCommandTests(FrontDeskLoginE2ECase):
++    """The read-only diagnostic an administrator runs on the server."""
++
++    def run_doctor(self, *args):
++        out = StringIO()
++        call_command("frontdesk_login_doctor", *args, stdout=out)
++        return out.getvalue()
++
++    def test_reports_the_missing_workstation_as_the_blocking_gap(self):
++        self.desk.delete()
++        text = self.run_doctor()
++        self.assertIn("NONE REGISTERED", text)
++        self.assertIn("blocking gap", text)
++        self.assertIn("Terminals", text)
++
++    def test_reports_each_enrolment_route_and_matches_an_observed_address(self):
++        raw_key = issue_desktop_key(self.desk)
++        self.desk.save(update_fields=["sign_in_key_hash", "sign_in_key_issued_at", "updated_at"])
++        hotel_settings(front_desk_desktop_ip=f"{DESK_IP}/32")
++        text = self.run_doctor("--observed-ip", DESK_IP)
++        self.assertIn("desktop key issued", text)
++        self.assertIn(f"registered address {DESK_IP}", text)
++        self.assertIn(f"MATCHES this binding", text)
++        self.assertIn("Diagnosis complete. Nothing was changed.", text)
++        self.assertNotIn(raw_key, text)
++
++    def test_flags_an_ambiguous_duplicate_address_registration(self):
++        Workstation.objects.create(
++            name="Front desk reception 2", department=Workstation.Department.FRONT_DESK,
++            ip_address=DESK_IP,
++        )
++        text = self.run_doctor("--observed-ip", DESK_IP)
++        self.assertIn("AMBIGUOUS", text)
++
++    def test_the_command_changes_nothing(self):
++        before = (
++            Workstation.objects.count(),
++            str(HotelSettings.get_settings().front_desk_desktop_ip),
++            User.objects.count(),
++        )
++        self.run_doctor("--observed-ip", DESK_IP)
++        after = (
++            Workstation.objects.count(),
++            str(HotelSettings.get_settings().front_desk_desktop_ip),
++            User.objects.count(),
++        )
++        self.assertEqual(before, after)
++
++
++class SettingsPayloadTests(FrontDeskLoginE2ECase):
++    """The Settings page must tell an administrator which step is missing."""
++
++    def test_the_settings_payload_reports_the_workstation_registration(self):
++        self.auth(self.admin)
++        with_workstation = self.client.get(SETTINGS_URL, REMOTE_ADDR=OTHER_IP)
++        self.assertEqual(with_workstation.status_code, 200, with_workstation.content)
++        self.assertTrue(with_workstation.data["data"]["front_desk_workstation_registered"])
++
++        self.desk.delete()
++        hotel_settings(front_desk_desktop_ip=DESK_IP)
++        without = self.client.get(SETTINGS_URL, REMOTE_ADDR=OTHER_IP)
++        self.assertEqual(without.status_code, 200, without.content)
++        self.assertFalse(without.data["data"]["front_desk_workstation_registered"])
+diff --git a/frontend/dashboard/settings.html b/frontend/dashboard/settings.html
+index 06e3040..8f2a505 100644
+--- a/frontend/dashboard/settings.html
++++ b/frontend/dashboard/settings.html
+@@ -316,7 +316,17 @@
+     var ipWarning = $("st-request-ip-warning");
+     var ipIsInfrastructure = !!current.request_ip_is_infrastructure;
+     var savedIpUnusable = !!current.front_desk_desktop_ip_unusable;
++    var workstationMissing = current.front_desk_workstation_registered === false;
+     var ipNotices = [];
++    if(workstationMissing){
++      /* The address field below only takes effect once a real Front Desk
++         workstation exists. Without that record no address and no key can
++         authorize the desk, so the configuration looks complete while every
++         password sign-in at the desk is still refused. */
++      ipNotices.push("<strong>No active Front Desk workstation is registered yet.</strong> " +
++        "The address below only authorizes sign-ins once a Front Desk workstation exists, and a desktop key can only be issued for one. " +
++        "Open <strong>Dashboard \u2192 Terminals</strong>, register the Front Desk workstation, then enrol this browser with its desktop key or register this desk\u2019s address on it.");
++    }
+     if(ipIsInfrastructure){
+       ipNotices.push("<strong>This is the hosting network\u2019s address, not the Front Desk desktop.</strong> " +
+         "The server is reporting its own proxy, so registering this value cannot work \u2014 it changes on every request. " +
+diff --git a/frontend/login.html b/frontend/login.html
+index fbc03a7..bf2e804 100644
+--- a/frontend/login.html
++++ b/frontend/login.html
+@@ -213,6 +213,13 @@
+       var lines = [];
+       lines.push("Staff sign-in is limited to the Receptionist Desktop. This browser reached the server from "
+         + (ip ? ip + "." : "an address the server could not determine."));
++      if (meta.no_active_front_desk_workstation) {
++        // Nothing can authorize this browser yet: no active Front Desk
++        // workstation record exists, so no address (and no desktop key) can be
++        // enrolled for the desk. Saying only "register this address" would send
++        // the administrator in a circle — the address alone is never enough.
++        lines.push("No active Front Desk workstation is registered on the server yet, so no address can authorize this browser. An administrator must first register the Front Desk workstation in Dashboard \u2192 Terminals, then either install that workstation\u2019s desktop key in this browser or register the address the server reports above on it.");
++      }
+       if (meta.client_ip_is_infrastructure) {
+         // The address is the hosting platform's own proxy, not the desk. Saying
+         // "register it" would send the administrator in a circle: it changes on
+diff --git a/frontend/tests-js/test-frontdesk-login-ui.js b/frontend/tests-js/test-frontdesk-login-ui.js
+new file mode 100644
+index 0000000..31e1f98
+--- /dev/null
++++ b/frontend/tests-js/test-frontdesk-login-ui.js
+@@ -0,0 +1,80 @@
++/* tests-js/test-frontdesk-login-ui.js
++   Front Desk email/password login — UI contracts for the refusal that names
++   the missing enrolment step (static source assertions, same style as
++   test-login-error-states.js):
++
++   The blocking configuration trap: an administrator can fill the Settings
++   "Front Desk desktop address" field (the Settings page invites it) while NO
++   Front Desk workstation record exists. Every enrolment route needs that
++   record, so no address and no key can authorize the desk — yet the old
++   refusal just said "register this address", sending the administrator in a
++   circle. The server now sends errors.no_active_front_desk_workstation and
++   BOTH surfaces (login refusal, Settings page) must say which step is missing.
++
++   Run from /frontend: node --test tests-js/test-frontdesk-login-ui.js */
++"use strict";
++
++const test = require("node:test");
++const assert = require("node:assert/strict");
++const fs = require("node:fs");
++const path = require("node:path");
++const { FRONTEND } = require("./harness");
++
++const LOGIN = fs.readFileSync(path.join(FRONTEND, "login.html"), "utf8");
++const SETTINGS = fs.readFileSync(path.join(FRONTEND, "dashboard", "settings.html"), "utf8");
++
++test("the login refusal names a missing Front Desk workstation as the blocking step", () => {
++  assert.match(LOGIN, /if \(meta\.no_active_front_desk_workstation\) \{/,
++    "the refusal handles the server's no-workstation flag");
++  assert.match(LOGIN, /No active Front Desk workstation is registered on the server yet, so no address can authorize this browser\./,
++    "the message says plainly that no address can help yet");
++  assert.match(LOGIN, /register the Front Desk workstation in Dashboard \\u2192 Terminals/,
++    "and names the exact administrator action (Terminals page)");
++});
++
++test("the missing-workstation line is additive, not a replacement for the address advice", () => {
++  const notice = LOGIN.slice(LOGIN.indexOf("function desktopRefusalNotice"), LOGIN.indexOf('window.Auth.bindLoginForm'));
++  const branches = notice.match(/\} else if \(meta\./g) || [];
++  assert.ok(branches.length >= 2, "the address-quality branches (unusable / mismatch) are still there");
++  assert.match(notice, /if \(meta\.no_active_front_desk_workstation\) \{[\s\S]*?\}\s*if \(meta\.client_ip_is_infrastructure\) \{/,
++    "the workstation line stands BEFORE and independently of the address-quality chain, so both can appear together");
++});
++
++test("the refusal still reports every address quality case it did before", () => {
++  const notice = LOGIN.slice(LOGIN.indexOf("function desktopRefusalNotice"), LOGIN.indexOf('window.Auth.bindLoginForm'));
++  assert.match(notice, /meta\.client_ip_is_infrastructure/);
++  assert.match(notice, /meta\.configured_address_unusable/);
++  assert.match(notice, /meta\.reason === "front_desk_ip_mismatch"/);
++  assert.match(notice, /This browser reached the server from/);
++  assert.match(notice, /6-digit code issued at the Reception Attendance Workstation/,
++    "the numeric-code fallback is still offered");
++});
++
++test("the Settings page warns when no Front Desk workstation is registered", () => {
++  assert.match(SETTINGS, /current\.front_desk_workstation_registered === false/,
++    "the payload flag drives the warning");
++  assert.match(SETTINGS, /No active Front Desk workstation is registered yet\./,
++    "the warning names the missing step");
++  assert.match(SETTINGS, /[Tt]he address below only authorizes sign-ins once a Front Desk workstation exists/,
++    "and explains why the address field alone cannot work");
++  assert.match(SETTINGS, /Dashboard \\u2192 Terminals/,
++    "with the exact administrator action");
++});
++
++test("the shared sign-in flow is unchanged: email + password, one submission, independent retries", () => {
++  assert.match(LOGIN, /<form id="login-form" novalidate>/);
++  assert.match(LOGIN, /<input class="input" id="email" name="email" type="email" required autocomplete="email">/);
++  assert.match(LOGIN, /<input class="input" id="password" name="password" type="password" required autocomplete="current-password"/);
++  assert.match(LOGIN, /bindLoginForm\("#login-form", \{ onRestricted: desktopRefusalNotice \}\);/,
++    "the shared binder (guard, reset, message mapping) still drives the form");
++});
++
++test("no fingerprint, attendance code, or clock-in is required to submit the password form", () => {
++  const form = LOGIN.slice(LOGIN.indexOf('<form id="login-form"'), LOGIN.indexOf("</form>") + 7);
++  assert.ok(form.length > 200, "the password form was found");
++  for (const forbidden of ["fingerprint", "attendance", "clock", "access_code", "temporary_token"]) {
++    assert.ok(!form.includes(forbidden), `the password form must not require "${forbidden}"`);
++  }
++  // The 6-digit code stays a SEPARATE, opt-in tab.
++  assert.match(LOGIN, /id="access-code-login-form" novalidate style="display:none;"/);
++});

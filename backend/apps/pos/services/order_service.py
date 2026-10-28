@@ -129,6 +129,249 @@ def _room_service_context(*, stay, folio=None, actor=None):
     return stay, main_folio
 
 
+#: Orders that will still consume stock when they are delivered. Delivered
+#: orders already did (the on-hand balance reflects their deduction) and
+#: cancelled/voided ones never will, so only these statuses count as an open
+#: commitment against the same physical stock.
+_STOCK_COMMITTED_STATUSES = (
+    PosOrder.Status.DRAFT, PosOrder.Status.SUBMITTED, PosOrder.Status.PREPARING, PosOrder.Status.READY,
+)
+
+
+def _display_unit(unit, quantity) -> str:
+    """Human singular/plural form of a stock base unit for staff messages."""
+    token = str(unit or "").strip().lower() or "unit"
+    if token.endswith("(s)"):
+        token = token[:-3]
+    if token.endswith("s"):
+        token = token[:-1] if int(quantity) == 1 else token
+        return token
+    return token if int(quantity) == 1 else token + "s"
+
+
+def _qty_text(value) -> str:
+    """Exact decimal quantity without trailing zeros or exponent notation."""
+    amount = Decimal(value).quantize(Decimal("0.0001")).normalize()
+    if amount.as_tuple().exponent > 0:
+        amount = amount.quantize(Decimal("1"))
+    return str(amount)
+
+
+def _stock_conflict_context(reason, items):
+    return {"reason": reason, "items": items}
+
+
+def _validate_order_lines_stock(lines, *, exclude_order=None):
+    """Authoritative pre-acceptance stock validation for POS order lines.
+
+    Runs INSIDE the caller's transaction for both draft creation and draft
+    submission, and rejects — before any line is saved or advanced — a
+    stock-tracked product that cannot be fulfilled from the exact store the
+    delivery-time deduction will draw from.
+
+    Resolution uses ``pos_stock_rules`` (inventory service), which is built on
+    the SAME recipe/direct-sale mapping ``consume_stock_for_delivered_order``
+    uses, so the store named in the refusal is the store the sale would deduct.
+
+    Rules, matching the repository's deliberate inventory design:
+
+    * only stock-TRACKED menu items are validated (active COMPONENTS recipe or
+      an explicit direct-sale configuration). Explicitly non-stock recipes and
+      entirely unconfigured products keep their existing behaviour — POS stock
+      rules are not imposed on them;
+    * a product that IS claimed for stock tracking but whose mapping is broken
+      (inactive stock item, missing/inactive store, zero per-sale quantity,
+      recipe without components) is rejected instead of silently passing;
+    * required base units are aggregated per (stock item, location) across all
+      lines of this order — including different menu items that draw from the
+      same physical stock — and compared against the locked balance;
+    * quantities already committed by OTHER open (non-delivered, non-cancelled)
+      orders reduce availability, so two orders cannot collectively accept
+      more than the store holds. This is a best-effort soft commitment inside
+      the existing architecture (no reservation tables): it is released
+      automatically when an order is cancelled, and the delivery-time
+      all-or-nothing shortage check remains the final authority that can never
+      drive a balance negative.
+
+    Raises :class:`~apps.core.exceptions.PosStockConflictError` (HTTP 409,
+    machine code ``POS_STOCK_CONFLICT``) with the product, store, and actual
+    quantities in ``errors``.
+    """
+    from apps.core.exceptions import PosStockConflictError
+    from apps.inventory.models import StockItem as _StockItem, StockLocation as _StockLocation
+    from apps.inventory.services.inventory_service import _locked_balance, pos_stock_rules
+
+    normalised = []
+    for line in lines or ():
+        menu_item = line.get("menu_item") if hasattr(line, "get") else None
+        menu_item_id = getattr(menu_item, "pk", None) or line.get("menu_item_id")
+        if menu_item_id is None:
+            continue  # legacy free-text line: never resolvable to stock, never blocked here
+        try:
+            quantity = int(line.get("quantity"))
+        except (TypeError, ValueError):
+            continue
+        normalised.append((int(menu_item_id), quantity, str(line.get("item_name") or "")))
+    if not normalised:
+        return
+
+    rules = pos_stock_rules({row[0] for row in normalised})
+    names = {}
+    unconfigured = []
+    for menu_item_id, quantity, item_name in normalised:
+        rule = rules.get(menu_item_id)
+        if rule is None:
+            continue
+        names[menu_item_id] = item_name
+        if rule["unconfigured"]:
+            unconfigured.append((menu_item_id, item_name, rule["unconfigured_reason"]))
+    if unconfigured:
+        menu_item_id, item_name, reason = unconfigured[0]
+        message = (
+            f"Stock location unavailable for {item_name or 'this product'}: {reason}. "
+            "This item cannot be added to the order until its inventory configuration is corrected."
+        )
+        extra = "".join(f" {name} is also not configured for stock." for _, name, _ in unconfigured[1:])
+        raise PosStockConflictError(
+            message + extra,
+            context=_stock_conflict_context(
+                "stock_not_configured",
+                [{"menu_item_id": mid, "item_name": name, "reason": why} for mid, name, why in unconfigured],
+            ),
+        )
+
+    # Required base units per (stock item, store), and which menu items feed it.
+    required = {}
+    contributors = {}
+    for menu_item_id, quantity, item_name in normalised:
+        rule = rules.get(menu_item_id)
+        if not rule or not rule["tracked"]:
+            continue
+        names[menu_item_id] = item_name or names.get(menu_item_id, "")
+        for component in rule["components"]:
+            key = (component["item_id"], rule["location_id"])
+            amount = (component["quantity_per_menu_unit"] * quantity).quantize(Decimal("0.0001"))
+            required[key] = (required.get(key, Decimal("0.0000")) + amount).quantize(Decimal("0.0001"))
+            contributors.setdefault(key, []).append((menu_item_id, quantity, component))
+    if not required:
+        return
+
+    # Stock already committed by other open orders (resolved through the same
+    # rules so shared physical stock is counted). The query runs while the
+    # balance locks are held, so a draft committed just before this order's
+    # locks were taken is already visible to it.
+    # Lock the balances in the same sorted per-(item, location) order the
+    # delivery-time deduction uses, so validation and deduction serialise on
+    # identical row sequences and can never deadlock against each other.
+    balances = {}
+    for key in sorted(required):
+        item_id, location_id = key
+        balance = _locked_balance(item=_StockItem(pk=item_id), location=_StockLocation(pk=location_id))
+        balances[key] = Decimal(balance.quantity_on_hand)
+
+    demand_lines = PosOrderLine.objects.filter(
+        order__status__in=_STOCK_COMMITTED_STATUSES, menu_item_id__isnull=False,
+    )
+    if exclude_order is not None:
+        demand_lines = demand_lines.exclude(order=exclude_order)
+    demand_rows = [(int(row["menu_item_id"]), int(row["quantity"])) for row in demand_lines.values("menu_item_id", "quantity")]
+    demand = {}
+    if demand_rows:
+        demand_rules = pos_stock_rules({row[0] for row in demand_rows})
+        for menu_item_id, quantity in demand_rows:
+            rule = demand_rules.get(menu_item_id)
+            if not rule or not rule["tracked"]:
+                continue
+            for component in rule["components"]:
+                key = (component["item_id"], rule["location_id"])
+                if key not in required:
+                    continue  # cannot affect this order's availability
+                amount = (component["quantity_per_menu_unit"] * quantity).quantize(Decimal("0.0001"))
+                demand[key] = (demand.get(key, Decimal("0.0000")) + amount).quantize(Decimal("0.0001"))
+
+    shortages = []
+    for key in sorted(required):
+        item_id, location_id = key
+        on_hand = balances.get(key, Decimal("0.0000"))
+        needed = required[key]
+        held = demand.get(key, Decimal("0.0000"))
+        available = on_hand - held
+        if available >= needed:
+            continue
+        shortages.append((key, on_hand, held, available, needed, list(contributors.get(key, []))))
+    if not shortages:
+        return
+
+    messages = []
+    conflict_items = []
+    for key, on_hand, held, available, needed, lines_in in shortages:
+        # Group the contributing lines by product so repeated lines of one
+        # item report one precise, product-specific message.
+        by_product = {}
+        for menu_item_id, quantity, component in lines_in:
+            grouped = by_product.setdefault(menu_item_id, [menu_item_id, 0, component])
+            grouped[1] += quantity
+        menu_item_id, total_quantity, component = sorted(by_product.values(), key=lambda row: -row[1])[0]
+        rule = rules.get(menu_item_id, {})
+        location_name = rule.get("location_name") or rule.get("location_code") or "its stock location"
+        item_name = names.get(menu_item_id) or component.get("item_name") or "This product"
+        unit = component.get("unit") or ""
+        per_unit = component["quantity_per_menu_unit"]
+        conflict_items.append({
+            "menu_item_id": menu_item_id,
+            "item_name": item_name,
+            "item_sku": component.get("item_sku", ""),
+            "location": location_name,
+            "on_hand": _qty_text(on_hand),
+            "committed_to_open_orders": _qty_text(held),
+            "available": _qty_text(max(available, Decimal("0.0000"))),
+            "requested": _qty_text(needed),
+            "unit": _display_unit(unit, Decimal("1")),
+        })
+        if len(by_product) == 1 and len(rule.get("components") or []) == 1:
+            available_unit_word = _display_unit(unit, max(available, Decimal("1")))
+            if on_hand <= Decimal("0.0000"):
+                messages.append(
+                    f"Out of stock: {item_name} is unavailable at {location_name}. "
+                    f"Available stock: 0 {available_unit_word}. This item cannot be added to the order."
+                )
+            elif available <= Decimal("0.0000"):
+                messages.append(
+                    f"Insufficient stock: all {_qty_text(on_hand)} {available_unit_word} of {item_name} "
+                    f"at {location_name} are already held by other open orders. This item cannot be added "
+                    "until those orders are delivered or cancelled."
+                )
+            else:
+                requested_unit_word = _display_unit(unit, needed)
+                requested_text = (
+                    f"{_qty_text(needed)} {requested_unit_word}"
+                    if per_unit == Decimal("1")
+                    else f"{total_quantity} × {item_name} ({_qty_text(needed)} {requested_unit_word})"
+                )
+                held_note = (
+                    f" ({_qty_text(held)} {available_unit_word} are already held by other open orders)"
+                    if held > Decimal("0.0000") else ""
+                )
+                messages.append(
+                    f"Insufficient stock: only {_qty_text(available)} {available_unit_word} of {item_name} "
+                    f"are available at {location_name}{held_note}, but {requested_text} were requested. "
+                    "Reduce the quantity or replenish stock before adding this item."
+                )
+        else:
+            unit_word = _display_unit(component.get("unit"), Decimal("2"))
+            messages.append(
+                f"Insufficient stock: {location_name} has {_qty_text(on_hand)} {unit_word} of "
+                f"{component.get('item_name') or component.get('item_sku')} on hand"
+                + (f" ({_qty_text(held)} {unit_word} already held by other open orders)" if held > Decimal("0.0000") else "")
+                + f", but this order needs {_qty_text(needed)} {unit_word}. "
+                "Reduce the quantities or replenish stock before adding these items."
+            )
+    raise PosStockConflictError(
+        " ".join(messages),
+        context=_stock_conflict_context("insufficient_stock", conflict_items),
+    )
+
+
 @transaction.atomic
 def create_order(
     *,
@@ -233,6 +476,11 @@ def create_order(
         _snapshot_line(raw_line=raw_line, currency=currency, service_areas=service_areas)
         for raw_line in supplied_lines
     ]
+    # Authoritative stock validation: an unavailable product must never become
+    # an accepted order line, so this runs before anything is persisted. A
+    # rejection rolls the whole transaction back — no order row, no lines, and
+    # any pre-existing drafts by other staff are untouched.
+    _validate_order_lines_stock(snapshotted_lines)
     subtotal = sum((item["line_total"] for item in snapshotted_lines), Decimal("0.00")).quantize(CENT)
     tax_amount = sum((item["tax_amount"] for item in snapshotted_lines), Decimal("0.00")).quantize(CENT)
     total_amount = (subtotal + tax_amount).quantize(CENT)
@@ -314,6 +562,15 @@ def submit_order(*, order, actor, priority=0) -> PosOrder:
         raise ValidationError(f"Order {order.reference} cannot submit from {order.status}.")
     if not PosOrderLine.objects.filter(order=order).exists():
         raise ValidationError("A POS order needs at least one line before submission.")
+    # Re-validate stock at submission: stock that was available when the draft
+    # was created may have been consumed by another delivered order since. The
+    # draft itself stays intact (DRAFT, unchanged) when this rejects, so staff
+    # can correct or cancel it. This order's own committed lines are excluded
+    # from the open-order demand so it is not counted against itself.
+    _validate_order_lines_stock(
+        PosOrderLine.objects.filter(order=order).values("menu_item_id", "quantity", "item_name"),
+        exclude_order=order,
+    )
     now = timezone.now()
     order.status = PosOrder.Status.SUBMITTED
     order.submitted_at = now

@@ -11,8 +11,6 @@ deducted exactly once, later, when an order is delivered (see
 """
 from __future__ import annotations
 
-from decimal import Decimal
-
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from rest_framework.exceptions import NotFound
@@ -73,66 +71,56 @@ def resolve_barcode(code, *, service_areas=None) -> tuple[MenuItem, str]:
 def stock_summary_for_menu_item(menu_item: MenuItem) -> dict:
     """Saleable-stock estimate from the existing recipe/balance projection.
 
-    Returns ``tracked=False`` for items with no stock recipe (or an explicit
-    NO_STOCK recipe); the POS must not invent availability for those. For
-    tracked items, ``saleable_quantity`` is how many whole menu units the
-    scarcest component can still produce, and ``components`` keeps the raw
-    per-component balances visible for staff diagnostics.
+    Delegates to the inventory service's shared ``pos_stock_summaries``
+    resolver — the same recipe/direct-sale mapping the delivery-time deduction
+    uses — so the location and figures here are exactly the store and stock a
+    sale would be deducted from. Returns ``tracked=False`` for items with no
+    stock mapping (or an explicit NO_STOCK recipe); the POS must not invent
+    availability for those. For tracked items, ``saleable_quantity`` is how
+    many whole menu units the scarcest component can still produce, and
+    ``components`` keeps the raw per-component balances visible for staff
+    diagnostics. ``unconfigured=True`` marks a product that is claimed for
+    stock tracking but whose mapping (store, stock item, per-sale quantity) is
+    invalid, so it must never be silently treated as available.
     """
-    from apps.inventory.models import StockBalance
-    from apps.inventory.services.inventory_service import _active_recipe_snapshots
+    from apps.inventory.services.inventory_service import pos_stock_summaries
 
-    snapshots = _active_recipe_snapshots([menu_item.pk])
-    recipe = snapshots.get(str(menu_item.pk))
-    if not recipe or recipe.get("tracking_mode") == "NO_STOCK":
+    summary = pos_stock_summaries([menu_item.pk]).get(menu_item.pk)
+    if summary is None:  # pragma: no cover - defensive; resolver always answers
         return {
             "tracked": False,
-            "location_code": (recipe or {}).get("location_code", ""),
+            "unconfigured": False,
+            "unconfigured_reason": "",
+            "location_code": "",
+            "location_name": "",
             "saleable_quantity": None,
             "sufficient_for_one": None,
+            "stock_unit": "",
             "components": [],
         }
-    components = list(recipe.get("components") or ())
-    if not components:
-        return {
-            "tracked": False,
-            "location_code": recipe.get("location_code", ""),
-            "saleable_quantity": None,
-            "sufficient_for_one": None,
-            "components": [],
-        }
-    balances = {
-        balance.item_id: balance
-        for balance in StockBalance.objects.filter(
-            location_id=recipe["location_id"], item_id__in=[c["item_id"] for c in components]
-        )
-    }
-    saleable = None
-    component_rows = []
-    for component in components:
-        per_unit = Decimal(str(component["quantity_per_menu_unit"]))
-        balance = balances.get(component["item_id"])
-        on_hand = Decimal(balance.quantity_on_hand) if balance else Decimal("0.0000")
-        component_saleable = (on_hand / per_unit) if per_unit > 0 else Decimal("0")
-        saleable = component_saleable if saleable is None else min(saleable, component_saleable)
-        component_rows.append({
-            "item_id": component["item_id"],
-            "item_sku": component["item_sku"],
-            "quantity_per_menu_unit": str(per_unit),
-            "quantity_on_hand": str(on_hand),
-        })
-    whole_units = int(saleable) if saleable is not None else 0
-    return {
-        "tracked": True,
-        "location_code": recipe.get("location_code", ""),
-        "saleable_quantity": str(whole_units),
-        "sufficient_for_one": whole_units >= 1,
-        "components": component_rows,
-    }
+    return summary
 
 
-def barcode_lookup_payload(code, *, service_areas=None) -> dict:
-    item, matched_by = resolve_barcode(code, service_areas=service_areas)
+def resolve_menu_item(menu_item_id, *, service_areas=None) -> MenuItem:
+    """Resolve one known menu item by its identifier for live stock checks.
+
+    Used by the POS page (through the barcode-lookup endpoint's optional
+    ``menu_item_id`` parameter) to re-verify an item's CURRENT stock before
+    adding it to an order. Applies exactly the same availability, category and
+    service-area scoping as a scanned barcode, and never returns an item POS
+    could not legally sell in the requested mode.
+    """
+    item = _base_queryset(service_areas).filter(pk=menu_item_id).first()
+    if item is None:
+        raise NotFound("Menu item not found or not currently sellable in this POS mode.")
+    return item
+
+
+def barcode_lookup_payload(item_or_code, *, service_areas=None) -> dict:
+    if isinstance(item_or_code, MenuItem):
+        item, matched_by = item_or_code, "menu_item"
+    else:
+        item, matched_by = resolve_barcode(item_or_code, service_areas=service_areas)
     return {
         "menu_item_id": item.pk,
         "name": item.name,

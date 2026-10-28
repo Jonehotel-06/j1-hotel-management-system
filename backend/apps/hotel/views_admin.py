@@ -65,6 +65,15 @@ class HotelSettingsAdminView(generics.RetrieveUpdateAPIView):
         data["front_desk_desktop_ip_unusable"] = configured_front_desk_desktop_cannot_match(
             client_ip
         )
+        # Whether a real, active FRONT_DESK workstation record exists. The
+        # address below only authorizes sign-ins while one does (and a desktop
+        # key can only be issued for one), so an administrator who configures
+        # ONLY this field with no workstation registered has a binding that
+        # cannot work — the page says which step is missing instead of letting
+        # the configuration look complete.
+        from apps.accounts.desktop_policy import active_front_desk_workstation
+
+        data["front_desk_workstation_registered"] = active_front_desk_workstation() is not None
         # Whether the hotel can actually take money online. A missing, public or
         # malformed Paystack key turns EVERY guest payment into HTTP 503 while
         # the rest of the booking flow keeps working — the failure surfaces only

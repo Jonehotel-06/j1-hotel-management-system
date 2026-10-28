@@ -213,6 +213,13 @@
       var lines = [];
       lines.push("Staff sign-in is limited to the Receptionist Desktop. This browser reached the server from "
         + (ip ? ip + "." : "an address the server could not determine."));
+      if (meta.no_active_front_desk_workstation) {
+        // Nothing can authorize this browser yet: no active Front Desk
+        // workstation record exists, so no address (and no desktop key) can be
+        // enrolled for the desk. Saying only "register this address" would send
+        // the administrator in a circle — the address alone is never enough.
+        lines.push("No active Front Desk workstation is registered on the server yet, so no address can authorize this browser. An administrator must first register the Front Desk workstation in Dashboard \u2192 Terminals, then either install that workstation\u2019s desktop key in this browser or register the address the server reports above on it.");
+      }
       if (meta.client_ip_is_infrastructure) {
         // The address is the hosting platform's own proxy, not the desk. Saying
         // "register it" would send the administrator in a circle: it changes on

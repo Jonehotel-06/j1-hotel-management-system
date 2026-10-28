@@ -216,7 +216,15 @@ class NoAutomaticRecipeTests(InventoryManagementTestCase):
         self.assertEqual(StockRecipe.objects.count(), recipes_before, "still no invented recipe")
 
     def test_an_invalid_recipe_still_blocks_the_whole_order(self):
-        """No guessing, but a broken configuration is a hard stop with evidence."""
+        """No guessing, but a broken configuration is a hard stop with evidence.
+
+        Since order entry validates stock, the hard stop now happens at
+        CREATION with a clear product-level refusal. The delivery-time
+        evidence path is still covered: a recipe broken AFTER a valid draft
+        was created parks the hand-off instead of deducting anything.
+        """
+        from apps.core.exceptions import PosStockConflictError
+
         menu_item = MenuItem.objects.create(
             category=self.bar_category, name="Cocktail special", sku="ITM-COCKTAIL", base_price=Decimal("3000.00"),
         )
@@ -230,7 +238,26 @@ class NoAutomaticRecipeTests(InventoryManagementTestCase):
         self.stock_in(self.bottle, self.bar, 5)
         before = self.balance(self.bottle, self.bar)
 
-        order = self.sell(mode=PosOrder.Mode.BAR, menu_item=menu_item, table_number="T-10")
+        # Order entry refuses the sale outright: no order, no lines, no deduction.
+        with self.assertRaises(PosStockConflictError) as raised:
+            self.sell(mode=PosOrder.Mode.BAR, menu_item=menu_item, table_number="T-10")
+        self.assertIn("Stock location unavailable for Cocktail special", str(raised.exception))
+        self.assertIn("has no components", str(raised.exception))
+        self.assertFalse(PosOrder.objects.filter(lines__item_sku="ITM-COCKTAIL").exists())
+        self.assertEqual(self.balance(self.bottle, self.bar), before, "a broken recipe must not deduct anything")
+
+        # A recipe broken after the draft was submitted still parks at
+        # delivery, with evidence, and never deducts anything.
+        recipe.lines.create(item=self.bottle, quantity_per_menu_unit=Decimal("1"))
+        order = create_order(
+            mode=PosOrder.Mode.BAR, actor=self.cashier, table_number="T-10b",
+            lines=[{"menu_item_id": menu_item.pk, "quantity": 1}],
+        )[0]
+        submit_order(order=order, actor=self.cashier)
+        recipe.lines.all().delete()
+        transition_order(order=order, target_status=PosOrder.Status.PREPARING, actor=self.cashier)
+        transition_order(order=order, target_status=PosOrder.Status.READY, actor=self.cashier)
+        transition_order(order=order, target_status=PosOrder.Status.DELIVERED, actor=self.cashier)
 
         request = PosOrder.objects.get(pk=order.pk).stock_consumption_request
         self.assertEqual(request.status, "FAILED")
@@ -742,6 +769,8 @@ class ExistingBehaviourTests(InventoryManagementTestCase):
         self.assertEqual(item.pk, self.bar_water.pk)
         self.assertIn(matched_by, ("sku", "barcode"))
 
+        # Stocked store, so order entry's stock validation accepts the sale.
+        self.stock_in(self.bottle, self.bar, 10)
         order = self.sell(mode=PosOrder.Mode.BAR, quantity=2, table_number="T-6")
         self.assertEqual(order.total_amount, Decimal("600.00"))
 

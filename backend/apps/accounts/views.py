@@ -31,7 +31,10 @@ from apps.core.serializers import EmptySerializer
 
 from .capabilities import capability_codes_for_user
 from .desktop_policy import (
-    front_desk_desktop_ip_allowed, request_client_ip, resolve_receptionist_desktop,
+    front_desk_desktop_ip_allowed,
+    front_desk_workstation_missing,
+    request_client_ip,
+    resolve_receptionist_desktop,
     sign_in_policy_applies,
 )
 from .models import User
@@ -253,7 +256,10 @@ def _refuse_staff_refresh_outside_desk(request):
         },
         summary="Staff session refresh refused outside the Receptionist Desktop",
     )
-    raise StaffSignInRestrictedError(client_ip=request_client_ip(request))
+    raise StaffSignInRestrictedError(
+        client_ip=request_client_ip(request),
+        front_desk_workstation_missing=front_desk_workstation_missing(),
+    )
 
 
 @extend_schema(tags=["Auth"], request=None, summary="Log out (blacklist refresh token)")

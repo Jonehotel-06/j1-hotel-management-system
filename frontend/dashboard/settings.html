@@ -316,7 +316,17 @@
     var ipWarning = $("st-request-ip-warning");
     var ipIsInfrastructure = !!current.request_ip_is_infrastructure;
     var savedIpUnusable = !!current.front_desk_desktop_ip_unusable;
+    var workstationMissing = current.front_desk_workstation_registered === false;
     var ipNotices = [];
+    if(workstationMissing){
+      /* The address field below only takes effect once a real Front Desk
+         workstation exists. Without that record no address and no key can
+         authorize the desk, so the configuration looks complete while every
+         password sign-in at the desk is still refused. */
+      ipNotices.push("<strong>No active Front Desk workstation is registered yet.</strong> " +
+        "The address below only authorizes sign-ins once a Front Desk workstation exists, and a desktop key can only be issued for one. " +
+        "Open <strong>Dashboard \u2192 Terminals</strong>, register the Front Desk workstation, then enrol this browser with its desktop key or register this desk\u2019s address on it.");
+    }
     if(ipIsInfrastructure){
       ipNotices.push("<strong>This is the hosting network\u2019s address, not the Front Desk desktop.</strong> " +
         "The server is reporting its own proxy, so registering this value cannot work \u2014 it changes on every request. " +

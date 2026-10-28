@@ -866,6 +866,237 @@ def _direct_sale_snapshots(menu_item_ids):
     return snapshots
 
 
+def pos_stock_rules(menu_item_ids):
+    """One authoritative stock rule per POS menu item, for validation/display.
+
+    This is the POS-facing resolver built on exactly the same two configuration
+    sources the delivery-time deduction uses (``_active_recipe_snapshots``):
+    an active :class:`StockRecipe`, or an explicit direct-sale configuration on
+    the ``StockItem``. Nothing here deducts, reserves, or creates anything.
+
+    Returns ``{menu_item_id: rule}`` where each rule carries:
+
+    * ``tracked`` — a resolvable COMPONENTS mapping exists (stock must be
+      validated before the item is accepted into an order);
+    * ``no_stock`` — an explicitly non-stock-tracked recipe (never validated);
+    * ``source`` — ``"recipe"`` / ``"direct_sale"`` / ``""``;
+    * ``location_id`` / ``location_code`` / ``location_name`` — the store the
+      sale is fulfilled from (identical to the store the delivery-time
+      deduction posts its movement against);
+    * ``components`` — ``[{item_id, item_sku, item_name, unit,
+      quantity_per_menu_unit}]`` for active component stock items;
+    * ``unconfigured`` + ``unconfigured_reason`` — the product is claimed for
+      stock tracking (a direct-sale link exists, or an active recipe exists)
+      but its mapping is invalid: inactive stock item, missing/inactive store,
+      zero per-sale quantity, or a recipe with no usable components. Such a
+      product must never be silently treated as available.
+
+    A menu item with **no** stock configuration at all (no recipe and no
+    direct-sale link) resolves to an untracked rule — the existing, deliberate
+    behaviour (the sale is allowed and the delivery hand-off is parked for
+    inventory review); POS stock rules are not imposed on it.
+    """
+    ids = sorted({int(value) for value in menu_item_ids if value is not None})
+    if not ids:
+        return {}
+    snapshots = _active_recipe_snapshots(ids)
+    # Every stock item that explicitly claims one of these menu items as a
+    # direct sale, regardless of validity: a claim that did not resolve into a
+    # usable snapshot above is a broken stock configuration, not an untracked
+    # product, and must be reported instead of silently passing.
+    claims = {
+        row.direct_sale_menu_item_id: row
+        for row in StockItem.objects.filter(direct_sale_menu_item_id__in=ids).select_related(
+            "direct_sale_location"
+        )
+    }
+    location_ids = {
+        int(snapshot["location_id"])
+        for snapshot in snapshots.values()
+        if snapshot.get("location_id") is not None
+    }
+    component_ids = {
+        int(component["item_id"])
+        for snapshot in snapshots.values()
+        for component in (snapshot.get("components") or ())
+    }
+    for claim in claims.values():
+        if claim.direct_sale_location_id:
+            location_ids.add(claim.direct_sale_location_id)
+    locations = {row.pk: row for row in StockLocation.objects.filter(pk__in=location_ids)}
+    component_items = {row.pk: row for row in StockItem.objects.filter(pk__in=component_ids)}
+
+    rules = {}
+    for menu_item_id in ids:
+        snapshot = snapshots.get(str(menu_item_id))
+        rule = {
+            "tracked": False,
+            "no_stock": False,
+            "source": "",
+            "recipe_reference": "",
+            "location_id": None,
+            "location_code": "",
+            "location_name": "",
+            "components": [],
+            "unconfigured": False,
+            "unconfigured_reason": "",
+        }
+        if snapshot is None:
+            claim = claims.get(menu_item_id)
+            if claim is not None:
+                rule["unconfigured"] = True
+                rule["source"] = "direct_sale"
+                if not claim.is_active:
+                    rule["unconfigured_reason"] = (
+                        f"its stock item {claim.sku} is inactive"
+                    )
+                elif not claim.direct_sale_location_id:
+                    rule["unconfigured_reason"] = "no stock location is configured for it"
+                else:
+                    location = locations.get(claim.direct_sale_location_id)
+                    if location is None:
+                        rule["unconfigured_reason"] = "its stock location no longer exists"
+                    elif not location.is_active:
+                        rule["unconfigured_reason"] = (
+                            f"its stock location {location.name} is inactive"
+                        )
+                    elif not (claim.direct_sale_quantity or Decimal("0.0000")) > Decimal("0.0000"):
+                        rule["unconfigured_reason"] = "its per-sale stock quantity is not configured"
+                    else:  # pragma: no cover - a valid claim always resolves above
+                        rule["unconfigured"] = False
+            rules[menu_item_id] = rule
+            continue
+        rule["source"] = "direct_sale" if snapshot.get("direct_sale") else "recipe"
+        rule["recipe_reference"] = snapshot.get("recipe_reference", "")
+        location = locations.get(int(snapshot.get("location_id") or 0))
+        if location is not None:
+            rule["location_id"] = location.pk
+            rule["location_code"] = location.code
+            rule["location_name"] = location.name
+        if snapshot.get("tracking_mode") == StockRecipe.TrackingMode.NO_STOCK:
+            rule["no_stock"] = True
+            rules[menu_item_id] = rule
+            continue
+        components = list(snapshot.get("components") or ())
+        if not components:
+            rule["unconfigured"] = True
+            rule["unconfigured_reason"] = (
+                f"its stock recipe {rule['recipe_reference']} has no components"
+            )
+            rules[menu_item_id] = rule
+            continue
+        if location is None or not location.is_active:
+            rule["unconfigured"] = True
+            rule["unconfigured_reason"] = (
+                f"its stock location {rule['location_code'] or rule['location_id']} is missing or inactive"
+            )
+            rules[menu_item_id] = rule
+            continue
+        resolved_components = []
+        unusable = []
+        for component in components:
+            item = component_items.get(int(component["item_id"]))
+            if item is None or not item.is_active:
+                unusable.append(str(component.get("item_sku") or component.get("item_id")))
+                continue
+            resolved_components.append({
+                "item_id": item.pk,
+                "item_sku": item.sku,
+                "item_name": item.name,
+                "unit": item.base_unit,
+                "quantity_per_menu_unit": Decimal(str(component["quantity_per_menu_unit"])),
+            })
+        if unusable:
+            rule["unconfigured"] = True
+            rule["unconfigured_reason"] = (
+                "its recipe references an inactive or removed stock item ("
+                + ", ".join(sorted(set(unusable))) + ")"
+            )
+            rules[menu_item_id] = rule
+            continue
+        rule["tracked"] = True
+        rule["components"] = resolved_components
+        rules[menu_item_id] = rule
+    return rules
+
+
+def pos_stock_summaries(menu_item_ids):
+    """Bulk, read-only stock summaries for the POS order-entry interfaces.
+
+    One shared implementation for the POS menu payload and the barcode lookup:
+    every figure is computed from the same recipe/direct-sale resolution the
+    delivery-time deduction uses, so the location shown here is exactly the
+    store the backend deducts from. Balances are read WITHOUT locks (display
+    only — order validation locks its own rows).
+
+    Returns ``{menu_item_id: summary}`` with the keys
+    ``tracked / unconfigured / unconfigured_reason / location_code /
+    location_name / saleable_quantity / sufficient_for_one / stock_unit /
+    components``. ``saleable_quantity`` is how many whole menu units the
+    scarcest component can still produce; ``stock_unit`` is the limiting
+    component's base unit for single-component (direct-sale) products and is
+    empty for mixed-unit recipes.
+    """
+    rules = pos_stock_rules(menu_item_ids)
+    balance_keys = {
+        (component["item_id"], rule["location_id"])
+        for rule in rules.values()
+        if rule["tracked"]
+        for component in rule["components"]
+    }
+    balances = {}
+    if balance_keys:
+        for row in StockBalance.objects.filter(
+            item_id__in={key[0] for key in balance_keys},
+            location_id__in={key[1] for key in balance_keys},
+        ):
+            balances[(row.item_id, row.location_id)] = Decimal(row.quantity_on_hand)
+    summaries = {}
+    for menu_item_id, rule in rules.items():
+        summary = {
+            "tracked": rule["tracked"],
+            "no_stock": rule["no_stock"],
+            "unconfigured": rule["unconfigured"],
+            "unconfigured_reason": rule["unconfigured_reason"],
+            "location_code": rule["location_code"],
+            "location_name": rule["location_name"],
+            "saleable_quantity": None,
+            "sufficient_for_one": None,
+            "stock_unit": "",
+            "components": [],
+        }
+        if not rule["tracked"]:
+            summaries[menu_item_id] = summary
+            continue
+        saleable = None
+        limiting_unit = ""
+        component_rows = []
+        for component in rule["components"]:
+            per_unit = component["quantity_per_menu_unit"]
+            on_hand = balances.get((component["item_id"], rule["location_id"]), Decimal("0.0000"))
+            component_saleable = (on_hand / per_unit) if per_unit > 0 else Decimal("0")
+            if saleable is None or component_saleable < saleable:
+                saleable = component_saleable
+                limiting_unit = component["unit"]
+            component_rows.append({
+                "item_id": component["item_id"],
+                "item_sku": component["item_sku"],
+                "item_name": component["item_name"],
+                "unit": component["unit"],
+                "quantity_per_menu_unit": str(per_unit),
+                "quantity_on_hand": str(on_hand),
+            })
+        whole_units = int(saleable) if saleable is not None else 0
+        summary.update({
+            "saleable_quantity": str(whole_units),
+            "sufficient_for_one": whole_units >= 1,
+            "stock_unit": limiting_unit if len(rule["components"]) == 1 else "",
+            "components": component_rows,
+        })
+        summaries[menu_item_id] = summary
+    return summaries
+
+
 def _consumption_event(*, request, event_type, actor=None, details=None):
     return StockConsumptionRequestEvent.objects.create(
         request=request, type=event_type, actor=actor, details=dict(details or {}),

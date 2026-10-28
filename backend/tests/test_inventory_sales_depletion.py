@@ -317,11 +317,47 @@ class DuplicateDeductionTests(SalesDepletionTestCase):
 
 
 class InsufficientStockTests(SalesDepletionTestCase):
-    """A shortage must never be silently ignored and never go negative."""
+    """A shortage must never be silently ignored and never go negative.
 
-    def test_sale_beyond_available_stock_is_parked_for_review_and_never_goes_negative(self):
+    Since POS order entry validates stock on create/submit, an order can no
+    longer be CREATED beyond the available balance. The delivery-time shortage
+    path is still reachable and must stay safe: stock can drop between draft
+    creation and delivery (shrinkage, another channel's consumption), and that
+    must park the hand-off for review instead of driving a balance negative.
+    """
+
+    def test_creating_an_order_beyond_available_stock_is_rejected(self):
+        from apps.core.exceptions import PosStockConflictError
+
         self.receive_from_supplier(2, source_key="dep-receipt-short")
-        order = self.sell(mode=PosOrder.Mode.BAR, quantity=5)
+        with self.assertRaises(PosStockConflictError) as raised:
+            self.sell(mode=PosOrder.Mode.BAR, quantity=5)
+        self.assertIn("Insufficient stock", str(raised.exception))
+        self.assertIn("Bottled water 75cl (bar)", str(raised.exception))
+        self.assertIn("Depletion bar", str(raised.exception))
+        # Nothing was accepted, so nothing exists to deduct or review.
+        self.assertFalse(PosOrder.objects.exists())
+        self.assertFalse(StockConsumptionRequest.objects.exists())
+        self.assertFalse(StockMovement.objects.filter(type=StockMovement.Type.POS_CONSUMPTION).exists())
+        self.assertEqual(self.on_hand(), Decimal("2.0000"))
+
+    def test_a_shortage_that_appears_after_creation_is_parked_for_review_and_never_goes_negative(self):
+        self.receive_from_supplier(5, source_key="dep-receipt-short")
+        # Draft accepted while 5 bottles were on hand.
+        order, _ = create_order(
+            mode=PosOrder.Mode.BAR, actor=self.cashier, table_number="S-1",
+            lines=[{"menu_item_id": self.bar_water.pk, "quantity": 3}],
+        )
+        submit_order(order=order, actor=self.cashier)
+        # The stock drains to 2 while the order is with the bar.
+        record_stock_movement(
+            item=self.bottle, location=self.bar, movement_type=StockMovement.Type.ISSUE,
+            quantity_delta="-3", source_key="dep-short-drain", actor=self.clerk,
+            department="BAR", recipient="Bar handover",
+        )
+        transition_order(order=order, target_status=PosOrder.Status.PREPARING, actor=self.cashier)
+        transition_order(order=order, target_status=PosOrder.Status.READY, actor=self.cashier)
+        transition_order(order=order, target_status=PosOrder.Status.DELIVERED, actor=self.cashier)
 
         balance = StockBalance.objects.get(item=self.bottle, location=self.bar)
         self.assertEqual(balance.quantity_on_hand, Decimal("2.0000"))
@@ -334,15 +370,28 @@ class InsufficientStockTests(SalesDepletionTestCase):
         self.assertEqual(hand_off.resolution_payload["shortages"][0]["item"], "DEP-WATER")
 
     def test_restocking_a_short_sale_completes_the_deduction_on_the_next_sweep(self):
-        self.receive_from_supplier(2, source_key="dep-receipt-short-topup")
-        order = self.sell(mode=PosOrder.Mode.BAR, quantity=5)
-        self.assertEqual(self.on_hand(), Decimal("2.0000"))
+        self.receive_from_supplier(5, source_key="dep-receipt-short-topup")
+        # Draft accepted while 5 bottles were on hand; only 1 remains by delivery.
+        order, _ = create_order(
+            mode=PosOrder.Mode.BAR, actor=self.cashier, table_number="S-2",
+            lines=[{"menu_item_id": self.bar_water.pk, "quantity": 3}],
+        )
+        submit_order(order=order, actor=self.cashier)
+        record_stock_movement(
+            item=self.bottle, location=self.bar, movement_type=StockMovement.Type.ISSUE,
+            quantity_delta="-4", source_key="dep-short-drain-topup", actor=self.clerk,
+            department="BAR", recipient="Bar handover",
+        )
+        transition_order(order=order, target_status=PosOrder.Status.PREPARING, actor=self.cashier)
+        transition_order(order=order, target_status=PosOrder.Status.READY, actor=self.cashier)
+        transition_order(order=order, target_status=PosOrder.Status.DELIVERED, actor=self.cashier)
+        self.assertEqual(self.on_hand(), Decimal("1.0000"))
 
         # The goods arrive; the parked hand-off can now complete.
-        self.receive_from_supplier(5, unit_cost="150.00", source_key="dep-receipt-topup")
+        self.receive_from_supplier(2, unit_cost="150.00", source_key="dep-receipt-topup")
         summary = process_pending_pos_consumption(actor=self.clerk)
         self.assertEqual(summary["posted"], 1)
-        self.assertEqual(self.on_hand(), Decimal("2.0000"))
+        self.assertEqual(self.on_hand(), Decimal("0.0000"))
         hand_off = StockConsumptionRequest.objects.get(pos_order=order)
         self.assertEqual(hand_off.status, StockConsumptionRequest.Status.PROCESSED)
 

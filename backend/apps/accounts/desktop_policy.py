@@ -386,6 +386,21 @@ def active_front_desk_workstation() -> Workstation | None:
     )
 
 
+def front_desk_workstation_missing() -> bool:
+    """True when the hotel has no active FRONT_DESK workstation record at all.
+
+    Every Receptionist Desktop enrolment route dead-ends without one: a desktop
+    key can only be issued for a workstation record, ``Workstation.ip_address``
+    lives on that record, and the ``HotelSettings.front_desk_desktop_ip``
+    binding only takes effect while an active FRONT_DESK workstation exists.
+    A sign-in refusal that answers "register this address" while no workstation
+    exists sends the administrator in a circle — the address alone can never
+    be enough — so this flag lets the refusal say the one thing that is
+    actually missing.
+    """
+    return active_front_desk_workstation() is None
+
+
 def resolve_receptionist_desktop(request) -> tuple[Workstation | None, str]:
     """Identify the Receptionist Desktop behind this request.
 
