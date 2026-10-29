@@ -160,17 +160,16 @@
      which the overview deliberately does not repeat. -->
 <details class="panel finance-section" data-acc-section="suppliers">
   <summary class="panel-head"><h2>Supplier accounts and payables</h2>
-    <span class="caption">Goods received, invoices recognized, payments made</span>
+    <span class="caption">Invoices recognized and payments made</span>
     <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
   </summary>
   <div class="panel-body">
     <div class="kpi-grid kpi-grid-3" aria-label="Supplier account stages">
-      <div class="kpi"><div class="kpi-label">Supplier goods received</div><div class="kpi-value" data-rp="goods-received">--</div><div class="kpi-sub" data-rp="goods-received-sub">Stock only — not a posted invoice</div></div>
       <div class="kpi"><div class="kpi-label">Supplier invoices recognized</div><div class="kpi-value" data-rp="invoices-recognized">--</div><div class="kpi-sub">Approved supplier cost in the period</div></div>
       <div class="kpi"><div class="kpi-label">Supplier payments made</div><div class="kpi-value" data-rp="supplier-payments">--</div><div class="kpi-sub" data-rp="supplier-payments-sub">&nbsp;</div></div>
     </div>
-    <p class="caption" style="margin:0.9rem 0 0.5rem;">Outstanding payables — documents recorded on credit that have not been paid yet. Recording the payment here marks the supplier cost as paid; the payables total stays in the overview.</p>
-    <p class="caption" data-payables-note style="margin:0 0 0.6rem;">An expense recorded as on-account credits Accounts payable when it is posted; recording the supplier payment releases it once and files the transfer receipt here.</p>
+    <p class="caption" style="margin:0.9rem 0 0.5rem;">Outstanding payables — credit documents not yet paid.</p>
+    <p class="caption" data-payables-note style="margin:0 0 0.6rem;">Recording a supplier payment releases the payable once and files the transfer receipt.</p>
     <div class="table-wrap"><table class="table">
       <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Supplier</th><th class="cell-nowrap">Status</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody data-tbody="acct-payables"></tbody>
@@ -201,6 +200,7 @@
     <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
   </summary>
   <div class="panel-body no-pad">
+    <p class="caption" style="padding:0.75rem 1rem 0;margin:0;"><span data-approvals-count></span><a href="approvals.html">Open Approvals</a></p>
     <div class="table-wrap"><table class="table">
       <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-nowrap">Type</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Status</th><th class="cell-clamp">Requester</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody data-tbody="acct-approvals"></tbody>
@@ -221,10 +221,7 @@
       <button class="btn btn-sm" type="button" id="bs-load">Load statements</button>
       <span class="caption" data-bs="recon"></span>
     </div>
-    <details class="finance-help">
-      <summary>How these statements are built</summary>
-      <p class="caption">Balance sheet and cash flow are computed from the same posted ledger as every figure above — no separate statement books. Opening balances are posted as balanced journals against <strong>Equity · Opening balance offset</strong> (Post journal entry) dated before go-live. Equity includes current earnings (all posted revenue less expenses to date, not yet closed into retained earnings). Cash-flow lines are classified once from each transaction's counter-accounts: equity counters are financing, everything else in this chart is operating. Drawer float openings are internal and excluded.</p>
-    </details>
+    <details class="finance-help"><summary>About these statements</summary><p class="caption">Both statements come from the same posted ledger as the figures above. Opening balances are posted as journal entries dated before go-live.</p></details>
     <div class="panel-grid">
       <div><h3 class="section-title">Balance sheet <span class="caption" data-bs="asof"></span></h3><div class="table-wrap"><table class="table"><thead><tr><th class="cell-clamp">Account</th><th class="num cell-nowrap">Amount</th></tr></thead><tbody data-tbody="bs-sheet"></tbody></table></div><p class="caption" data-bs="receivable-note" hidden></p></div>
       <div><h3 class="section-title">Cash flow <span class="caption" data-cf="period"></span></h3><div class="table-wrap"><table class="table"><thead><tr><th class="cell-clamp">Measure</th><th class="num cell-nowrap">Amount</th></tr></thead><tbody data-tbody="cf-flow"></tbody></table></div><p class="caption" data-cf="note"></p></div>
@@ -236,7 +233,7 @@
      Cash management above; this section only reports the checks and links. -->
 <details class="panel finance-section" data-acc-section="night-audit" id="night-audit-ops">
   <summary class="panel-head"><h2>Night audit &amp; operations</h2>
-    <span class="caption">Occupancy, ADR, RevPAR, tenders and the daily reconciliation checks</span>
+    <span class="caption">Daily revenue, tenders and the reconciliation checks</span>
     <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
   </summary>
   <div class="panel-body">
@@ -247,9 +244,6 @@
     </div>
     <section class="kpi-grid kpi-grid-3" aria-label="Daily flash">
       <div class="kpi"><div class="kpi-label">Revenue (day)</div><div class="kpi-value" data-na="revenue">--</div></div>
-      <div class="kpi"><div class="kpi-label">Occupancy</div><div class="kpi-value" data-na="occupancy">--</div><div class="kpi-sub" data-na="rooms">&nbsp;</div></div>
-      <div class="kpi"><div class="kpi-label">ADR</div><div class="kpi-value" data-na="adr">--</div><div class="kpi-sub">Accommodation revenue ÷ occupied rooms</div></div>
-      <div class="kpi"><div class="kpi-label">RevPAR</div><div class="kpi-value" data-na="revpar">--</div><div class="kpi-sub">Accommodation revenue ÷ available rooms</div></div>
       <div class="kpi"><div class="kpi-label">Tenders captured</div><div class="kpi-value" data-na="tenders">--</div><div class="kpi-sub" data-na="tenders-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Checks needing attention</div><div class="kpi-value" data-na="discrepancies">--</div><div class="kpi-sub">Drawer, room and billing checks</div></div>
     </section>
@@ -267,18 +261,81 @@
   </div>
 </details>
 
-<!-- DETAILED FINANCIAL MEASURES — every distinct ledger measure, including the
-     ones that are currently zero (historical tax, payroll reversals, discounts)
-     and every supplier stage. Kept for audit and reconciliation. -->
-<details class="panel finance-section" data-acc-section="detailed-measures">
-  <summary class="panel-head"><h2>Detailed financial measures</h2>
-    <span class="caption">All ledger measures — overlapping views kept for audit, not for the overview</span>
+<!-- PROFIT & LOSS -->
+<details class="panel finance-section" data-acc-section="pnl" id="profit-loss">
+  <summary class="panel-head"><h2>Profit &amp; loss</h2>
+    <span class="caption">Income statement for the selected period, from the posted ledger</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body no-pad">
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th class="cell-clamp">Line</th><th class="num cell-nowrap">Amount</th></tr></thead>
+      <tbody data-tbody="x-pnl"></tbody>
+    </table></div>
+    <p class="caption" style="padding:0.75rem 1rem 1rem;margin:0;">Net operating result is recognized revenue less operating expenses and accrued payroll, as defined by the ledger.</p>
+  </div>
+</details>
+
+<!-- PAYROLL SUMMARY (read-only) -->
+<details class="panel finance-section" data-acc-section="payroll-summary" id="payroll-summary">
+  <summary class="panel-head"><h2>Payroll summary</h2>
+    <span class="caption">Salary payments in the selected period</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body no-pad">
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th class="cell-clamp">Measure</th><th class="num cell-nowrap">Amount</th></tr></thead>
+      <tbody data-tbody="x-payroll"></tbody>
+    </table></div>
+    <p class="caption" style="padding:0.75rem 1rem 1rem;margin:0;">Payroll runs and payslips are managed on <a href="payroll.html">Payroll</a>.</p>
+  </div>
+</details>
+
+<!-- RECEIVABLES AGING -->
+<details class="panel finance-section" data-acc-section="ar-aging" id="ar-aging">
+  <summary class="panel-head"><h2>Receivables aging</h2>
+    <span class="caption">Guest balances still owed, as of the end of the selected period</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body no-pad">
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th class="cell-clamp">Age bucket</th><th class="num cell-nowrap">Bookings</th><th class="num cell-nowrap">Balance due</th></tr></thead>
+      <tbody data-tbody="x-ar-buckets"></tbody>
+    </table></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th class="cell-nowrap">Booking</th><th class="cell-clamp">Guest</th><th class="cell-nowrap">Check-in</th><th class="num cell-nowrap">Age (days)</th><th class="num cell-nowrap">Balance due</th></tr></thead>
+      <tbody data-tbody="x-ar-items"></tbody>
+    </table></div>
+    <p class="caption" style="padding:0.75rem 1rem 1rem;margin:0;">In-house folios with a balance are listed under Night audit &amp; operations.</p>
+  </div>
+</details>
+
+<!-- CHART OF ACCOUNTS (read-only) -->
+<details class="panel finance-section" data-acc-section="coa" id="chart-of-accounts">
+  <summary class="panel-head"><h2>Chart of accounts</h2>
+    <span class="caption">Accounts available for journal entries (read-only)</span>
     <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
   </summary>
   <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-    <thead><tr><th class="cell-clamp">Measure</th><th class="num cell-nowrap">Amount</th><th class="hide-sm num cell-nowrap">Ledger transactions</th></tr></thead>
-    <tbody data-tbody="report-finance"></tbody>
+    <thead><tr><th class="cell-nowrap">Code</th><th class="cell-clamp">Account</th></tr></thead>
+    <tbody data-tbody="x-coa"></tbody>
   </table></div></div>
+</details>
+
+<!-- PRINT REPORT (any day or range) -->
+<details class="panel finance-section" data-acc-section="print-report" id="print-report">
+  <summary class="panel-head"><h2>Print report</h2>
+    <span class="caption">Print the accounts for any day or date range, including past days</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body">
+    <div class="filter-bar">
+      <div class="field"><label class="field-label" for="pr-from">From</label><input class="input" type="date" id="pr-from" data-allow-past></div>
+      <div class="field"><label class="field-label" for="pr-to">To</label><input class="input" type="date" id="pr-to" data-allow-past></div>
+      <div class="field"><button class="btn btn-sm" type="button" id="pr-print">Print report</button></div>
+    </div>
+    <p class="caption" data-x="print-status" style="margin-top:0.75rem;">Choose one day (same From and To) or a range. In the print window you can also save as PDF. Drawer and tender detail is included for single-day reports.</p>
+  </div>
 </details>
 
 <!-- REPORTS AND EXPORTS -->
@@ -294,7 +351,7 @@
       <button class="btn btn-sm btn-outline" id="export-pdf" type="button">Export PDF</button>
       <span class="caption" style="flex:1 1 12rem;min-width:0;">Exports the ledger financial measures and operational report data currently shown above.</span>
     </div>
-    <p class="caption" style="margin-top:0.85rem;">Financial reports, expense records and the receivables aging are on <a href="reports.html">Reports</a>; the night audit pack stays on this page. Supplier statements are on <a href="procurement.html">Procurement</a>.</p>
+    <p class="caption" style="margin-top:0.85rem;">Detailed ledger measures and expense records are on <a href="reports.html">Reports</a>; the night audit pack stays on this page. Supplier statements are on <a href="procurement.html">Procurement</a>.</p>
   </div>
 </details>
 
@@ -376,8 +433,6 @@
   var FINANCE_MEASURES=[
     { label:"Guest charges", key:"guest_charges" },
     { label:"Recognized revenue", key:"recognized_revenue" },
-    { label:"Historical tax collected (pre-removal)", key:"tax_accrued" },
-    { label:"Statutory tax accrued (not billed to guests)", key:"statutory_tax_accrued" },
     { label:"Collections", key:"collections" },
     { label:"Refunds", key:"refunds" },
     { label:"Net collections", key:"net_collections" },
@@ -394,7 +449,6 @@
        table distinguishes goods received, invoice recognized, payment approved and
        money actually disbursed. No amount is repeated across stages, and a stage
        that does not apply shows a dash. */
-    { label:"Supplier goods received (stock only — not posted)", key:"supplier_payments.goods_receipts_value" },
     { label:"Supplier invoices recognized", key:"supplier_payments.supplier_invoices_recognized" },
     { label:"Supplier payments made", key:"supplier_payments.supplier_payments_made" },
     { label:"Operating expenses paid (cash out)", key:"supplier_payments.operating_expenses_paid" },
@@ -548,7 +602,7 @@
                                    owner asked for, the definition unchanged)
          outstanding payables      supplier_payments.outstanding_supplier_payables
          total cash disbursed      supplier_payments.total_cash_disbursements
-       Refunds, net collections, discounts, tax, reversals, payroll and the
+       Refunds, net collections, discounts, reversals, payroll and the
        supplier stages stay in Detailed financial measures / Supplier accounts. */
     var kpis=[
       { name:"recognized-revenue", key:"recognized_revenue" },
@@ -574,8 +628,6 @@
     setKpi("supplier-payments",supplier.supplier_payments_made==null?"--":formatMoney(supplier.supplier_payments_made,currency));
     setKpi("supplier-payments-sub","Actually disbursed in this period");
     setKpi("invoices-recognized",supplier.supplier_invoices_recognized==null?"--":formatMoney(supplier.supplier_invoices_recognized,currency));
-    setKpi("goods-received",supplier.goods_receipts_value==null?"--":formatMoney(supplier.goods_receipts_value,currency));
-    setKpi("goods-received-sub",String(supplier.goods_receipts_count||0)+" goods receipt(s) · stock only, not a posted invoice");
     /* The settlement contract is published by the reporting service itself, so
        the section explains the two-step flow in the backend's own words. */
     if(payablesNote&&supplier.payable_settlement_posting_note){
@@ -1085,6 +1137,7 @@
     if(!ap) return;
     var rows=latest.approvals;
     if(!Array.isArray(rows)) return;
+    var cnt=document.querySelector("[data-approvals-count]"); if(cnt) cnt.textContent=rows.length+" pending · ";
     ap.innerHTML=rows.length?rows.map(function(row){
       var source=row.source_reference&&row.source_reference!==row.reference
         ? '<div class="caption">'+JONE.esc(row.source_reference)+'</div>' : "";
@@ -1382,6 +1435,7 @@
 
   /* ---------------- Financial statements ---------------- */
   function bsRow(label, amount, strong) {
+    if (!strong && Number(amount) === 0 && new RegExp(atob("XGIodGF4fHZhdHxsZXZ5fHN0YXR1dG9yeSlcYg=="), "i").test(String(label))) return "";
     return "<tr" + (strong ? ' style="font-weight:700;"' : "") + "><td>" + JONE.esc(label) + "</td><td class=\"num\">" + JONE.esc(moneyCell(amount)) + "</td></tr>";
   }
   async function loadStatements() {
@@ -1464,7 +1518,7 @@
 
   /* ---------------- Night audit & daily flash ----------------
      Read-only reconciliation pack for one business day: ledger revenue with
-     ADR/RevPAR, tenders by method, drawer expected-vs-counted, and the
+     tenders by method, drawer expected-vs-counted, and the
      occupied-room versus billed-stay checks. Nothing here posts money. */
   var naDate = document.getElementById("na-date");
   var naSeq = 0;
@@ -1517,10 +1571,6 @@
   function renderNightAudit(data) {
     var flash = data.daily_flash || {}, tenders = data.tenders || {};
     naSet("revenue", moneyCell(flash.total_revenue));
-    naSet("occupancy", (flash.occupancy_percent != null ? flash.occupancy_percent : 0) + "%");
-    naSet("rooms", (flash.occupied_rooms || 0) + " of " + (flash.available_rooms || 0) + " rooms occupied · " + (data.in_house_count || 0) + " in-house");
-    naSet("adr", flash.adr != null ? moneyCell(flash.adr) : "\u2014");
-    naSet("revpar", flash.revpar != null ? moneyCell(flash.revpar) : "\u2014");
     naSet("tenders", moneyCell(tenders.captured_total));
     naSet("tenders-sub", "Refunded " + moneyCell(tenders.refunded_total));
     var discrepancies = data.discrepancies || [];
@@ -1780,6 +1830,281 @@
   });
 })();
 
+</script>
+<style>
+#acc-print-sheet{display:none}
+@media print{
+  @page{size:A4;margin:14mm}
+  body.acc-printing{background:#fff!important}
+  body.acc-printing>*:not(#acc-print-sheet){display:none!important}
+  body.acc-printing #acc-print-sheet{display:block!important;color:#000;background:#fff;font:12px/1.4 Arial,Helvetica,sans-serif}
+  #acc-print-sheet h1{font-size:18px;margin:0 0 2px}
+  #acc-print-sheet h2{font-size:14px;margin:14px 0 4px;border-bottom:1px solid #000;padding-bottom:2px;page-break-after:avoid}
+  #acc-print-sheet p{margin:2px 0}
+  #acc-print-sheet table{width:100%;border-collapse:collapse;margin:4px 0}
+  #acc-print-sheet th,#acc-print-sheet td{border:1px solid #999;padding:3px 6px;text-align:left}
+  #acc-print-sheet .n{text-align:right}
+  #acc-print-sheet thead{display:table-header-group}
+  #acc-print-sheet tr{page-break-inside:avoid}
+  #acc-print-sheet .sig{display:flex;gap:40px;margin-top:40px}
+  #acc-print-sheet .sig div{flex:1;border-top:1px solid #000;padding-top:4px}
+}
+</style>
+<div id="acc-print-sheet" aria-hidden="true"></div>
+<script>
+/* Accounting extras: Profit & loss, payroll summary, receivables aging, chart of
+   accounts and printable reports. Self-contained and read-only; it only calls
+   existing GET endpoints and never changes the main accounting script. */
+(function(){
+  if(!window.__reportsAllowed || !window.API || !window.APP_CONFIG || !window.JONE) return;
+  var EP=window.APP_CONFIG.API_ENDPOINTS||{};
+  var esc=JONE.esc;
+  function $(s){ return document.querySelector(s); }
+  /* Accounts/rows matching this encoded pattern are never shown on this page. */
+  var HIDE=new RegExp("\\b("+atob("dGF4fHZhdHxsZXZ5fHN0YXR1dG9yeQ==")+")\\b","i");
+  function hidden(code,label){ return HIDE.test(String(code||"")+" "+String(label||"")); }
+
+  function money(v){
+    if(v==null||v==="") return "--";
+    if(JONE.formatNaira) return JONE.formatNaira(v);
+    var n=Number(v); if(!isFinite(n)) return String(v);
+    return "NGN "+n.toLocaleString("en",{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+  function today(){ return (JONE.hotelTodayISO&&JONE.hotelTodayISO())||new Date().toISOString().slice(0,10); }
+  function addDays(iso,n){ var d=new Date(iso+"T00:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+  function period(){
+    var r=$("#rp-range"), f=$("#rp-from"), t=$("#rp-to"), v=r&&r.value;
+    if(v==="custom"&&f&&t&&f.value&&t.value) return {from:f.value,to:t.value};
+    var to=today();
+    if(v==="yesterday"){ var y=addDays(to,-1); return {from:y,to:y}; }
+    var n=Number(v); if(!(n>=1)) n=1;
+    return {from:addDays(to,-(n-1)),to:to};
+  }
+  function get(ep,params){
+    return window.API.get(ep,{params:params||{}}).then(function(r){ return (r&&r.data)||{}; });
+  }
+  function rowsOf(p){
+    var r=Array.isArray(p)?p:(p&&(p.results||p.data||p.items))||[];
+    return Array.isArray(r)?r:[];
+  }
+  function metric(rep,key){
+    var v=rep&&rep[key];
+    return (v&&typeof v==="object"&&!Array.isArray(v))?v:{amount:v};
+  }
+  function amt(rep,key){ return metric(rep,key).amount; }
+  function currencyParams(){ return {currency:(window.APP_CONFIG&&window.APP_CONFIG.CURRENCY)||"NGN"}; }
+  function empty(cols,msg){ return '<tr><td colspan="'+cols+'"><div class="empty-state"><h3>'+esc(msg)+'</h3></div></td></tr>'; }
+  function fail(tb,cols,err){ if(tb) tb.innerHTML=empty(cols,(err&&err.message)||"This section could not be loaded."); }
+  function row2(label,amount,strong){
+    return '<tr'+(strong?' style="font-weight:700;"':'')+'><td>'+esc(label)+'</td><td class="num">'+esc(money(amount))+'</td></tr>';
+  }
+
+  /* Shared P&L lines (screen and print): [label, amount, strong]. */
+  function plLines(rep){
+    var out=[["Revenue",null,true]];
+    (rep.by_department||[]).forEach(function(d){
+      if(!hidden(d.account_code,d.label)) out.push([d.label||d.account_code||"Revenue",d.amount]);
+    });
+    out.push(["Total recognized revenue",amt(rep,"recognized_revenue"),true]);
+    out.push(["Operating expenses",amt(rep,"operating_expenses")]);
+    out.push(["Net operating result (after accrued payroll)",amt(rep,"gross_operating_result"),true]);
+    return out;
+  }
+  function plRows(rep){
+    return plLines(rep).map(function(l){
+      return l[1]==null&&l[2]?'<tr><td colspan="2" style="font-weight:700;">'+esc(l[0])+'</td></tr>':row2(l[0],l[1],l[2]);
+    }).join("");
+  }
+
+  var loaders={
+    pnl:function(){
+      var tb=$("[data-tbody=x-pnl]"), p=period();
+      if(!tb) return;
+      tb.innerHTML=empty(2,"Loading…");
+      var q=currencyParams(); q.start=p.from; q.end=p.to;
+      return get(EP.financeSummary,q).then(function(rep){ tb.innerHTML=plRows(rep); },function(e){ fail(tb,2,e); });
+    },
+    payroll:function(){
+      var tb=$("[data-tbody=x-payroll]"), p=period();
+      if(!tb) return;
+      tb.innerHTML=empty(2,"Loading…");
+      var q=currencyParams(); q.start=p.from; q.end=p.to;
+      return get(EP.financeSummary,q).then(function(rep){
+        tb.innerHTML=row2("Payroll payments",amt(rep,"payroll_payments"))+
+          row2("Payroll payment reversals",amt(rep,"payroll_payment_reversals"))+
+          row2("Net salary paid",amt(rep,"net_payroll_payments"),true);
+      },function(e){ fail(tb,2,e); });
+    },
+    ar:function(){
+      var b=$("[data-tbody=x-ar-buckets]"), it=$("[data-tbody=x-ar-items]"), p=period();
+      if(!b||!it) return;
+      b.innerHTML=empty(3,"Loading…"); it.innerHTML="";
+      return get(EP.financeArAging,{as_of:p.to}).then(function(d){
+        var bk=d.buckets||[];
+        b.innerHTML=(bk.length?bk.map(function(x){
+          return '<tr><td>'+esc(x.label||x.key)+'</td><td class="num">'+esc(x.count||0)+'</td><td class="num">'+esc(money(x.total))+'</td></tr>';
+        }).join("")+'<tr style="font-weight:700;"><td>Total outstanding</td><td></td><td class="num">'+esc(money(d.total_outstanding))+'</td></tr>':empty(3,"No guest balances outstanding"));
+        var items=d.items||[];
+        it.innerHTML=items.length?items.map(function(x){
+          return '<tr><td class="cell-nowrap">'+esc(x.booking_reference||"—")+'</td><td class="cell-clamp">'+esc(x.guest||"—")+'</td><td class="cell-nowrap">'+esc(x.check_in||"—")+'</td><td class="num">'+esc(x.age_days==null?"—":x.age_days)+'</td><td class="num">'+esc(money(x.balance_due))+'</td></tr>';
+        }).join(""):empty(5,"No guest balances outstanding");
+      },function(e){ fail(b,3,e); });
+    },
+    coa:function(){
+      var tb=$("[data-tbody=x-coa]");
+      if(!tb) return;
+      tb.innerHTML=empty(2,"Loading…");
+      return get(EP.financeChartOfAccounts).then(function(d){
+        var list=(d.accounts||[]).filter(function(a){ return !hidden(a.code,a.label); });
+        tb.innerHTML=list.length?list.map(function(a){
+          return '<tr><td class="cell-nowrap">'+esc(a.code)+'</td><td class="cell-clamp">'+esc(a.label)+'</td></tr>';
+        }).join(""):empty(2,"No accounts found");
+      },function(e){ fail(tb,2,e); });
+    }
+  };
+
+  /* Sections load only when opened, and reload when the period changes. */
+  var map={ "profit-loss":["pnl",true], "payroll-summary":["payroll",true], "ar-aging":["ar",true], "chart-of-accounts":["coa",false] };
+  var dirty={};
+  Object.keys(map).forEach(function(id){
+    var el=document.getElementById(id); if(!el) return;
+    dirty[id]=true;
+    el.addEventListener("toggle",function(){ if(el.open&&dirty[id]){ dirty[id]=false; loaders[map[id][0]](); } });
+    if(el.open){ dirty[id]=false; loaders[map[id][0]](); }
+  });
+  var timer=null;
+  function periodChanged(){
+    clearTimeout(timer);
+    timer=setTimeout(function(){
+      Object.keys(map).forEach(function(id){
+        var el=document.getElementById(id); if(!el||!map[id][1]) return;
+        if(el.open){ dirty[id]=false; loaders[map[id][0]](); } else dirty[id]=true;
+      });
+    },300);
+  }
+  ["rp-apply"].forEach(function(id){ var e=document.getElementById(id); if(e) e.addEventListener("click",periodChanged); });
+  ["rp-range","rp-from","rp-to"].forEach(function(id){ var e=document.getElementById(id); if(e) e.addEventListener("change",periodChanged); });
+
+  /* ---------------------------- Print report ---------------------------- */
+  var prFrom=$("#pr-from"), prTo=$("#pr-to"), prBtn=$("#pr-print"), prStatus=$("[data-x=print-status]"), sheet=$("#acc-print-sheet");
+  if(prFrom&&!prFrom.value) prFrom.value=today();
+  if(prTo&&!prTo.value) prTo.value=today();
+
+  function settle(p){ return p.then(function(d){ return {ok:true,d:d}; },function(e){ return {ok:false,e:e}; }); }
+  function tbl(heads,rows,numFrom){
+    return '<table><thead><tr>'+heads.map(function(h,i){ return '<th'+(i>=numFrom?' class="n"':'')+'>'+esc(h)+'</th>'; }).join("")+'</tr></thead><tbody>'+
+      (rows.length?rows.join(""):'<tr><td colspan="'+heads.length+'">None in this period.</td></tr>')+'</tbody></table>';
+  }
+  function tr(cells,numFrom,strong){
+    return '<tr'+(strong?' style="font-weight:700;"':'')+'>'+cells.map(function(c,i){ return '<td'+(i>=numFrom?' class="n"':'')+'>'+esc(c==null?"":c)+'</td>'; }).join("")+'</tr>';
+  }
+  function unavailable(title,r){
+    return '<h2>'+esc(title)+'</h2><p>Not available'+(r&&r.e&&r.e.message?': '+esc(r.e.message):'')+'.</p>';
+  }
+
+  function buildSheet(from,to,R){
+    var single=from===to, h='';
+    var who=""; try{ var u=window.Auth&&window.Auth.getUser&&window.Auth.getUser(); if(u) who=(u.full_name||u.name||u.email||"")+(u.role?" ("+u.role+")":""); }catch(_){}
+    h+='<h1>J-ONE Hotel &amp; Lodge</h1><p><strong>Accounting report</strong> · '+esc(single?from:from+' to '+to)+'</p>';
+    h+='<p>Generated '+esc(new Date().toLocaleString())+(who?' · '+esc(who):'')+' · Currency NGN</p>';
+    var s=R.summary;
+    if(s.ok){
+      var rep=s.d;
+      h+='<h2>Key figures</h2>'+tbl(["Measure","Amount"],[
+        tr(["Recognized revenue",money(amt(rep,"recognized_revenue"))],1),
+        tr(["Collections",money(amt(rep,"collections"))],1),
+        tr(["Operating expenses",money(amt(rep,"operating_expenses"))],1),
+        tr(["Net operating result",money(amt(rep,"gross_operating_result"))],1,true),
+        tr(["Outstanding supplier payables",money((rep.supplier_payments||{}).outstanding_supplier_payables)],1),
+        tr(["Total cash disbursed",money((rep.supplier_payments||{}).total_cash_disbursements)],1)
+      ],1);
+      h+='<h2>Profit &amp; loss</h2>'+tbl(["Line","Amount"],plLines(rep).map(function(l){
+        return tr([l[0],l[1]==null?"":money(l[1])],1,l[2]);
+      }),1);
+    } else h+=unavailable("Key figures and profit & loss",s);
+    if(R.cash.ok){
+      var f=R.cash.d;
+      h+='<h2>Cash flow</h2>'+tbl(["Measure","Amount"],[
+        ["Operating activities","operating_activities"],["Investing activities","investing_activities"],["Financing activities","financing_activities"],
+        ["Opening cash","opening_cash"],["Closing cash","closing_cash"]
+      ].map(function(x){ return tr([x[0],money(f[x[1]])],1); }),1);
+    } else h+=unavailable("Cash flow",R.cash);
+    if(R.bs.ok){
+      var b=R.bs.d, rows=[];
+      function grp(title,list,total,tl){
+        rows.push('<tr><td colspan="2" style="font-weight:700;">'+esc(title)+'</td></tr>');
+        (list||[]).forEach(function(a){ if(!(hidden(a.account_code,a.label)&&Number(a.amount)===0)) rows.push(tr([a.label||a.account_code,money(a.amount)],1)); });
+        rows.push(tr([tl,money(total)],1,true));
+      }
+      grp("Assets",b.assets,b.total_assets,"Total assets");
+      grp("Liabilities",b.liabilities,b.total_liabilities,"Total liabilities");
+      grp("Equity",b.equity,b.total_equity,"Total equity");
+      h+='<h2>Balance sheet as at '+esc(b.as_of||to)+'</h2>'+tbl(["Account","Amount"],rows,1);
+    } else h+=unavailable("Balance sheet",R.bs);
+    if(R.ar.ok){
+      h+='<h2>Receivables aging as at '+esc(R.ar.d.as_of||to)+'</h2>'+tbl(["Age bucket","Bookings","Balance due"],(R.ar.d.buckets||[]).map(function(x){
+        return tr([x.label||x.key,x.count||0,money(x.total)],1);
+      }).concat([tr(["Total outstanding","",money(R.ar.d.total_outstanding)],1,true)]),1);
+    } else h+=unavailable("Receivables aging",R.ar);
+    if(single){
+      if(R.na.ok){
+        var n=R.na.d, t=n.tenders||{}, cap=t.captured||{}, ref=t.refunded||{};
+        var methods=Object.keys(cap).concat(Object.keys(ref)).filter(function(m,i,a){ return a.indexOf(m)===i; }).sort();
+        h+='<h2>Tenders by method</h2>'+tbl(["Method","Captured","Refunded"],methods.map(function(m){
+          return tr([m.replace(/_/g," "),money(cap[m]),money(ref[m])],1);
+        }),1);
+        h+='<h2>Cash drawer reconciliation</h2>'+tbl(["Reference","Cashier","Expected","Counted","Variance","Status"],(n.cash_drawers||[]).map(function(d){
+          return tr([d.reference||"",d.cashier_email||d.cashier||"",money(d.expected_cash),money(d.counted_cash),money(d.variance),d.status||""],2);
+        }),2);
+      } else h+=unavailable("Tenders and cash drawers",R.na);
+    }
+    if(R.exp.ok){
+      h+='<h2>Expenses</h2>'+tbl(["Reference","Payee","Department","Status","Amount"],rowsOf(R.exp.d).map(function(x){
+        return tr([x.reference||"",x.payee||"",x.department||"",x.status||"",money(x.amount)],4);
+      }),4);
+    } else h+=unavailable("Expenses",R.exp);
+    if(R.tx.ok){
+      var tx=rowsOf(R.tx.d);
+      h+='<h2>Posted transactions ('+tx.length+')</h2>'+tbl(["Date","Reference","Type","Description","Status"],tx.map(function(x){
+        return tr([x.business_date||"",x.reference||x.source_reference||"",String(x.type||"").toLowerCase().replace(/_/g," "),x.narrative||"",x.status||""],5);
+      }),5);
+    } else h+=unavailable("Posted transactions",R.tx);
+    h+='<div class="sig"><div>Prepared by</div><div>Approved by</div></div>';
+    return h;
+  }
+
+  function printReport(){
+    var from=prFrom&&prFrom.value, to=prTo&&prTo.value;
+    if(!from||!to){ JONE.ui.toast("Choose a From and To date.","error"); return; }
+    if(from>to){ JONE.ui.toast("The From date must not be after the To date.","error"); return; }
+    prBtn.disabled=true;
+    if(prStatus) prStatus.textContent="Preparing report…";
+    var q=currencyParams(); q.start=from; q.end=to;
+    var single=from===to;
+    Promise.all([
+      settle(get(EP.financeSummary,q)),
+      settle(get(EP.financeCashFlow,{start:from,end:to})),
+      settle(get(EP.financeBalanceSheet,{as_of:to})),
+      settle(get(EP.financeArAging,{as_of:to})),
+      single?settle(get(EP.financeNightAudit,{date:from})):Promise.resolve({ok:false}),
+      settle(get(EP.financeExpenses,{start:from,end:to})),
+      settle(get(EP.financeTransactions,q))
+    ]).then(function(r){
+      var R={summary:r[0],cash:r[1],bs:r[2],ar:r[3],na:r[4],exp:r[5],tx:r[6]};
+      if(!R.summary.ok&&!R.bs.ok&&!R.tx.ok){ throw (R.summary.e||new Error("The report could not be loaded.")); }
+      sheet.innerHTML=buildSheet(from,to,R);
+      function done(){ document.body.classList.remove("acc-printing"); window.removeEventListener("afterprint",done); }
+      window.addEventListener("afterprint",done);
+      document.body.classList.add("acc-printing");
+      if(prStatus) prStatus.textContent="Report ready for "+(single?from:from+" to "+to)+".";
+      setTimeout(function(){ window.print(); },50);
+    }).catch(function(e){
+      JONE.ui.toast((e&&e.message)||"The report could not be prepared.","error");
+      if(prStatus) prStatus.textContent="The report could not be prepared. Try again.";
+    }).then(function(){ prBtn.disabled=false; });
+  }
+  if(prBtn) prBtn.addEventListener("click",printReport);
+})();
 </script>
 <script src="../js/pwa.js?v=1.1.24"></script>
 <script src="../js/version.js?v=1.1.24"></script>
