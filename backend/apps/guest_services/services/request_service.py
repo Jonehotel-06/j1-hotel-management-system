@@ -157,6 +157,15 @@ def _can_work(request, actor) -> bool:
     return bool(actor and (_can_dispatch(actor) or request.assigned_to_id == actor.pk))
 
 
+def _lock_linked_portal_context(service_request):
+    """Lock booking/stay before mutating a linked portal request or POS row."""
+    from apps.pos.models import PosOrder
+    candidate = PosOrder.objects.filter(service_request_id=service_request.pk).only("pk").first()
+    if candidate is not None:
+        from apps.pos.services.order_service import _lock_portal_stay_before_order
+        _lock_portal_stay_before_order(candidate, require_active=False)
+
+
 @transaction.atomic
 def create_service_request(
     *,
@@ -285,6 +294,7 @@ def assign_service_request(*, service_request, actor, assigned_to=None, owner_te
     """Dispatch/re-route a request; only the named dispatcher capability may do so."""
     if not _can_dispatch(actor):
         raise PermissionDenied("This user cannot dispatch guest service requests.")
+    _lock_linked_portal_context(service_request)
     request = ServiceRequest.objects.select_for_update().get(pk=service_request.pk)
     if request.status in _TERMINAL_STATUSES:
         raise ValidationError("A closed or cancelled request cannot be reassigned.")
@@ -325,6 +335,7 @@ def assign_service_request(*, service_request, actor, assigned_to=None, owner_te
 @transaction.atomic
 def claim_service_request(*, service_request, actor):
     """Let an eligible housekeeping/maintenance worker claim an unassigned task."""
+    _lock_linked_portal_context(service_request)
     request = ServiceRequest.objects.select_for_update().get(pk=service_request.pk)
     if request.status in _TERMINAL_STATUSES:
         raise ValidationError("A closed or cancelled request cannot be claimed.")
@@ -352,16 +363,44 @@ def claim_service_request(*, service_request, actor):
 @transaction.atomic
 def transition_service_request(*, service_request, target_status: str, actor, note="", guest_visible=True):
     """Advance the controlled lifecycle; workers may only work their own requests."""
-    request = ServiceRequest.objects.select_for_update().get(pk=service_request.pk)
     target_status = str(target_status or "").upper()
     if target_status not in ServiceRequest.Status.values:
         raise ValidationError({"status": "Invalid service-request status."})
+    # Match POS and checkout lock order. A staff cancellation must never leave
+    # a live linked draft behind.
+    _lock_linked_portal_context(service_request)
+    order = None
+    if target_status in {ServiceRequest.Status.CANCELLED, ServiceRequest.Status.RESOLVED,
+                         ServiceRequest.Status.CLOSED, ServiceRequest.Status.IN_PROGRESS}:
+        from apps.pos.models import PosOrder
+        order = PosOrder.objects.select_for_update().filter(service_request_id=service_request.pk).first()
+        if order is not None and (order.metadata or {}).get("portal_stock_rules") is None:
+            order = None
+    request = ServiceRequest.objects.select_for_update().get(pk=service_request.pk)
     if target_status == request.status:
         return request
     if target_status not in _ALLOWED_TRANSITIONS.get(request.status, set()):
         raise ValidationError(f"Request {request.reference} cannot transition from {request.status} to {target_status}.")
     if not _can_work(request, actor):
         raise PermissionDenied("Only the assigned worker or an authorized dispatcher can progress this request.")
+    if order is not None:
+        if target_status == ServiceRequest.Status.IN_PROGRESS and order.status == PosOrder.Status.DELIVERED:
+            raise ValidationError("The linked POS order was already delivered; contact the front desk for follow-up.")
+        if target_status in {ServiceRequest.Status.RESOLVED, ServiceRequest.Status.CLOSED} and order.status not in {
+            PosOrder.Status.DELIVERED, PosOrder.Status.CANCELLED,
+        }:
+            raise ValidationError("Complete or cancel the linked POS order before resolving this request.")
+        if target_status == ServiceRequest.Status.CANCELLED and order.status != PosOrder.Status.CANCELLED:
+            if order.status == PosOrder.Status.DELIVERED or order.charge_transaction_id:
+                raise ValidationError("The linked POS order has been charged and cannot be cancelled.")
+            from apps.pos.services.order_service import transition_order
+            transition_order(order=order, target_status=PosOrder.Status.CANCELLED, actor=actor)
+            request.refresh_from_db()
+            if request.status == ServiceRequest.Status.CANCELLED:
+                if note:
+                    _create_event(request=request, event_type=ServiceRequestEvent.Type.COMMENT, actor=actor,
+                                  message=note, guest_visible=guest_visible)
+                return request
     previous_status = request.status
     now = timezone.now()
     request.status = target_status
@@ -400,6 +439,7 @@ def transition_service_request(*, service_request, target_status: str, actor, no
 @transaction.atomic
 def add_service_request_comment(*, service_request, message, actor=None, actor_label="", guest_visible=False):
     """Add immutable discussion evidence after ownership/assignment checks."""
+    _lock_linked_portal_context(service_request)
     request = ServiceRequest.objects.select_for_update().get(pk=service_request.pk)
     message = str(message or "").strip()
     if not message:
@@ -422,14 +462,36 @@ def add_service_request_comment(*, service_request, message, actor=None, actor_l
 
 @transaction.atomic
 def cancel_service_request_by_guest(*, service_request, portal_email, note=""):
-    """Allow a verified guest to cancel only a not-yet-worked request."""
+    """Cancel a not-yet-worked request and its linked guest POS draft atomically."""
+    from apps.pos.models import PosOrder
+    from apps.portal.eligibility import active_stay_rooms_for_email
+
+    # Lock booking -> stay -> POS -> request, matching checkout and delivery.
+    _lock_linked_portal_context(service_request)
+    order = PosOrder.objects.select_for_update().filter(service_request_id=service_request.pk).first()
     request = ServiceRequest.objects.select_for_update().select_related("guest").get(pk=service_request.pk)
-    if request.guest.email.strip().lower() != str(portal_email or "").strip().lower():
+    email = str(portal_email or "").strip().lower()
+    contact = str(getattr(request.guest, "email", "") or "").strip().lower()
+    if email not in {contact, str(request.portal_email or "").strip().lower()} or not email:
         raise PermissionDenied("This request does not belong to the verified portal guest.")
+    if request.room_id and not active_stay_rooms_for_email(email).filter(stay_id=request.stay_id, room_id=request.room_id).exists():
+        raise PermissionDenied("This request is no longer associated with your active room.")
     if request.status == ServiceRequest.Status.CANCELLED:
         return request
     if request.status not in {ServiceRequest.Status.OPEN, ServiceRequest.Status.ACKNOWLEDGED}:
         raise ValidationError("Only open or acknowledged requests can be cancelled by the guest.")
+    if order is not None and (order.metadata or {}).get("portal_stock_rules") is not None:
+        if order.charge_transaction_id or order.status not in {PosOrder.Status.DRAFT, PosOrder.Status.SUBMITTED, PosOrder.Status.CANCELLED}:
+            raise ValidationError("This order is already being prepared or charged. Please contact staff.")
+        if order.status != PosOrder.Status.CANCELLED:
+            from apps.pos.services.order_service import transition_order
+            transition_order(order=order, target_status=PosOrder.Status.CANCELLED, actor=None)
+            request.refresh_from_db()
+            if request.status == ServiceRequest.Status.CANCELLED:
+                if note:
+                    _create_event(request=request, event_type=ServiceRequestEvent.Type.COMMENT,
+                                  actor_label="Guest", message=note, guest_visible=True)
+                return request
     previous_status = request.status
     request.status = ServiceRequest.Status.CANCELLED
     request.closed_at = timezone.now()

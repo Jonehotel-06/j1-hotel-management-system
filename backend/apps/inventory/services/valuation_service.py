@@ -504,8 +504,11 @@ def menu_item_cost_basis(menu_item):
        of ``quantity_per_menu_unit x supplier cost`` over its components
        (the highest-cost active recipe is used, so the price covers every
        location that sells it);
-    2. a stock item that is the same product (matching SKU, else exact name),
-       costed per base unit.
+    2. the explicitly linked direct-sale stock item, multiplied by its
+       configured base units per sale;
+    3. for legacy price checks only, one unambiguous case-insensitive SKU,
+       or one unambiguous exact-name match. A match never creates a stock
+       relationship and is never used to accept a portal order.
 
     Costs come from real goods receipts (weighted average) and fall back to
     the item's standard cost. Returns ``None`` when no cost is on record —
@@ -522,11 +525,34 @@ def menu_item_cost_basis(menu_item):
         for line in recipe.lines.all():
             component_items[line.item_id] = line.item
     matched = None
+    sale_quantity = Decimal("1")
+    explicit = False
     if not component_items:
-        matched = (
-            StockItem.objects.filter(is_active=True, sku__iexact=str(menu_item.sku or "").strip()).first()
-            or StockItem.objects.filter(is_active=True, name__iexact=str(menu_item.name or "").strip()).first()
-        )
+        if menu_item.pk:
+            # An inactive configured item is still an explicit mapping. Do not
+            # silently price it against an unrelated SKU/name match instead.
+            matched = StockItem.objects.filter(direct_sale_menu_item_id=menu_item.pk).first()
+            if matched is not None:
+                explicit = True
+                sale_quantity = matched.direct_sale_quantity or ZERO
+                if not matched.is_active or sale_quantity <= ZERO:
+                    return None  # broken explicit mapping must not turn into a name guess
+        if matched is None:
+            sku = str(menu_item.sku or "").strip()
+            candidates = list(StockItem.objects.filter(is_active=True, sku__iexact=sku)[:2]) if sku else []
+            if len(candidates) > 1:
+                return None  # case-insensitive SKU collision: never pick an arbitrary row
+            if candidates:
+                candidate = candidates[0]
+                if str(candidate.sku or "").strip().casefold() != sku.casefold():
+                    return None
+                matched = candidate
+            else:
+                name = str(menu_item.name or "").strip()
+                candidates = list(StockItem.objects.filter(is_active=True, name__iexact=name)[:2]) if name else []
+                if (len(candidates) == 1 and
+                        str(candidates[0].name or "").strip().casefold() == name.casefold()):
+                    matched = candidates[0]
         if matched is not None:
             component_items[matched.pk] = matched
     if not component_items:
@@ -553,8 +579,8 @@ def menu_item_cost_basis(menu_item):
     if unit_cost is None:
         return None
     return {
-        "cost": unit_cost.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP),
-        "basis": "STOCK_ITEM",
+        "cost": (unit_cost * sale_quantity).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP),
+        "basis": "DIRECT_SALE" if explicit else "STOCK_ITEM",
         "currencies": {(matched.currency or "NGN").upper()},
     }
 

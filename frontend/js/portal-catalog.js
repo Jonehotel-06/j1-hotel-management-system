@@ -1,7 +1,7 @@
 /* js/portal-catalog.js
    Guest portal catalogue: restaurant & bar menu and guest-facing services.
-   Data comes only from the server (portalMenu / portalServices endpoints) and
-   is read-only here. Prices are displayed exactly as the server returns them.
+   Data comes only from the server (portalMenu / portalServices endpoints).
+   Availability is an advisory snapshot; the order API validates it again.
 
    Pure helpers (filtering, search, money formatting, action mapping) are kept
    free of DOM access so they can be unit-tested directly. */
@@ -21,6 +21,15 @@
     var parts = fixed.split(".");
     var whole = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     return (amount < 0 ? "-" : "") + "\u20A6" + whole + "." + parts[1];
+  }
+
+  function formatCurrency(value, currency) {
+    var code = String(currency || "NGN").toUpperCase();
+    if (code === "NGN") return formatNaira(value);
+    var amount = Number(value);
+    if (value === null || value === undefined || value === "" || !isFinite(amount)) return "Price on request";
+    try { return new Intl.NumberFormat("en-NG", { style: "currency", currency: code }).format(amount); }
+    catch (_) { return code + " " + amount.toFixed(2); }
   }
 
   function normalizeQuery(value) {
@@ -63,8 +72,9 @@
 
   function availabilityBadge(item) {
     var available = !!(item && item.is_available);
+    var quantity = item && Number(item.available_quantity);
     return {
-      label: available ? "Available" : "Currently unavailable",
+      label: available ? (Number.isInteger(quantity) && quantity > 0 ? "Available · up to " + quantity : "Available") : "Currently unavailable",
       unavailable: !available,
     };
   }
@@ -97,6 +107,7 @@
   }
 
   catalog.formatNaira = formatNaira;
+  catalog.formatCurrency = formatCurrency;
   catalog.normalizeQuery = normalizeQuery;
   catalog.itemMatches = itemMatches;
   catalog.filterMenu = filterMenu;
@@ -126,12 +137,10 @@
   function renderMenuItem(item, category) {
     var badge = availabilityBadge(item);
     var order = item.is_available
-      ? '<button class="btn btn-sm btn-accent" type="button" data-portal-order="' + esc(item.id) + '" data-portal-order-category="' + esc(category.id) + '">Place order</button>'
+      ? '<button class="btn btn-sm btn-accent" type="button" data-portal-order="' + esc(item.id) + '" data-portal-order-category="' + esc(category.id) + '">Add to order</button>'
       : '<span class="badge badge-warning">Currently unavailable</span>';
     var options = (item.modifiers && item.modifiers.length)
-      ? '<p class="caption">Options: ' + item.modifiers.map(function (m) {
-          return esc(m.name) + (Number(m.price_delta) ? " (+" + esc(formatNaira(m.price_delta)) + ")" : "");
-        }).join(", ") + "</p>"
+      ? '<p class="caption">For custom options, please contact the hotel.</p>'
       : "";
     return (
       '<article class="card card-pad portal-menu-item" data-portal-menu-item="' + esc(item.id) + '">' +
@@ -139,7 +148,7 @@
           '<div><h3 style="margin:0">' + esc(item.name) + "</h3>" +
           '<span class="badge">' + esc(areaLabel(category.service_area)) + "</span> " +
           '<span class="badge ' + (badge.unavailable ? "badge-warning" : "badge-success") + '">' + esc(badge.label) + "</span></div>" +
-          '<strong style="white-space:nowrap">' + esc(formatNaira(item.price)) + "</strong>" +
+          '<strong style="white-space:nowrap">' + esc(formatCurrency(item.price, item.currency)) + "</strong>" +
         "</div>" +
         (item.description ? '<p class="muted" style="margin:.5rem 0">' + esc(item.description) + "</p>" : "") +
         options +
@@ -148,8 +157,8 @@
     );
   }
 
-  // Menu panel. `api.load(params)` resolves to the server payload
-  // ({categories:[...]}); `api.onOrder(item, category)` opens the request form.
+  // Menu panel. `api.load()` returns {categories:[...]};
+  // `api.onOrder(item, category)` adds a server-listed item to the guest cart.
   catalog.mountMenu = function mountMenu(root, api) {
     var state = { area: "ALL", categoryId: "ALL", query: "", data: null };
     root.innerHTML =
@@ -187,7 +196,7 @@
         return;
       }
       var count = categories.reduce(function (n, c) { return n + c.items.length; }, 0);
-      status.textContent = count + (count === 1 ? " item" : " items") + " shown. Prices are in naira and as listed by the hotel.";
+      status.textContent = count + (count === 1 ? " item" : " items") + " shown. Availability may change; stock and prices are checked when you send your order.";
       list.innerHTML = categories.map(function (category) {
         return '<section style="grid-column:1/-1"><h3 style="margin:.5rem 0 0">' + esc(category.name) + "</h3>" +
           (category.description ? '<p class="caption">' + esc(category.description) + "</p>" : "") +

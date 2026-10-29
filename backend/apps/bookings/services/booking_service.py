@@ -1468,6 +1468,10 @@ def _perform_checkout(booking: Booking, *, actor=None, automatic=False,
 
 @transaction.atomic
 def check_out_booking(booking: Booking, *, staff_user, allow_balance_due=False, request=None):
+    # Serialize checkout with verified portal order creation before locking
+    # room assignments. Automatic checkout already takes this booking lock.
+    # Re-read under the lock so a waiting checkout does not act on stale state.
+    booking = Booking.objects.select_for_update().get(pk=booking.pk)
     return _perform_checkout(
         booking, actor=staff_user, automatic=False,
         allow_balance_due=allow_balance_due, request=request,

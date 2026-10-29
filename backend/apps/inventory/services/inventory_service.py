@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
-from django.db.models import F, Q, Sum
+from django.db.models import Count, F, Q, Sum
 from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
@@ -866,7 +866,7 @@ def _direct_sale_snapshots(menu_item_ids):
     return snapshots
 
 
-def pos_stock_rules(menu_item_ids):
+def pos_stock_rules(menu_item_ids, *, strict=False):
     """One authoritative stock rule per POS menu item, for validation/display.
 
     This is the POS-facing resolver built on exactly the same two configuration
@@ -900,6 +900,26 @@ def pos_stock_rules(menu_item_ids):
     if not ids:
         return {}
     snapshots = _active_recipe_snapshots(ids)
+    ambiguous = set()
+    if strict:
+        # Some imported databases can contain several active recipe versions;
+        # the legacy resolver chooses one deterministically, but a guest order
+        # must not guess. Nor should a recipe and direct-sale claim compete.
+        recipe_counts = {
+            row["menu_item_id"]: row["count"]
+            for row in StockRecipe.objects.filter(menu_item_id__in=ids, is_active=True)
+            .values("menu_item_id").annotate(count=Count("pk"))
+        }
+        claim_counts = {
+            row["direct_sale_menu_item_id"]: row["count"]
+            for row in StockItem.objects.filter(direct_sale_menu_item_id__in=ids)
+            .values("direct_sale_menu_item_id").annotate(count=Count("pk"))
+        }
+        ambiguous = {
+            menu_id for menu_id in ids
+            if recipe_counts.get(menu_id, 0) > 1 or claim_counts.get(menu_id, 0) > 1
+            or (recipe_counts.get(menu_id, 0) and claim_counts.get(menu_id, 0))
+        }
     # Every stock item that explicitly claims one of these menu items as a
     # direct sale, regardless of validity: a claim that did not resolve into a
     # usable snapshot above is a broken stock configuration, not an untracked
@@ -941,6 +961,11 @@ def pos_stock_rules(menu_item_ids):
             "unconfigured": False,
             "unconfigured_reason": "",
         }
+        if menu_item_id in ambiguous:
+            rule["unconfigured"] = True
+            rule["unconfigured_reason"] = "multiple active physical stock mappings need inventory review"
+            rules[menu_item_id] = rule
+            continue
         if snapshot is None:
             claim = claims.get(menu_item_id)
             if claim is not None:
@@ -996,7 +1021,7 @@ def pos_stock_rules(menu_item_ids):
         unusable = []
         for component in components:
             item = component_items.get(int(component["item_id"]))
-            if item is None or not item.is_active:
+            if item is None or not item.is_active or Decimal(str(component["quantity_per_menu_unit"])) <= Decimal("0"):
                 unusable.append(str(component.get("item_sku") or component.get("item_id")))
                 continue
             resolved_components.append({
@@ -1009,7 +1034,7 @@ def pos_stock_rules(menu_item_ids):
         if unusable:
             rule["unconfigured"] = True
             rule["unconfigured_reason"] = (
-                "its recipe references an inactive or removed stock item ("
+                "its recipe references an inactive stock item or an invalid quantity ("
                 + ", ".join(sorted(set(unusable))) + ")"
             )
             rules[menu_item_id] = rule
@@ -1058,30 +1083,56 @@ def open_pos_order_demand(required_keys, *, exclude_order=None):
     keys = {key for key in required_keys}
     if not keys:
         return {}
-    lines = PosOrderLine.objects.filter(
-        order__status__in=_open_pos_order_statuses(), menu_item_id__isnull=False,
-    )
+    lines = PosOrderLine.objects.filter(order__status__in=_open_pos_order_statuses())
     if exclude_order is not None:
         lines = lines.exclude(order=exclude_order)
-    rows = [(int(row["menu_item_id"]), int(row["quantity"])) for row in lines.values("menu_item_id", "quantity")]
+    rows = list(lines.values("menu_item_id", "quantity", "order__metadata"))
     if not rows:
         return {}
-    rules = pos_stock_rules({row[0] for row in rows})
+    rules = pos_stock_rules({
+        int(row["menu_item_id"]) for row in rows
+        if row["menu_item_id"] is not None and (row["order__metadata"] or {}).get("portal_stock_rules") is None
+    })
     demand = {}
-    for menu_item_id, quantity in rows:
-        rule = rules.get(menu_item_id)
-        if not rule or not rule["tracked"]:
-            continue
-        for component in rule["components"]:
-            key = (component["item_id"], rule["location_id"])
+    for row in rows:
+        metadata = row["order__metadata"] or {}
+        frozen = metadata.get("portal_stock_rules")
+        if row["menu_item_id"] is None:
+            if frozen is not None:
+                # An imported/deleted menu item can null the FK. Never discard
+                # its still-open physical obligation from other orders' demand.
+                raise ValidationError("An open guest order has invalid stock evidence; contact inventory.")
+            continue  # legacy non-portal free-text line
+        menu_item_id, quantity = int(row["menu_item_id"]), int(row["quantity"])
+        if frozen is not None:
+            # Portal orders keep their original physical commitment even when
+            # an inventory operator subsequently replaces a recipe. Failing
+            # closed on corrupt evidence is safer than silently dropping it.
+            rule = frozen.get(str(menu_item_id))
+            if not rule or not rule.get("location_id") or not rule.get("components"):
+                raise ValidationError("An open guest order has invalid stock evidence; contact inventory.")
+            components = rule["components"]
+        else:
+            rule = rules.get(menu_item_id)
+            if not rule or not rule["tracked"]:
+                continue
+            components = rule["components"]
+        for component in components:
+            try:
+                key = (int(component["item_id"]), int(rule["location_id"]))
+                per_unit = Decimal(str(component["quantity_per_menu_unit"]))
+                if per_unit <= 0:
+                    raise ValueError("non-positive stock quantity")
+            except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+                raise ValidationError("An open guest order has invalid stock evidence; contact inventory.") from exc
             if key not in keys:
-                continue  # cannot affect the keys the caller asked about
-            amount = (component["quantity_per_menu_unit"] * quantity).quantize(QTY)
+                continue
+            amount = (per_unit * quantity).quantize(QTY)
             demand[key] = (demand.get(key, Decimal("0.0000")) + amount).quantize(QTY)
     return demand
 
 
-def pos_stock_summaries(menu_item_ids, *, include_open_order_demand=True):
+def pos_stock_summaries(menu_item_ids, *, include_open_order_demand=True, strict=False):
     """Bulk, read-only stock summaries for the POS order-entry interfaces.
 
     One shared implementation for the POS menu payload and the barcode lookup:
@@ -1117,7 +1168,7 @@ def pos_stock_summaries(menu_item_ids, *, include_open_order_demand=True):
     is display guidance only. Submission-time validation in
     ``apps.pos.services.order_service`` remains authoritative.
     """
-    rules = pos_stock_rules(menu_item_ids)
+    rules = pos_stock_rules(menu_item_ids, strict=strict)
     balance_keys = {
         (component["item_id"], rule["location_id"])
         for rule in rules.values()
@@ -1298,6 +1349,12 @@ def create_stock_recipe(*, menu_item, location, tracking_mode, components, actor
 
 @transaction.atomic
 def retire_stock_recipe(*, recipe, actor):
+    # Same menu-row lock as recipe creation and portal stock validation: a
+    # recipe cannot disappear between checking and freezing its components.
+    from apps.pos.models import MenuItem
+
+    menu_item_id = StockRecipe.objects.values_list("menu_item_id", flat=True).get(pk=recipe.pk)
+    MenuItem.objects.select_for_update().get(pk=menu_item_id)
     recipe = StockRecipe.objects.select_for_update().get(pk=recipe.pk)
     if not recipe.is_active:
         return recipe

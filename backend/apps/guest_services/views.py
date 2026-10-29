@@ -13,7 +13,7 @@ from apps.accounts.models import User
 from apps.audit.services import log_action
 from apps.bookings.models import Guest, RoomOccupant
 from apps.core.pagination import StandardPagination
-from apps.core.exceptions import ServiceQRExpiredError
+from apps.core.exceptions import PosStockConflictError, ServiceQRExpiredError
 from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
 from apps.portal.authentication import PortalSessionAuthentication
@@ -30,6 +30,7 @@ from .serializers import (
     PortalServiceRequestCreateSerializer,
     PortalServiceRequestDetailSerializer,
     PortalServiceRequestListSerializer,
+    PortalRoomOrderCreateSerializer,
     ServiceRequestAssignSerializer,
     ServiceRequestCommentSerializer,
     ServiceRequestDetailSerializer,
@@ -95,7 +96,8 @@ def _portal_base_queryset(email, *, detail=False):
         ServiceRequest.objects
         .filter(Q(guest__email__iexact=email) | Q(portal_email__iexact=email))
         .filter(stay_id__in=eligible_stay_ids_for_email(email))
-        .select_related("stay", "room")
+        .select_related("stay", "room", "pos_order")
+        .prefetch_related("pos_order__lines")
     )
     if detail:
         queryset = queryset.prefetch_related(
@@ -412,6 +414,42 @@ class PortalServiceRequestListCreateView(_PortalServiceRequestBase):
         return _page(self, request, queryset.order_by("-created_at", "-pk"), PortalServiceRequestListSerializer)
 
     def post(self, request):
+        if "lines" in request.data:
+            serializer = PortalRoomOrderCreateSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            from .services.portal_order_service import submit_portal_room_order
+
+            try:
+                service_request, created = submit_portal_room_order(
+                    email=request.portal_session.email, data=serializer.validated_data, request=request,
+                )
+            except PosStockConflictError as exc:
+                # The POS context is for staff and contains store, SKU and
+                # ingredient details. The guest needs product-specific errors,
+                # not internal configuration or inventory identifiers.
+                affected = {}
+                for row in (exc.stock_context or {}).get("items", []):
+                    for item in row.get("affected_menu_items") or [row]:
+                        name = str(item.get("item_name") or "").strip()
+                        if name:
+                            affected[item.get("menu_item_id")] = name
+                labels = list(dict.fromkeys(affected.values()))
+                message = (
+                    ", ".join(labels) + " cannot be ordered in the requested quantity right now. "
+                    "Please adjust your order or contact the hotel."
+                    if labels else "The requested items cannot be ordered right now. Please contact the hotel."
+                )
+                raise PosStockConflictError(message, context={
+                    "reason": (exc.stock_context or {}).get("reason", "unavailable"),
+                    "items": [{"menu_item_id": mid, "item_name": name} for mid, name in affected.items()],
+                }) from None
+            service_request = _portal_request_or_404(email=request.portal_session.email, reference=service_request.reference, detail=True)
+            return success_response(
+                PortalServiceRequestDetailSerializer(service_request).data,
+                message="Order received for staff review. No payment has been taken." if created else "Existing order returned.",
+                status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+            )
+
         serializer = PortalServiceRequestCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data

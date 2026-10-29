@@ -466,6 +466,11 @@ def _folio_clearance_payload(booking, *, user=None):
                                  PosOrder.Status.DRAFT])
             .order_by("created_at")
         ):
+            if ((order.metadata or {}).get("portal_stock_rules") is not None
+                    and order.status != PosOrder.Status.DELIVERED):
+                # A guest menu request is not a debt until delivery. It stays
+                # visible in open_requests and still blocks gate clearance.
+                continue
             unpaid_requests.append(
                 {
                     "reference": order.reference,

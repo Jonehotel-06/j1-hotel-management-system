@@ -2,8 +2,9 @@
 
 Both endpoints sit behind the verified portal session (cookie or header), so an
 expired, checked-out or cross-guest session gets nothing. Responses contain only
-customer-facing fields. SKU, barcode, tax settings, recipes, costs, margins and
-stock never leave the server through these views.
+customer-facing fields. SKU, barcode, tax settings, recipes, costs, margins and ingredient-level
+inventory data never leave the server through these views. The available menu
+quantity is a non-reserving snapshot; submission rechecks it under locks.
 
 Prices are the stored POS selling price (``MenuItem.base_price``). The POS never
 appends customer tax (owner policy, see ``pos.services.order_service``), so the
@@ -35,19 +36,26 @@ def _money(value) -> str:
     return f"{value:.2f}"
 
 
-def _menu_item_payload(item, service_area):
+def _menu_item_payload(item, service_area, stock_summary, *, ordering_enabled=True):
     modifiers = [
         {"name": modifier.name, "price_delta": _money(modifier.price_delta)}
         for modifier in getattr(item, "_portal_modifiers", [])
     ]
+    summary = stock_summary or {}
+    available = bool(
+        item.is_available and item.base_price > 0 and ordering_enabled and summary.get("tracked")
+        and not summary.get("unconfigured") and summary.get("available_sufficient_for_one")
+    )
+    quantity = int(summary.get("available_quantity") or 0) if summary.get("tracked") else 0
     return {
         "id": item.pk,
         "name": item.name,
         "description": item.description or "",
         "price": _money(item.base_price),
         "currency": item.currency or "NGN",
-        "is_available": bool(item.is_available),
-        "availability_label": "Available" if item.is_available else "Currently unavailable",
+        "is_available": available,
+        "availability_label": "Available" if available else "Currently unavailable",
+        "available_quantity": min(100, max(quantity, 0)),
         "preparation_minutes": item.preparation_minutes,
         "modifiers": modifiers,
         "service_area": service_area,
@@ -79,10 +87,17 @@ class PortalMenuView(APIView):
             "sort_order", "name"
         )
 
+        categories = list(categories)
+        from apps.inventory.services.inventory_service import pos_stock_summaries
+
+        all_ids = [item.pk for category in categories for item in getattr(category, "_portal_items", [])]
+        summaries = pos_stock_summaries(all_ids, strict=True)
+        enabled = set(getattr(settings, "PORTAL_ENABLED_SERVICE_CATEGORIES", None) or ServiceRequest.Category.values)
         payload = []
         for category in categories:
             visible = [
-                _menu_item_payload(item, category.service_area)
+                _menu_item_payload(item, category.service_area, summaries.get(item.pk),
+                                   ordering_enabled=MENU_ORDER_CATEGORY.get(category.service_area) in enabled)
                 for item in getattr(category, "_portal_items", [])
             ]
             if not visible:

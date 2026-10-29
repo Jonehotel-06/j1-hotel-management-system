@@ -1,4 +1,6 @@
 """Explicit staff and portal contracts for guest-service operations."""
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from .models import ServiceRequest, ServiceRequestEvent
@@ -56,6 +58,9 @@ class ServiceRequestDetailSerializer(ServiceRequestListSerializer):
 
 
 class PortalServiceRequestListSerializer(serializers.ModelSerializer):
+    # The portal may show only the guest-facing snapshot, never SKUs, stock
+    # components, internal notes, or financial transaction identifiers.
+    pos_order = serializers.SerializerMethodField()
     stay_reference = serializers.CharField(source="stay.reference", read_only=True, allow_null=True)
     room_number = serializers.CharField(source="room.room_number", read_only=True, allow_null=True)
 
@@ -63,9 +68,34 @@ class PortalServiceRequestListSerializer(serializers.ModelSerializer):
         model = ServiceRequest
         fields = [
             "reference", "stay_reference", "room_number", "category", "priority", "status", "summary",
-            "due_at", "acknowledged_at", "resolved_at", "closed_at", "created_at", "updated_at",
+            "due_at", "acknowledged_at", "resolved_at", "closed_at", "created_at", "updated_at", "pos_order",
         ]
         read_only_fields = fields
+
+    def get_pos_order(self, obj):
+        order = getattr(obj, "pos_order", None)
+        if order is None or (order.metadata or {}).get("portal_stock_rules") is None:
+            # Do not describe unrelated/legacy POS links as folio-only portal
+            # orders or expose their data through this new projection.
+            return None
+        return {
+            "reference": order.reference,
+            "status": order.status,
+            "currency": order.currency,
+            "total_amount": str(order.total_amount),
+            "payment_method": "FOLIO",
+            "charge_posted": bool(order.charge_transaction_id),
+            "can_cancel": (
+                obj.status in {ServiceRequest.Status.OPEN, ServiceRequest.Status.ACKNOWLEDGED}
+                and order.status in {"DRAFT", "SUBMITTED", "CANCELLED"}
+                and not order.charge_transaction_id
+            ),
+            "lines": [
+                {"name": line.item_name, "quantity": line.quantity,
+                 "unit_price": str(line.unit_price), "line_total": str(line.line_total)}
+                for line in order.lines.all()
+            ],
+        }
 
 
 class PortalServiceRequestDetailSerializer(PortalServiceRequestListSerializer):
@@ -117,6 +147,36 @@ class PortalServiceRequestCreateSerializer(serializers.Serializer):
     summary = serializers.CharField(max_length=255, trim_whitespace=True)
     detail = serializers.CharField(required=False, allow_blank=True, max_length=5000)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
+
+
+class _StrictPortalOrderSerializer(serializers.Serializer):
+    """Reject, rather than silently discard, unrecognised order fields."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, "keys"):
+            unknown = set(data.keys()) - set(self.fields)
+            if unknown:
+                raise serializers.ValidationError({
+                    "non_field_errors": ["Unsupported order fields. Refresh the menu and try again."]
+                })
+        return super().to_internal_value(data)
+
+
+class PortalRoomOrderLineSerializer(_StrictPortalOrderSerializer):
+    menu_item_id = serializers.IntegerField(min_value=1)
+    quantity = serializers.IntegerField(min_value=1, max_value=100)
+    # This is a price-change acknowledgement, never the authoritative price.
+    expected_unit_price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
+
+
+class PortalRoomOrderCreateSerializer(_StrictPortalOrderSerializer):
+    stay_reference = serializers.CharField(max_length=56)
+    room_id = serializers.IntegerField(required=False, min_value=1)
+    lines = PortalRoomOrderLineSerializer(many=True, min_length=1, max_length=20)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
+    idempotency_key = serializers.CharField(max_length=128, allow_blank=False, trim_whitespace=True)
+    # The established room-service POS flow settles on the guest's main folio.
+    payment_method = serializers.ChoiceField(choices=["FOLIO"], default="FOLIO")
 
 
 class PortalServiceRequestCommentSerializer(serializers.Serializer):

@@ -91,6 +91,10 @@ def _snapshot_line(*, raw_line: Mapping, currency: str, service_areas=None) -> d
     unit_price = _money(menu_item.base_price, positive=True) + modifier_total
     if unit_price <= Decimal("0.00"):
         raise ValidationError({"lines": "The configured item/modifier price must be positive."})
+    if raw_line.get("expected_unit_price") is not None:
+        expected = _money(raw_line["expected_unit_price"], field="expected_unit_price", positive=True)
+        if expected != unit_price:
+            raise ValidationError({"lines": f"The price of {menu_item.name} has changed. Refresh the menu and review your order."})
     line_subtotal = (unit_price * quantity).quantize(CENT)
     # CUSTOMER-BILLING TAX REMOVAL (owner policy 2026-10-11): POS lines never
     # carry an appended tax, regardless of any legacy MenuItem.tax_rate_percent
@@ -162,7 +166,29 @@ def _stock_conflict_context(reason, items):
     return {"reason": reason, "items": items}
 
 
-def _validate_order_lines_stock(lines, *, exclude_order=None):
+def _portal_stock_snapshot(rules):
+    """Freeze physical obligations for a portal draft, in base units.
+
+    Open-order demand must continue to include these obligations even if an
+    operator later edits or retires a recipe. A changed mapping is refused at
+    submission/delivery rather than silently consuming a different stock item.
+    """
+    return {
+        str(menu_id): {
+            "source": rule["source"],
+            "recipe_reference": rule["recipe_reference"],
+            "location_id": rule["location_id"],
+            "components": sorted(
+                [{"item_id": c["item_id"], "quantity_per_menu_unit": str(c["quantity_per_menu_unit"].quantize(Decimal("0.0001")))}
+                 for c in rule["components"]],
+                key=lambda component: component["item_id"],
+            ),
+        }
+        for menu_id, rule in sorted(rules.items())
+    }
+
+
+def _validate_order_lines_stock(lines, *, exclude_order=None, require_configuration=False, expected_snapshot=None):
     """Authoritative pre-acceptance stock validation for POS order lines.
 
     Runs INSIDE the caller's transaction for both draft creation and draft
@@ -207,16 +233,29 @@ def _validate_order_lines_stock(lines, *, exclude_order=None):
         menu_item = line.get("menu_item") if hasattr(line, "get") else None
         menu_item_id = getattr(menu_item, "pk", None) or line.get("menu_item_id")
         if menu_item_id is None:
+            if require_configuration:
+                raise PosStockConflictError("An ordered item is no longer available. Please contact the hotel.")
             continue  # legacy free-text line: never resolvable to stock, never blocked here
         try:
             quantity = int(line.get("quantity"))
+            if quantity <= 0:
+                raise ValueError("non-positive quantity")
         except (TypeError, ValueError):
+            if require_configuration:
+                raise PosStockConflictError("An order quantity is invalid. Please contact the hotel.")
             continue
         normalised.append((int(menu_item_id), quantity, str(line.get("item_name") or "")))
     if not normalised:
+        if require_configuration:
+            raise PosStockConflictError("This order has no valid items. Please contact the hotel.")
         return
 
-    rules = pos_stock_rules({row[0] for row in normalised})
+    menu_ids = sorted({row[0] for row in normalised})
+    if require_configuration:
+        # Recipe creation/retirement takes the same menu locks. Sort once so
+        # differently ordered baskets cannot deadlock each other.
+        list(MenuItem.objects.select_for_update().filter(pk__in=menu_ids).order_by("pk").values_list("pk", flat=True))
+    rules = pos_stock_rules(menu_ids, strict=require_configuration)
     names = {}
     unconfigured = []
     for menu_item_id, quantity, item_name in normalised:
@@ -226,6 +265,10 @@ def _validate_order_lines_stock(lines, *, exclude_order=None):
         names[menu_item_id] = item_name
         if rule["unconfigured"]:
             unconfigured.append((menu_item_id, item_name, rule["unconfigured_reason"]))
+        elif require_configuration and not rule["tracked"]:
+            # A SKU/name resemblance, or even a NO_STOCK recipe, is not a
+            # verifiable physical food/drink deduction for guest ordering.
+            unconfigured.append((menu_item_id, item_name, "a physical stock mapping is required"))
     if unconfigured:
         menu_item_id, item_name, reason = unconfigured[0]
         message = (
@@ -239,6 +282,14 @@ def _validate_order_lines_stock(lines, *, exclude_order=None):
                 "stock_not_configured",
                 [{"menu_item_id": mid, "item_name": name, "reason": why} for mid, name, why in unconfigured],
             ),
+        )
+
+    if expected_snapshot is not None and _portal_stock_snapshot(rules) != expected_snapshot:
+        raise PosStockConflictError(
+            "An ordered item's inventory configuration changed; contact staff before processing this order.",
+            context=_stock_conflict_context("stock_configuration_changed", [
+                {"menu_item_id": mid, "item_name": names.get(mid, "")} for mid in menu_ids
+            ]),
         )
 
     # Required base units per (stock item, store), and which menu items feed it.
@@ -255,7 +306,7 @@ def _validate_order_lines_stock(lines, *, exclude_order=None):
             required[key] = (required.get(key, Decimal("0.0000")) + amount).quantize(Decimal("0.0001"))
             contributors.setdefault(key, []).append((menu_item_id, quantity, component))
     if not required:
-        return
+        return rules
 
     # Stock already committed by other open orders (resolved through the same
     # rules so shared physical stock is counted). The query runs while the
@@ -269,6 +320,20 @@ def _validate_order_lines_stock(lines, *, exclude_order=None):
         item_id, location_id = key
         balance = _locked_balance(item=_StockItem(pk=item_id), location=_StockLocation(pk=location_id))
         balances[key] = Decimal(balance.quantity_on_hand)
+
+    if require_configuration:
+        # An inventory edit may have completed between the first resolution
+        # and our stock-item/location locks. Re-read only after those locks;
+        # never accept against a mapping that was replaced while we waited.
+        current_rules = pos_stock_rules(menu_ids, strict=True)
+        if (any(not rule["tracked"] or rule["unconfigured"] for rule in current_rules.values())
+                or _portal_stock_snapshot(current_rules) != _portal_stock_snapshot(rules)):
+            raise PosStockConflictError(
+                "An ordered item's inventory configuration changed; refresh the menu or contact staff.",
+                context=_stock_conflict_context("stock_configuration_changed", [
+                    {"menu_item_id": mid, "item_name": names.get(mid, "")} for mid in menu_ids
+                ]),
+            )
 
     # The "stock other open orders already promised" rule lives in ONE place:
     # the inventory service's shared helper, which the POS menu availability
@@ -289,7 +354,7 @@ def _validate_order_lines_stock(lines, *, exclude_order=None):
             continue
         shortages.append((key, on_hand, held, available, needed, list(contributors.get(key, []))))
     if not shortages:
-        return
+        return rules
 
     messages = []
     conflict_items = []
@@ -309,6 +374,10 @@ def _validate_order_lines_stock(lines, *, exclude_order=None):
         conflict_items.append({
             "menu_item_id": menu_item_id,
             "item_name": item_name,
+            "affected_menu_items": [
+                {"menu_item_id": mid, "item_name": names.get(mid, "")}
+                for mid in sorted(by_product)
+            ],
             "item_sku": component.get("item_sku", ""),
             "location": location_name,
             "on_hand": _qty_text(on_hand),
@@ -386,12 +455,14 @@ def create_order(
     notes="",
     idempotency_key=None,
     service_request=None,
+    portal_email=None,
 ) -> tuple[PosOrder, bool]:
     """Create a price-snapshotted draft. Client totals are never accepted."""
     if mode not in PosOrder.Mode.values:
         raise ValidationError({"mode": "Invalid POS order mode."})
     idempotency_key = (idempotency_key or "").strip() or None
     qr_request = None
+    is_portal_order = portal_email is not None
     if service_request is not None:
         qr_request = (
             ServiceRequest.objects.select_for_update()
@@ -401,22 +472,42 @@ def create_order(
         )
         if qr_request is None:
             raise ValidationError({"service_request_reference": "The guest service request was not found."})
-        if not service_request_queryset_for_staff(actor).filter(pk=qr_request.pk).exists():
-            raise PermissionDenied("This QR request is no longer in the caller's permitted guest-service queue.")
-        if (
-            qr_request.channel != ServiceRequest.Channel.QR
-            or qr_request.category != ServiceRequest.Category.FOOD_BEVERAGE
-            or qr_request.qr_link_id is None
-            or qr_request.qr_link.target_type != "TABLE"
-            or not qr_request.table_number
-        ):
-            raise ValidationError({"service_request_reference": "Only a table QR food-and-beverage request can be linked to a POS draft."})
+        if is_portal_order:
+            # This is an internal-only path called by the verified portal
+            # service, not an option exposed by the staff POS API. Recheck the
+            # source, identity, stay AND the actual occupied room here as well.
+            from apps.portal.eligibility import active_stay_rooms_for_email
+
+            email = str(portal_email or "").strip().lower()
+            if (
+                actor is not None or not email or mode != PosOrder.Mode.ROOM_SERVICE
+                or qr_request.channel != ServiceRequest.Channel.PORTAL
+                or qr_request.category not in {ServiceRequest.Category.ROOM_SERVICE, ServiceRequest.Category.FOOD_BEVERAGE}
+                or qr_request.portal_email.strip().lower() != email
+                or stay is None or qr_request.stay_id != stay.pk
+                or qr_request.guest_id != stay.guest_id or not qr_request.room_id
+                or not active_stay_rooms_for_email(email).filter(stay_id=stay.pk, room_id=qr_request.room_id).exists()
+            ):
+                raise PermissionDenied("This room-service order is not available for the current guest and stay.")
+        else:
+            if not service_request_queryset_for_staff(actor).filter(pk=qr_request.pk).exists():
+                raise PermissionDenied("This QR request is no longer in the caller's permitted guest-service queue.")
+            if (
+                qr_request.channel != ServiceRequest.Channel.QR
+                or qr_request.category != ServiceRequest.Category.FOOD_BEVERAGE
+                or qr_request.qr_link_id is None
+                or qr_request.qr_link.target_type != "TABLE"
+                or not qr_request.table_number
+            ):
+                raise ValidationError({"service_request_reference": "Only a table QR food-and-beverage request can be linked to a POS draft."})
+            if mode not in {PosOrder.Mode.RESTAURANT, PosOrder.Mode.BAR}:
+                raise ValidationError({"mode": "Table QR requests can create only restaurant or bar drafts."})
         if qr_request.status in {
             ServiceRequest.Status.RESOLVED, ServiceRequest.Status.CLOSED, ServiceRequest.Status.CANCELLED,
         }:
             raise ValidationError({"service_request_reference": "A resolved, closed, or cancelled request cannot create a POS draft."})
-        if mode not in {PosOrder.Mode.RESTAURANT, PosOrder.Mode.BAR}:
-            raise ValidationError({"mode": "Table QR requests can create only restaurant or bar drafts."})
+    elif is_portal_order:
+        raise ValidationError("A portal room-service order must be linked to its guest request.")
 
     if idempotency_key:
         existing = PosOrder.objects.select_for_update().filter(idempotency_key=idempotency_key).first()
@@ -431,14 +522,14 @@ def create_order(
 
     table_session_reference = str(table_session_reference or "").strip()
     table_session = None
-    if qr_request is not None and mode == PosOrder.Mode.RESTAURANT and not table_session_reference:
+    if qr_request is not None and not is_portal_order and mode == PosOrder.Mode.RESTAURANT and not table_session_reference:
         raise ValidationError({"table_session_reference": "Restaurant orders from a table QR request require its open registered table session."})
     if table_session_reference:
         if mode != PosOrder.Mode.RESTAURANT:
             raise ValidationError({"table_session_reference": "Registered table sessions are for restaurant dine-in orders only."})
         table_session = lock_open_table_session(table_session_reference)
         table_number = table_session.table.code
-    if qr_request is not None:
+    if qr_request is not None and not is_portal_order:
         request_table_label = _normalise_table_label(qr_request.table_number)
         if mode == PosOrder.Mode.RESTAURANT:
             if request_table_label != _normalise_table_label(table_session.table.code):
@@ -471,6 +562,13 @@ def create_order(
         service_areas = {MenuCategory.ServiceArea.RESTAURANT, MenuCategory.ServiceArea.BAR}
     else:
         service_areas = {MenuCategory.ServiceArea.RESTAURANT}
+    # Lock every menu item in a stable order before snapshotting lines. This
+    # also serializes against recipe version creation for a shared menu item.
+    try:
+        menu_ids = sorted({int(raw_line.get("menu_item_id")) for raw_line in supplied_lines})
+    except (TypeError, ValueError):
+        raise ValidationError({"lines": "Each line needs an integer menu_item_id and quantity."})
+    list(MenuItem.objects.select_for_update().filter(pk__in=menu_ids).order_by("pk").values_list("pk", flat=True))
     snapshotted_lines = [
         _snapshot_line(raw_line=raw_line, currency=currency, service_areas=service_areas)
         for raw_line in supplied_lines
@@ -479,7 +577,7 @@ def create_order(
     # an accepted order line, so this runs before anything is persisted. A
     # rejection rolls the whole transaction back — no order row, no lines, and
     # any pre-existing drafts by other staff are untouched.
-    _validate_order_lines_stock(snapshotted_lines)
+    stock_rules = _validate_order_lines_stock(snapshotted_lines, require_configuration=is_portal_order)
     subtotal = sum((item["line_total"] for item in snapshotted_lines), Decimal("0.00")).quantize(CENT)
     tax_amount = sum((item["tax_amount"] for item in snapshotted_lines), Decimal("0.00")).quantize(CENT)
     total_amount = (subtotal + tax_amount).quantize(CENT)
@@ -506,6 +604,7 @@ def create_order(
         tax_amount=tax_amount,
         total_amount=total_amount,
         created_by=actor,
+        metadata={"portal_stock_rules": _portal_stock_snapshot(stock_rules)} if is_portal_order else {},
     )
     PosOrderLine.objects.bulk_create(
         [
@@ -540,8 +639,9 @@ def create_order(
             request=qr_request,
             type=ServiceRequestEvent.Type.POS_ORDER_LINKED,
             actor=actor,
-            message=f"POS draft {order.reference} created from this QR request.",
-            guest_visible=False,
+            message=("Menu order received for staff review. No payment was taken."
+                     if is_portal_order else f"POS draft {order.reference} created from this QR request."),
+            guest_visible=is_portal_order,
             previous_status=qr_request.status,
             new_status=qr_request.status,
             details={"pos_order_reference": order.reference, "pos_order_status": order.status},
@@ -551,9 +651,93 @@ def create_order(
     return order, True
 
 
+def _lock_portal_stay_before_order(order, *, require_active):
+    """Use booking -> stay -> POS -> request, including for cancellation.
+
+    On MariaDB even a status-only POS update can acquire a shared FK lock on
+    the stay. Locking the order first therefore deadlocks with delivery, which
+    holds the stay and waits for the order. Booking first also agrees with
+    checkout, which locks its booking before touching the room and stay.
+    """
+    identity = PosOrder.objects.filter(pk=order.pk).values("stay_id", "metadata").first()
+    if not identity or (identity["metadata"] or {}).get("portal_stock_rules") is None:
+        return None
+    if not identity["stay_id"]:
+        if require_active:
+            raise ValidationError("This guest order has no active stay.")
+        return None
+    if require_active:
+        from apps.guest_services.services.portal_order_service import _require_safe_isolation
+        _require_safe_isolation()
+    stay_identity = Stay.objects.filter(pk=identity["stay_id"]).values("booking_id").first()
+    if not stay_identity:
+        raise ValidationError("This guest order has no associated stay.")
+    from apps.bookings.models import Booking
+    from apps.portal.eligibility import INELIGIBLE_BOOKING_STATUSES
+    booking = Booking.objects.select_for_update().get(pk=stay_identity["booking_id"])
+    stay = Stay.objects.select_for_update().get(pk=identity["stay_id"])
+    if require_active and (stay.status != Stay.Status.IN_HOUSE or booking.status in INELIGIBLE_BOOKING_STATUSES):
+        raise ValidationError("This room-service order requires an active in-house stay.")
+    return stay
+
+
+def _locked_portal_request(order):
+    if (order.metadata or {}).get("portal_stock_rules") is None:
+        return None
+    if not order.service_request_id:
+        raise ValidationError("This guest order is missing its service request; contact the hotel.")
+    return ServiceRequest.objects.select_for_update().get(pk=order.service_request_id)
+
+
+def _sync_portal_request(request, order, actor, target):
+    """Reflect POS progress in the linked request, with append-only evidence."""
+    if request is None:
+        return
+    previous = request.status
+    next_status = None
+    if target == PosOrder.Status.SUBMITTED and previous == ServiceRequest.Status.OPEN:
+        next_status = ServiceRequest.Status.ACKNOWLEDGED
+    elif target in {PosOrder.Status.PREPARING, PosOrder.Status.READY} and previous in {
+        ServiceRequest.Status.OPEN, ServiceRequest.Status.ACKNOWLEDGED, ServiceRequest.Status.ESCALATED,
+    }:
+        next_status = ServiceRequest.Status.IN_PROGRESS
+    elif target == PosOrder.Status.DELIVERED and previous not in {
+        ServiceRequest.Status.RESOLVED, ServiceRequest.Status.CLOSED, ServiceRequest.Status.CANCELLED,
+    }:
+        next_status = ServiceRequest.Status.RESOLVED
+    elif target == PosOrder.Status.CANCELLED and previous not in {
+        ServiceRequest.Status.RESOLVED, ServiceRequest.Status.CLOSED, ServiceRequest.Status.CANCELLED,
+    }:
+        next_status = ServiceRequest.Status.CANCELLED
+    if next_status is None:
+        return
+    now = timezone.now()
+    request.status = next_status
+    fields = ["status", "updated_at"]
+    if next_status == ServiceRequest.Status.ACKNOWLEDGED and not request.acknowledged_at:
+        request.acknowledged_at = now
+        fields.append("acknowledged_at")
+    elif next_status == ServiceRequest.Status.RESOLVED:
+        request.resolved_at = now
+        fields.append("resolved_at")
+    elif next_status == ServiceRequest.Status.CANCELLED:
+        request.closed_at = now
+        fields.append("closed_at")
+    request.save(update_fields=fields)
+    ServiceRequestEvent.objects.create(
+        request=request, actor=actor, actor_label="Guest" if actor is None else "",
+        type=ServiceRequestEvent.Type.CANCELLED if next_status == ServiceRequest.Status.CANCELLED
+             else ServiceRequestEvent.Type.STATUS_CHANGED,
+        message=f"Menu order {target.lower().replace('_', ' ')}.", guest_visible=True,
+        previous_status=previous, new_status=next_status,
+        details={"pos_order_reference": order.reference, "pos_order_status": target},
+    )
+
+
 @transaction.atomic
 def submit_order(*, order, actor, priority=0) -> PosOrder:
     """Send a nonempty frozen order to the kitchen exactly once."""
+    _lock_portal_stay_before_order(order, require_active=True)
     order = PosOrder.objects.select_for_update().get(pk=order.pk)
     if order.status == PosOrder.Status.SUBMITTED:
         return order
@@ -566,9 +750,23 @@ def submit_order(*, order, actor, priority=0) -> PosOrder:
     # draft itself stays intact (DRAFT, unchanged) when this rejects, so staff
     # can correct or cancel it. This order's own committed lines are excluded
     # from the open-order demand so it is not counted against itself.
+    portal_snapshot = (order.metadata or {}).get("portal_stock_rules")
+    portal_request = _locked_portal_request(order)
+    if portal_request and portal_request.status in {
+        ServiceRequest.Status.CANCELLED, ServiceRequest.Status.CLOSED, ServiceRequest.Status.RESOLVED,
+    }:
+        raise ValidationError("This guest request is no longer open for processing.")
+    if portal_request:
+        from apps.portal.eligibility import active_stay_rooms_for_email
+        if not active_stay_rooms_for_email(portal_request.portal_email).filter(
+            stay_id=portal_request.stay_id, room_id=portal_request.room_id,
+        ).exists():
+            raise ValidationError("The guest's room is no longer active for this order. Contact the front desk.")
     _validate_order_lines_stock(
         PosOrderLine.objects.filter(order=order).values("menu_item_id", "quantity", "item_name"),
         exclude_order=order,
+        require_configuration=portal_snapshot is not None,
+        expected_snapshot=portal_snapshot,
     )
     now = timezone.now()
     order.status = PosOrder.Status.SUBMITTED
@@ -577,6 +775,7 @@ def submit_order(*, order, actor, priority=0) -> PosOrder:
     station = KitchenTicket.Station.BAR if order.mode == PosOrder.Mode.BAR else KitchenTicket.Station.KITCHEN
     KitchenTicket.objects.create(order=order, station=station, priority=max(0, int(priority or 0)), notes=order.notes)
     PosOrderEvent.objects.create(order=order, type=PosOrderEvent.Type.SUBMITTED, actor=actor)
+    _sync_portal_request(portal_request, order, actor, PosOrder.Status.SUBMITTED)
     return order
 
 
@@ -692,7 +891,11 @@ def bill_unbilled_order_charge(*, order, actor):
     interrupted mid-transition). It reuses the same idempotent posting, so a
     settled order is never charged twice.
     """
-    return _post_order_charge(order=order, actor=actor)
+    _lock_portal_stay_before_order(order, require_active=False)
+    locked = PosOrder.objects.select_for_update().get(pk=order.pk)
+    if (locked.metadata or {}).get("portal_stock_rules") is not None and locked.status != PosOrder.Status.DELIVERED:
+        raise ValidationError("This guest menu order has not been delivered. Deliver or cancel it before collecting its charge.")
+    return _post_order_charge(order=locked, actor=actor)
 
 
 @transaction.atomic
@@ -709,8 +912,9 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
     ``TransactionManagementError: select_for_update cannot be used outside
     of a transaction`` (HTTP 500) when this decorator was missing.
     """
-    order = PosOrder.objects.select_for_update().get(pk=order.pk)
     target_status = str(target_status or "").upper()
+    _lock_portal_stay_before_order(order, require_active=target_status != PosOrder.Status.CANCELLED)
+    order = PosOrder.objects.select_for_update().get(pk=order.pk)
     if target_status == order.status:
         return order
     allowed = {
@@ -721,6 +925,29 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
     }
     if target_status not in allowed.get(order.status, set()):
         raise ValidationError(f"Order {order.reference} cannot transition from {order.status} to {target_status}.")
+
+    portal_snapshot = (order.metadata or {}).get("portal_stock_rules")
+    portal_request = _locked_portal_request(order)
+    if portal_request and portal_request.status in {
+        ServiceRequest.Status.CANCELLED, ServiceRequest.Status.CLOSED, ServiceRequest.Status.RESOLVED,
+    } and target_status != PosOrder.Status.CANCELLED:
+        raise ValidationError("This guest request is no longer open for processing.")
+    if portal_request and target_status != PosOrder.Status.CANCELLED:
+        from apps.portal.eligibility import active_stay_rooms_for_email
+        if not active_stay_rooms_for_email(portal_request.portal_email).filter(
+            stay_id=portal_request.stay_id, room_id=portal_request.room_id,
+        ).exists():
+            raise ValidationError("The guest's room is no longer active for this order. Contact the front desk.")
+    if portal_snapshot is not None and target_status == PosOrder.Status.CANCELLED and order.charge_transaction_id:
+        raise ValidationError("This room-service order is already charged and cannot be cancelled; contact the front desk.")
+    if portal_snapshot is not None and target_status == PosOrder.Status.DELIVERED:
+        # Staff may have changed stock or a recipe after the guest submitted.
+        # Recheck under the same locks and do not post a charge for a delivery
+        # whose stock cannot actually be consumed.
+        _validate_order_lines_stock(
+            PosOrderLine.objects.filter(order=order).values("menu_item_id", "quantity", "item_name"),
+            exclude_order=order, require_configuration=True, expected_snapshot=portal_snapshot,
+        )
 
     ticket = KitchenTicket.objects.select_for_update().filter(order=order).first()
     now = timezone.now()
@@ -777,8 +1004,15 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
         # inventory console and pressed Process.
         from apps.inventory.services.inventory_service import consume_stock_for_delivered_order
 
-        consume_stock_for_delivered_order(order=order, actor=actor)
+        consumption, _ = consume_stock_for_delivered_order(order=order, actor=actor)
+        if portal_snapshot is not None:
+            from apps.inventory.models import StockConsumptionRequest
+            if consumption.status != StockConsumptionRequest.Status.PROCESSED:
+                from apps.core.exceptions import PosStockConflictError
+                # Roll back the charge, delivery, and any stock writes together.
+                raise PosStockConflictError("Stock could not be recorded for this order. Contact inventory and retry.")
     PosOrderEvent.objects.create(order=order, type=event_type, actor=actor)
+    _sync_portal_request(portal_request, order, actor, target_status)
     return order
 
 

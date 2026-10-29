@@ -531,6 +531,12 @@ def settle_outstanding_balance(
             .order_by("created_at")
         )
         for order in unbilled_pos_orders:
+            if ((order.metadata or {}).get("portal_stock_rules") is not None
+                    and order.status != PosOrder.Status.DELIVERED):
+                # Keep pending guest menu orders off the bill, but do not stop
+                # an unrelated accommodation/folio settlement. The open
+                # request remains a gate-clearance blocker until completed.
+                continue
             bill_unbilled_order_charge(order=order, actor=actor)
             billed_requests.append(order.reference)
 
