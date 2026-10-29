@@ -1,25 +1,25 @@
-backend/apps/accounts/capabilities.py
-backend/apps/accounts/departments.py
-backend/apps/accounts/models.py
-backend/apps/accounts/views_admin.py
-backend/apps/hotel/management/commands/seed_demo_operations.py
-backend/apps/staff_operations/serializers.py
-backend/apps/staff_operations/services/fingerprint_service.py
-backend/apps/staff_operations/views.py
-backend/tests/test_admin_list_pagination.py
-backend/tests/test_audit_capability_revocation.py
-backend/tests/test_barcode_lookup.py
-backend/tests/test_pos_department_api.py
-frontend/dashboard/barcode-labels.html
-frontend/dashboard/laundry.html
-frontend/dashboard/pos.html
-frontend/dashboard/staff-profile.html
-frontend/dashboard/staff.html
-frontend/dashboard/workforce.html
-frontend/js/auth.js
-frontend/js/config.js
-frontend/js/dashboard.js
-frontend/tests-js/test-department-page-access.js
-frontend/tests-js/test-laundry-walk-in-ui.js
-frontend/tests-js/test-pos-ui.js
-frontend/tests-js/test-workforce-ui.js
+# Accounting agent — changed/created files (repository-relative, apply in this order)
+# M = modified, A = added. apply.sh reads this file.
+
+# --- backend: accounting/reconciliation + directly necessary procurement/payment
+M backend/apps/finance/models.py
+A backend/apps/finance/migrations/0017_accounting_payables_checks_and_payment_requests.py
+A backend/apps/finance/services/reconciliation_service.py
+M backend/apps/finance/services/night_audit_service.py
+A backend/apps/finance/services/procurement_payable_service.py
+A backend/apps/finance/services/supplier_payment_service.py
+M backend/apps/finance/services/expense_service.py
+M backend/apps/finance/services/approval_service.py
+M backend/apps/finance/serializers.py
+M backend/apps/finance/views.py
+M backend/apps/finance/urls.py
+
+# --- backend: tests for the repaired behaviour
+A backend/tests/test_accounting_agent_reconciliation.py
+A backend/tests/test_accounting_agent_procurement_payables.py
+A backend/tests/test_accounting_agent_supplier_payments.py
+
+# --- frontend: the Accounting dashboard and its endpoint map
+M frontend/dashboard/accounting.html
+M frontend/js/config.js
+A frontend/tests-js/test-accounting-agent-ui.js

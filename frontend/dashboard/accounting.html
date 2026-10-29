@@ -174,7 +174,51 @@
       <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Supplier</th><th class="cell-nowrap">Status</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody data-tbody="acct-payables"></tbody>
     </table></div>
-    <p class="caption" style="margin-top:0.75rem;">Full supplier register, purchase orders and goods receipts live in <a href="procurement.html">Procurement</a> and <a href="inventory.html">Inventory</a>.</p>
+    <p class="caption" style="margin-top:0.75rem;">Purchase orders submitted to Accounting are listed below; the full supplier register and goods receipts live in <a href="procurement.html">Procurement</a> and <a href="inventory.html">Inventory</a>.</p>
+  </div>
+</details>
+
+<!-- PURCHASE ORDERS SUBMITTED TO ACCOUNTING — read-only hand-off from
+     Procurement. A submitted order is NOT proof of delivery and NOT an
+     immediate payable: what may be billed is the value actually received, and
+     the amount is capped and de-duplicated on the server. -->
+<details class="panel finance-section" data-acc-section="purchase-orders" id="purchase-orders">
+  <summary class="panel-head"><h2>Purchase orders submitted to Accounting</h2>
+    <span class="caption">What arrived, what is billed, what is still owed — per order</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body">
+    <p class="caption" data-po-note>An order appears here once Procurement submits it. Drafts stay in Procurement. A payable can only be raised for goods actually received, and only once per order.</p>
+    <div class="table-wrap"><table class="table">
+      <thead><tr>
+        <th class="cell-nowrap">Order</th><th class="cell-clamp">Supplier</th><th class="cell-nowrap">Order status</th>
+        <th class="cell-nowrap">Receipt</th><th class="num cell-nowrap">Ordered</th><th class="num cell-nowrap">Received</th>
+        <th class="num cell-nowrap">Payable raised</th><th class="num cell-nowrap">Unpaid</th>
+        <th class="cell-nowrap"><span class="sr-only">Actions</span></th>
+      </tr></thead>
+      <tbody data-tbody="acct-purchase-orders"></tbody>
+    </table></div>
+  </div>
+</details>
+
+<!-- SUPPLIER PAYMENT REQUESTS — proposed -> submitted -> approved -> executed.
+     The separate states are the point: an approver authorises, an accountant
+     executes, and nothing is paid while a request is merely proposed. -->
+<details class="panel finance-section" data-acc-section="supplier-payments" id="supplier-payments">
+  <summary class="panel-head"><h2>Supplier payment requests</h2>
+    <span class="caption">Proposed · submitted · approved · executed · cancelled</span>
+    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
+  </summary>
+  <div class="panel-body">
+    <p class="caption" data-supplier-payments-note>A payment is proposed against one posted payable, approved by someone else, then executed once. Executing posts the settlement exactly once; a rejected or cancelled request pays nothing.</p>
+    <div class="table-wrap"><table class="table">
+      <thead><tr>
+        <th class="cell-nowrap">Request</th><th class="cell-nowrap">Payable</th><th class="cell-clamp">Supplier</th>
+        <th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Method</th><th class="cell-nowrap">Status</th>
+        <th class="cell-clamp">Raised by</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th>
+      </tr></thead>
+      <tbody data-tbody="acct-supplier-payments"></tbody>
+    </table></div>
   </div>
 </details>
 
@@ -251,13 +295,28 @@
     <div class="table-wrap"><table class="table"><thead><tr><th class="cell-clamp">Method</th><th class="num cell-nowrap">Captured</th><th class="num cell-nowrap">Refunded</th></tr></thead><tbody data-tbody="na-tenders"></tbody></table></div>
     <h3 class="section-title">Drawer reconciliation</h3>
     <div data-na-drawers-summary class="finance-note"><p class="caption">Run the night audit to check today's drawers.</p></div>
-    <details class="panel-grid-collapsible">
-      <summary class="section-title">Discrepancies &amp; in-house balances</summary>
-      <div class="panel-grid" style="margin-top:0.75rem;">
-        <div><h4 class="section-title-sm">Discrepancies &amp; checks</h4><div data-na-list="discrepancies"><p class="caption">Run the night audit to check drawers, occupied rooms and in-house billing.</p></div></div>
-        <div><h4 class="section-title-sm">In-house folios with balance due</h4><div class="table-wrap"><table class="table"><thead><tr><th class="cell-nowrap">Stay</th><th class="cell-clamp">Guest</th><th class="cell-nowrap">Room</th><th class="num cell-nowrap">Balance</th></tr></thead><tbody data-tbody="na-unbilled"></tbody></table></div></div>
-      </div>
-    </details>
+    <!-- The checks behind the "unresolved" figure. Every row is a real record:
+         the room, folio, drawer or purchase order it belongs to, the amount
+         where there is one, why it is flagged, and what to do next. A reviewed
+         row says who looked and when; a dismissed row says why it was judged
+         explained. Nothing here is written off — the underlying records are
+         never edited by a review. -->
+    <h3 class="section-title">Room, billing, drawer and payable checks</h3>
+    <p class="caption" data-na-checks-summary>Run the night audit to check drawers, occupied rooms and in-house billing.</p>
+    <div class="table-wrap"><table class="table">
+      <thead><tr>
+        <th class="cell-nowrap">Subject</th><th class="cell-clamp">Check</th><th class="cell-nowrap">Record</th>
+        <th class="num cell-nowrap">Amount</th><th class="cell-nowrap">Status</th>
+        <th class="cell-clamp">Why it is flagged</th><th class="cell-clamp">Recommended next action</th>
+        <th class="cell-nowrap"><span class="sr-only">Decision</span></th>
+      </tr></thead>
+      <tbody data-tbody="na-checks"></tbody>
+    </table></div>
+    <h3 class="section-title">In-house folios with balance due</h3>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th class="cell-nowrap">Stay</th><th class="cell-clamp">Guest</th><th class="cell-nowrap">Room</th><th class="num cell-nowrap">Balance</th></tr></thead>
+      <tbody data-tbody="na-unbilled"></tbody>
+    </table></div>
   </div>
 </details>
 
@@ -389,6 +448,11 @@
   var cash=document.querySelector("[data-tbody=acct-cash]");
   var ap=document.querySelector("[data-tbody=acct-approvals]");
   var payables=document.querySelector("[data-tbody=acct-payables]");
+  var naChecksBody=document.querySelector("[data-tbody=na-checks]");
+  var naChecksSummary=document.querySelector("[data-na-checks-summary]");
+  var poBody=document.querySelector("[data-tbody=acct-purchase-orders]");
+  var poNote=document.querySelector("[data-po-note]");
+  var supplierPaymentsBody=document.querySelector("[data-tbody=acct-supplier-payments]");
   var alertsBox=document.querySelector("[data-finance-alerts]");
   var drawerSummary=document.querySelector("[data-na-drawers-summary]");
   var payablesNote=document.querySelector("[data-payables-note]");
@@ -398,6 +462,10 @@
   var fromEl=document.getElementById("rp-from");
   var toEl=document.getElementById("rp-to");
   var latest={ financial:null, bookings:null, occupancy:null, expenses:null, approvals:null, cash:null };
+  /* Reconciliation checks (the records behind "N unresolved ..."), the
+     purchase-order hand-off and the supplier payment requests. */
+  var latestChecks={ checks:[], summary:{}, resolved:[], business_date:"" };
+  var latestProcurement={ orders:null, payables:null, payments:null };
   var operationalPending={ bookings:false, occupancy:false };
   var loadSequence=0;
 
@@ -409,6 +477,11 @@
      by the server-resolved capability list once it arrives, re-rendering the
      two decision tables so the buttons appear without a page reload. */
   var CAN = { approveExpense:false, refunds:false, reviewDrawer:false };
+  /* Accounting agent: the same fail-closed shape for the two capabilities the
+     repaired sections need. Declared separately so the original line above
+     stays the one statement that decides the decision buttons. */
+  CAN.manageExpenses = false;
+  CAN.reviewChecks = false;
   function capabilityReady(){
     if(!(window.Auth&&window.Auth.loadCapabilities)) return Promise.resolve();
     return window.Auth.loadCapabilities().then(function(){
@@ -418,13 +491,20 @@
         /* A material drawer variance is closed by the same authority that
            decides refunds and adjustments (payment.refund.approve) — decided
            through the controlled cash-session route, never from this list. */
-        reviewDrawer:window.Auth.hasCapability("payment.refund.approve")
+        reviewDrawer:window.Auth.hasCapability("payment.refund.approve"),
+        /* Raising and executing money movements; approving is separate. */
+        manageExpenses:window.Auth.hasCapability("expense.manage"),
+        /* Deciding a reconciliation check is expense work, not approval work:
+           recording what you found changes no money. The server enforces the
+           same rule (expense.manage or expense.approve). */
+        reviewChecks:window.Auth.hasCapability("expense.manage")||window.Auth.hasCapability("expense.approve")
       };
-      var changed=(next.approveExpense!==CAN.approveExpense)||(next.refunds!==CAN.refunds)||(next.reviewDrawer!==CAN.reviewDrawer);
+      var changed=(next.approveExpense!==CAN.approveExpense)||(next.refunds!==CAN.refunds)||(next.reviewDrawer!==CAN.reviewDrawer)||(next.manageExpenses!==CAN.manageExpenses)||(next.reviewChecks!==CAN.reviewChecks);
       CAN=next;
       /* The approvals and cash sections change shape with the reviewer
          capability: load them for a reviewer, explain them for everyone else. */
       if(changed){ renderExpenses(); renderApprovals(); renderCash(); refreshApprovalsSection(); }
+      if(changed){ renderPayables(); renderChecks(); renderPurchaseOrders(); renderSupplierPayments(); }
     }).catch(function(){
       /* Role-based UX stays the fallback; server-side checks are unaffected. */
     });
@@ -833,6 +913,36 @@
     settleExpense(settle.getAttribute("data-expense-settle"));
   });
   document.addEventListener("click", function (event) {
+    var checkReview = event.target.closest ? event.target.closest("[data-check-review]") : null;
+    if (checkReview) {
+      event.preventDefault();
+      reviewCheck(checkReview.getAttribute("data-check-review"), checkReview.getAttribute("data-check-date"), checkReview.getAttribute("data-check-type"));
+      return;
+    }
+    var poOpen = event.target.closest ? event.target.closest("[data-po-open]") : null;
+    if (poOpen) { event.preventDefault(); openPurchaseOrder(poOpen.getAttribute("data-po-open")); return; }
+    var poPayable = event.target.closest ? event.target.closest("[data-po-payable]") : null;
+    if (poPayable) {
+      event.preventDefault();
+      raisePayable(poPayable.getAttribute("data-po-payable"), poPayable.getAttribute("data-po-received"));
+      return;
+    }
+    var proposePayment = event.target.closest ? event.target.closest("[data-supplier-payment-propose]") : null;
+    if (proposePayment) { event.preventDefault(); proposeSupplierPayment(proposePayment.getAttribute("data-supplier-payment-propose")); return; }
+    var submitPayment = event.target.closest ? event.target.closest("[data-supplier-payment-submit]") : null;
+    if (submitPayment) {
+      event.preventDefault();
+      submitSupplierPaymentRequest(submitPayment.getAttribute("data-supplier-payment-submit"));
+      return;
+    }
+    var approvePayment = event.target.closest ? event.target.closest("[data-supplier-payment-approve]") : null;
+    if (approvePayment) { event.preventDefault(); reviewSupplierPayment(approvePayment.getAttribute("data-supplier-payment-approve"), true); return; }
+    var rejectPayment = event.target.closest ? event.target.closest("[data-supplier-payment-reject]") : null;
+    if (rejectPayment) { event.preventDefault(); reviewSupplierPayment(rejectPayment.getAttribute("data-supplier-payment-reject"), false); return; }
+    var executePayment = event.target.closest ? event.target.closest("[data-supplier-payment-execute]") : null;
+    if (executePayment) { event.preventDefault(); executeSupplierPayment(executePayment.getAttribute("data-supplier-payment-execute")); return; }
+    var cancelPayment = event.target.closest ? event.target.closest("[data-supplier-payment-cancel]") : null;
+    if (cancelPayment) { event.preventDefault(); cancelSupplierPayment(cancelPayment.getAttribute("data-supplier-payment-cancel")); return; }
     var approve = event.target.closest ? event.target.closest("[data-expense-approve]") : null;
     if (!approve) return;
     event.preventDefault();
@@ -1005,6 +1115,7 @@
       renderCash();
     },function(err){ if(requestId===loadSequence&&cash) DATA.error(cash,"Cash sessions couldn't be loaded",financeErrorMessage(err,"cash management"),7); });
     refreshApprovalsSection(requestId);
+    loadProcurement(requestId);
 
   }
 
@@ -1092,11 +1203,429 @@
       return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td>"+
         "<td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.amount))+"</td>"+
         "<td class=\"cell-nowrap\"><div class=\"row-actions\">"+
-        (row.status==="POSTED"?'<button class="btn btn-sm btn-accent" type="button" data-expense-settle="'+JONE.esc(row.reference||"")+'">Record supplier payment</button>':"")+
+        (row.status==="POSTED"
+          ? (CAN.approveExpense
+              ? '<button class="btn btn-sm btn-accent" type="button" data-expense-settle="'+JONE.esc(row.reference||"")+'">Record supplier payment</button>'
+              : (CAN.manageExpenses
+                  ? '<button class="btn btn-sm btn-accent" type="button" data-supplier-payment-propose="'+JONE.esc(row.reference||"")+'">Propose payment</button>'
+                  : ""))
+          : "")+
         '<button class="btn btn-sm btn-outline" type="button" data-expense-details="'+JONE.esc(row.reference||"")+'">Details</button>'+
         "</div></td></tr>";
     }).join(""):'<tr><td colspan="5"><div class="empty-state"><h3>No outstanding supplier payables</h3><p>Everything recorded on credit has been paid.</p></div></td></tr>';
     if(JONE.icons) JONE.icons.inject(payables);
+  }
+
+
+  /* ======================= Reconciliation checks ==========================
+     The number in the alert strip is derived from these records, never from a
+     separate counter. Each row carries the object it belongs to (room, folio,
+     stay, drawer or purchase order), the amount where there is one, the derived
+     status, why it is flagged and the recommended next action. A reviewer can
+     acknowledge, escalate or dismiss a check with a reason; the review is
+     append-only audit evidence and never edits the record it is about. */
+  var CHECK_STATUS_LABEL = {
+    OPEN: "Open", ACKNOWLEDGED: "Acknowledged", DISMISSED: "Explained", RESOLVED: "Resolved"
+  };
+  function checkStatusCell(check){
+    var label = CHECK_STATUS_LABEL[check.status] || check.status || "—";
+    var tone = check.status === "DISMISSED" ? "caption" : (check.severity === "ERROR" ? "" : "caption");
+    var who = check.reviewed_by
+      ? '<div class="caption">' + JONE.esc(check.reviewed_by) + (check.reviewed_at ? " · " + JONE.esc(JONE.formatDateTime(check.reviewed_at)) : "") + '</div>'
+      : "";
+    return '<span class="' + tone + '">' + JONE.esc(label) + '</span>' + who;
+  }
+  function checkObjectCell(check){
+    var bits = [];
+    if (check.room) bits.push("Room " + check.room);
+    if (check.folio) bits.push("Bill " + check.folio);
+    if (check.stay) bits.push(check.stay);
+    if (check.booking) bits.push(check.booking);
+    if (!bits.length) bits.push(check.object_reference || "—");
+    return JONE.esc(bits.join(" · "));
+  }
+  function checkActionCell(check){
+    if (!CAN.reviewChecks) return '<span class="caption">Accounts review</span>';
+    if (check.status === "RESOLVED") return '<span class="caption">—</span>';
+    return '<button class="btn btn-sm btn-outline" type="button" data-check-review="' + JONE.esc(check.check_id) +
+      '" data-check-date="' + JONE.esc(latestChecks.business_date || "") + '" data-check-type="' + JONE.esc(check.type_label || check.type) +
+      '" aria-label="Review the check on ' + JONE.esc(check.object_reference || "") + '">Review</button>';
+  }
+  function renderChecks(){
+    if (!naChecksBody) return;
+    var checks = latestChecks.checks || [];
+    var summary = latestChecks.summary || {};
+    if (naChecksSummary) {
+      var parts = [];
+      parts.push((summary.unresolved != null ? summary.unresolved : 0) + " unresolved (error) check" + (summary.unresolved === 1 ? "" : "s"));
+      parts.push((summary.unresolved_room_and_billing || 0) + " room or billing");
+      parts.push((summary.unresolved_cash_drawer || 0) + " cash drawer");
+      if (summary.attention_room_and_billing) parts.push((summary.attention_room_and_billing) + " billing condition" + (summary.attention_room_and_billing === 1 ? "" : "s") + " to watch");
+      if (summary.attention_procurement) parts.push((summary.attention_procurement) + " purchase order" + (summary.attention_procurement === 1 ? "" : "s") + " received but not billed");
+      if (summary.informational) parts.push(summary.informational + " informational");
+      if (summary.dismissed) parts.push(summary.dismissed + " explained");
+      if (summary.resolved_since_review) parts.push(summary.resolved_since_review + " resolved since review");
+      naChecksSummary.textContent = "Business date " + (latestChecks.business_date || "—") + " · " + parts.join(" · ") + ".";
+    }
+    if (!checks.length) {
+      naChecksBody.innerHTML = '<tr><td colspan="8"><div class="empty-state"><h3>No checks for this business date</h3><p>Every drawer, room, billing and payable condition passed.</p></div></td></tr>';
+      return;
+    }
+    var order = { ERROR: 0, WARNING: 1, INFO: 2 };
+    var rows = checks.slice().sort(function (a, b) {
+      return (order[a.severity] || 0) - (order[b.severity] || 0) || String(a.category).localeCompare(String(b.category));
+    });
+    naChecksBody.innerHTML = rows.map(function (check) {
+      return "<tr>" +
+        '<td class="cell-nowrap">' + JONE.esc(check.category_label || check.category) + "</td>" +
+        '<td class="cell-clamp">' + JONE.esc(check.type_label || check.type) + "</td>" +
+        '<td class="cell-clamp">' + checkObjectCell(check) + "</td>" +
+        '<td class="num cell-nowrap">' + (check.amount == null ? "—" : JONE.esc(moneyCell(check.amount))) + "</td>" +
+        '<td class="cell-nowrap">' + checkStatusCell(check) + "</td>" +
+        '<td class="cell-clamp">' + JONE.esc(check.why_flagged || "") +
+          (check.review_note ? '<div class="caption">Note: ' + JONE.esc(check.review_note) + "</div>" : "") + "</td>" +
+        '<td class="cell-clamp">' + JONE.esc(check.recommended_action || "") + "</td>" +
+        '<td class="cell-nowrap"><div class="row-actions">' + checkActionCell(check) + "</div></td>" +
+        "</tr>";
+    }).join("");
+    if (JONE.icons) JONE.icons.inject(naChecksBody);
+  }
+
+  /* The View action for the alert strip: the same records, one screen, with the
+     full explanation and the review controls. */
+  function checksHtml(){
+    var checks = latestChecks.checks || [];
+    if (!checks.length) return '<div class="empty-state"><h3>No unresolved checks</h3><p>Every drawer, room, billing and payable condition passed for ' + JONE.esc(latestChecks.business_date || "this day") + '.</p></div>';
+    var rows = checks.map(function (check) {
+      return "<tr>" +
+        '<td class="cell-nowrap">' + JONE.esc(check.category_label || check.category) + "</td>" +
+        '<td class="cell-clamp">' + JONE.esc(check.type_label || check.type) +
+          '<div class="caption">' + JONE.esc(check.object_reference || "") + "</div></td>" +
+        '<td class="cell-clamp">' + checkObjectCell(check) + "</td>" +
+        '<td class="num cell-nowrap">' + (check.amount == null ? "—" : JONE.esc(moneyCell(check.amount))) + "</td>" +
+        '<td class="cell-nowrap">' + checkStatusCell(check) + "</td>" +
+        '<td class="cell-clamp">' + JONE.esc(check.why_flagged || "") + "</td>" +
+        '<td class="cell-clamp">' + JONE.esc(check.recommended_action || "") + "</td>" +
+        '<td class="cell-nowrap"><div class="row-actions">' + checkActionCell(check) + "</div></td>" +
+        "</tr>";
+    }).join("");
+    return '<p class="caption">Business date ' + JONE.esc(latestChecks.business_date || "—") +
+      '. A review records what you found; it never changes the drawer, folio, room or payable it is about.</p>' +
+      '<div class="table-wrap"><table class="table"><thead><tr>' +
+      "<th>Subject</th><th>Check</th><th>Record</th><th>Amount</th><th>Status</th><th>Why it is flagged</th><th>Next action</th><th><span class=\"sr-only\">Decision</span></th>" +
+      "</tr></thead><tbody>" + rows + "</tbody></table></div>";
+  }
+  function openReconciliationChecks(){
+    JONE.dashboard.panel.open("Reconciliation checks", checksHtml());
+    var body = JONE.dashboard.panel.body();
+    if (JONE.icons && body) JONE.icons.inject(body);
+  }
+
+  async function reviewCheck(checkId, businessDate, checkLabel){
+    var result = await JONE.dashboard.formModal({
+      title: "Review · " + (checkLabel || "check"), submitText: "Record review", wide: true,
+      fields: [
+        { name: "decision", label: "What did you find?", type: "select", required: true, options: [
+          { value: "ACKNOWLEDGED", label: "Acknowledged — still open, I am working it" },
+          { value: "ESCALATED", label: "Escalate — someone else must investigate" },
+          { value: "DISMISSED", label: "Not a discrepancy — explained, no action needed" }
+        ], help: "A dismissal needs a reason and stays on the record; it does not delete the check or change the figures." },
+        { name: "note", label: "What you found and did", type: "text", required: true, maxLength: 2000,
+          help: "At least a sentence. This is the audit trail the next person reads." }
+      ],
+      onSubmit: async function (values){
+        if (String(values.note || "").trim().length < 5) throw new Error("Record what you found (at least 5 characters).");
+        await window.API.post(
+          window.APP_CONFIG.API_ENDPOINTS.financeReconciliationChecks + encodeURIComponent(checkId) + "/review/",
+          { decision: values.decision, note: values.note, business_date: businessDate || undefined }
+        );
+        return { message: "Review recorded. The underlying records were not changed." };
+      }
+    });
+    if (result) { JONE.ui.toast("Review recorded.", "success"); loadNightAudit(); }
+  }
+
+  /* ==================== Purchase orders from Procurement =================
+     Read-only hand-off: what arrived, what is billed, what is still owed. A
+     submitted order is not a liability; only received goods are payable, and
+     the server caps and de-duplicates the payable it creates. */
+  function procurementPosition(reference){
+    var index = (latestProcurement.payables && latestProcurement.payables.purchase_orders) || {};
+    return index[reference] || null;
+  }
+  function receiptLabel(progress){
+    return String(progress || "").replace(/_/g, " ").toLowerCase() || "—";
+  }
+  function poActionCell(order){
+    var position = procurementPosition(order.reference) || {};
+    var html = '<button class="btn btn-sm btn-outline" type="button" data-po-open="' + JONE.esc(order.reference) + '">Lines</button>';
+    if (CAN.manageExpenses && position.can_raise_payable) {
+      html += '<button class="btn btn-sm btn-accent" type="button" data-po-payable="' + JONE.esc(order.reference) +
+        '" data-po-received="' + JONE.esc(position.received_value || order.received_value || "") + '">Raise payable</button>';
+    }
+    return html;
+  }
+  function renderPurchaseOrders(){
+    if (!poBody) return;
+    var orders = latestProcurement.orders;
+    if (!Array.isArray(orders)) return;
+    poBody.innerHTML = orders.length ? orders.map(function (order) {
+      var position = procurementPosition(order.reference) || {};
+      return "<tr>" +
+        '<td class="cell-nowrap">' + JONE.esc(order.reference || "—") +
+          (order.supplier_reference ? '<div class="caption">' + JONE.esc(order.supplier_reference) + "</div>" : "") + "</td>" +
+        '<td class="cell-clamp">' + JONE.esc(order.supplier_name || "—") + "</td>" +
+        '<td class="cell-nowrap">' + JONE.dashboard.statusPill(order.status) + "</td>" +
+        '<td class="cell-nowrap">' + JONE.esc(receiptLabel(order.receipt_progress)) + "</td>" +
+        '<td class="num cell-nowrap">' + JONE.esc(moneyCell(order.total_amount)) + "</td>" +
+        '<td class="num cell-nowrap">' + JONE.esc(moneyCell(position.received_value != null ? position.received_value : order.received_value)) + "</td>" +
+        '<td class="num cell-nowrap">' + JONE.esc(moneyCell(position.payable_raised != null ? position.payable_raised : "0.00")) + "</td>" +
+        '<td class="num cell-nowrap">' + JONE.esc(moneyCell(position.payable_outstanding != null ? position.payable_outstanding : "0.00")) + "</td>" +
+        '<td class="cell-nowrap"><div class="row-actions">' + poActionCell(order) + "</div></td>" +
+        "</tr>";
+    }).join("") : '<tr><td colspan="9"><div class="empty-state"><h3>No submitted purchase orders</h3><p>An order appears here once Procurement submits it; drafts stay in Procurement.</p></div></td></tr>';
+    if (JONE.icons) JONE.icons.inject(poBody);
+  }
+  function loadProcurement(requestId){
+    if (!poBody && !supplierPaymentsBody) return;
+    var stale = function () { return requestId != null && requestId !== loadSequence; };
+    getReport(window.APP_CONFIG.API_ENDPOINTS.procurementAccountingOrders, {}).then(function (response) {
+      if (stale()) return;
+      var rows = rowsOf(response);
+      latestProcurement.orders = Array.isArray(rows) ? rows : [];
+      renderPurchaseOrders();
+    }, function (err) {
+      if (stale() || !poBody) return;
+      DATA.error(poBody, "Purchase orders couldn't be loaded", financeErrorMessage(err, "purchase orders"), 9);
+    });
+    getReport(window.APP_CONFIG.API_ENDPOINTS.financeProcurementPayables, {}).then(function (response) {
+      if (stale()) return;
+      latestProcurement.payables = response.data || {};
+      renderPurchaseOrders();
+    }, function () { /* the order list still renders without the payable position */ });
+    loadSupplierPayments(requestId);
+  }
+  async function raisePayable(reference, received){
+    var result = await JONE.dashboard.formModal({
+      title: "Raise supplier payable · " + reference, submitText: "Raise payable", wide: true,
+      fields: [
+        { name: "amount", label: "Payable amount", type: "number", step: "0.01", min: "0.01", required: true,
+          help: "Capped at the value actually received" + (received ? " (" + moneyCell(received) + ")" : "") + ". Raising a payable is not paying it." },
+        { name: "category", label: "Category", type: "text", placeholder: "Inventory purchase" },
+        { name: "notes", label: "Note for the approver (optional)", type: "text", maxLength: 2000 }
+      ],
+      onSubmit: async function (values){
+        var key = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : String(Date.now());
+        await window.API.post(
+          window.APP_CONFIG.API_ENDPOINTS.financePurchaseOrderPayable + encodeURIComponent(reference) + "/payable/",
+          { amount: values.amount, category: values.category || "", notes: values.notes || "", idempotency_key: key }
+        );
+        return { message: "Supplier payable raised as a draft. Submit it for approval next." };
+      }
+    });
+    if (result) { JONE.ui.toast("Payable raised. Nothing has been paid yet.", "success"); load(); }
+  }
+  async function openPurchaseOrder(reference){
+    JONE.dashboard.panel.open("Purchase order " + reference, '<div class="loading-skeleton" aria-busy="true">Loading purchase order…</div>');
+    var body = JONE.dashboard.panel.body();
+    try {
+      var response = await window.API.get(
+        window.APP_CONFIG.API_ENDPOINTS.procurementAccountingOrders + encodeURIComponent(reference) + "/"
+      );
+      var po = (response && response.data) || {};
+      var position = procurementPosition(reference) || {};
+      var lines = (po.lines || []).map(function (line) {
+        return "<tr><td>" + JONE.esc(line.item_sku || "") + "</td><td>" + JONE.esc(line.item_name || "") +
+          '</td><td class="num">' + JONE.esc(line.quantity_ordered) + '</td><td class="num">' + JONE.esc(line.quantity_received) +
+          '</td><td class="num">' + JONE.esc(moneyCell(line.unit_cost)) + '</td></tr>';
+      }).join("");
+      var receipts = (po.goods_receipts || []).map(function (receipt) {
+        return "<tr><td>" + JONE.esc(receipt.reference) + "</td><td>" + JONE.esc(receipt.received_on || "") +
+          '</td><td class="num">' + JONE.esc(moneyCell(receipt.received_value)) + "</td></tr>";
+      }).join("");
+      var payables = (position.payables || []).map(function (payable) {
+        return "<tr><td>" + JONE.esc(payable.reference) + "</td><td>" + JONE.esc(payable.status) +
+          '</td><td class="num">' + JONE.esc(moneyCell(payable.amount)) + "</td><td>" +
+          JONE.esc(payable.paid_at ? "paid" : "unpaid") + "</td></tr>";
+      }).join("");
+      if (body) {
+        body.innerHTML =
+          '<div class="profile-grid">' +
+            expenseDetailRow("Supplier", expenseDetailText(po.supplier_name)) +
+            expenseDetailRow("Order status", JONE.dashboard.statusPill(po.status)) +
+            expenseDetailRow("Ordered total", JONE.esc(moneyCell(po.total_amount)), { numeric: true }) +
+            expenseDetailRow("Received value", JONE.esc(moneyCell(position.received_value != null ? position.received_value : po.received_value)), { numeric: true }) +
+            expenseDetailRow("Payable raised", JONE.esc(moneyCell(position.payable_raised)), { numeric: true }) +
+            expenseDetailRow("Still unpaid", JONE.esc(moneyCell(position.payable_outstanding)), { numeric: true }) +
+            expenseDetailRow("Unbilled received value", JONE.esc(moneyCell(position.unbilled_received_value)), { numeric: true }) +
+            expenseDetailRow("Requested by", expenseDetailText(po.requested_by_email)) +
+            expenseDetailRow("Approved by", expenseDetailText(po.approved_by_email)) +
+            expenseDetailRow("Delivery location", expenseDetailText(po.delivery_location_code)) +
+          "</div>" +
+          '<h4 class="detail-section-title">Ordered lines</h4><div class="table-wrap"><table class="table"><thead><tr><th>SKU</th><th>Item</th><th class="num">Ordered</th><th class="num">Received</th><th class="num">Unit cost</th></tr></thead><tbody>' + (lines || '<tr><td colspan="5">No lines</td></tr>') + "</tbody></table></div>" +
+          '<h4 class="detail-section-title">Goods receipts</h4><div class="table-wrap"><table class="table"><thead><tr><th>Receipt</th><th>Received on</th><th class="num">Value</th></tr></thead><tbody>' + (receipts || '<tr><td colspan="3">Nothing received yet — so nothing is payable.</td></tr>') + "</tbody></table></div>" +
+          '<h4 class="detail-section-title">Supplier payables raised from this order</h4><div class="table-wrap"><table class="table"><thead><tr><th>Payable</th><th>Status</th><th class="num">Amount</th><th><span class="sr-only">Payment state</span></th></tr></thead><tbody>' + (payables || '<tr><td colspan="4">None raised yet.</td></tr>') + "</tbody></table></div>";
+      }
+    } catch (err) {
+      if (body) body.innerHTML = '<div class="empty-state"><h3>Purchase order unavailable</h3><p>' + JONE.esc(financeErrorMessage(err)) + "</p></div>";
+    }
+  }
+
+  /* ======================= Supplier payment requests ======================
+     proposed -> submitted -> approved -> executed. A proposal moves no money; an
+     approver decides; execution posts the settlement exactly once. */
+  var PAYMENT_STATUS_LABEL = {
+    PROPOSED: "Proposed", SUBMITTED: "Submitted for approval", APPROVED: "Approved",
+    REJECTED: "Rejected", EXECUTED: "Executed", CANCELLED: "Cancelled"
+  };
+  function supplierPaymentActions(row){
+    var reference = JONE.esc(row.reference || "");
+    var status = String(row.status || "");
+    var html = "";
+    if (status === "PROPOSED" && CAN.manageExpenses) {
+      html += '<button class="btn btn-sm" type="button" data-supplier-payment-submit="' + reference + '">Submit</button>';
+    }
+    if (status === "SUBMITTED" && CAN.approveExpense) {
+      html += '<button class="btn btn-sm" type="button" data-supplier-payment-approve="' + reference + '">Approve</button>';
+      html += '<button class="btn btn-sm btn-outline" type="button" data-supplier-payment-reject="' + reference + '">Reject</button>';
+    }
+    if (status === "APPROVED" && CAN.manageExpenses) {
+      html += '<button class="btn btn-sm btn-accent" type="button" data-supplier-payment-execute="' + reference + '">Execute payment</button>';
+    }
+    if (status === "PROPOSED" || status === "SUBMITTED" || status === "APPROVED") {
+      html += '<button class="btn btn-sm btn-outline" type="button" data-supplier-payment-cancel="' + reference + '">Cancel</button>';
+    }
+    return html || '<span class="caption">—</span>';
+  }
+  function renderSupplierPayments(){
+    if (!supplierPaymentsBody) return;
+    var rows = latestProcurement.payments;
+    if (!Array.isArray(rows)) return;
+    supplierPaymentsBody.innerHTML = rows.length ? rows.map(function (row) {
+      return "<tr>" +
+        '<td class="cell-nowrap">' + JONE.esc(row.reference || "—") +
+          (row.approval_reference ? '<div class="caption">' + JONE.esc(row.approval_reference) + "</div>" : "") + "</td>" +
+        '<td class="cell-nowrap">' + JONE.esc(row.expense_reference || "—") +
+          (row.purchase_order ? '<div class="caption">' + JONE.esc(row.purchase_order) + "</div>" : "") + "</td>" +
+        '<td class="cell-clamp">' + JONE.esc(row.payee || "—") + "</td>" +
+        '<td class="num cell-nowrap">' + JONE.esc(moneyCell(row.amount)) + "</td>" +
+        '<td class="cell-nowrap">' + JONE.esc(String(row.method || "").replace(/_/g, " ").toLowerCase()) + "</td>" +
+        '<td class="cell-nowrap">' + JONE.esc(PAYMENT_STATUS_LABEL[row.status] || row.status || "—") +
+          (row.settlement_reference ? '<div class="caption">' + JONE.esc(row.settlement_reference) + "</div>" : "") + "</td>" +
+        '<td class="cell-clamp">' + JONE.esc(row.requested_by_email || "—") +
+          (row.reviewed_by_email ? '<div class="caption">decided by ' + JONE.esc(row.reviewed_by_email) + "</div>" : "") + "</td>" +
+        '<td class="cell-nowrap"><div class="row-actions">' + supplierPaymentActions(row) + "</div></td>" +
+        "</tr>";
+    }).join("") : '<tr><td colspan="8"><div class="empty-state"><h3>No supplier payment requests</h3><p>A posted payable is paid by proposing a payment here, which needs approval before it can be executed.</p></div></td></tr>';
+    if (JONE.icons) JONE.icons.inject(supplierPaymentsBody);
+  }
+  function loadSupplierPayments(requestId){
+    if (!supplierPaymentsBody) return;
+    var stale = function () { return requestId != null && requestId !== loadSequence; };
+    getReport(window.APP_CONFIG.API_ENDPOINTS.financeSupplierPayments, { page_size: 50 }).then(function (response) {
+      if (stale()) return;
+      var rows = rowsOf(response);
+      latestProcurement.payments = Array.isArray(rows) ? rows : [];
+      renderSupplierPayments();
+    }, function (err) {
+      if (stale()) return;
+      if (err && err.status === 403) {
+        supplierPaymentsBody.innerHTML = '<tr><td colspan="8"><div class="empty-state"><h3>Not part of your role</h3><p>Supplier payments are recorded by accounts staff.</p></div></td></tr>';
+        return;
+      }
+      DATA.error(supplierPaymentsBody, "Supplier payment requests couldn't be loaded", financeErrorMessage(err, "supplier payments"), 6);
+    });
+  }
+  async function proposeSupplierPayment(expenseReference){
+    var result = await JONE.dashboard.formModal({
+      title: "Propose supplier payment · " + expenseReference, submitText: "Propose payment", wide: true,
+      fields: [
+        { name: "method", label: "How will the supplier be paid?", type: "select", required: true, options: [
+          { value: "BANK_TRANSFER", label: "Bank transfer" }, { value: "CARD", label: "Card / terminal" },
+          { value: "CASH", label: "Cash from an open drawer" } ] },
+        { name: "payment_reference", label: "Bank/card reference", type: "text", maxLength: 160,
+          help: "Required for bank and card payments. The payable is settled in full in one payment." },
+        { name: "paid_on", label: "Payment date", type: "date", dataAllowPast: true },
+        { name: "notes", label: "Note for the approver (optional)", type: "text", maxLength: 2000 }
+      ],
+      onSubmit: async function (values){
+        var key = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : String(Date.now());
+        var created = await window.API.post(window.APP_CONFIG.API_ENDPOINTS.financeSupplierPayments, {
+          expense_reference: expenseReference, method: values.method,
+          payment_reference: values.payment_reference || "", paid_on: values.paid_on || null,
+          notes: values.notes || "", idempotency_key: key
+        });
+        var reference = created && created.data && created.data.reference;
+        if (!reference) throw new Error("The payment request was not created.");
+        await window.API.post(window.APP_CONFIG.API_ENDPOINTS.financeSupplierPayments + encodeURIComponent(reference) + "/submit/", {});
+        return { message: "Payment proposed and submitted for approval." };
+      }
+    });
+    if (result) { JONE.ui.toast("Payment request submitted for approval.", "success"); load(); }
+  }
+  async function submitSupplierPaymentRequest(reference){
+    try {
+      await window.API.post(window.APP_CONFIG.API_ENDPOINTS.financeSupplierPayments + encodeURIComponent(reference) + "/submit/", {});
+      JONE.ui.toast("Payment request submitted for approval.", "success");
+      load();
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "The payment request could not be submitted.", "error");
+    }
+  }
+  async function reviewSupplierPayment(reference, approved){
+    var result = await JONE.dashboard.formModal({
+      title: (approved ? "Approve" : "Reject") + " supplier payment · " + reference,
+      submitText: approved ? "Approve payment" : "Reject payment", wide: true,
+      fields: [
+        { name: "review_note", label: "Why (recorded on the approval)", type: "text", required: !approved, maxLength: 2000 }
+      ],
+      onSubmit: async function (values){
+        await window.API.post(
+          window.APP_CONFIG.API_ENDPOINTS.financeSupplierPayments + encodeURIComponent(reference) + "/review/",
+          { approved: approved, review_note: values.review_note || "" }
+        );
+        return { message: approved ? "Payment approved. An accountant can now execute it." : "Payment rejected. Nothing was paid." };
+      }
+    });
+    if (result) { JONE.ui.toast(approved ? "Payment approved." : "Payment rejected.", "success"); load(); }
+  }
+  async function executeSupplierPayment(reference){
+    var result = await JONE.dashboard.formModal({
+      title: "Execute supplier payment · " + reference, submitText: "Execute payment", wide: true, multipart: true,
+      fields: [
+        { name: "cash_session_reference", label: "Cash session reference (cash payments only)", type: "text", maxLength: 64 },
+        { name: "receipt_url", label: "Payment receipt link (optional)", type: "text", placeholder: "https://…" },
+        { name: "receipt", label: "Payment receipt file (optional)", type: "file" }
+      ],
+      onSubmit: async function (values){
+        var fd = new FormData();
+        fd.append("cash_session_reference", values.cash_session_reference || "");
+        fd.append("receipt_url", values.receipt_url || "");
+        if (values.receipt) fd.append("receipt", values.receipt);
+        await window.API.post(
+          window.APP_CONFIG.API_ENDPOINTS.financeSupplierPayments + encodeURIComponent(reference) + "/execute/", fd
+        );
+        return { message: "Payment executed. The payable is released." };
+      }
+    });
+    if (result) { JONE.ui.toast("Payment executed.", "success"); load(); }
+  }
+  async function cancelSupplierPayment(reference){
+    var result = await JONE.dashboard.formModal({
+      title: "Cancel supplier payment request · " + reference, submitText: "Cancel request", wide: true,
+      fields: [
+        { name: "reason", label: "Why is this request being cancelled?", type: "text", required: true, maxLength: 2000 }
+      ],
+      onSubmit: async function (values){
+        if (String(values.reason || "").trim().length < 5) throw new Error("Record why the request is being cancelled.");
+        await window.API.post(
+          window.APP_CONFIG.API_ENDPOINTS.financeSupplierPayments + encodeURIComponent(reference) + "/cancel/",
+          { reason: values.reason }
+        );
+        return { message: "Payment request cancelled. Nothing was paid." };
+      }
+    });
+    if (result) { JONE.ui.toast("Payment request cancelled.", "success"); load(); }
   }
 
   /* Has the capability read finished? Until it has, the role-based fallback
@@ -1539,13 +2068,39 @@
         action: "Review"
       });
     }
-    var discrepancies = (data && data.discrepancies) || [];
-    if (discrepancies.length) {
+    /* The strip names what each group of checks actually is. One lumped
+       "unresolved room or billing checks" sentence used to include cash-drawer
+       variances, so the subject was wrong and the number could not be trusted. */
+    var summary = (data && data.check_summary) || {};
+    var roomBilling = summary.unresolved_room_and_billing;
+    var drawer = summary.unresolved_cash_drawer;
+    if (roomBilling == null && drawer == null) {
+      var legacy = (data && data.discrepancies) || [];
+      roomBilling = legacy.filter(function (row) { return row.category && row.category !== "CASH_DRAWER"; }).length;
+      drawer = legacy.filter(function (row) { return row.category === "CASH_DRAWER"; }).length;
+    }
+    if (roomBilling) {
       items.push({
         tone: "warn",
-        text: discrepancies.length + " unresolved room or billing check" + (discrepancies.length === 1 ? "" : "s"),
+        text: roomBilling + " unresolved room or billing check" + (roomBilling === 1 ? "" : "s"),
         href: "#night-audit-ops",
-        action: "Review"
+        action: "View records"
+      });
+    }
+    if (drawer) {
+      items.push({
+        tone: "warn",
+        text: drawer + " unresolved cash drawer check" + (drawer === 1 ? "" : "s"),
+        href: "#night-audit-ops",
+        action: "View records"
+      });
+    }
+    if (summary.attention_procurement) {
+      items.push({
+        tone: "warn",
+        text: summary.attention_procurement + " purchase order" + (summary.attention_procurement === 1 ? "" : "s") + " received but not billed",
+        href: "#purchase-orders",
+        action: "Open purchase orders"
       });
     }
     var unbilled = (data && data.unbilled_in_house_folios) || [];
@@ -1567,6 +2122,13 @@
     }).join("");
     if (JONE.icons) JONE.icons.inject(alertsBox);
   }
+  /* "View records" on the alert strip opens the same records the table lists. */
+  document.addEventListener("click", function (event) {
+    var link = event.target.closest ? event.target.closest("[data-finance-alerts] a[href='#night-audit-ops']") : null;
+    if (!link) return;
+    event.preventDefault();
+    openReconciliationChecks();
+  });
 
   function renderNightAudit(data) {
     var flash = data.daily_flash || {}, tenders = data.tenders || {};
@@ -1574,7 +2136,16 @@
     naSet("tenders", moneyCell(tenders.captured_total));
     naSet("tenders-sub", "Refunded " + moneyCell(tenders.refunded_total));
     var discrepancies = data.discrepancies || [];
-    naSet("discrepancies", String(discrepancies.length));
+    var checkSummary = data.check_summary || {};
+    latestChecks = { checks: data.checks || [], summary: checkSummary, discrepancies: discrepancies,
+                     resolved: data.resolved_reviews || [], business_date: data.business_date || "" };
+    /* The KPI is the ERROR-class conditions only. Warnings (an in-house balance,
+       a pending arrival, goods received not yet billed) and dismissed checks are
+       reported beside it, so the number means one thing. */
+    naSet("discrepancies", String(
+      checkSummary.unresolved != null ? checkSummary.unresolved : discrepancies.length
+    ));
+    renderChecks();
     var captured = tenders.captured || {}, refunded = tenders.refunded || {};
     var methods = Array.from(new Set(Object.keys(captured).concat(Object.keys(refunded)))).sort();
     var tt = document.querySelector("[data-tbody=na-tenders]");
@@ -1600,10 +2171,8 @@
         : "<p class=\"caption\">No cash drawers were opened on this business date.</p>";
     }
     renderFinanceAlerts(data);
-    var dl = document.querySelector("[data-na-list=discrepancies]");
-    if (dl) dl.innerHTML = discrepancies.length ? "<ul style=\"margin:0;padding-left:1.1rem;\">" + discrepancies.map(function (d) {
-      return "<li><strong>" + JONE.esc(d.reference || "") + "</strong> \u00b7 " + JONE.esc(d.detail || "") + "</li>";
-    }).join("") + "</ul>" : "<p class=\"caption\">All drawer, room and billing checks passed for this day.</p>";
+    /* The records themselves are rendered by renderChecks() from the same
+       payload, so the count and the list can never drift apart. */
     var ut = document.querySelector("[data-tbody=na-unbilled]");
     if (ut) {
       var unbilled = data.unbilled_in_house_folios || [];

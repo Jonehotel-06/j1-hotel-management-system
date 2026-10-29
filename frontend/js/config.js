@@ -347,6 +347,17 @@
     /* Read-only Accounting hand-off of purchase orders from submission onwards
        (reports.financial.view / expense.approve / procurement.approve). */
     purchaseOrderAccounting:      "/api/admin/inventory/accounting/purchase-orders/",
+    /* Accounting agent: the same hand-off as the Accounting page reads it —
+       the payable position per order and the drill-down of the procurement
+       checks (what arrived, what is billed, what is still owed). */
+    procurementAccountingOrders:  "/api/admin/inventory/accounting/purchase-orders/",
+    financeProcurementPayables:   "/api/admin/finance/procurement/payables/",
+    /* Raise a supplier payable from the value actually received on one order.
+       The reference is appended, then "/payable/". */
+    financePurchaseOrderPayable:  "/api/admin/finance/procurement/purchase-orders/",
+    /* Supplier payment requests: proposed -> submitted -> approved -> executed.
+       The reference is appended, then /submit/, /review/, /execute/, /cancel/. */
+    financeSupplierPayments:      "/api/admin/finance/supplier-payments/",
 
     /* Reports (MANAGER+) — financial ledger summary stays separate from
        legacy booking/occupancy compatibility projections.
@@ -366,6 +377,10 @@
     financeJournals:     "/api/admin/finance/journals/",
     financeChartOfAccounts: "/api/admin/finance/chart-of-accounts/",
     financeApprovals:    "/api/admin/finance/approvals/",      // sensitive-money approval requests
+    /* The records behind "N unresolved ... checks": one row per condition with
+       the object, amount, status and recommended action, plus the review route
+       (append-only; it never edits the record it is about). */
+    financeReconciliationChecks: "/api/admin/finance/reconciliation/checks/",
     /* Per-record drill-down. API.getOne appends the escaped reference. */
     financeExpenseDetail:"/api/admin/finance/expenses/",
     reportsRevenue:      "/api/admin/reports/revenue/", // retained for legacy consumers

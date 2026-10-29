@@ -478,6 +478,9 @@ class ApprovalRequest(TimeStampedModel):
         CASH_VARIANCE = "CASH_VARIANCE", "Cash variance"
         ADJUSTMENT = "ADJUSTMENT", "Adjustment"
         EXPENSE = "EXPENSE", "Expense"
+        # The second, independent decision on money leaving the hotel: an
+        # expense approval authorises the obligation, this authorises paying it.
+        SUPPLIER_PAYMENT = "SUPPLIER_PAYMENT", "Supplier payment"
 
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -602,6 +605,15 @@ class Expense(TimeStampedModel):
     )
     notes = models.TextField(blank=True, default="")
     metadata = models.JSONField(default=dict, blank=True)
+    #: The purchase order this expense is the supplier payable for, when it was
+    #: raised from Procurement instead of typed in by hand. The link is what
+    #: keeps purchase order -> goods receipt -> payable -> payment traceable and
+    #: what makes "one payable per purchase order" enforceable in the database
+    #: rather than only in the UI. Null for every ordinary expense.
+    purchase_order = models.ForeignKey(
+        "inventory.PurchaseOrder", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="payables",
+    )
 
     class Meta:
         ordering = ["-incurred_on", "-created_at"]
@@ -609,6 +621,17 @@ class Expense(TimeStampedModel):
             models.Index(fields=["status", "incurred_on"]),
             models.Index(fields=["category", "incurred_on"]),
             models.Index(fields=["requested_by", "status", "created_at"]),
+            models.Index(fields=["purchase_order", "status"]),
+        ]
+        constraints = [
+            # One supplier payable per purchase order. A NULL purchase_order is
+            # exempt (SQL unique indexes do not collide on NULL), so ordinary
+            # expenses are untouched. A second attempt is refused by the
+            # database, not only by the service check that produces the friendly
+            # message — the constraint is the guarantee.
+            models.UniqueConstraint(
+                fields=["purchase_order"], name="one_supplier_payable_per_purchase_order",
+            ),
         ]
 
     def save(self, *args, **kwargs):
@@ -712,3 +735,138 @@ class FinancialEvent(ImmutableFinancialModel):
 
     def __str__(self):
         return f"{self.type} · {self.occurred_at:%Y-%m-%d %H:%M}"
+
+
+class SupplierPaymentRequest(TimeStampedModel):
+    """A supplier payment as its own controlled record, not a side effect.
+
+    Before this model, the only way money left the hotel for a payable was the
+    ``/expenses/<ref>/settle-payment/`` endpoint, which *is* the payment: there
+    was no separate record of a payment having been proposed, submitted,
+    authorised, executed or cancelled, and a cashier holds ``expense.manage``,
+    so the person who could create an expense could also discharge the
+    liability it created.
+
+    The states are explicit and the transitions are enforced in
+    ``services/supplier_payment_service.py``:
+
+    ``PROPOSED``   -> recorded by whoever found the payable, no authority yet
+    ``SUBMITTED``  -> handed to a reviewer (an ApprovalRequest is created)
+    ``APPROVED``   -> an independent approver said yes; money may now move
+    ``REJECTED``   -> an approver refused; terminal
+    ``EXECUTED``   -> the settlement posted and the payable is released
+    ``CANCELLED``  -> withdrawn before execution; terminal
+
+    ``EXECUTED`` is stamped in the same database transaction as the settlement
+    posting, and the settlement itself is guarded by the expense row lock, so a
+    request cannot be executed twice and a failed posting can never be reported
+    as a successful payment.
+    """
+
+    class Status(models.TextChoices):
+        PROPOSED = "PROPOSED", "Proposed"
+        SUBMITTED = "SUBMITTED", "Submitted for approval"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        EXECUTED = "EXECUTED", "Executed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    class Method(models.TextChoices):
+        BANK_TRANSFER = "BANK_TRANSFER", "Bank transfer"
+        CARD = "CARD", "Card / terminal"
+        CASH = "CASH", "Cash paid out"
+
+    reference = models.CharField(max_length=64, unique=True, db_index=True)
+    idempotency_key = models.CharField(max_length=180, null=True, blank=True, unique=True)
+    expense = models.ForeignKey(Expense, on_delete=models.PROTECT, related_name="supplier_payment_requests")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PROPOSED, db_index=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[POSITIVE_MONEY])
+    currency = models.CharField(max_length=3, default="NGN")
+    method = models.CharField(max_length=16, choices=Method.choices, default=Method.BANK_TRANSFER)
+    payment_reference = models.CharField(max_length=160, blank=True, default="")
+    paid_on = models.DateField(null=True, blank=True, db_index=True)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="supplier_payment_requests_raised"
+    )
+    requested_at = models.DateTimeField(default=timezone.now)
+    approval_request = models.ForeignKey(
+        ApprovalRequest, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_payment_requests",
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="supplier_payment_requests_reviewed",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.TextField(blank=True, default="")
+    executed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="supplier_payment_requests_executed",
+    )
+    executed_at = models.DateTimeField(null=True, blank=True)
+    settlement_transaction = models.ForeignKey(
+        FinancialTransaction, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_payment_requests",
+    )
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="supplier_payment_requests_cancelled",
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancel_reason = models.TextField(blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["expense", "status"]),
+        ]
+        verbose_name = "Supplier payment request"
+        verbose_name_plural = "Supplier payment requests"
+
+    def __str__(self):
+        return f"{self.reference} · {self.expense_id} · {self.amount} · {self.status}"
+
+
+class ReconciliationCheckReview(ImmutableFinancialModel):
+    """Append-only accountant decision about one reconciliation check.
+
+    ``check_id`` is derived from (business date, check type, object reference),
+    so a decision sticks to the record it was written about and cannot be
+    re-used by a different condition. A review never edits the ledger, the
+    folio, the drawer or the payment: it records that a person looked, what they
+    found, and whether the hotel considers the check explained.
+    """
+
+    class Decision(models.TextChoices):
+        ACKNOWLEDGED = "ACKNOWLEDGED", "Acknowledged (still open, being worked)"
+        DISMISSED = "DISMISSED", "Not a discrepancy (explained)"
+        ESCALATED = "ESCALATED", "Escalated for investigation"
+
+    check_id = models.CharField(max_length=40, db_index=True)
+    business_date = models.DateField(db_index=True)
+    category = models.CharField(max_length=20, db_index=True)
+    check_type = models.CharField(max_length=40, db_index=True)
+    object_reference = models.CharField(max_length=120, blank=True, default="")
+    amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    decision = models.CharField(max_length=12, choices=Decision.choices)
+    note = models.TextField()
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="reconciliation_check_reviews",
+    )
+    snapshot = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        indexes = [models.Index(fields=["check_id", "created_at"])]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Reconciliation reviews are append-only and cannot be updated.")
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.check_type} · {self.object_reference} · {self.decision}"

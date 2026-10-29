@@ -1,164 +1,650 @@
-# Final Report — POS & Room Service Out-of-Stock Validation and Stock-Source Display
+# Accounting agent — audit and repair report
 
-**Project:** J-ONE Hotel & Lodge — `j1-hotel-management-system` (Django + DRF + MySQL backend, vanilla JS frontend)
-**Baseline:** commit `5aeeb18` ("cashier to restaurants")
-**Scope actually changed:** POS page and Room Service order mode only (both live in `frontend/dashboard/pos.html`; Room Service is `PosOrder.Mode.ROOM_SERVICE`)
-**Result:** 9 files modified + 2 test files added; 844 insertions / 85 deletions; **no schema or migration changes**; related backend suite 186/186 OK; new backend tests 31/31; new frontend contract tests 15/15; no regressions vs. baseline.
+Repository inspected: `https://github.com/Jonehotel-06/j1-hotel-management-system`
+(HEAD `afe9af7`, "procurement agent report,"). Frontend accounting page:
+`frontend/dashboard/accounting.html`. Work is isolated in
+`ai_updates/accounting_agent/`; the upstream tree was **not** modified and
+nothing was pushed.
 
----
+Scope: the "N unresolved room or billing checks" number and its View action,
+Procurement → Accounting purchase-order visibility and supplier payables, the
+supplier-payment approval workflow, a form audit, and the reconciliation /
+security / testing requirements. Nothing outside Accounting, reconciliation and
+the directly necessary procurement/payment integration was touched: the
+Procurement and Inventory dashboards, their serializers, views, services and
+models are **unmodified** (see §5 for what those agents must do).
 
-## A. Root-cause analysis
+### Where each requested deliverable is
 
-1. **Order entry never consulted inventory.** There is exactly one order-creation entry point — `PosOrderListCreateView.post` (baseline `views.py:780`) → `order_service.create_order` (also used by the QR guest-request flow). Drafts are created atomically with all their lines in one POST; there are no add-line endpoints. Neither `create_order` (baseline `order_service.py:133`) nor `submit_order` (baseline `order_service.py:308`) looked at stock. A bar product with zero or insufficient stock sailed into DRAFT/SUBMITTED/PREPARING/READY, and the failure surfaced only at DELIVERED, where `consume_stock_for_delivered_order` parks the deduction when the store is short (guest already promised the item). Nothing prevented several open orders from collectively promising more than a store held.
-
-2. **The menu/barcode APIs carried no inventory facts.** `MenuItemSerializer` had no stock field, and `barcode_service.stock_summary_for_menu_item` returned only a stub summary. The POS page therefore could not display the stock source even if it wanted to.
-
-3. **The POS page displayed no stock information anywhere.** The item picker, cart lines and scan flow showed no store, no available quantity, no unit — and the scan flow's only stock handling was a soft "recorded stock may be insufficient" note that still added the item.
-
-The stock *deduction* itself was already correct (delivery-time, exact quantities, from the configured store, once, all-or-nothing, never negative). The fix therefore adds **validation and display** in front of it and changes nothing about the deduction.
-
----
-
-## B. Files changed (9 modified, 2 new)
-
-| # | File | Change |
-|---|------|--------|
-| 1 | `backend/apps/core/exceptions.py` | New `PosStockConflictError` (HTTP 409, `POS_STOCK_CONFLICT`) with `errors_payload` carrying product/store/quantity figures; auto-surfaced by the existing `jone_exception_handler`. |
-| 2 | `backend/apps/inventory/services/inventory_service.py` | New public resolvers `pos_stock_rules()` (baseline line 868 → inserted at new 869) and `pos_stock_summaries()` (new 1023): the recipe/direct-sale → source-store mapping, identical to what the deduction uses. |
-| 3 | `backend/apps/pos/services/order_service.py` | New `_validate_order_lines_stock()` + helpers, wired into `create_order` and `submit_order`. |
-| 4 | `backend/apps/pos/services/barcode_service.py` | `stock_summary_for_menu_item` delegates to `pos_stock_summaries`; new `resolve_menu_item()`; `barcode_lookup_payload` accepts item-or-code (`matched_by="menu_item"`). |
-| 5 | `backend/apps/pos/serializers.py` | `MenuItemSerializer.stock` method field; `get_items` forwards context; `matched_by` choices + `"menu_item"`. |
-| 6 | `backend/apps/pos/views.py` | `PosMenuView` bulk stock summaries into serializer context (one query per page, no N+1); `PosBarcodeLookupView` optional `?menu_item_id=`. |
-| 7 | `frontend/dashboard/pos.html` | Stock-source display in picker/cart/scan; live pre-add verification (fail-safe); the four refusal messages; `+`-button ceiling; 409 refresh; room-service wording; no hardcoded store names. |
-| 8 | `backend/tests/test_pos_stock_validation.py` | NEW — 31 tests (see E). |
-| 9 | `frontend/tests-js/test-pos-stock-ui.js` | NEW — 15 static contract tests. |
-| 10 | `backend/tests/test_inventory_sales_depletion.py` | `InsufficientStockTests` rewritten for the new create-time policy (3 tests; delivery-time parking still covered for shortages arising after creation). |
-| 11 | `backend/tests/test_inventory_item_management.py` | 2 tests updated to the new policy (invalid-recipe blocks at creation — delivery-time evidence path still covered; barcode/total test seeds stock). |
-
-**Explicitly untouched:** front-desk sign-in, auth, staff accounts/roles, bookings, room assignments, payments/Paystack, accounting, payroll, kitchen ops, menu management, suppliers, receipts, reports; `frontend/js/config.js` / `api.js` (existing endpoints reused); CSS (existing `.hint`, `.field-error.is-banner` classes reused); the deduction flow itself (`transition_order`, `consume_stock_for_delivered_order`, restock sweep, returns).
+| the brief asked for | section |
+|---|---|
+| verified root causes | §1 |
+| changed-file manifest | §3 and `MANIFEST.txt` |
+| DB/API changes and migration rationale | §4 |
+| test commands and actual results | §6 (including the full-suite run and the pinned UI tests) |
+| Procurement/Inventory dependencies | §5 |
+| exact paths + line numbers for simple manual fixes | §7 |
+| safe apply/rollback | §8 and `apply.sh` / `rollback.sh` |
+| remaining unverified issues | §10 |
+| the financial-form audit (no field removed, and why) | §9 |
+| what was changed, in prose | §2 |
 
 ---
 
-## C. Isolated-folder contents (`JONE_POS_ROOMSERVICE_STOCK_FIX/`)
+## 1. Verified root causes
+
+Every cause below was reproduced from the code and, where marked *(proved)*, by
+a test in this change set.
+
+### R1 — the "unresolved" number was the length of one undifferentiated list, and named the wrong subject
+
+`backend/apps/finance/services/night_audit_service.py` (original) built a single
+`discrepancies` list by appending four different conditions inside
+`daily_reconciliation`:
+
+| original line | condition | what it actually is |
+|---|---|---|
+| 116 | `CASH_VARIANCE` | cash-drawer check |
+| 122 | `DRAWER_STILL_OPEN` | cash-drawer check |
+| 144 | `OCCUPIED_NOT_IN_HOUSE` | room check |
+| 178 | `IN_HOUSE_NO_FOLIO` | billing check |
+
+`frontend/dashboard/accounting.html:1546` then rendered
+`discrepancies.length + " unresolved room or billing check"`. So a night with
+five drawer variances and no room or billing issue told the accountant
+"5 unresolved room or billing checks". The sentence named a subject the number
+did not measure, and the same number drove both the KPI
+(`data-na="discrepancies"`) and the alert strip.
+
+### R2 — the list contained conditions that were never discrepancies, and missed data that was there
+
+* **A guest who had not arrived yet was reported as an occupied room with no
+  stay.** `occupied_room_ids` came from `BookingRoom` filtered by
+  `blocking_booking_q()`, and `apps/bookings/services/availability.py:25`
+  defines `BLOCKING_STATUSES = (CONFIRMED, CHECKED_IN)`. A CONFIRMED booking
+  arriving that same day therefore produced `OCCUPIED_NOT_IN_HOUSE` for every
+  room on the arrivals list, all afternoon, until the guest reached the desk.
+  *(proved: `test_a_pending_arrival_and_a_folio_on_hold_are_not_reported_as_discrepancies`)*
+* **A folio on hold was reported as a missing folio.** The original query at
+  lines 154 and 164 filtered `folio__status=Folio.Status.OPEN` only, while
+  `Folio.Status` also has `ON_HOLD`. An in-house stay whose folio was on hold
+  produced `IN_HOUSE_NO_FOLIO` *and* a folio balance of zero, so the guest's
+  outstanding balance disappeared from the pack as well. *(proved, same test)*
+* **A stay with several live folios silently used one of them.** `stay_folios`
+  was a dict comprehension over `Folio.objects.filter(...)`, so the second open
+  folio overwrote the first and the balance shown was whichever row the
+  database returned last.
+* **A stay with no room allocation was invisible.** `_stay_room()` returned
+  `None` and the loop simply skipped that stay, so an in-house stay with no
+  physical room neither appeared as a discrepancy nor in the occupancy figures.
+
+### R3 — the count could not be inspected, reviewed, or told apart from history
+
+The page rendered the list as `reference · detail` bullets
+(`accounting.html` "Discrepancies & checks" block) and the alert strip's
+**Review** action was `href="#night-audit-ops"` — a scroll, not a drill-down.
+Nothing carried an id, an amount, a record status, a reason, or a next action,
+and there was no way to record "I looked at this" or "this is explained".
+A check reviewed last week and a check appearing for the first time were
+indistinguishable, and a condition that had since cleared simply vanished with
+no trace that it had ever been raised.
+
+### R4 — Accounting could not see submitted purchase orders at all, and no payable could be linked to one
+
+* The Accounting page said so itself:
+  `accounting.html:177` — *"Full supplier register, purchase orders and goods
+  receipts live in Procurement and Inventory."* There was no purchase-order
+  panel on Accounting.
+* A read-only hand-off **did** exist (`/api/admin/inventory/accounting/purchase-orders/`,
+  `apps/inventory/views.py:842`), but only the Procurement page consumed it.
+  Accounting's own "Outstanding supplier payables" table
+  (`accounting.html:1086-1100`) was built purely from `latest.expenses`.
+* `apps/finance/models.py` `Expense` had **no link to a purchase order**
+  (original lines 527-625: `supplier_reference` is a free-text supplier
+  document number, not an order reference). Consequences:
+  * a payable raised from an order was an unrelated record — order, receipt,
+    payable and payment could not be traced to each other;
+  * nothing prevented the same delivery being billed twice;
+  * nothing capped a payable at the value actually received, so the ordered
+    total could be billed before any goods arrived.
+
+### R5 — a supplier payment needed no approval and had no state of its own
+
+`apps/finance/services/expense_service.py` (original) `settle_expense_payment`
+(lines 330-350) required only `expense.manage` and took **no amount**. That
+capability is granted to `CASHIER` (`apps/accounts/capabilities.py:113`) and is
+inherited by `WAITER` (`:152-160`), so the person who could record a supplier
+bill could also discharge it, on any amount, with no second signature and no
+record distinguishing "payment proposed", "payment approved" and "payment
+executed". `Expense.settlement_transaction` is a `OneToOneField`, so one
+settlement is all the ledger design supports — but nothing said so to a caller.
+
+### R6 — procurement-recorded supplier payments never reach the ledger (documented, not "fixed")
+
+`apps/inventory/services/inventory_service.py:469-551`
+(`record_purchase_order_payment`) appends a `PurchaseOrderPayment` row and moves
+the order to `PAID` when the payments cover the **ordered** total. It posts no
+`FinancialTransaction`, and the amount is not tied to the value received. It
+requires `procurement.approve`, so it is not an unapproved path — but a payment
+recorded there is invisible to Accounting's payables, cash-flow and supplier
+disbursement figures. Fixing that is a Procurement/owner decision (§5, §8);
+this agent did not invent a posting rule or silently re-point those payments.
+
+---
+
+## 2. What was changed
+
+### 2.1 Unresolved checks: one record per condition, with a review trail
+
+New `backend/apps/finance/services/reconciliation_service.py` is now the single
+place reconciliation conditions are computed. It returns one dict per
+condition with:
+
+`check_id` (stable hash of business date + type + object), `category`
+(`ROOM` / `BILLING` / `CASH_DRAWER` / `PROCUREMENT`), `type` + human `type_label`,
+`severity` (`ERROR` / `WARNING` / `INFO`), `object_reference` plus the specific
+`room` / `folio` / `stay` / `booking` references, `amount`, `currency`,
+`record_status` (the status of the underlying record), `why_flagged`,
+`recommended_action`, and the derived `status` (`OPEN` / `ACKNOWLEDGED` /
+`DISMISSED` / `RESOLVED`) with `reviewed_by`, `reviewed_at`, `review_note`.
+
+Conditions now computed, and the fixes they encode:
+
+| check type | category | severity | fix |
+|---|---|---|---|
+| `CASH_VARIANCE` | CASH_DRAWER | ERROR | unchanged logic, now labelled as a drawer check and counted separately |
+| `DRAWER_STILL_OPEN` | CASH_DRAWER | ERROR | unchanged, counted separately |
+| `ROOM_OCCUPIED_NOT_IN_HOUSE` | ROOM | ERROR | **only** when the booking's own status is `CHECKED_IN` |
+| `ROOM_ARRIVAL_NOT_CHECKED_IN` | ROOM | INFO | a `CONFIRMED` arrival is informational, never "unresolved" |
+| `STAY_WITHOUT_ROOM` | ROOM | ERROR | in-house stay with no live room allocation is now visible |
+| `IN_HOUSE_NO_FOLIO` | BILLING | ERROR | a folio in `ON_HOLD` counts as a folio (no false "missing folio") |
+| `FOLIO_ON_HOLD` | BILLING | WARNING | the real condition, stated once |
+| `FOLIO_MULTIPLE_OPEN` | BILLING | WARNING | several live folios are reported instead of one silently winning |
+| `FOLIO_BALANCE_DUE` | BILLING | WARNING | balance per folio, with the amount and the guest |
+| `PO_RECEIVED_NOT_BILLED` | PROCUREMENT | WARNING | goods received with nothing (or not enough) billed |
+| `PO_PAYABLE_EXCEEDS_RECEIVED` | PROCUREMENT | ERROR | a payable larger than the value received |
+
+`summary` reports `unresolved`, `unresolved_room_and_billing`,
+`unresolved_cash_drawer`, `unresolved_procurement`, the warning/informational
+counts, `dismissed` and `resolved_since_review`. Only `ERROR` conditions count
+as unresolved; warnings and informational rows are counted beside them so the
+one number keeps one meaning.
+
+`night_audit_service.daily_reconciliation()` keeps its historic response shape
+(`discrepancies`, `cash_drawers`, `unbilled_in_house_folios`, `daily_flash`,
+`tenders`, `in_house_count`) and now derives it from the checks, adding
+`checks`, `check_summary` and `resolved_reviews`. No existing caller breaks
+(proved by `tests/test_night_audit_journals.py`, unchanged and passing).
+
+Review workflow: `GET /api/admin/finance/reconciliation/checks/` and
+`POST /api/admin/finance/reconciliation/checks/<check_id>/review/` with
+`decision` ∈ `ACKNOWLEDGED | ESCALATED | DISMISSED` and a mandatory note.
+Decisions are appended to `ReconciliationCheckReview` (append-only model; `save()`
+refuses an update, `delete()` refused by the shared immutable base), mirrored
+into the audit log as `RECONCILIATION_CHECK_REVIEWED`, and **never** edit the
+drawer, folio, room, order or payment the check is about (proved:
+`test_a_review_never_edits_the_records_it_is_about`). Dismissing is not
+suppression — it is a dated, attributed, reversible statement; a later
+acknowledgement re-opens the same check and both rows stay.
+
+### 2.2 Purchase orders and supplier payables
+
+* `Expense.purchase_order` (nullable `PROTECT` FK to `inventory.PurchaseOrder`)
+  with `UniqueConstraint(["purchase_order"], name="one_supplier_payable_per_purchase_order")`.
+  The link makes order → receipt → payable → payment traceable; the constraint
+  makes double-billing impossible at the database level, not just in the UI.
+* `services/procurement_payable_service.py`:
+  `raise_payable_from_purchase_order()` raises the payable as an ordinary
+  on-account `Expense`, so it travels the **existing** submit → approve → post
+  controls and lands in the same liabilities the reports already read. It
+  refuses `DRAFT`/`SUBMITTED`/`CANCELLED` orders, refuses orders with nothing
+  received ("a submitted purchase order is not proof of delivery"), caps the
+  amount at the value actually received
+  (`GoodsReceiptLine.quantity_received × unit_cost`), refuses a second payable,
+  and locks the order row so two accountants cannot race the check.
+* `purchase_order_payable_summary()` / `purchase_order_payables_index()` give
+  the read-only payable position per order: ordered total, received value,
+  payable raised, payable outstanding, unbilled received value, the individual
+  payables with their status, and `can_raise_payable`.
+* API: `GET /api/admin/finance/procurement/payables/` and
+  `POST /api/admin/finance/procurement/purchase-orders/<reference>/payable/`
+  (`expense.manage` **and** `reports.financial.view`, so cashiers/waiters cannot
+  raise payables).
+
+### 2.3 Supplier payment approval workflow
+
+New `SupplierPaymentRequest` model with explicit states —
+`PROPOSED → SUBMITTED → APPROVED/REJECTED → EXECUTED`, plus `CANCELLED` — and
+`services/supplier_payment_service.py` enforcing every transition:
+
+| action | endpoint | capability | what it refuses |
+|---|---|---|---|
+| propose | `POST /supplier-payments/` | `expense.manage` | unposted/settled non-payable expense, amount > outstanding, amount ≠ full balance, missing bank/card reference, future date, a second open request for the same payable |
+| submit | `POST /supplier-payments/<ref>/submit/` | `expense.manage` | any state but `PROPOSED`; a payable whose balance moved |
+| review | `POST /supplier-payments/<ref>/review/` | `expense.approve` | self-approval (central `require_independent_approver`), expired requests, non-`SUBMITTED` states |
+| execute | `POST /supplier-payments/<ref>/execute/` | `expense.manage` | anything not `APPROVED`; re-execution (idempotent, no second posting) |
+| cancel | `POST /supplier-payments/<ref>/cancel/` | requester or `expense.approve` | cancelled/executed requests; requires a reason |
+
+`settle_expense_payment()` now requires **either** an `expense.approve` holder
+**or** an `APPROVED SupplierPaymentRequest` for that exact payable, re-validated
+inside the locked transaction; it accepts an optional `amount`, refuses any
+amount above the outstanding balance and any amount that is not the full
+balance (one settlement posting per payable is what the ledger supports), and
+records the authority (`APPROVER_DIRECT` / `APPROVED_PAYMENT_REQUEST`) and the
+request reference on the append-only expense event. Execution and the `EXECUTED`
+stamp share one `transaction.atomic()` block, so a failed posting can never be
+reported as a successful payment.
+
+The accounts manager's existing direct route is unchanged (regression-proved):
+the fix removes the capability gap without changing a posted figure.
+
+### 2.4 The Accounting screen
+
+* `accounting.html` — the night-audit section now renders the checks as a table
+  (Subject · Check · Record · Amount · Status · Why it is flagged · Recommended
+  next action · decision), with a summary line that names each subject and a
+  **Review** action per row. The alert strip no longer says "unresolved room or
+  billing checks" over a mixed number: it shows `N unresolved room or billing
+  checks`, `N unresolved cash drawer checks` and `N purchase orders received but
+  not billed` separately, and its action opens the full record list.
+* New section **Purchase orders submitted to Accounting** — supplier, order
+  reference, order status, receipt progress, ordered total, received value,
+  payable raised, still-unpaid, plus *Lines* (order lines, goods receipts,
+  payables) and *Raise payable* (capped at the value received, server-validated).
+* New section **Supplier payment requests** — request, payable, supplier,
+  amount, method, status, raiser, with Submit / Approve / Reject / Execute /
+  Cancel offered per state and per capability.
+* The payables table keeps *Record supplier payment* for an approver and offers
+  *Propose payment* to a user who cannot approve, so the UI never offers a
+  control the server would refuse.
+* `frontend/js/config.js` — five endpoint keys added
+  (`financeReconciliationChecks`, `financeProcurementPayables`,
+  `financePurchaseOrderPayable`, `financeSupplierPayments`,
+  `procurementAccountingOrders`).
+* Both new sections fail closed: they render only what the server returns, and
+  an unreadable endpoint shows a section-specific message, not a page-wide
+  permission sentence.
+
+---
+
+## 3. Changed-file manifest
+
+`MANIFEST.txt` is the machine-readable list used by `apply.sh`. Summary:
+
+| file | kind | change |
+|---|---|---|
+| `backend/apps/finance/models.py` | M | `Expense.purchase_order` + unique constraint + index; `ApprovalRequest.Type.SUPPLIER_PAYMENT`; new `SupplierPaymentRequest`; new `ReconciliationCheckReview` |
+| `backend/apps/finance/migrations/0017_accounting_payables_checks_and_payment_requests.py` | A | the additive migration for the above |
+| `backend/apps/finance/services/reconciliation_service.py` | A | the reconciliation checks, summaries and review recording |
+| `backend/apps/finance/services/night_audit_service.py` | M | `daily_reconciliation` derived from the checks; historic keys kept |
+| `backend/apps/finance/services/procurement_payable_service.py` | A | payable position per order; raise a payable from received value |
+| `backend/apps/finance/services/supplier_payment_service.py` | A | propose/submit/review/execute/cancel |
+| `backend/apps/finance/services/expense_service.py` | M | settlement authority + amount validation + `purchase_order`/`metadata` on create |
+| `backend/apps/finance/services/approval_service.py` | M | `SUPPLIER_PAYMENT` threshold mapping, capability mapping, routing |
+| `backend/apps/finance/serializers.py` | M | `purchase_order` + `payment_requests` on expenses; the new request/raise/review serializers |
+| `backend/apps/finance/views.py` | M | 9 new endpoints; `ValidationError` import; supplier-payment routing on the generic approvals endpoint |
+| `backend/apps/finance/urls.py` | M | routes for the above |
+| `backend/tests/test_accounting_agent_reconciliation.py` | A | 9 tests |
+| `backend/tests/test_accounting_agent_procurement_payables.py` | A | 11 tests |
+| `backend/tests/test_accounting_agent_supplier_payments.py` | A | 12 tests |
+| `frontend/dashboard/accounting.html` | M | checks table + drill-down + review, purchase-order section, supplier-payment section, split alert strip, payables action |
+| `frontend/js/config.js` | M | 5 endpoint keys |
+| `frontend/tests-js/test-accounting-agent-ui.js` | A | 7 tests |
+
+No Procurement or Inventory file is modified.
+
+---
+
+## 4. Database and API changes, and why the migration is safe
+
+Migration `finance/0017_accounting_payables_checks_and_payment_requests`
+(depends on `finance.0016_ledger_reporting_indexes` and
+`inventory.0013_alter_stockmovement_department`) does exactly five things:
+
+1. **`CreateModel ReconciliationCheckReview`** — a new table.
+2. **`CreateModel SupplierPaymentRequest`** — a new table.
+3. **`AddField Expense.purchase_order`** — nullable, `ON DELETE PROTECT`,
+   default `NULL`; every existing expense keeps `NULL` and therefore keeps its
+   current meaning ("not raised from a purchase order"). No row is rewritten.
+4. **`AddConstraint one_supplier_payable_per_purchase_order`** —
+   `UNIQUE(purchase_order)`. Because SQL unique indexes ignore `NULL`, the
+   existing expenses (all `NULL`) cannot collide. It is created **after** the
+   column exists and no data exists that could violate it, so the migration
+   cannot fail on a populated database.
+5. **`AlterField ApprovalRequest.type`** — choices only; `SUPPLIER_PAYMENT` is a
+   new allowed value. No column type, length or data changes.
+
+Rationale: the payable link and its uniqueness must be enforced where two
+requests cannot race (the database), not only in a service check; the review
+table must be append-only evidence owned by the finance app; the payment
+request needs its own states rather than overloading `Expense`. Nothing is
+dropped, renamed or back-filled, no existing financial history is touched, and
+`python manage.py makemigrations --check` reports **no pending changes** after
+the migration is applied.
+
+Reversal: `python manage.py migrate finance 0016_ledger_reporting_indexes`
+drops the two tables, the column and the constraint. Rows created after the
+change (reviews, payment requests) are dropped with them — export first if they
+must be kept (`rollback.sh` prints the `dumpdata` command).
+
+New API surface (all under `/api/admin/finance/`):
+
+| method + path | capability |
+|---|---|
+| `GET reconciliation/checks/` | `reports.financial.view` **or** `expense.approve` |
+| `POST reconciliation/checks/<check_id>/review/` | `expense.manage` **or** `expense.approve` |
+| `GET procurement/payables/` | `reports.financial.view` / `expense.approve` / `procurement.approve` |
+| `POST procurement/purchase-orders/<reference>/payable/` | `expense.manage` **and** `reports.financial.view` |
+| `GET,POST supplier-payments/` | `expense.manage` **or** `expense.approve` |
+| `GET supplier-payments/<reference>/` | same, object-scoped |
+| `POST supplier-payments/<reference>/submit/` | `expense.manage` |
+| `POST supplier-payments/<reference>/review/` | `expense.approve` |
+| `POST supplier-payments/<reference>/execute/` | `expense.manage` |
+| `POST supplier-payments/<reference>/cancel/` | `expense.manage` / `expense.approve` |
+
+Existing endpoints and response shapes are unchanged; the night-audit payload
+only gained keys. Amounts, currencies and references are validated on the
+server; the client-supplied amount is never trusted (the payable balance is the
+ceiling) and exceptions are surfaced through the project's existing error
+envelope (no stack traces, no internal identifiers).
+
+---
+
+## 5. Dependencies on Procurement and Inventory (for those agents)
+
+These are the cross-dashboard changes this agent deliberately did **not** make:
+
+1. **Purchase-order payments are not ledger payments.** `record_purchase_order_payment`
+   (`apps/inventory/services/inventory_service.py:469-551`) records money out
+   against the *ordered* total and posts no ledger entry, so Accounting's
+   payables, cash-flow and supplier-disbursement figures never see it, and an
+   order can read `PAID` while Accounting still shows it unpaid. The two
+   dashboards therefore disagree. Either (a) PO payments should create/execute a
+   `SupplierPaymentRequest` (the model and endpoints now exist), or (b) the
+   hotel decides PO payments are deposits outside the supplier-payables ledger
+   and Procurement labels them as such. **Owner decision required.**
+2. **Receipts are the accounting basis.** The payable is capped at
+   `GoodsReceiptLine.quantity_received × unit_cost`. If Storekeeping under-
+   receipts a delivery, the payable is capped too; the fix belongs in
+   Procurement/receiving, not in Accounting.
+3. **Second deliveries after the payable is raised.** `UNIQUE(purchase_order)`
+   means one payable document per order. A later delivery is reported every day
+   by `PO_RECEIVED_NOT_BILLED` (with the unbilled amount) but cannot be added to
+   that payable, because posted expenses are immutable. The hotel must decide
+   between a supplementary payable (needs a payable-adjustment model) and a
+   separately keyed supplier invoice. Not invented here.
+4. **Drafts stay private.** `ACCOUNTING_VISIBLE_STATUSES` excludes `DRAFT`, and
+   Accounting sees nothing until Procurement submits. Keep it that way.
+5. **Supplier identity.** The payable copies the supplier *name* and
+   `PurchaseOrder.supplier_reference` into the expense (there is no
+   `Expense.supplier` FK). If Procurement/Inventory want supplier-level ageing,
+   that needs a nullable supplier FK on `Expense` — a shared decision, so it was
+   not made unilaterally.
+6. **Procurement UI.** The Procurement page should show, per order, whether a
+   payable has been raised and whether it is paid (read
+   `GET /api/admin/finance/procurement/payables/`), so the two screens stop
+   disagreeing. No Procurement file was edited by this agent.
+
+---
+
+## 6. Test commands and actual results
+
+Environment used (Linux, Python 3.13, SQLite test database):
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install "Django>=5.2,<5.3" "djangorestframework>=3.15,<4" djangorestframework-simplejwt \
+            django-cors-headers drf-spectacular python-decouple python-dotenv dj-database-url \
+            Pillow qrcode reportlab openpyxl boto3 "django-storages[s3]" requests whitenoise celery redis
+```
+
+Applied to a scratch copy of the repository (`/tmp/verify`), then:
+
+```bash
+cd backend
+python manage.py check                      # System check identified no issues (0 silenced).
+python manage.py makemigrations --check     # No changes detected
+python manage.py test tests.test_accounting_agent_reconciliation --parallel 1
+python manage.py test tests.test_accounting_agent_procurement_payables --parallel 1
+python manage.py test tests.test_accounting_agent_supplier_payments --parallel 1
+python manage.py test tests.test_finance_api tests.test_finance tests.test_night_audit_journals \
+    tests.test_expenses tests.test_expense_api tests.test_expense_payment_evidence \
+    tests.test_payments_statements_exports_laundry tests.test_accounting_inventory_reconciliation \
+    tests.test_audit_procurement_regressions tests.test_admin_approval_override \
+    tests.test_approvals_inbox --parallel 1
+```
+
+| suite | result |
+|---|---|
+| `tests.test_accounting_agent_reconciliation` (new) | **9 tests — OK** |
+| `tests.test_accounting_agent_procurement_payables` (new) | **11 tests — OK** |
+| `tests.test_accounting_agent_supplier_payments` (new) | **12 tests — OK** |
+| 11 pre-existing finance/expense/procurement suites listed above (81 tests) | **OK** (after the `ValidationError` import fix described in §8) |
+| the three new modules together (final re-run) | `Ran 32 tests in 20.392s — OK` |
+| full backend suite (`python manage.py test tests`) | **Ran 2022 — 1999 passed, 22 skipped, 1 pre-existing environmental failure (no `mysqlclient`)** (see §6.1) |
+
+Frontend:
+
+```bash
+cd frontend
+python3 validate.py                          # Checked 73 HTML files, syntax-checked 32 standalone JS files. ALL OK
+node --check ../js/config.js                 # (also: every inline <script> block in accounting.html)
+node --test tests-js/                        # 688 tests: 680 pass, 8 fail
+node --test tests-js/test-accounting-agent-ui.js   # 7 tests — OK
+```
+
+The **8 failing JS tests are pre-existing**: the same 8 fail on the untouched
+`source_repo` checkout (`# pass 673, # fail 8` before adding the new test file),
+so this change introduces **no** new frontend test failure. They are:
+`116` (72-page version.json stamp), `120` (supplier goods-received measure),
+`148` (production rewrite config), `293` (night-audit UI assertions),
+`493` (manifest scope), `571` (statutory figure), `595` (balance-sheet UI),
+`609` (table scroll wrapper). They are reported in §8 rather than papered over.
+
+### What the new tests prove (mapping to the brief)
+
+| requirement | test |
+|---|---|
+| unresolved-count and record retrieval | `test_the_count_is_split_by_subject_and_cash_is_not_called_room_or_billing`, `test_night_audit_keeps_its_shape_and_gains_the_drilldown` |
+| View action and permissions | `test_a_cashier_cannot_read_the_pack`, `test_a_reader_without_financial_visibility_cannot_record_a_review`, `openReconciliationChecks`/`reviewCheck` in `test-accounting-agent-ui.js` |
+| stale/resolved discrepancy handling | `test_the_count_follows_the_underlying_status`, `test_acknowledging_keeps_the_check_open_and_records_who_looked`, `test_dismissing_requires_a_reason_and_is_reversible` |
+| procurement order visibility | `test_accounting_sees_submitted_orders_with_the_payable_position`, `test_a_draft_order_is_never_handed_to_accounting` |
+| payable creation and duplicate prevention | `test_a_partial_receipt_raises_a_payable_for_what_actually_arrived`, `test_the_same_order_cannot_be_billed_twice` (service **and** DB constraint) |
+| approval and rejection | `test_the_lifecycle_moves_through_distinct_states_and_posts_once`, `test_a_rejected_request_leaves_the_payable_untouched`, `test_a_requester_cannot_approve_their_own_payment_request` |
+| partial payment and remaining balance | `test_a_partial_receipt_...`, `test_a_second_delivery_after_the_payable_shows_as_unbilled_remainder`, `test_over_payment_and_partial_amounts_are_refused` |
+| invalid and excessive payment amounts | `test_over_payment_and_partial_amounts_are_refused`, `test_an_already_settled_payable_cannot_be_proposed_again` |
+| reconciliation after a payment | `test_received_goods_without_a_payable_are_reported_and_then_cleared`, `test_a_second_delivery_after_the_payable_shows_as_unbilled_remainder` |
+| historical financial record preservation | `test_history_is_preserved_and_audited`, `test_a_review_never_edits_the_records_it_is_about`, `test_the_lifecycle_..._posts_once` (one transaction, no double posting) |
+
+### 6.1 Full backend suite — actually run
+
+```bash
+cd backend && python manage.py test tests --parallel 1
+# Ran 2022 tests in 752.539s
+# FAILED (failures=1, skipped=22)
+```
+
+The single failure is **pre-existing and environmental**, not caused by this
+change:
 
 ```
-JONE_POS_ROOMSERVICE_STOCK_FIX/
-├── FILE_MANIFEST.md          — every file, purpose, line-number table, test status
-├── CHANGELOG.md              — before/after narrative
-├── PATCH.diff                — unified diff vs 5aeeb18 (all 11 files, 2086 lines)
-├── backend/apps/core/exceptions.py            (full fixed file)
-├── backend/apps/inventory/services/inventory_service.py
-├── backend/apps/pos/serializers.py
-├── backend/apps/pos/services/barcode_service.py
-├── backend/apps/pos/services/order_service.py
-├── backend/apps/pos/views.py
-├── backend/tests/test_inventory_item_management.py
-├── backend/tests/test_inventory_sales_depletion.py
-├── backend/tests/test_pos_stock_validation.py (new)
-├── frontend/dashboard/pos.html
-└── frontend/tests-js/test-pos-stock-ui.js    (new)
+FAIL: test_production_settings_boot_cleanly_with_northflank_mysqls_and_rediss_urls
+      (tests.test_deployment_readiness.ProductionSettingsBootAndFailFastTests)
+django.core.exceptions.ImproperlyConfigured: Error loading MySQLdb module.
+Did you install mysqlclient?
 ```
 
-Verified: `PATCH.diff` applies cleanly (`git apply --check`) to a pristine `git archive 5aeeb18` tree, and every file in the folder is byte-identical to the fixed working tree. Tests were re-run **from the freshly patched tree** (82/82 OK) to prove the folder is self-sufficient. The original project repo was not replaced.
+That test boots the production settings with a `mysql://` URL; this environment
+has no `mysqlclient` and no MySQL server. Running the same module on the
+**untouched** `source_repo` checkout gives the identical result
+(`Ran 14 tests … FAILED (failures=1)`, same test), so it is a missing optional
+dependency in the audit sandbox, not a regression. Everything else — 1999
+passed, 22 skipped — including the 32 new tests in this change set.
+
+### 6.2 The pinned Accounting UI tests, individually
+
+| test file | result |
+|---|---|
+| `tests-js/test-night-audit-accounting-ui.js` | 7 pass / **1 fail** — pre-existing baseline #293, `"Accounting renders the night audit daily flash and checks"`. It asserts `/data-na="adr"/`; that tile does not exist in the pristine `source_repo` file either (`grep -c 'data-na="adr"'` → `0` in both trees), so the test is asserting a KPI nobody ever added. Not touched here: adding an ADR tile is a report decision, not an accounting repair. |
+| `tests-js/test-expense-approval-ui.js` | **12 pass / 0 fail** |
+| `tests-js/test-cash-variance-review-ui.js` | **7 pass / 0 fail** |
+| `tests-js/test-supplier-payment-receipt-ui.js` | **6 pass / 0 fail** |
+| `tests-js/test-accounting-agent-ui.js` (new) | **7 pass / 0 fail** |
 
 ---
 
-## D. Line-by-line manual-fix instructions (original → modified line numbers)
+## 7. Exact file paths and line numbers for simple manual fixes
 
-Apply order: 1 → 7 (backend first, then frontend). "o" = original line in `5aeeb18`, "n" = line after the fix.
+These are small, optional follow-ups that stay inside Accounting/Procurement.
+Line numbers refer to the **patched** files in this folder.
 
-**1. `backend/apps/core/exceptions.py`** (201 → 227 lines)
-- Insert after **o132** (blank line following `RestaurantTableSessionConflictError`, which spans o125–o131; `ServiceQRExpiredError` follows at o133 and shifts down): the 26-line `class PosStockConflictError(JOneAPIError)` → **n133–158**. HTTP 409, `default_code="POS_STOCK_CONFLICT"`, `__init__(detail, *, context)`, `errors_payload` property returning `{reason, items}`.
-
-**2. `backend/apps/inventory/services/inventory_service.py`** (1654 → 1885)
-- Insert after **o868** (`return snapshots` that ends `_active_recipe_snapshots`; `_consumption_event` follows at o870 and shifts down): `pos_stock_rules(menu_item_ids)` → **n869–1019** and `pos_stock_summaries(menu_item_ids)` → **n1023–1099**. `pos_stock_rules` resolves, per menu item, the active COMPONENTS recipe or the direct-sale config into `{location_id, location_code, location_name, components: [{item_id, item_sku, item_name, unit, quantity_per_menu_unit}], direct_sale, active}`; `pos_stock_summaries` adds on-hand balances (locked read, same as the deduction) minus open-order demand → `{tracked, unconfigured, unconfigured_reason, location_code, location_name, saleable_quantity, sufficient_for_one, stock_unit, components}`.
-
-**3. `backend/apps/pos/services/order_service.py`** (638 → 895)
-- Insert after **o131** (end of `_room_service_context`, o118–131; `create_order` follows): `_STOCK_COMMITTED_STATUSES` → **n136**, `_display_unit` → **n141**, `_qty_text` → **n152**, `_stock_conflict_context` → **n160**, `_validate_order_lines_stock` → **n164–374**.
-- In `create_order` (o133 → **n376**): insert `_validate_order_lines_stock(snapshotted_lines)` at **n483** — after the `_snapshot_line` loop (o~236), before subtotal computation.
-- In `submit_order` (o308 → **n556**): insert the re-validation call at **n570–573** — after the state/lines guards, with `exclude_order=order`, reading `PosOrderLine.objects.filter(order=order).values("menu_item_id", "quantity", "item_name")`.
-- `_validate_order_lines_stock` aggregates demand per (component item, location) across all lines and all *other* open orders (DRAFT/SUBMITTED/PREPARING/READY), resolves each line through `pos_stock_rules`, reads balances via the same locked helper and sort order the delivery-time deduction uses, and raises `PosStockConflictError` with the product/store/quantity/unit message variants (out-of-stock; insufficient with available + held figures; unconfigured/broken recipe; multi-component aggregate form). Untracked items are skipped (kitchen unaffected). Nothing is written before validation passes.
-
-**4. `backend/apps/pos/services/barcode_service.py`** (150 → 138)
-- o11–18 imports → **n11–16**: remove the unused `Decimal` import.
-- Replace `stock_summary_for_menu_item` (o73–92) → **n71–90**: now delegates to `pos_stock_summaries` and returns its real figures.
-- Insert `resolve_menu_item(menu_item_id, *, service_areas=None)` → **n104–117** (area-scoped menu-item resolution, same visibility rules as `resolve_barcode`).
-- Replace `barcode_lookup_payload(code, …)` (o134) with `barcode_lookup_payload(item_or_code, *, service_areas=None)` → **n119–138**: accepts a `MenuItem` (calls the summary directly, `matched_by="menu_item"`) or a code string (previous behaviour unchanged).
-
-**5. `backend/apps/pos/serializers.py`** (645 → 668)
-- In `MenuItemSerializer` (o21): add `stock = serializers.SerializerMethodField()` (→ **n24**) and `get_stock` (→ **n35–51**) reading the bulk `pos_stock_summaries` dict from context, with a per-item fallback.
-- `BarcodeLookupSerializer.matched_by` choices → **n67**: `["barcode", "sku", "menu_item"]`.
-- `MenuCategoryMenuSerializer.get_items` (o~70 → **n86–94**): pass `self.context` into the child serializer so the stock context flows through.
-
-**6. `backend/apps/pos/views.py`** (1142 → 1172)
-- `PosMenuView.get` (o179): after the queryset/serializer setup (o~214), add the bulk resolver → **n208–227** (docstring note + import) and **n231–243** (collect `menu_item_ids` from the serialized categories, call `pos_stock_summaries` once, inject into `context`).
-- `PosBarcodeLookupView.get` (o227): docstring → **n247–258**; parameter parsing → **n289–304** — read optional `menu_item_id` query param, `int()`-parse with a 400 on garbage, resolve via `resolve_menu_item` with the same `mode`/service-area scoping, build the payload with `barcode_lookup_payload(menu_item)`, and return **404 (NotFound)** when the item is not sellable in the current mode.
-
-**7. `frontend/dashboard/pos.html`** (1223 → 1349)
-- **o147 → n150**: add `<div class="hint" data-pos-item-stock role="status" aria-live="polite">…</div>` inside the menu-item field (reuses the existing `.hint` CSS).
-- **o379–393 → n383–432**: new helper block after `renderItemChoices`' old body — `orderNoun()` (n388), `unitWord()` (n389, singular/plural from the server unit), `stockLocationName()` (n397), `stockOptionSuffix()` (n398, option label suffix " · Store · N available" / " · out of stock" / " · stock location unavailable"), `renderItemStockHint()` (n406, the live status line: "Stock location: … · Available stock: N unit"), and `renderItemChoices` now appends the suffix and calls `renderItemStockHint()` (**o362 → n365** wiring plus the `pos-item` change listener at n~535 calls both `renderModifiers()` and `renderItemStockHint()`).
-- **o549–564 → n588–668**: replace `addCartLine` with `verifyItemStock(item)` (**n597** — GET `posBarcodeLookup` with `params={menu_item_id, mode}` and `cache:"no-store"`; 404 → "no longer available"; any other error → "We couldn't verify the stock for X. The item has not been added."; **never falls back to stale figures**), `reportItemNotAdded(message)` (**n612** — toast + inline status), and `async addCartLine()` (**n617**) guarded by `JONE.guardSubmit`/`releaseGuard` on the Add button, refusing unconfigured / zero / insufficient quantities with the exact messages, then pushing the line with `stock_location` / `stock_available` / `stock_unit` fields.
-- **o757 → n857**: cart `+` handler — `stockCeiling = stock_available == null ? 100 : min(100, stock_available)`; hitting the ceiling toasts the insufficient-stock message with the real figures.
-- **o788 → n880–887**: create-draft `catch` — on `err.code === "POS_STOCK_CONFLICT"` call `loadMenu(state.menuArea)` so the picker/hints show current figures; the cart is preserved (unchanged behaviour of the existing handler).
-- **o1147–1162 → n1244–1284**: replace `addScannedItem` — hard refusals (returning `false`) for unconfigured / out-of-stock / repeat-scan-exceeds-store, success path stores the same stock fields and sets a status naming store and availability.
-- **o1168 → n1293–1303**: `handleScan` now checks `var added = addScannedItem(item); if (added !== false) { …success status… }` so a blocked scan's message is not overwritten.
-- Also **o~362 (renderCart region) → n365–366**: each cart row renders `Stock location: {store} · N units available` (small caption line inside the row).
-
-**8–9. New test files:** `backend/tests/test_pos_stock_validation.py` (706 lines) and `frontend/tests-js/test-pos-stock-ui.js` (162 lines) — see E.
-
-**10. `backend/tests/test_inventory_sales_depletion.py`** (470 → 519): rewrite `InsufficientStockTests` (**o317–348 → n317–397**): (i) create-time rejection, (ii) shortage arising *after* creation still parks at delivery and never goes negative, (iii) restock sweep completes the parked deduction. Same fixture and helpers as the rest of the file.
-
-**11. `backend/tests/test_inventory_item_management.py`** (990 → 1019): `test_an_invalid_recipe_still_blocks_the_whole_order` (**o216–236 → n216–263**) now expects the create-time refusal and additionally covers the delivery-time parking when the recipe breaks after submit; `test_barcode_lookup_still_resolves_the_sku_and_the_order_total_is_unchanged` (**o742–747 → n769–775**) seeds stock before selling (its product is stock-tracked now).
+1. `frontend/dashboard/accounting.html:292` — the KPI card still reads
+   *"Checks needing attention"* with the sub-label *"Drawer, room and billing
+   checks"* while `data-na="discrepancies"` now holds only the **error** checks.
+   If the owner wants the split on the card itself, split this one `<div>` into
+   three and fill them from `check_summary.unresolved_room_and_billing`,
+   `.unresolved_cash_drawer` and `.unresolved_procurement` in `renderChecks()`
+   (`accounting.html`, function `renderChecks`). Copy/markup only — the numbers
+   already exist; the table below the card already separates them.
+2. `frontend/dashboard/accounting.html:1356` (`receiptLabel`) — turns
+   `RECEIVED_IN_FULL` into "received in full"; a status such as
+   `PARTIALLY_RECEIVED` reads acceptably but `NOT_RECEIVED` reads "not received"
+   only by luck of word order. If the wording matters, replace the generic
+   underscore-replace with an explicit map; it is one function, no logic.
+3. `backend/apps/finance/services/reconciliation_service.py:441`
+   (`_procurement_checks`) — procurement checks are computed for **today only**
+   (`if business_date != hotel_today(): return []`, line 451). If Accounting
+   wants payable conditions on historical dates, that guard is the single line
+   to revisit; it exists so no history is invented.
+4. `backend/apps/finance/services/supplier_payment_service.py:66`
+   (`ACTIVE_STATUSES`) — this tuple decides which requests block a new one for
+   the same payable. Removing `APPROVED` from it would allow a second proposal
+   alongside an approved one; keep it unless the hotel wants parallel proposals.
+5. `apps/inventory/services/inventory_service.py:469-551` (Procurement's file,
+   **not** changed here) — the PO payment that posts no ledger entry; see §5.1.
 
 ---
 
-## E. Test results (all actually run)
+## 8. Safe application and rollback
 
-**New backend module — `tests/test_pos_stock_validation.py`: 31 tests, 31 OK** (~7 s, SQLite test DB):
-- `CreateOrderStockValidationTests` (8): zero stock, insufficient, two-lines-aggregated, exact-quantity boundary, multi-component recipe, crate (24-per-unit) conversion, untracked item passes, room-service mode identical.
-- `BrokenConfigurationTests` (3): recipe with no components, inactive location, direct-sale item with no location.
-- `DraftIntegrityTests` (2): refused order writes no rows/no lines; partial lines never persisted.
-- `DeductionLocationConsistencyTests` (4): menu payload location == deduction movement location (bar store and main store); open-order commitment counted and released on cancellation; delivered order deducts exactly its own quantity.
-- `PosStockApiTests` (10): 409 envelope `{success:false, code:"POS_STOCK_CONFLICT", errors:{reason, items:[…]}}` via the real `/api/admin/pos/orders/` endpoint; room-service rejection; menu `items[].stock` payload shape; barcode-lookup `?menu_item_id=`; scan by barcode; area-scoped 404.
-- `ConcurrencyTests` (2): sequentially-committed orders cannot collectively oversell (5 bottles, 3+3 refused, 3+2 delivered → 0); threaded burst (4 workers × 6 bottles vs 5) — never oversells, never negative, no partial orders.
-- `PosStockValidationTestCase` fixture (2 direct-sale products at two stores, unconfigured kitchen item, in-house stay).
+```bash
+# 1. apply (from the repository root, on a clean branch)
+bash ai_updates/accounting_agent/apply.sh
 
-**Related backend suite (17 modules — pos, pos_api, pos_department_api, pos_menu_management, pos_restaurant_tables, pos_unopened_returns, inventory, inventory_api, inventory_item_management, inventory_sales_depletion, inventory_unit_contract, barcode_lookup, barcode_auto_assign, menu_price_cost_guard, service_request_pos_handoff, error_contract, pos_stock_validation): 186 tests, all OK** (~125 s).
+# 2. migrate (additive)
+cd backend && python manage.py migrate finance
 
-**Full backend suite (`python manage.py test`): 1820 tests — 26 failures + 4 errors + 17 skipped.** Every failure was re-run **on the untouched baseline** (fix stashed) with the identical result: all 30 sit in `test_deployment_readiness`, `test_finance` (nightly task), `test_email_pipeline` (redis/celery assertions), `test_attendance_code_and_visibility` (role code issuing) — modules this fix never touches, failing for environment reasons (no celery/redis/SMTP in the sandbox). **Zero regressions attributable to this change.**
+# 3. verify
+python manage.py check
+python manage.py makemigrations --check --dry-run   # expect "No changes detected"
+python manage.py test tests.test_accounting_agent_reconciliation \
+    tests.test_accounting_agent_procurement_payables \
+    tests.test_accounting_agent_supplier_payments
+cd ../frontend && python3 validate.py && node --test tests-js/test-accounting-agent-ui.js
+```
 
-**Frontend JS (`node --test tests-js/`): 629/632 pass.** The 15 new `test-pos-stock-ui.js` contracts all pass. The only 3 failures are the pre-existing baseline ones (`test-cloudflare-northflank-deployment.js` "expected 72 HTML pages, found 73", `test-deploy-config.js`, `test-pwa-dashboard-only.js`) — unrelated to POS, not fixed by request (smallest-change rule).
+`apply.sh` backs up every file it overwrites (and records which files did not
+exist) under `ai_updates/accounting_agent/.rollback/`, so
+`bash ai_updates/accounting_agent/rollback.sh` restores the tree byte-for-byte
+and prints the exact reverse-migration command
+(`python manage.py migrate finance 0016_ledger_reporting_indexes`).
 
-**Isolation-folder self-sufficiency:** `PATCH.diff` was applied to a pristine `git archive 5aeeb18` tree and the three core modules re-run there: **82/82 OK**.
+The scripts themselves were exercised, not just written:
+
+```text
+$ bash ai_updates/accounting_agent/apply.sh
+Applied 17 file(s) to /tmp/applytest
+$ diff -rq ai_updates/accounting_agent/backend/apps/finance /tmp/applytest/backend/apps/finance   # no differences
+$ bash ai_updates/accounting_agent/rollback.sh
+Restored 17 file(s) in /tmp/applytest
+$ diff -q backend/apps/finance/models.py <pristine source_repo>/backend/apps/finance/models.py
+# identical ("models.py pristine"); the new 0017 migration file is gone
+```
+
+and the migration was forward/reverse/re-forward tested on a fresh SQLite
+database:
+
+```text
+$ DATABASE_URL=sqlite:////tmp/agenttest.sqlite3 python manage.py migrate
+  ... Applying finance.0017_accounting_payables_checks_and_payment_requests... OK
+$ ... python manage.py migrate finance 0016_ledger_reporting_indexes
+  Unapplying finance.0017_accounting_payables_checks_and_payment_requests... OK
+$ ... python manage.py migrate finance
+  Applying finance.0017_accounting_payables_checks_and_payment_requests... OK
+```
+
+Operational notes for go-live:
+
+* The two new sections read endpoints that exist in this change set; deploying
+  the frontend without the backend would show section-specific "couldn't be
+  loaded" messages rather than broken markup, but deploy **backend first**.
+* No back-fill is required. Existing payables have `purchase_order = NULL` and
+  behave exactly as before; existing posted expenses, ledger transactions,
+  audit logs and payment records are untouched.
+* `SupplierPaymentRequest` starts empty. Nothing becomes unpayable: an
+  `expense.approve` holder can still settle a posted payable directly.
 
 ---
 
-## F. Regression status
+## 9. Form audit (§6 of the brief) — what was checked and what was not removed
 
-- **Deduction timing preserved:** stock is still deducted only at DELIVERED via `consume_stock_for_delivered_order`, exactly once, from the same configured store, all-or-nothing, never negative — verified by the untouched lifecycle/retry/sweep/cancellation/fractional/concurrency tests in `test_inventory_sales_depletion` (18/18) and `test_inventory_item_management` (33/33). **No double deduction was introduced** (validation only reads balances through the same locked helper; it never writes movements).
-- **Kitchen/untracked items unaffected** — validated by `test_pos.py`, `test_pos_api.py`, `test_service_request_pos_handoff.py` passing unchanged (their fixtures use unconfigured items).
-- **Scanner behaviour for in-stock items unchanged** (same endpoint, same envelope; `matched_by` gains a value only when queried by `menu_item_id`).
-- **Existing error-contract behaviour preserved** (`test_error_contract` green; `POS_STOCK_CONFLICT` follows the same envelope shape as the existing 409s).
-- **Full-suite comparison:** identical results to baseline outside the fixed modules (see E).
+No field was removed. Each field that looks like a duplicate was traced to its
+uses; every one of them is load-bearing, and removing it would either break a
+financial calculation, a report/export, an API contract, or historical data.
 
-## G. Outstanding issues & limitations
+| field | other field it could be confused with | why both stay (evidence) |
+|---|---|---|
+| `Expense.supplier_reference` | new `Expense.purchase_order` | `supplier_reference` is the *supplier's* document number and is written to the ledger as `external_reference` (`expense_service.post_expense`), shown in the expense detail and used by exports. `purchase_order` is the *internal* order link. Different facts. |
+| `Expense.receipt_url` / `receipt_file` | `payment_receipt_url` / `payment_receipt_file` | the first pair is the document the expense was recorded *from*; the second is proof the money actually *left*. `tests/test_expense_payment_evidence.py` pins the distinction (a bank expense already paid at posting can gain the second without posting anything). |
+| `Expense.payment_reference` | `SupplierPaymentRequest.payment_reference` | the expense field is the settled payment's bank reference (read by the payables view and the summary). The request field is the *intended* reference before execution; execution copies it onto the expense. Keeping both is what lets a proposal be corrected without editing a posted expense. |
+| `Expense.amount` | `PurchaseOrder.total_amount` / `received_value` | ordered value, received value and payable value are three different amounts; the audit found them collapsed (payable could equal the ordered total). They are now separate and the reconciliation reports the difference. |
+| `payment_method` on the expense form | `SupplierPaymentRequest.method` | the expense's method decides the *posting* (which tender account is credited at posting) and is immutable; the request's method is how the payment will be made later. For a `PAYABLE` expense they are different events. |
+| expense form `supplier_id` select vs free-text `payee` | — | the select resolves to `payee` (name) plus `supplier_reference`; the free-text field is the fallback for a one-off payee that is not in Procurement. Both are used by `create_expense` and covered by `tests/test_expense_api.py`. |
 
-1. **Pre-existing failures (not this fix, not in scope):** 30 backend full-suite failures (celery/redis/finance/attendance — environment-dependent) and 3 JS failures (page-count/deploy-config/PWA-scope). Left untouched per the smallest-safe-change rule.
-2. **Open-order commitment semantics:** a DRAFT now "holds" its quantity against availability. A draft abandoned in an open status keeps reserving stock until cancelled; the message tells staff how many units "are already held by other open orders". This is the intended anti-oversell behaviour, but staff should cancel abandoned drafts.
-3. **Old orders created before deployment** are not retro-validated at creation (impossible); any still in DRAFT *will* be validated when submitted (submit re-checks). Orders already SUBMITTED/PREPARING/READY keep the delivery-time parking safety net.
-4. **Frontend pre-check is UX, not security** — by design the backend is authoritative; the frontend never fabricates figures, it only displays server data and re-verifies before adding. A race between the pre-check and submission is still caught by the backend (409 → figures refresh).
-5. **Environment limitations (honest statement):** developed and tested in a sandbox on SQLite (development settings); no production system, real MySQL, celery/redis or Paystack environment was available or touched; **no deployment was performed and no production inventory was modified**. Concurrency behaviour under MySQL row locks follows the same code paths exercised by the SQLite tests (the locked-read ordering matches the deduction's), but a staging run on the real MySQL topology before go-live is recommended.
-6. No schema changes were needed, so none are pending approval.
+Left as-is **by decision, documented rather than changed**: the manual "Create
+expense" form still lets an accountant hand-key a purchase that Procurement has
+already ordered. It is not wrong (it covers costs with no purchase order), but
+the new *Raise payable* action should be preferred for anything with an order,
+and the form's help text was not reworded to avoid changing a tested copy
+string. A follow-up could add a "linked purchase order" selector to the manual
+form; that is a UX change, not a defect.
 
-## H. Deployment instructions
+---
 
-1. **Backup** the current deployment (at minimum the 9 files listed in B) and the database (read-only precaution — this fix ships no migrations).
-2. **Apply the fix** — either copy the 9 modified + 2 new files from `JONE_POS_ROOMSERVICE_STOCK_FIX/` into the working tree at `5aeeb18` (paths are repo-relative), or `git apply PATCH.diff` from the repo root (verified to apply cleanly to a pristine baseline).
-3. **No migrations, settings, or dependency changes** are required. `python manage.py check` should report no issues (it does in the test environment). Running `python manage.py migrate` is harmless but unnecessary.
-4. **Restart the backend** (Django app server / workers) and **redeploy the static frontend** (`frontend/dashboard/pos.html`).
-5. **Verify in staging first** (recommended command set):
-   - `python manage.py test tests.test_pos_stock_validation tests.test_inventory_sales_depletion tests.test_inventory_item_management` (82 tests)
-   - related regression: the 17-module list in E (186 tests)
-   - frontend: `cd frontend && node --test tests-js/`
-6. **Smoke test in staging:** open POS → item picker shows "Store · N available"; set quantity above availability → refusal with figures; scan an out-of-stock barcode → refusal; create a draft that exceeds stock → 409 banner + figures refresh; deliver an order → stock deducted from the displayed store.
-7. **Rollback:** restore the 9 backed-up files (and delete the 2 new test files if desired); no data cleanup is needed — the fix writes no new tables or columns.
+## 10. Remaining unverified issues
+
+1. **`tests.test_deployment_readiness` cannot pass in this sandbox** — it needs
+   `mysqlclient` and a MySQL server to boot production settings. It fails
+   identically on the pristine checkout. Run it in CI, where MySQL is available,
+   before deploying.
+2. **Procurement payments and the ledger (§5.1)** — verified by reading
+   `record_purchase_order_payment` (no `FinancialTransaction` is created), not by
+   an end-to-end reconciliation against real data. Resolving it needs the owner
+   decision described there.
+3. **Concurrency under production MySQL/MariaDB** — the new paths take row locks
+   (`select_for_update`) and rely on a database unique constraint, and the
+   tests run on SQLite, where `select_for_update` is a no-op. The duplicate
+   payable guarantee is enforced by the constraint, which behaves the same on
+   MySQL; the "two accountants raise at the same instant" race was reasoned
+   about, not load-tested.
+4. **`FOLIO_MULTIPLE_OPEN` / `FOLIO_BALANCE_DUE` do not attempt to allocate a
+   payment between several folios.** They flag the condition; consolidation
+   remains a manual, approved step.
+5. **Second deliveries after a payable is raised** are reported, not billed
+   (§5.3). Not fixable without a new payable-adjustment decision.
+6. **Supplier-level ageing** — the payable has no supplier FK (§5.5), so
+   "how much do we owe supplier X" is still derived by name matching. Unchanged
+   behaviour, unchanged limitation.
+7. **The 8 pre-existing JS test failures** listed in §6 are untouched by this
+   change (they fail identically on the pristine checkout) and belong to
+   whichever agents own those pages.
+8. **No browser/UI automation was run** for the new panels. They are verified by
+   static assertions (`frontend/tests-js/test-accounting-agent-ui.js`), by
+   `frontend/validate.py`, and by `node --check` on every inline script block;
+   `renderChecks`/`renderPurchaseOrders`/`renderSupplierPayments` were not
+   exercised in a real browser.
+9. **Permission matrix breadth** — the new endpoints use existing capabilities
+   (`reports.financial.view`, `expense.manage`, `expense.approve`,
+   `procurement.approve`). Whether `STOREKEEPER`/`PROCUREMENT_OFFICER` should see
+   the payable position was not re-decided; they can reach it only through
+   `procurement.approve`.

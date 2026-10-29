@@ -4,7 +4,7 @@ from django.db.models import Count, Prefetch, Q
 from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.views import APIView
 
@@ -14,7 +14,10 @@ from apps.core.pagination import StandardPagination
 from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
 
-from .models import ApprovalRequest, CashSession, Expense, ExpenseEvent, FinancialControlPolicy, FinancialLine, FinancialTransaction, Folio, FolioPosting
+from .models import (
+    ApprovalRequest, CashSession, Expense, ExpenseEvent, FinancialControlPolicy, FinancialLine,
+    FinancialTransaction, Folio, FolioPosting, SupplierPaymentRequest,
+)
 from .serializers import (
     ApprovalRequestSerializer,
     ApprovalReviewSerializer,
@@ -32,6 +35,14 @@ from .serializers import (
     FinancialTransactionSerializer,
     FolioPostingSerializer,
     FolioSerializer,
+    PurchaseOrderPayableRaiseSerializer,
+    ReconciliationCheckReviewReadSerializer,
+    ReconciliationCheckReviewSerializer,
+    SupplierPaymentCancelSerializer,
+    SupplierPaymentExecuteSerializer,
+    SupplierPaymentRequestCreateSerializer,
+    SupplierPaymentRequestSerializer,
+    SupplierPaymentReviewSerializer,
 )
 from .services.approval_service import review_approval
 from .services.cash_session_service import review_cash_variance
@@ -48,6 +59,18 @@ from apps.core.utils import hotel_today
 
 from .services.journal_service import chart_of_accounts, post_manual_journal, record_cash_drop
 from .services.night_audit_service import accounts_receivable_aging, daily_reconciliation
+from .services.procurement_payable_service import (
+    purchase_order_payables_index,
+    raise_payable_from_purchase_order,
+)
+from .services.reconciliation_service import collect_checks, record_check_review
+from .services.supplier_payment_service import (
+    cancel_supplier_payment,
+    execute_supplier_payment,
+    propose_supplier_payment,
+    review_supplier_payment,
+    submit_supplier_payment,
+)
 from .services.statements_service import balance_sheet, cash_flow
 from .services.reporting_service import financial_summary, summary_pdf_bytes, summary_xlsx_bytes
 
@@ -63,7 +86,6 @@ def _parse_query_date(value, name):
         return None
     parsed = parse_date(value)
     if parsed is None:
-        from rest_framework.exceptions import ValidationError
         raise ValidationError({name: "Use ISO date format YYYY-MM-DD."})
     return parsed
 
@@ -242,11 +264,13 @@ class ApprovalReviewView(APIView):
         if approval is None:
             raise NotFound("Approval request not found.")
         if approval.type == ApprovalRequest.Type.CASH_VARIANCE:
-            from rest_framework.exceptions import ValidationError
             raise ValidationError({"reference": "Use the cash-session variance-review endpoint for this approval."})
         if approval.type == ApprovalRequest.Type.EXPENSE:
-            from rest_framework.exceptions import ValidationError
             raise ValidationError({"reference": "Use the expense review endpoint for this approval."})
+        if approval.type == ApprovalRequest.Type.SUPPLIER_PAYMENT:
+            raise ValidationError({
+                "reference": "Use the supplier-payment review endpoint for this approval.",
+            })
         approval = review_approval(approval=approval, reviewer=request.user, **serializer.validated_data)
         return success_response(ApprovalRequestSerializer(approval).data, message="Approval review recorded.")
 
@@ -717,4 +741,415 @@ class CashSessionDropView(APIView):
             CashSessionSerializer(cash_session).data,
             message="Cash drop recorded; expected cash updated.",
             status=status.HTTP_201_CREATED,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Accounting agent: unresolved reconciliation checks (drill-down + review)
+# ---------------------------------------------------------------------------
+def _finance_reader(request):
+    """Who may read the reconciliation pack.
+
+    The same pair the night audit already requires. ``expense.manage`` alone is
+    deliberately not enough for reading: the capability matrix also grants it to
+    cashiers and waiters, and this payload carries guest names and folio
+    balances. A cashier who cannot read the pack cannot be shown it.
+    """
+    return has_capability(request.user, "reports.financial.view") or has_capability(
+        request.user, "expense.approve"
+    )
+
+
+@extend_schema(
+    tags=["Admin · Finance"],
+    summary="Reconciliation checks for a business date, with the underlying records",
+)
+class ReconciliationCheckListView(APIView):
+    """Every reconciliation condition for one business date, drillable.
+
+    The Accounting screen's "N unresolved room or billing checks" line is
+    rendered from this payload, so the number and the records behind it can
+    never disagree. ``summary`` splits room/billing from cash-drawer and
+    procurement conditions instead of lumping them into one count.
+    """
+
+    permission_classes = [HasCapability]
+    required_capabilities = ("reports.financial.view", "expense.approve")
+    require_any_capability = True
+
+    def get(self, request):
+        business_date = _parse_query_date(request.query_params.get("date"), "date") or hotel_today()
+        category = (request.query_params.get("category") or "").strip().upper() or None
+        include_dismissed = (request.query_params.get("include_dismissed") or "true").lower() != "false"
+        payload = collect_checks(business_date=business_date, include_dismissed=include_dismissed)
+        if category:
+            payload["checks"] = [row for row in payload["checks"] if row["category"] == category]
+            payload["resolved_reviews"] = [row for row in payload["resolved_reviews"] if row["category"] == category]
+            payload["summary"]["filtered_category"] = category
+        return success_response(payload)
+
+
+@extend_schema(
+    tags=["Admin · Finance"],
+    summary="Record an accountant's decision about one reconciliation check",
+)
+class ReconciliationCheckReviewView(APIView):
+    """Acknowledge, dismiss or escalate a check, with the reason kept forever.
+
+    Dismissing is allowed — some flagged conditions really are explained — but
+    it requires a written reason, it is append-only, and it never edits the
+    ledger, the folio, the drawer or the payment the check is about.
+    """
+
+    permission_classes = [HasCapability]
+    required_capabilities = ("expense.manage", "expense.approve")
+    require_any_capability = True
+
+    def post(self, request, check_id):
+        serializer = ReconciliationCheckReviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        business_date = data.get("business_date") or _parse_query_date(
+            request.query_params.get("date"), "date",
+        ) or hotel_today()
+        review, check = record_check_review(
+            check_id=check_id,
+            business_date=business_date,
+            decision=data["decision"],
+            note=data["note"],
+            actor=request.user,
+        )
+        log_action(
+            actor=request.user,
+            action="RECONCILIATION_CHECK_REVIEWED",
+            instance=None,
+            request=request,
+            summary=f"Reconciliation check {check['type']} on {check['object_reference']} {data['decision'].lower()}",
+            metadata={
+                "check_id": check["check_id"],
+                "check_type": check["type"],
+                "category": check["category"],
+                "object_reference": check["object_reference"],
+                "business_date": business_date.isoformat(),
+                "decision": data["decision"],
+                "amount": check["amount"],
+            },
+        )
+        payload = success_response(
+            {
+                "review": ReconciliationCheckReviewReadSerializer(review).data,
+                "check": check,
+                "summary": collect_checks(business_date=business_date)["summary"],
+            },
+            message="Review recorded. The underlying records were not changed.",
+            status=status.HTTP_201_CREATED,
+        )
+        return payload
+
+
+# ---------------------------------------------------------------------------
+# Accounting agent: purchase-order hand-off and supplier payables
+# ---------------------------------------------------------------------------
+@extend_schema(
+    tags=["Admin · Finance"],
+    summary="Payable position of submitted purchase orders (read-only)",
+)
+class PurchaseOrderPayableListView(APIView):
+    """What Accounting owes per purchase order, derived from receipts and payables.
+
+    Read-only. The purchase orders themselves come from the procurement
+    accounting hand-off endpoint; this joins them onto the payables so the
+    Accounting screen can show, for one order: what arrived, what was billed,
+    what is still unpaid, and whether a payable may still be raised.
+    """
+
+    permission_classes = [HasCapability]
+    required_capabilities = ("reports.financial.view", "expense.approve", "procurement.approve")
+    require_any_capability = True
+
+    def get(self, request):
+        raw = (request.query_params.get("references") or request.query_params.get("reference") or "").strip()
+        references = [value for value in raw.split(",") if value] if raw else None
+        if references is not None and len(references) > 200:
+            raise ValidationError({"references": "Ask for at most 200 purchase orders at a time."})
+        index = purchase_order_payables_index(references=references)
+        return success_response({"purchase_orders": index, "count": len(index)})
+
+
+@extend_schema(
+    tags=["Admin · Finance"],
+    summary="Raise the supplier payable for the goods received on a purchase order",
+)
+class PurchaseOrderPayableCreateView(APIView):
+    """Turn a received purchase order into a supplier payable (on account).
+
+    The payable is created as a controlled expense DRAFT-able document and
+    travels through the existing submit -> approve -> post workflow; nothing is
+    posted here. The amount is capped at the value actually received and one
+    payable per order is enforced by the database.
+    """
+
+    permission_classes = [HasCapability]
+    required_capabilities = ("expense.manage", "reports.financial.view")
+
+    def post(self, request, reference):
+        from apps.inventory.models import PurchaseOrder
+
+        serializer = PurchaseOrderPayableRaiseSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        purchase_order = PurchaseOrder.objects.filter(reference=reference).first()
+        if purchase_order is None:
+            raise NotFound("Purchase order not found.")
+        key = f"payable:{request.user.pk}:{data['idempotency_key']}"
+        expense, created = raise_payable_from_purchase_order(
+            purchase_order=purchase_order,
+            actor=request.user,
+            amount=data.get("amount"),
+            category=data.get("category", ""),
+            notes=data.get("notes", ""),
+            accounting_class=data["accounting_class"],
+            idempotency_key=key,
+        )
+        if created:
+            log_action(
+                actor=request.user,
+                action="PURCHASE_ORDER_PAYABLE_RAISED",
+                instance=expense,
+                request=request,
+                summary=f"Supplier payable {expense.reference} raised from purchase order {purchase_order.reference}",
+                metadata={
+                    "expense_reference": expense.reference,
+                    "purchase_order": purchase_order.reference,
+                    "amount": str(expense.amount),
+                },
+            )
+        return success_response(
+            ExpenseDetailSerializer(_expense_or_404(request, expense.reference, detail=True)).data,
+            message=(
+                "Supplier payable raised. Submit it for approval, then post it — nothing has been paid yet."
+                if created
+                else "Existing payable returned."
+            ),
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Accounting agent: supplier payment requests
+# ---------------------------------------------------------------------------
+def _supplier_payment_queryset():
+    return SupplierPaymentRequest.objects.select_related(
+        "expense", "expense__purchase_order", "expense__approval_request",
+        "requested_by", "reviewed_by", "executed_by", "cancelled_by",
+        "approval_request", "settlement_transaction",
+    )
+
+
+def _supplier_payment_visible_to(request, queryset):
+    """Object-level visibility, mirroring the expense list rule.
+
+    A reader with financial visibility sees every payment request. Anyone else
+    sees only their own, so a cashier can follow the payment they proposed
+    without being shown the hotel's other supplier money.
+    """
+    if _finance_reader(request):
+        return queryset
+    return queryset.filter(
+        Q(requested_by=request.user) | Q(expense__requested_by=request.user)
+    )
+
+
+def _supplier_payment_or_404(request, reference):
+    queryset = _supplier_payment_visible_to(request, _supplier_payment_queryset()).filter(reference=reference)
+    payment_request = queryset.first()
+    if payment_request is None:
+        raise NotFound("Supplier payment request not found.")
+    return payment_request
+
+
+@extend_schema(tags=["Admin · Finance"], summary="List or propose supplier payment requests")
+class SupplierPaymentRequestListCreateView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("expense.manage", "expense.approve")
+    require_any_capability = True
+
+    def get(self, request):
+        queryset = _supplier_payment_visible_to(request, _supplier_payment_queryset())
+        if status_value := request.query_params.get("status"):
+            queryset = queryset.filter(status=status_value)
+        if expense_reference := request.query_params.get("expense"):
+            queryset = queryset.filter(expense__reference=expense_reference)
+        return _paginate(self, request, queryset.order_by("-created_at", "-pk"), SupplierPaymentRequestSerializer)
+
+    def post(self, request):
+        serializer = SupplierPaymentRequestCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        expense = _expense_or_404(request, data["expense_reference"])
+        payment_request, created = propose_supplier_payment(
+            expense=expense,
+            actor=request.user,
+            method=data["method"],
+            amount=data.get("amount"),
+            payment_reference=data.get("payment_reference", ""),
+            paid_on=data.get("paid_on"),
+            notes=data.get("notes", ""),
+            idempotency_key=f"supplier-payment:{request.user.pk}:{data['idempotency_key']}",
+        )
+        if created:
+            log_action(
+                actor=request.user,
+                action="SUPPLIER_PAYMENT_PROPOSED",
+                instance=expense,
+                request=request,
+                summary=f"Supplier payment request {payment_request.reference} proposed for {expense.reference}",
+                metadata={
+                    "supplier_payment_request": payment_request.reference,
+                    "expense_reference": expense.reference,
+                    "amount": str(payment_request.amount),
+                    "method": payment_request.method,
+                },
+            )
+        return success_response(
+            SupplierPaymentRequestSerializer(payment_request).data,
+            message="Supplier payment proposed. Submit it for approval next." if created else "Existing request returned.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Get one supplier payment request")
+class SupplierPaymentRequestDetailView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("expense.manage", "expense.approve")
+    require_any_capability = True
+
+    def get(self, request, reference):
+        return success_response(SupplierPaymentRequestSerializer(_supplier_payment_or_404(request, reference)).data)
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Submit a proposed supplier payment for approval")
+class SupplierPaymentRequestSubmitView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "expense.manage"
+
+    def post(self, request, reference):
+        payment_request = submit_supplier_payment(
+            request=_supplier_payment_or_404(request, reference), actor=request.user,
+        )
+        log_action(
+            actor=request.user, action="SUPPLIER_PAYMENT_SUBMITTED", instance=payment_request.expense, request=request,
+            metadata={"supplier_payment_request": payment_request.reference, "status": payment_request.status},
+        )
+        return success_response(
+            SupplierPaymentRequestSerializer(payment_request).data,
+            message=(
+                "Submitted for independent approval."
+                if payment_request.status == SupplierPaymentRequest.Status.SUBMITTED
+                else "Approved under the active policy (below the approval threshold)."
+            ),
+        )
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Approve or reject a submitted supplier payment")
+class SupplierPaymentRequestReviewView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "expense.approve"
+
+    def post(self, request, reference):
+        serializer = SupplierPaymentReviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payment_request = review_supplier_payment(
+            request=_supplier_payment_or_404(request, reference),
+            reviewer=request.user,
+            **serializer.validated_data,
+        )
+        log_action(
+            actor=request.user, action="SUPPLIER_PAYMENT_REVIEWED", instance=payment_request.expense, request=request,
+            metadata={"supplier_payment_request": payment_request.reference, "status": payment_request.status},
+        )
+        return success_response(
+            SupplierPaymentRequestSerializer(payment_request).data,
+            message=(
+                "Supplier payment approved."
+                if payment_request.status == SupplierPaymentRequest.Status.APPROVED
+                else "Supplier payment rejected."
+                if payment_request.status == SupplierPaymentRequest.Status.REJECTED
+                else "Review recorded."
+            ),
+        )
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Execute an approved supplier payment exactly once")
+class SupplierPaymentRequestExecuteView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "expense.manage"
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def post(self, request, reference):
+        serializer = SupplierPaymentExecuteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        cash_session = None
+        if ref := data.get("cash_session_reference"):
+            cash_session = CashSession.objects.filter(reference=ref).first()
+            if cash_session is None:
+                raise NotFound("Cash session not found.")
+        payment_request, expense = execute_supplier_payment(
+            request=_supplier_payment_or_404(request, reference),
+            actor=request.user,
+            cash_session=cash_session,
+            receipt_url=data.get("receipt_url", ""),
+            receipt_file=request.FILES.get("receipt"),
+        )
+        log_action(
+            actor=request.user,
+            action="SUPPLIER_PAYMENT_EXECUTED",
+            instance=payment_request.expense,
+            request=request,
+            summary=f"Supplier payment {payment_request.reference} executed for {payment_request.expense.reference}",
+            metadata={
+                "supplier_payment_request": payment_request.reference,
+                "expense_reference": payment_request.expense.reference,
+                "amount": str(payment_request.amount),
+                "settlement_transaction": (
+                    payment_request.settlement_transaction.reference
+                    if payment_request.settlement_transaction_id else ""
+                ),
+            },
+        )
+        return success_response(
+            SupplierPaymentRequestSerializer(payment_request).data,
+            message=(
+                "Payment executed and the payable released."
+                if expense is not None
+                else "This payment request was already executed; nothing further was posted."
+            ),
+        )
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Cancel a supplier payment request that has not been executed")
+class SupplierPaymentRequestCancelView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("expense.manage", "expense.approve")
+    require_any_capability = True
+
+    def post(self, request, reference):
+        serializer = SupplierPaymentCancelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payment_request = cancel_supplier_payment(
+            request=_supplier_payment_or_404(request, reference),
+            actor=request.user,
+            reason=serializer.validated_data["reason"],
+        )
+        log_action(
+            actor=request.user, action="SUPPLIER_PAYMENT_CANCELLED", instance=payment_request.expense, request=request,
+            metadata={
+                "supplier_payment_request": payment_request.reference,
+                "reason": payment_request.cancel_reason,
+            },
+        )
+        return success_response(
+            SupplierPaymentRequestSerializer(payment_request).data,
+            message="Payment request cancelled. Nothing was paid.",
         )

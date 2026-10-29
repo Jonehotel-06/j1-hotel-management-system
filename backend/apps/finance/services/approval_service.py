@@ -22,6 +22,11 @@ _THRESHOLD_FIELD = {
     ApprovalRequest.Type.ADJUSTMENT: "refund_manager_approval_threshold",
     ApprovalRequest.Type.CASH_VARIANCE: "cash_variance_manager_approval_threshold",
     ApprovalRequest.Type.EXPENSE: "expense_manager_approval_threshold",
+    # A supplier payment is decided at the same money threshold the hotel
+    # already sets for releasing expense money. No new policy field is invented:
+    # an owner who raises the expense threshold is understood to be raising the
+    # ceiling for paying a supplier invoice by the same amount.
+    ApprovalRequest.Type.SUPPLIER_PAYMENT: "expense_manager_approval_threshold",
 }
 
 
@@ -131,7 +136,11 @@ def _review_approval(*, approval, reviewer, approved: bool, review_note="") -> A
     approval = ApprovalRequest.objects.select_for_update().select_related("policy", "requester").get(pk=approval.pk)
     if approval.status != ApprovalRequest.Status.PENDING:
         return approval
-    approval_capability = "expense.approve" if approval.type == ApprovalRequest.Type.EXPENSE else "payment.refund.approve"
+    approval_capability = (
+        "expense.approve"
+        if approval.type in {ApprovalRequest.Type.EXPENSE, ApprovalRequest.Type.SUPPLIER_PAYMENT}
+        else "payment.refund.approve"
+    )
     if not reviewer or not has_capability(reviewer, approval_capability):
         raise PermissionDenied("This user cannot approve this sensitive monetary action.")
     if approval.expires_at and approval.expires_at <= timezone.now():
@@ -174,6 +183,10 @@ def review_approval(*, approval, reviewer, approved: bool, review_note="") -> Ap
         raise ValidationError("Cash variance approvals must be reviewed through the controlled cash-session workflow.")
     if approval.type == ApprovalRequest.Type.EXPENSE:
         raise ValidationError("Expense approvals must be reviewed through the controlled expense workflow.")
+    if approval.type == ApprovalRequest.Type.SUPPLIER_PAYMENT:
+        raise ValidationError(
+            "Supplier payment approvals must be reviewed through the controlled supplier-payment workflow."
+        )
     return _review_approval(
         approval=approval,
         reviewer=reviewer,

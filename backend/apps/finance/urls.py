@@ -30,4 +30,26 @@ urlpatterns = [
     path("expenses/<str:reference>/settle-payment/", views.ExpenseSettlePaymentView.as_view(), name="expense-settle-payment"),
     path("expenses/<str:reference>/payment-evidence/", views.ExpensePaymentEvidenceView.as_view(), name="expense-payment-evidence"),
     path("control-policies/", views.FinancialControlPolicyListCreateView.as_view(), name="control-policies"),
+    # --- Accounting agent: drillable reconciliation checks -------------------
+    # One record per unresolved condition (room, billing, cash drawer,
+    # procurement/payables) with the object, amount, why it is flagged and the
+    # recommended next action. The night-audit count is rendered from this.
+    path("reconciliation/checks/", views.ReconciliationCheckListView.as_view(), name="reconciliation-checks"),
+    path(
+        "reconciliation/checks/<str:check_id>/review/",
+        views.ReconciliationCheckReviewView.as_view(), name="reconciliation-check-review",
+    ),
+    # --- Accounting agent: purchase-order hand-off and supplier payables -----
+    path("procurement/payables/", views.PurchaseOrderPayableListView.as_view(), name="procurement-payables"),
+    path(
+        "procurement/purchase-orders/<str:reference>/payable/",
+        views.PurchaseOrderPayableCreateView.as_view(), name="procurement-purchase-order-payable",
+    ),
+    # --- Accounting agent: supplier payment request workflow -----------------
+    path("supplier-payments/", views.SupplierPaymentRequestListCreateView.as_view(), name="supplier-payments"),
+    path("supplier-payments/<str:reference>/", views.SupplierPaymentRequestDetailView.as_view(), name="supplier-payment-detail"),
+    path("supplier-payments/<str:reference>/submit/", views.SupplierPaymentRequestSubmitView.as_view(), name="supplier-payment-submit"),
+    path("supplier-payments/<str:reference>/review/", views.SupplierPaymentRequestReviewView.as_view(), name="supplier-payment-review"),
+    path("supplier-payments/<str:reference>/execute/", views.SupplierPaymentRequestExecuteView.as_view(), name="supplier-payment-execute"),
+    path("supplier-payments/<str:reference>/cancel/", views.SupplierPaymentRequestCancelView.as_view(), name="supplier-payment-cancel"),
 ]

@@ -14,8 +14,9 @@ from django.utils import timezone
 
 from apps.core.utils import hotel_date_bounds, hotel_today, money
 
-from ..models import CashMovement, CashSession, FinancialLine, FinancialTransaction, Folio, FolioPosting
+from ..models import FinancialLine, FinancialTransaction
 from . import accounting
+from .reconciliation_service import SEVERITY_ERROR, collect_checks
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")
@@ -51,12 +52,22 @@ def _ledger_revenue(business_date):
 
 def daily_reconciliation(*, business_date=None) -> dict:
     """One business day's night-audit pack: flash metrics, tenders, drawers,
-    and occupied-room versus billed-stay exceptions."""
-    from apps.bookings.models import BookingRoom
-    from apps.bookings.services.availability import blocking_booking_q
+    and the reconciliation checks for that day.
+
+    The checks themselves are owned by ``reconciliation_service``: one record
+    per condition, with the object it belongs to, the amount, why it is flagged
+    and what to do next. This function keeps the historic response shape
+    (``cash_drawers``, ``discrepancies``, ``unbilled_in_house_folios``) so no
+    existing caller breaks, and adds ``checks`` and ``check_summary`` so the
+    dashboard can show the underlying records instead of a bare count.
+
+    ``discrepancies`` stays what it always was — one row per condition that
+    needs a person — but it is now built from the checks, so the drawer, room
+    and billing subjects can be counted separately and a reviewed condition
+    carries its review state instead of looking untouched.
+    """
     from apps.pos.models import PosTender
     from apps.rooms.models import Room
-    from apps.stays.models import Stay
 
     business_date = business_date or hotel_today()
     day_start, day_end = hotel_date_bounds(business_date, business_date)
@@ -64,8 +75,18 @@ def daily_reconciliation(*, business_date=None) -> dict:
     revenue_by_account = _ledger_revenue(business_date)
     accommodation_revenue = _dec(revenue_by_account.get(accounting.ACCOMMODATION_REVENUE))
     total_revenue = _dec(sum(revenue_by_account.values(), ZERO))
-
     active_rooms = Room.objects.filter(is_active=True).count()
+
+    pack = collect_checks(business_date=business_date)
+    checks = pack["checks"]
+    summary = pack["summary"]
+    drawer_rows = pack["cash_drawers"]
+
+    # Occupancy is read from the same blocking-booking set the room checks use,
+    # so the occupancy figures and the room checks can never disagree.
+    from apps.bookings.models import BookingRoom
+    from apps.bookings.services.availability import blocking_booking_q
+
     occupied_room_ids = set(
         BookingRoom.objects.filter(check_in__lte=business_date, check_out__gt=business_date)
         .filter(blocking_booking_q(prefix="booking"))
@@ -85,101 +106,21 @@ def daily_reconciliation(*, business_date=None) -> dict:
         .values("method").annotate(total=Sum("amount"))
     )}
 
-    sessions = (
-        CashSession.objects.filter(business_date=business_date)
-        .select_related("cashier")
-        .order_by("opened_at", "pk")
-    )
-    drops = {
-        row["cash_session_id"]: _dec(row["total"])
-        for row in CashMovement.objects.filter(
-            cash_session__in=sessions, type=CashMovement.Type.SAFE_DROP
-        ).values("cash_session_id").annotate(total=Sum("amount"))
-    }
-    drawer_rows, discrepancies = [], []
-    for session in sessions:
-        counted = _dec(session.counted_cash) if session.counted_cash is not None else None
-        variance = _dec(session.variance) if session.variance is not None else None
-        row = {
-            "reference": session.reference,
-            "cashier": (session.cashier.full_name or session.cashier.email) if session.cashier_id else "",
-            "location": session.location,
-            "status": session.status,
-            "opening_float": money(session.opening_float),
-            "safe_drops": money(drops.get(session.pk, ZERO)),
-            "expected_cash": money(session.expected_cash),
-            "counted_cash": money(counted) if counted is not None else None,
-            "variance": money(variance) if variance is not None else None,
+    discrepancies = [
+        {
+            "type": check["type"],
+            "reference": check["reference"],
+            # Kept for callers that render one sentence per row.
+            "detail": check["why_flagged"],
+            "check_id": check["check_id"],
+            "category": check["category"],
+            "severity": check["severity"],
+            "status": check["status"],
+            "amount": check["amount"],
         }
-        drawer_rows.append(row)
-        if variance is not None and variance != ZERO:
-            discrepancies.append({
-                "type": "CASH_VARIANCE",
-                "reference": session.reference,
-                "detail": f"Drawer counted {money(counted)} against expected {money(session.expected_cash)} (variance {money(variance)}).",
-            })
-        if session.status == CashSession.Status.OPEN and session.business_date < hotel_today():
-            discrepancies.append({
-                "type": "DRAWER_STILL_OPEN",
-                "reference": session.reference,
-                "detail": "Cash session from this business day is still open.",
-            })
-
-    in_house = list(
-        Stay.objects.filter(status=Stay.Status.IN_HOUSE)
-        .select_related("booking", "guest")
-        .prefetch_related("stay_rooms__room")
-    )
-    def _stay_room(stay):
-        for occupancy in stay.stay_rooms.all():
-            if occupancy.released_at is None:
-                return occupancy.room
-        return None
-
-    in_house_room_ids = {
-        room.pk for stay in in_house if (room := _stay_room(stay)) is not None
-    }
-    for room_id in sorted(occupied_room_ids - in_house_room_ids):
-        room = Room.objects.filter(pk=room_id).first()
-        discrepancies.append({
-            "type": "OCCUPIED_NOT_IN_HOUSE",
-            "reference": getattr(room, "room_number", str(room_id)),
-            "detail": "Room is occupied by a blocking booking tonight but has no in-house stay.",
-        })
-
-    folio_balances = {
-        row["folio_id"]: (
-            Decimal(row["debits"] or 0) - Decimal(row["credits"] or 0)
-        ).quantize(CENT)
-        for row in FolioPosting.objects.filter(folio__stay__in=[s.pk for s in in_house], folio__status=Folio.Status.OPEN)
-        .values("folio_id")
-        .annotate(
-            debits=Sum("amount", filter=Q(effect=FolioPosting.Effect.DEBIT)),
-            credits=Sum("amount", filter=Q(effect=FolioPosting.Effect.CREDIT)),
-        )
-    } if in_house else {}
-    unbilled = []
-    stay_folios = {
-        row["stay_id"]: row["id"]
-        for row in Folio.objects.filter(stay__in=[s.pk for s in in_house], status=Folio.Status.OPEN).values("id", "stay_id")
-    } if in_house else {}
-    for stay in in_house:
-        folio_id = stay_folios.get(stay.pk)
-        balance = folio_balances.get(folio_id, ZERO) if folio_id else ZERO
-        if balance > ZERO:
-            room = _stay_room(stay)
-            unbilled.append({
-                "stay_reference": stay.reference,
-                "guest": stay.guest.full_name if stay.guest_id else "",
-                "room": room.room_number if room is not None else "",
-                "folio_balance": money(balance),
-            })
-        if folio_id is None:
-            discrepancies.append({
-                "type": "IN_HOUSE_NO_FOLIO",
-                "reference": stay.reference,
-                "detail": "In-house stay has no open folio.",
-            })
+        for check in checks
+        if check["severity"] == SEVERITY_ERROR and check["status"] in {"OPEN", "ACKNOWLEDGED"}
+    ]
 
     return {
         "business_date": business_date.isoformat(),
@@ -207,8 +148,12 @@ def daily_reconciliation(*, business_date=None) -> dict:
         },
         "cash_drawers": drawer_rows,
         "discrepancies": discrepancies,
-        "in_house_count": len(in_house),
-        "unbilled_in_house_folios": unbilled,
+        # Full drill-down payload: the records, not a count of them.
+        "checks": checks,
+        "check_summary": summary,
+        "resolved_reviews": pack["resolved_reviews"],
+        "in_house_count": summary["in_house_count"],
+        "unbilled_in_house_folios": pack["unbilled_in_house_folios"],
         "generated_at": timezone.now().isoformat(),
     }
 
