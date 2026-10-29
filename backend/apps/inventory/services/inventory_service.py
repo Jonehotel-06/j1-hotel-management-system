@@ -1020,7 +1020,68 @@ def pos_stock_rules(menu_item_ids):
     return rules
 
 
-def pos_stock_summaries(menu_item_ids):
+def _open_pos_order_statuses():
+    """POS order statuses whose lines still hold stock for an undelivered sale.
+
+    Imported lazily to keep ``inventory`` free of a module-level dependency on
+    ``pos``. The tuple is asserted against the delivery-time authority
+    (``apps.pos.services.order_service._STOCK_COMMITTED_STATUSES``) by the test
+    suite so the two can never drift.
+    """
+    from apps.pos.models import PosOrder
+
+    return (
+        PosOrder.Status.DRAFT, PosOrder.Status.SUBMITTED, PosOrder.Status.PREPARING, PosOrder.Status.READY,
+    )
+
+
+def open_pos_order_demand(required_keys, *, exclude_order=None):
+    """Base-unit demand already committed by OPEN POS orders, per stock key.
+
+    The single implementation of "stock other orders have already promised" for
+    both the order-entry validator (``apps.pos.services.order_service``) and the
+    menu availability projection below, so a displayed quantity and the
+    quantity the validator will actually accept are computed from one rule.
+
+    ``required_keys`` iterates ``(stock_item_id, location_id)`` pairs. Demand is
+    resolved through the same recipe/direct-sale mapping the deduction uses, so
+    a dish whose recipe shares rice with another dish reduces rice's
+    availability for both. Delivered orders are excluded: their deduction is
+    already in the balance, and cancelled/voided orders never deduct.
+
+    Callers that need a stable answer must hold the balance row locks before
+    calling (the POS order validator does); readers that only display the number
+    may call it without locks.
+    """
+    from apps.pos.models import PosOrderLine
+
+    keys = {key for key in required_keys}
+    if not keys:
+        return {}
+    lines = PosOrderLine.objects.filter(
+        order__status__in=_open_pos_order_statuses(), menu_item_id__isnull=False,
+    )
+    if exclude_order is not None:
+        lines = lines.exclude(order=exclude_order)
+    rows = [(int(row["menu_item_id"]), int(row["quantity"])) for row in lines.values("menu_item_id", "quantity")]
+    if not rows:
+        return {}
+    rules = pos_stock_rules({row[0] for row in rows})
+    demand = {}
+    for menu_item_id, quantity in rows:
+        rule = rules.get(menu_item_id)
+        if not rule or not rule["tracked"]:
+            continue
+        for component in rule["components"]:
+            key = (component["item_id"], rule["location_id"])
+            if key not in keys:
+                continue  # cannot affect the keys the caller asked about
+            amount = (component["quantity_per_menu_unit"] * quantity).quantize(QTY)
+            demand[key] = (demand.get(key, Decimal("0.0000")) + amount).quantize(QTY)
+    return demand
+
+
+def pos_stock_summaries(menu_item_ids, *, include_open_order_demand=True):
     """Bulk, read-only stock summaries for the POS order-entry interfaces.
 
     One shared implementation for the POS menu payload and the barcode lookup:
@@ -1030,12 +1091,31 @@ def pos_stock_summaries(menu_item_ids):
     only — order validation locks its own rows).
 
     Returns ``{menu_item_id: summary}`` with the keys
-    ``tracked / unconfigured / unconfigured_reason / location_code /
+    ``tracked / no_stock / unconfigured / unconfigured_reason / location_code /
     location_name / saleable_quantity / sufficient_for_one / stock_unit /
-    components``. ``saleable_quantity`` is how many whole menu units the
-    scarcest component can still produce; ``stock_unit`` is the limiting
-    component's base unit for single-component (direct-sale) products and is
-    empty for mixed-unit recipes.
+    available_quantity / available_sufficient_for_one / committed_quantity /
+    availability_unit / components``.
+
+    Two different quantities are reported and they must not be confused:
+
+    * ``saleable_quantity`` — how many whole menu units the STORE's physical
+      balance can still produce (on-hand only);
+    * ``available_quantity`` — how many the order validator will ACCEPT right
+      now, i.e. the same figure minus stock already promised to other open
+      (draft/submitted/preparing/ready) POS orders, resolved through
+      :func:`open_pos_order_demand`. This is the number the POS must show,
+      because it is the number the next order will be measured against.
+
+    ``stock_unit`` is the limiting component's base unit for single-component
+    (direct-sale) products and stays empty for mixed-unit recipes, matching the
+    existing API contract; ``availability_unit`` is the word the UI should use
+    for a menu unit — ``"portion"`` for a recipe-based prepared food, the stock
+    item's base unit for a direct-sale product.
+
+    Every figure here is a snapshot: a concurrent order, a goods receipt or a
+    correction in the inventory console can change it one moment later, so it
+    is display guidance only. Submission-time validation in
+    ``apps.pos.services.order_service`` remains authoritative.
     """
     rules = pos_stock_rules(menu_item_ids)
     balance_keys = {
@@ -1051,6 +1131,7 @@ def pos_stock_summaries(menu_item_ids):
             location_id__in={key[1] for key in balance_keys},
         ):
             balances[(row.item_id, row.location_id)] = Decimal(row.quantity_on_hand)
+    demand = open_pos_order_demand(balance_keys) if include_open_order_demand else {}
     summaries = {}
     for menu_item_id, rule in rules.items():
         summary = {
@@ -1063,21 +1144,34 @@ def pos_stock_summaries(menu_item_ids):
             "saleable_quantity": None,
             "sufficient_for_one": None,
             "stock_unit": "",
+            "available_quantity": None,
+            "available_sufficient_for_one": None,
+            "committed_quantity": "0",
+            "availability_unit": "",
             "components": [],
         }
         if not rule["tracked"]:
             summaries[menu_item_id] = summary
             continue
         saleable = None
+        available_units = None
         limiting_unit = ""
         component_rows = []
         for component in rule["components"]:
             per_unit = component["quantity_per_menu_unit"]
-            on_hand = balances.get((component["item_id"], rule["location_id"]), Decimal("0.0000"))
+            key = (component["item_id"], rule["location_id"])
+            on_hand = balances.get(key, Decimal("0.0000"))
+            committed = demand.get(key, Decimal("0.0000")) if include_open_order_demand else Decimal("0.0000")
+            free = on_hand - committed
+            if free < Decimal("0.0000"):
+                free = Decimal("0.0000")
             component_saleable = (on_hand / per_unit) if per_unit > 0 else Decimal("0")
+            component_available = (free / per_unit) if per_unit > 0 else Decimal("0")
             if saleable is None or component_saleable < saleable:
                 saleable = component_saleable
                 limiting_unit = component["unit"]
+            if available_units is None or component_available < available_units:
+                available_units = component_available
             component_rows.append({
                 "item_id": component["item_id"],
                 "item_sku": component["item_sku"],
@@ -1085,12 +1179,24 @@ def pos_stock_summaries(menu_item_ids):
                 "unit": component["unit"],
                 "quantity_per_menu_unit": str(per_unit),
                 "quantity_on_hand": str(on_hand),
+                "quantity_committed": str(committed.quantize(QTY)),
+                "quantity_available": str(free.quantize(QTY)),
             })
         whole_units = int(saleable) if saleable is not None else 0
+        whole_available = int(available_units) if available_units is not None else 0
+        single_component = len(rule["components"]) == 1
         summary.update({
             "saleable_quantity": str(whole_units),
             "sufficient_for_one": whole_units >= 1,
-            "stock_unit": limiting_unit if len(rule["components"]) == 1 else "",
+            "stock_unit": limiting_unit if single_component else "",
+            "available_quantity": str(whole_available),
+            "available_sufficient_for_one": whole_available >= 1,
+            # Whole menu units of THIS product already promised to open orders.
+            "committed_quantity": str(max(whole_units - whole_available, 0)),
+            # The unit a menu unit is counted in: the stock item's own base unit
+            # for a direct-sale product, "portion" for a prepared recipe (whose
+            # ingredients are measured in several different units at once).
+            "availability_unit": limiting_unit if single_component else "portion",
             "components": component_rows,
         })
         summaries[menu_item_id] = summary

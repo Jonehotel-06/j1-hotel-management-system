@@ -1,1003 +1,956 @@
-diff --git a/backend/apps/accounts/desktop_policy.py b/backend/apps/accounts/desktop_policy.py
-index 4629c20..050f69b 100644
---- a/backend/apps/accounts/desktop_policy.py
-+++ b/backend/apps/accounts/desktop_policy.py
-@@ -386,6 +386,21 @@ def active_front_desk_workstation() -> Workstation | None:
-     )
+--- a/backend/apps/pos/services/order_service.py
++++ b/backend/apps/pos/services/order_service.py
+@@ -6,6 +6,7 @@
+ 
+ from django.core.exceptions import PermissionDenied, ValidationError
+ from django.db import transaction
++from django.db.models import Sum
+ from django.utils import timezone
+ 
+ from apps.core.utils import hotel_today
+@@ -199,7 +200,7 @@
+     """
+     from apps.core.exceptions import PosStockConflictError
+     from apps.inventory.models import StockItem as _StockItem, StockLocation as _StockLocation
+-    from apps.inventory.services.inventory_service import _locked_balance, pos_stock_rules
++    from apps.inventory.services.inventory_service import _locked_balance, open_pos_order_demand, pos_stock_rules
+ 
+     normalised = []
+     for line in lines or ():
+@@ -269,25 +270,13 @@
+         balance = _locked_balance(item=_StockItem(pk=item_id), location=_StockLocation(pk=location_id))
+         balances[key] = Decimal(balance.quantity_on_hand)
+ 
+-    demand_lines = PosOrderLine.objects.filter(
+-        order__status__in=_STOCK_COMMITTED_STATUSES, menu_item_id__isnull=False,
+-    )
+-    if exclude_order is not None:
+-        demand_lines = demand_lines.exclude(order=exclude_order)
+-    demand_rows = [(int(row["menu_item_id"]), int(row["quantity"])) for row in demand_lines.values("menu_item_id", "quantity")]
+-    demand = {}
+-    if demand_rows:
+-        demand_rules = pos_stock_rules({row[0] for row in demand_rows})
+-        for menu_item_id, quantity in demand_rows:
+-            rule = demand_rules.get(menu_item_id)
+-            if not rule or not rule["tracked"]:
+-                continue
+-            for component in rule["components"]:
+-                key = (component["item_id"], rule["location_id"])
+-                if key not in required:
+-                    continue  # cannot affect this order's availability
+-                amount = (component["quantity_per_menu_unit"] * quantity).quantize(Decimal("0.0001"))
+-                demand[key] = (demand.get(key, Decimal("0.0000")) + amount).quantize(Decimal("0.0001"))
++    # The "stock other open orders already promised" rule lives in ONE place:
++    # the inventory service's shared helper, which the POS menu availability
++    # projection also uses. Keeping the two identical is what makes a displayed
++    # quantity agree with what this validator will accept. It runs while the
++    # balance locks above are held, so a draft committed a moment earlier is
++    # already visible here.
++    demand = open_pos_order_demand(required, exclude_order=exclude_order)
+ 
+     shortages = []
+     for key in sorted(required):
+@@ -358,12 +347,22 @@
+                     "Reduce the quantity or replenish stock before adding this item."
+                 )
+         else:
++            # A prepared food is limited by an INGREDIENT, so the refusal must
++            # name both the ingredient that ran short and the dish(es) that
++            # asked for it — otherwise an operator has no way to know which
++            # quantity to reduce.
++            dish_labels = []
++            for menu_item_id_in, _quantity_in, _component_in in lines_in:
++                dish_label = names.get(menu_item_id_in) or ""
++                if dish_label and dish_label not in dish_labels:
++                    dish_labels.append(dish_label)
++            dish_note = (" for " + ", ".join(dish_labels)) if dish_labels else ""
+             unit_word = _display_unit(component.get("unit"), Decimal("2"))
+             messages.append(
+                 f"Insufficient stock: {location_name} has {_qty_text(on_hand)} {unit_word} of "
+                 f"{component.get('item_name') or component.get('item_sku')} on hand"
+                 + (f" ({_qty_text(held)} {unit_word} already held by other open orders)" if held > Decimal("0.0000") else "")
+-                + f", but this order needs {_qty_text(needed)} {unit_word}. "
++                + f", but this order needs {_qty_text(needed)} {unit_word}{dish_note}. "
+                 "Reduce the quantities or replenish stock before adding these items."
+             )
+     raise PosStockConflictError(
+@@ -791,9 +790,70 @@
+     return accounting.BANK_CLEARING
  
  
-+def front_desk_workstation_missing() -> bool:
-+    """True when the hotel has no active FRONT_DESK workstation record at all.
++def tender_captured_amount(order) -> Decimal:
++    """Money already collected against one POS order (captured tenders only).
 +
-+    Every Receptionist Desktop enrolment route dead-ends without one: a desktop
-+    key can only be issued for a workstation record, ``Workstation.ip_address``
-+    lives on that record, and the ``HotelSettings.front_desk_desktop_ip``
-+    binding only takes effect while an active FRONT_DESK workstation exists.
-+    A sign-in refusal that answers "register this address" while no workstation
-+    exists sends the administrator in a circle — the address alone can never
-+    be enough — so this flag lets the refusal say the one thing that is
-+    actually missing.
++    Voided and refunded tenders never count towards what the guest has paid, so
++    only ``CAPTURED`` rows are summed. Uses the prefetched ``tenders`` cache when
++    the caller has it (the order detail API does) so serialising a list does not
++    issue a query per row.
 +    """
-+    return active_front_desk_workstation() is None
++    prefetched = getattr(order, "_prefetched_objects_cache", None) or {}
++    if "tenders" in prefetched:
++        return sum(
++            (Decimal(row.amount) for row in prefetched["tenders"] if row.status == PosTender.Status.CAPTURED),
++            Decimal("0.00"),
++        ).quantize(CENT)
++    total = order.tenders.filter(status=PosTender.Status.CAPTURED).aggregate(total=Sum("amount"))["total"]
++    return Decimal(total or 0).quantize(CENT)
 +
 +
- def resolve_receptionist_desktop(request) -> tuple[Workstation | None, str]:
-     """Identify the Receptionist Desktop behind this request.
++def order_outstanding_balance(order, *, captured=None) -> Decimal:
++    """What the guest still owes on a POS order: ``net_total - captured``.
++
++    ``net_total`` (order total minus unopened-item returns) is the collection
++    ceiling — never the frozen ``total_amount`` — so a return reduces what may
++    be collected instead of leaving the guest owing money they already got back.
++    Fully paid orders return ``0.00`` and an over-collected legacy order is
++    clamped to ``0.00`` so a display can never show a negative balance.
++    """
++    total = Decimal(order.net_total)
++    paid = Decimal(captured if captured is not None else tender_captured_amount(order))
++    outstanding = (total - paid).quantize(CENT)
++    return outstanding if outstanding > Decimal("0.00") else Decimal("0.00")
++
++
+ @transaction.atomic
+-def capture_direct_tender(*, order, method: str, amount, actor, cash_session=None, external_reference="", notes="") -> PosTender:
+-    """Capture tender for a delivered direct sale as a distinct collection entry."""
++def capture_direct_tender(
++    *, order, method: str, amount, actor, cash_session=None, external_reference="", notes="",
++    currency="", idempotency_key="", expected_outstanding_balance=None,
++):
++    """Capture tender for a delivered direct sale as a distinct collection entry.
++
++    The browser never decides how much is owed. Everything that gates the
++    collection is derived here, inside one transaction holding the order's row
++    lock:
++
++    * the outstanding balance is recomputed from ``net_total`` and the captured
++      tenders (so a partially paid order can only ever be topped up by the
++      remainder, and a fully paid order cannot be collected again);
++    * the amount is validated against that server figure — never against a
++      client-submitted total — and an over-collection is refused;
++    * the currency must match the order's currency;
++    * when the caller states the balance it displayed
++      (``expected_outstanding_balance``), a mismatch is refused so a stale
++      screen cannot collect an amount that another cashier already changed;
++    * a repeated ``idempotency_key`` (double click, retried request, lost
++      response) returns the tender that already exists instead of collecting a
++      second time.
++
++    The hotel's existing evidence conventions are preserved: the tender keeps its
++    own reference, is posted to the ledger as a PAYMENT_COLLECTION against the
++    method's clearing account, and updates the cashier's expected cash for cash
++    collections. Room-service orders still settle through the guest folio and are
++    refused here, and no processing fee is invented (this codebase models no POS
++    tender fee; if the hotel introduces one it must be added deliberately).
++    """
+     order = PosOrder.objects.select_for_update().get(pk=order.pk)
+     if order.mode == PosOrder.Mode.ROOM_SERVICE:
+         raise ValidationError("Room-service orders settle through the guest folio, not a direct POS tender.")
+@@ -801,19 +861,67 @@
+         raise ValidationError("Only a delivered and charged POS order can accept tender.")
+     if method not in PosTender.Method.values:
+         raise ValidationError("Invalid POS tender method.")
++    order_currency = (order.currency or "NGN").upper()
++    presented_currency = str(currency or "").strip().upper()
++    if presented_currency and presented_currency != order_currency:
++        raise ValidationError(
++            f"This order is denominated in {order_currency}; a {presented_currency} tender cannot settle it."
++        )
+     amount = _money(amount, positive=True)
+-    captured = sum(
+-        PosTender.objects.select_for_update()
+-        .filter(order=order, status=PosTender.Status.CAPTURED)
+-        .values_list("amount", flat=True),
+-        Decimal("0.00"),
++
++    # Recompute what is owed from the immutable order figures and the tenders
++    # already captured, while holding the order lock: two cashiers (or a double
++    # click) can never both pass on the same balance.
++    captured_rows = list(
++        PosTender.objects.select_for_update().filter(order=order, status=PosTender.Status.CAPTURED)
+     )
++    captured = sum((Decimal(row.amount) for row in captured_rows), Decimal("0.00")).quantize(CENT)
+     # Returns of untouched, unopened items reduce what the guest actually owes.
+     # ``total_amount`` stays frozen as the originally charged amount, so the
+     # collection ceiling is the live ``net_total`` and over-collection after a
+     # return is refused instead of silently banking the difference.
+-    if captured + amount > order.net_total:
+-        raise ValidationError("Tender exceeds the order's unpaid balance.")
++    outstanding = order_outstanding_balance(order, captured=captured)
++    if outstanding <= Decimal("0.00"):
++        raise ValidationError(
++            f"Order {order.reference} is already fully settled "
++            f"({captured} of {order.net_total} {order_currency} collected); there is no balance to collect."
++        )
++
++    idempotency_key = str(idempotency_key or "").strip()[:96]
++    if idempotency_key:
++        # Checked under the order row lock, so a concurrent duplicate either
++        # waits for this transaction or finds the tender below.
++        existing = (
++            PosTender.objects.select_for_update()
++            .filter(order=order, metadata__idempotency_key=idempotency_key)
++            .order_by("pk")
++            .first()
++        )
++        if existing is not None:
++            # A replay must never collect twice: the caller gets the tender that
++            # already exists, flagged so the API can answer 200 instead of 201.
++            existing.idempotent_replay = True
++            return existing
++
++    if expected_outstanding_balance is not None:
++        try:
++            expected = Decimal(str(expected_outstanding_balance)).quantize(CENT)
++        except (InvalidOperation, TypeError, ValueError) as exc:
++            raise ValidationError(
++                {"expected_outstanding_balance": "Enter a valid outstanding balance."}
++            ) from exc
++        if expected != outstanding:
++            raise ValidationError(
++                f"The outstanding balance changed: this screen showed {expected} {order_currency}, "
++                f"but {outstanding} {order_currency} is still owed. Reload the order and collect the "
++                "current balance."
++            )
++    if amount > outstanding:
++        raise ValidationError(
++            f"Tender exceeds the order's unpaid balance: {amount} {order_currency} was presented but only "
++            f"{outstanding} {order_currency} is still owed. Collect at most the remaining balance."
++        )
++
+     session = None
+     if method == PosTender.Method.CASH:
+         if cash_session is None:
+@@ -829,11 +937,12 @@
+         order=order,
+         method=method,
+         amount=amount,
+-        currency=order.currency,
++        currency=order_currency,
+         external_reference=(external_reference or "")[:120],
+         cash_session=session,
+         captured_by=actor,
+         notes=(notes or "")[:500],
++        metadata={"idempotency_key": idempotency_key} if idempotency_key else {},
+     )
+     source_key = f"pos-collection:{tender.reference}"
+     financial_transaction, _ = create_posted_transaction(
+@@ -845,7 +954,7 @@
+         external_reference=tender.external_reference or tender.reference,
+         narrative=f"POS tender {tender.reference} for {order.reference}",
+         metadata={"pos_order_id": order.pk, "pos_tender_id": tender.pk, "method": method},
+-        currency=order.currency,
++        currency=order_currency,
+         business_date=hotel_today(),
+         lines=[
+             {
+@@ -872,17 +981,17 @@
+             transaction=financial_transaction,
+             type=CashMovement.Type.COLLECTION,
+             amount=amount,
+-            currency=order.currency,
++            currency=order_currency,
+             actor=actor,
+             source_reference=tender.reference,
+             notes=f"POS order {order.reference}",
+         )
+         session.expected_cash = (session.expected_cash + amount).quantize(CENT)
+         session.save(update_fields=["expected_cash", "updated_at"])
+-    new_captured = captured + amount
++    new_captured = (captured + amount).quantize(CENT)
+     order.settlement_status = (
+         PosOrder.SettlementStatus.PAID
+-        if new_captured == order.net_total
++        if new_captured >= order.net_total
+         else PosOrder.SettlementStatus.PARTIALLY_PAID
+     )
+     order.save(update_fields=["settlement_status", "updated_at"])
+@@ -890,6 +999,12 @@
+         order=order,
+         type=PosOrderEvent.Type.TENDER_CAPTURED,
+         actor=actor,
+-        details={"tender_reference": tender.reference, "amount": str(amount), "method": method},
++        details={
++            "tender_reference": tender.reference,
++            "amount": str(amount),
++            "method": method,
++            "balance_before": str(outstanding),
++            "balance_after": str(order_outstanding_balance(order, captured=new_captured)),
++        },
+     )
+     return tender
+--- a/backend/apps/pos/serializers.py
++++ b/backend/apps/pos/serializers.py
+@@ -330,6 +330,20 @@
+     table_session_reference = serializers.CharField(source="table_session.reference", read_only=True, allow_null=True)
+     table_session_code = serializers.CharField(source="table_session.table.code", read_only=True, allow_null=True)
+     service_request_reference = serializers.CharField(source="service_request.reference", read_only=True, allow_null=True)
++    # --- Server-derived settlement figures (read-only) ---------------------
++    # The POS screen must never compute what a guest owes. These four values
++    # come from the same rules ``capture_direct_tender`` enforces: the charge
++    # ceiling is ``net_total`` (order total minus unopened-item returns), what
++    # was collected is the sum of CAPTURED tenders, and what is left is the
++    # difference. ``captured_amount`` is annotated by the views so listing
++    # orders stays a single query; the fallback keeps the field correct for any
++    # caller that serialises an order without that annotation.
++    net_total = serializers.SerializerMethodField()
++    returned_amount = serializers.SerializerMethodField()
++    amount_paid = serializers.SerializerMethodField()
++    outstanding_balance = serializers.SerializerMethodField()
++    #: True only when a direct tender may legally be captured right now.
++    settlement_action_available = serializers.SerializerMethodField()
  
-diff --git a/backend/apps/accounts/management/__init__.py b/backend/apps/accounts/management/__init__.py
-new file mode 100644
-index 0000000..e69de29
-diff --git a/backend/apps/accounts/management/commands/__init__.py b/backend/apps/accounts/management/commands/__init__.py
-new file mode 100644
-index 0000000..e69de29
-diff --git a/backend/apps/accounts/management/commands/frontdesk_login_doctor.py b/backend/apps/accounts/management/commands/frontdesk_login_doctor.py
-new file mode 100644
-index 0000000..a570aee
---- /dev/null
-+++ b/backend/apps/accounts/management/commands/frontdesk_login_doctor.py
-@@ -0,0 +1,206 @@
-+"""Read-only diagnosis of Front Desk email/password sign-in enrolment.
+     class Meta:
+         model = PosOrder
+@@ -338,9 +352,48 @@
+             "guest_name", "table_number", "table_session_reference", "table_session_code", "service_request_reference",
+             "delivery_location", "currency", "subtotal", "tax_amount",
+             "total_amount", "submitted_at", "delivered_at", "created_at", "created_by_email", "line_count",
++            "net_total", "returned_amount", "amount_paid", "outstanding_balance", "settlement_action_available",
+         ]
+         read_only_fields = fields
+ 
++    @staticmethod
++    def _captured(obj):
++        """Captured total: from the view's annotation when present, else computed."""
++        annotated = getattr(obj, "captured_amount", None)
++        if annotated is not None:
++            return Decimal(annotated).quantize(Decimal("0.01"))
++        from .services.order_service import tender_captured_amount
 +
-+Run on the server (production or staging):
++        return tender_captured_amount(obj)
 +
-+    python manage.py frontdesk_login_doctor
-+    python manage.py frontdesk_login_doctor --observed-ip 102.89.34.7
++    def get_net_total(self, obj):
++        return str(Decimal(obj.net_total).quantize(Decimal("0.01")))
 +
-+WHY THIS EXISTS
-+===============
-+Front-desk staff (other than management) may sign in with their email and
-+password only from the enrolled Receptionist Desktop. Three enrolment routes
-+exist, and every one of them requires an ACTIVE FRONT_DESK WORKSTATION RECORD
-+to exist first:
++    def get_returned_amount(self, obj):
++        return str(Decimal(obj.returned_amount or 0).quantize(Decimal("0.01")))
 +
-+1. a desktop key issued for that workstation and installed in the desk browser;
-+2. the address the desk reaches the API from, registered on the workstation
-+   (``Workstation.ip_address``);
-+3. the address/network saved in ``HotelSettings.front_desk_desktop_ip`` —
-+   which only takes effect while an active FRONT_DESK workstation exists.
++    def get_amount_paid(self, obj):
++        return str(self._captured(obj).quantize(Decimal("0.01")))
 +
-+An administrator who configures only the Settings address (the field the
-+Settings page invites them to fill) therefore still has a desk where every
-+password sign-in is refused: the configuration looks complete but nothing can
-+match. This command prints the actual enrolment state from the database, says
-+which single step is missing, and checks an observed address against the saved
-+bindings — without changing anything. It is strictly read-only: no rows are
-+created, saved or deleted, and no secret (key digest, password, token) is ever
-+printed.
-+"""
-+from django.core.management.base import BaseCommand
++    def get_outstanding_balance(self, obj):
++        from .services.order_service import order_outstanding_balance
 +
-+from apps.accounts.desktop_policy import (
-+    active_front_desk_workstation,
-+    configured_front_desk_desktop_ip,
-+    configured_front_desk_desktop_networks,
-+    front_desk_workstation_missing,
-+    receptionist_desktops_for_ip,
-+)
-+from apps.accounts.models import Workstation
-+from apps.core.client_ip import is_infrastructure_address, is_infrastructure_network
++        return str(order_outstanding_balance(obj, captured=self._captured(obj)).quantize(Decimal("0.01")))
 +
++    def get_settlement_action_available(self, obj):
++        """Whether a tender can be captured for this order right now.
 +
-+class Command(BaseCommand):
-+    help = (
-+        "Report how (or whether) the Front Desk desktop is enrolled for "
-+        "email/password staff sign-in, and what an administrator must register. "
-+        "Read-only: changes nothing."
++        Mirrors every server-side precondition of ``capture_direct_tender`` so
++        the button cannot offer a collection the API will refuse: delivered,
++        charged, a direct-sale mode (room service settles on the folio), and a
++        positive outstanding balance.
++        """
++        if obj.mode == PosOrder.Mode.ROOM_SERVICE:
++            return False
++        if obj.status != PosOrder.Status.DELIVERED or not obj.charge_transaction_id:
++            return False
++        return self.get_outstanding_balance(obj) != "0.00"
++
+ 
+ class PosOrderDetailSerializer(PosOrderListSerializer):
+     lines = PosOrderLineSerializer(many=True, read_only=True)
+@@ -401,15 +454,42 @@
+ 
+ 
+ class PosTenderCaptureSerializer(serializers.Serializer):
++    """Input for one direct POS collection.
++
++    ``amount`` stays required and is the amount the cashier actually took, but
++    it is never trusted as a balance: the service recomputes what is owed from
++    the order and its captured tenders and refuses anything above it.
++
++    The optional fields are additive and backwards compatible:
++
++    * ``currency`` — when supplied it must match the order's currency;
++    * ``idempotency_key`` — one key per tender form; a repeated key returns the
++      tender already recorded instead of collecting twice (double click,
++      network retry, lost response);
++    * ``expected_outstanding_balance`` — the balance the screen displayed. A
++      mismatch refuses the collection so a stale form cannot bank an amount that
++      another cashier already changed.
++    """
++
+     method = serializers.ChoiceField(choices=PosTender.Method.choices)
+     amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
+     cash_session_reference = serializers.CharField(required=False, allow_blank=True, max_length=64, default="")
+     external_reference = serializers.CharField(required=False, allow_blank=True, max_length=120, default="")
+     notes = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
++    currency = serializers.CharField(required=False, allow_blank=True, max_length=3, default="")
++    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=96, default="")
++    expected_outstanding_balance = serializers.DecimalField(
++        required=False, allow_null=True, max_digits=12, decimal_places=2, min_value=Decimal("0.00")
++    )
+ 
+     def validate(self, attrs):
+         if attrs["method"] == PosTender.Method.CASH and not attrs.get("cash_session_reference"):
+             raise serializers.ValidationError({"cash_session_reference": "Cash tender requires an open cash session."})
++        currency = (attrs.get("currency") or "").strip().upper()
++        if currency and len(currency) != 3:
++            raise serializers.ValidationError({"currency": "Currency must be a three-letter ISO code."})
++        attrs["currency"] = currency
++        attrs["idempotency_key"] = (attrs.get("idempotency_key") or "").strip()
+         return attrs
+ 
+ 
+--- a/backend/apps/pos/views.py
++++ b/backend/apps/pos/views.py
+@@ -56,10 +56,40 @@
+ from .services import table_service
+ 
+ 
++def _order_captured_amount_subquery():
++    """Captured tender total for one order, as a correlated subquery.
++
++    The order list already aggregates ``line_count``; adding the collection
++    total as another aggregate would multiply rows and inflate both figures, so
++    it is a single-value subquery instead. The serializer turns this into
++    ``amount_paid`` / ``outstanding_balance`` — the POS never derives what a
++    guest owes from the frozen order total.
++    """
++    return Subquery(
++        PosTender.objects.filter(order=OuterRef("pk"), status=PosTender.Status.CAPTURED)
++        .values("order")
++        .annotate(
++            captured=Coalesce(
++                Sum("amount"),
++                Value(Decimal("0.00")),
++                output_field=DecimalField(max_digits=14, decimal_places=2),
++            )
++        )
++        .values("captured")[:1]
 +    )
 +
-+    def add_arguments(self, parser):
-+        parser.add_argument(
-+            "--observed-ip",
-+            default="",
-+            help=(
-+                "The address the server reports for the desk browser (Settings "
-+                "page, 'IP address seen by the server'). Checked against the "
-+                "saved bindings to show which enrolment route would match."
++
+ def _order_queryset():
+     return (
+         PosOrder.objects.select_related("stay", "folio", "created_by", "charge_transaction", "table_session__table", "service_request")
+-        .annotate(line_count=Count("lines"))
++        .annotate(
++            line_count=Count("lines"),
++            captured_amount=Coalesce(
++                _order_captured_amount_subquery(),
++                Value(Decimal("0.00")),
++                output_field=DecimalField(max_digits=14, decimal_places=2),
 +            ),
 +        )
-+
-+    def handle(self, *args, **options):
-+        out = self.stdout
-+        observed = str(options.get("observed_ip") or "").strip()
-+
-+        out.write("Front Desk login doctor (read-only)")
-+        out.write("=" * 46)
-+
-+        # ---- 1. The workstation records: the foundation of every route ----
-+        desks = list(Workstation.objects.filter(department=Workstation.Department.FRONT_DESK).order_by("pk"))
-+        active_desks = [desk for desk in desks if desk.is_active]
-+        if not desks:
-+            out.write(
-+                "\n1. FRONT DESK WORKSTATIONS: NONE REGISTERED"
-+                "\n   >>> This is the blocking gap. No address and no desktop key can"
-+                "\n       authorize the desk until a Front Desk workstation exists."
-+                "\n   FIX: an administrator opens Dashboard -> Terminals and registers"
-+                "\n        the Front Desk workstation (an active FRONT_DESK record)."
-+            )
-+        else:
-+            out.write(f"\n1. FRONT DESK WORKSTATIONS: {len(active_desks)} active / {len(desks)} total")
-+            for desk in desks:
-+                state = "ACTIVE" if desk.is_active else "inactive (admits nobody)"
-+                key = "desktop key issued" if desk.sign_in_key_hash else "no desktop key"
-+                registered = (
-+                    f"registered address {desk.ip_address}"
-+                    if desk.ip_address else "no address registered"
-+                )
-+                routes = []
-+                if desk.is_active and desk.sign_in_key_hash:
-+                    routes.append("key route ready")
-+                if desk.is_active and desk.ip_address:
-+                    routes.append("address route ready")
-+                out.write(
-+                    f"   - {desk.name} [{desk.reference}] ({state})"
-+                    f"\n     {key}; {registered}"
-+                    + (f"; {'; '.join(routes)}" if routes else "")
-+                )
-+            if not active_desks:
-+                out.write(
-+                    "\n   >>> All Front Desk workstations are INACTIVE, so no route can"
-+                    "\n       authorize sign-ins. FIX: activate one in Dashboard -> Terminals."
-+                )
-+
-+        # ---- 2. The hotel-wide Settings binding ---------------------------
-+        configured = configured_front_desk_desktop_ip()
-+        networks = configured_front_desk_desktop_networks()
-+        out.write("\n2. SETTINGS 'Front Desk desktop address' (hotel-wide pin/route 3):")
-+        if not configured:
-+            out.write(
-+                "   (empty) — no network pin; the workstation routes above decide alone."
-+            )
-+        else:
-+            unusable = [str(net) for net in networks if is_infrastructure_network(net)]
-+            out.write(f"   saved value: {configured}")
-+            if front_desk_workstation_missing():
-+                out.write(
-+                    "   >>> INEFFECTIVE RIGHT NOW: no active Front Desk workstation"
-+                    "\n       exists, and this address only authorizes sign-ins while"
-+                    "\n       one does. FIX: register the workstation first (step 1)."
-+                )
-+            if unusable:
-+                plural = "ENTRIES" if len(unusable) > 1 else "ENTRY"
-+                out.write(
-+                    f"   >>> UNUSABLE {plural}: {', '.join(unusable)}"
-+                    "\n       This is a hosting/private address no browser can arrive"
-+                    "\n       from, so it can never match. FIX: replace it with the"
-+                    "\n       address the Settings page reports when opened ON the desk."
-+                )
-+            if observed:
-+                from apps.core.client_ip import address_in_network, parse_address
-+
-+                address = parse_address(observed)
-+                if address is None:
-+                    out.write(f"   observed address {observed!r} is not a valid IP — skipped.")
-+                elif any(address_in_network(observed, str(net)) for net in networks):
-+                    out.write(
-+                        f"   observed address {observed} MATCHES this binding"
-+                        + (
-+                            " (but see the workstation gap above)"
-+                            if front_desk_workstation_missing()
-+                            else " — route 3 can authorize the desk."
-+                        )
-+                    )
-+                else:
-+                    out.write(
-+                        f"   observed address {observed} does NOT match this binding."
-+                    )
-+
-+        # ---- 3. What the observed address would authorize ------------------
-+        if observed:
-+            matches = receptionist_desktops_for_ip(observed)
-+            out.write(f"\n3. OBSERVED ADDRESS {observed} (route 2, workstation records):")
-+            if matches:
-+                for desk in matches:
-+                    out.write(
-+                        f"   MATCHES workstation {desk.name} [{desk.reference}]"
-+                        " — sign-in from this address needs only correct credentials."
-+                    )
-+                if len(matches) > 1:
-+                    out.write(
-+                        "   >>> AMBIGUOUS: the same address is registered on more than"
-+                        "\n       one active Front Desk workstation, and an ambiguous"
-+                        "\n       registration authorizes NOBODY. FIX: keep it on exactly"
-+                        "\n       one workstation record."
-+                    )
-+            else:
-+                out.write(
-+                    "   matches no active Front Desk workstation record."
-+                )
-+            if is_infrastructure_address(observed):
-+                out.write(
-+                    "   >>> This looks like a hosting/private address, not a desk on the"
-+                    "\n       internet: registering it cannot work. Read the address from"
-+                    "\n       the Settings page opened ON the desk itself."
-+                )
-+
-+        # ---- 4. The summary an administrator can act on --------------------
-+        out.write("\n4. WHAT TO DO")
-+        if front_desk_workstation_missing():
-+            out.write(
-+                "   STEP 1 (blocking): register an active Front Desk workstation in"
-+                "\n   Dashboard -> Terminals. Until this exists, email/password sign-in"
-+                "\n   for front-desk staff is refused from every device by design."
-+            )
-+        else:
-+            desk = active_front_desk_workstation()
-+            if desk.sign_in_key_hash or desk.ip_address:
-+                out.write(
-+                    "   The desk is enrolled (key and/or registered address). A"
-+                    "\n   front-desk employee should be able to sign in with email and"
-+                    "\n   password from that desk. If sign-in is still refused, read the"
-+                    "\n   address the login refusal reports and compare it with the"
-+                    "\n   registered values above (a moved desk needs re-registration)."
-+                )
-+            else:
-+                out.write(
-+                    "   An active workstation exists but NEITHER enrolment route is"
-+                    "\n   configured: issue a desktop key for it (Terminals page) and"
-+                    "\n   install that key in the desk browser, or register the desk's"
-+                    "\n   address on the workstation (or in Settings)."
-+                )
-+        out.write(
-+            "\n   Management (ADMIN / MANAGER / GENERAL_MANAGER) can always sign in"
-+            "\n   from any device; this policy binds operational staff only."
-+        )
-+        out.write("\nDiagnosis complete. Nothing was changed.")
-diff --git a/backend/apps/accounts/serializers.py b/backend/apps/accounts/serializers.py
-index 7a08dda..b4bae94 100644
---- a/backend/apps/accounts/serializers.py
-+++ b/backend/apps/accounts/serializers.py
-@@ -18,6 +18,7 @@ from apps.core.storage import absolute_media_url
- from .capabilities import capability_codes_for_user, has_capability
- from .desktop_policy import (
-     front_desk_desktop_ip_allowed,
-+    front_desk_workstation_missing,
-     request_client_ip,
-     resolve_receptionist_desktop,
-     sign_in_policy_applies,
-@@ -127,6 +128,7 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
-                 raise StaffSignInRestrictedError(
-                     client_ip=request_client_ip(request),
-                     unusable_saved_addresses=unusable,
-+                    front_desk_workstation_missing=front_desk_workstation_missing(),
-                 )
-             if not front_desk_desktop_ip_allowed(request):
-                 log_staff_sign_in_rejected(
-diff --git a/backend/apps/accounts/views.py b/backend/apps/accounts/views.py
-index 3489b8c..d2882e1 100644
---- a/backend/apps/accounts/views.py
-+++ b/backend/apps/accounts/views.py
-@@ -31,7 +31,10 @@ from apps.core.serializers import EmptySerializer
- 
- from .capabilities import capability_codes_for_user
- from .desktop_policy import (
--    front_desk_desktop_ip_allowed, request_client_ip, resolve_receptionist_desktop,
-+    front_desk_desktop_ip_allowed,
-+    front_desk_workstation_missing,
-+    request_client_ip,
-+    resolve_receptionist_desktop,
-     sign_in_policy_applies,
- )
- from .models import User
-@@ -253,7 +256,10 @@ def _refuse_staff_refresh_outside_desk(request):
-         },
-         summary="Staff session refresh refused outside the Receptionist Desktop",
-     )
--    raise StaffSignInRestrictedError(client_ip=request_client_ip(request))
-+    raise StaffSignInRestrictedError(
-+        client_ip=request_client_ip(request),
-+        front_desk_workstation_missing=front_desk_workstation_missing(),
-+    )
- 
- 
- @extend_schema(tags=["Auth"], request=None, summary="Log out (blacklist refresh token)")
-diff --git a/backend/apps/core/exceptions.py b/backend/apps/core/exceptions.py
-index f20d4c8..4f733c8 100644
---- a/backend/apps/core/exceptions.py
-+++ b/backend/apps/core/exceptions.py
-@@ -185,13 +185,14 @@ class StaffSignInRestrictedError(JOneAPIError):
+         .order_by("-created_at", "-pk")
      )
  
-     def __init__(self, detail=None, *, client_ip="", network_mismatch=False,
--                 unusable_saved_addresses=()):
-+                 unusable_saved_addresses=(), front_desk_workstation_missing=False):
-         if detail is None and network_mismatch:
-             detail = self.network_mismatch_detail
-         super().__init__(detail)
-         self.client_ip = str(client_ip or "")
-         self.network_mismatch = bool(network_mismatch)
-         self.unusable_saved_addresses = [str(v) for v in (unusable_saved_addresses or []) if str(v).strip()]
-+        self.front_desk_workstation_missing = bool(front_desk_workstation_missing)
- 
-     @property
-     def errors_payload(self):
-@@ -208,6 +209,13 @@ class StaffSignInRestrictedError(JOneAPIError):
-                 payload["client_ip_is_infrastructure"] = True
-         if self.network_mismatch:
-             payload["reason"] = "front_desk_ip_mismatch"
-+        if self.front_desk_workstation_missing:
-+            # No active FRONT_DESK workstation exists, so NO address or key can
-+            # authorize this browser yet: registering the address alone (the
-+            # instruction the refusal otherwise gives) is a dead end until the
-+            # workstation record exists. The UI uses this to say which step is
-+            # actually missing instead of repeating the address advice.
-+            payload["no_active_front_desk_workstation"] = True
-         if self.unusable_saved_addresses:
-             # The SAVED value (hotel settings and/or a workstation) is a hosting
-             # or private address, so no public browser can ever match it.
-diff --git a/backend/apps/hotel/views_admin.py b/backend/apps/hotel/views_admin.py
-index 38583fc..d68e13d 100644
---- a/backend/apps/hotel/views_admin.py
-+++ b/backend/apps/hotel/views_admin.py
-@@ -65,6 +65,15 @@ class HotelSettingsAdminView(generics.RetrieveUpdateAPIView):
-         data["front_desk_desktop_ip_unusable"] = configured_front_desk_desktop_cannot_match(
-             client_ip
+@@ -193,7 +223,14 @@
+             Prefetch("events", queryset=PosOrderEvent.objects.select_related("actor")),
+             "kitchen_ticket",
          )
-+        # Whether a real, active FRONT_DESK workstation record exists. The
-+        # address below only authorizes sign-ins while one does (and a desktop
-+        # key can only be issued for one), so an administrator who configures
-+        # ONLY this field with no workstation registered has a binding that
-+        # cannot work — the page says which step is missing instead of letting
-+        # the configuration look complete.
-+        from apps.accounts.desktop_policy import active_front_desk_workstation
-+
-+        data["front_desk_workstation_registered"] = active_front_desk_workstation() is not None
-         # Whether the hotel can actually take money online. A missing, public or
-         # malformed Paystack key turns EVERY guest payment into HTTP 503 while
-         # the rest of the booking flow keeps working — the failure surfaces only
-diff --git a/backend/tests/test_frontdesk_login_e2e.py b/backend/tests/test_frontdesk_login_e2e.py
-new file mode 100644
-index 0000000..102fec8
---- /dev/null
-+++ b/backend/tests/test_frontdesk_login_e2e.py
-@@ -0,0 +1,525 @@
-+"""End-to-end regression matrix for Front Desk email/password staff sign-in.
-+
-+Pins the owner's required login behaviour against the REAL endpoints, in the
-+exact order a front desk lives it, so a future change cannot quietly reopen any
-+of these gaps:
-+
-+* an authorized Front Desk employee signs in with email + password from the
-+  enrolled Receptionist Desktop (all three enrolment routes, including the
-+  production proxy chain: Cloudflare-style edge header over a trusted proxy,
-+  and the X-Forwarded-For walk with the CDN range explicitly trusted);
-+* wrong password / unknown email / inactive account are each refused with the
-+  same non-enumerating 401 envelope;
-+* a desktop that is not registered, disabled, or merely "configured in
-+  Settings" without a workstation record cannot authorize anybody — and the
-+  refusal now SAYS which step is missing instead of advising an address that
-+  cannot help (the dead-end this suite was written to close);
-+* a staff member from another department is refused the Front Desk context;
-+* one person's failed attempt, logout, or refused refresh never blocks the
-+  next person's sign-in;
-+* management keeps access from any device; the numeric-code and fingerprint
-+  attendance workflows keep working untouched.
-+
-+No production system is touched: everything runs against the test database.
-+"""
-+from io import StringIO
-+
-+from django.core.cache import cache
-+from django.core.management import call_command
-+from django.test import override_settings
-+from rest_framework.test import APIClient
-+
-+from apps.accounts.desktop_policy import issue_desktop_key
-+from apps.accounts.models import User, Workstation
-+from apps.hotel.models import HotelSettings
-+from apps.staff_operations.models import StaffProfile
-+from apps.staff_operations.services import fingerprint_service
-+
-+from .base import BaseAPITestCase
-+from .factories import hotel_settings, make_staff, make_user
-+from .test_attendance_workstation_policy import MATCHING_PROBE, MINUTIAE
-+
-+PASSWORD = "Str0ng!Desk-Pass"
-+DESK_IP = "102.89.34.7"            # the address the desk reaches the API from
-+OTHER_IP = "41.203.89.5"           # any other device on the internet
-+HOME_IP = "197.210.44.12"          # a staff member's home connection
-+PROXY_IP = "10.0.0.9"              # the deployment's own (trusted) proxy hop
-+CF_EDGE_IP = "104.21.55.131"       # a public Cloudflare edge address
-+LOGIN_URL = "/api/auth/login/"
-+LOGOUT_URL = "/api/auth/logout/"
-+REFRESH_URL = "/api/auth/token/refresh/"
-+PROFILE_URL = "/api/auth/profile/"
-+SETTINGS_URL = "/api/admin/settings/"
-+ADMIN_BOOKINGS_URL = "/api/admin/bookings/"
-+TERMINAL_URL = "/api/admin/staff-operations/biometrics/reception-terminal/"
-+
-+
-+class FrontDeskLoginE2ECase(BaseAPITestCase):
-+    """Shared fixture: the people, and one enrolled Receptionist Desktop."""
-+
-+    def setUp(self):
-+        super().setUp()
-+        cache.clear()
-+        self.admin = make_user("e2e.admin@jone.test", password=PASSWORD, role=User.Role.ADMIN)
-+        self.manager = make_user("e2e.manager@jone.test", password=PASSWORD, role=User.Role.MANAGER)
-+        self.general_manager = make_user(
-+            "e2e.gm@jone.test", password=PASSWORD, role=User.Role.GENERAL_MANAGER
+-        .annotate(line_count=Count("lines"))
++        .annotate(
++            line_count=Count("lines"),
++            captured_amount=Coalesce(
++                _order_captured_amount_subquery(),
++                Value(Decimal("0.00")),
++                output_field=DecimalField(max_digits=14, decimal_places=2),
++            ),
 +        )
-+        self.receptionist = make_user(
-+            "e2e.receptionist@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST
-+        )
-+        self.second_receptionist = make_user(
-+            "e2e.receptionist2@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST
-+        )
-+        self.inactive_receptionist = make_user(
-+            "e2e.inactive@jone.test", password=PASSWORD, role=User.Role.RECEPTIONIST, is_active=False,
-+        )
-+        self.waiter = make_user("e2e.waiter@jone.test", password=PASSWORD, role=User.Role.WAITER)
-+        self.desk = Workstation.objects.create(
-+            name="Front desk reception 1", department=Workstation.Department.FRONT_DESK,
-+            location="Lobby", ip_address=DESK_IP,
-+        )
-+
-+    # ------------------------------------------------------------------ helpers
-+    def login(self, user=None, *, password=PASSWORD, ip=DESK_IP, headers=None, extra_body=None):
-+        body = {"email": (user or self.receptionist).email, "password": password}
-+        if extra_body:
-+            body.update(extra_body)
-+        return self.client.post(LOGIN_URL, body, format="json", REMOTE_ADDR=ip, **(headers or {}))
-+
-+    def clear_login_throttle(self):
-+        # The login endpoint is throttled 5/min per client address; the many
-+        # sign-ins inside one test are not an attack, so the counter is reset
-+        # between them (the dedicated throttle test does the opposite).
-+        cache.clear()
-+
-+    def tokens_of(self, response):
-+        return response.data["data"]["tokens"]
-+
-+
-+class HappyPathSignInTests(FrontDeskLoginE2ECase):
-+    """Matrix 1 + 15: the requested behaviour, on every enrolment route."""
-+
-+    def test_authorized_receptionist_password_login_from_the_registered_desk(self):
-+        response = self.login()
-+        self.assertEqual(response.status_code, 200, response.content)
-+        body = response.data["data"]
-+        self.assertEqual(body["user"]["email"], self.receptionist.email)
-+        self.assertEqual(body["user"]["role"], User.Role.RECEPTIONIST)
-+        self.assertTrue(body["tokens"]["access"] and body["tokens"]["refresh"])
-+
-+    def test_password_login_via_the_desktop_key_route(self):
-+        self.desk.ip_address = ""
-+        self.desk.save(update_fields=["ip_address"])
-+        raw_key = issue_desktop_key(self.desk)
-+        self.desk.save(update_fields=["sign_in_key_hash", "sign_in_key_issued_at", "updated_at"])
-+        response = self.login(ip=OTHER_IP, headers={"HTTP_X_JONE_DESKTOP_KEY": raw_key})
-+        self.assertEqual(response.status_code, 200, response.content)
-+        self.assertEqual(response.data["data"]["user"]["email"], self.receptionist.email)
-+
-+    def test_password_login_via_the_settings_address_route(self):
-+        self.desk.ip_address = ""
-+        self.desk.save(update_fields=["ip_address"])
-+        hotel_settings(front_desk_desktop_ip=DESK_IP)
-+        response = self.login()
-+        self.assertEqual(response.status_code, 200, response.content)
-+
-+    def test_password_login_through_the_production_proxy_chain(self):
-+        """The Cloudflare shape: trusted proxy hop + CF-Connecting-IP edge header."""
-+        response = self.login(
-+            ip=PROXY_IP,
-+            headers={
-+                "HTTP_CF_CONNECTING_IP": DESK_IP,
-+                "HTTP_X_FORWARDED_FOR": f"{DESK_IP}, {CF_EDGE_IP}",
-+            },
-+        )
-+        self.assertEqual(response.status_code, 200, response.content)
-+
-+    def test_password_login_when_only_the_cdn_range_is_trusted_as_a_proxy(self):
-+        """The header-stripped shape: the XFF walk must be able to step over the
-+        CDN when its range is explicitly trusted (the documented production
-+        remedy — TRUSTED_PROXY_CIDRS), and must not when it is not."""
-+        headers = {"HTTP_X_FORWARDED_FOR": f"{DESK_IP}, {CF_EDGE_IP}"}
-+        # Default trust: the CDN address is not a trusted proxy, so the walk
-+        # stops on it and the desk cannot be recognized (fail closed).
-+        refused = self.login(ip=PROXY_IP, headers=headers)
-+        self.assertEqual(refused.status_code, 403, refused.content)
-+        with override_settings(
-+            TRUSTED_PROXY_CIDRS=f"127.0.0.0/8,10.0.0.0/8,{CF_EDGE_IP}/32",
-+            TRUSTED_CLIENT_IP_HEADERS="none",
-+        ):
-+            allowed = self.login(ip=PROXY_IP, headers=headers)
-+        self.assertEqual(allowed.status_code, 200, allowed.content)
-+
-+    def test_management_signs_in_from_any_device(self):
-+        for user, ip in (
-+            (self.admin, HOME_IP), (self.manager, OTHER_IP), (self.general_manager, HOME_IP),
-+        ):
-+            with self.subTest(role=user.role):
-+                self.clear_login_throttle()
-+                response = self.login(user, ip=ip)
-+                self.assertEqual(response.status_code, 200, response.content)
-+
-+    def test_guest_sign_in_is_unaffected_by_the_desk_policy(self):
-+        guest = make_user("e2e.guest@jone.test", password=PASSWORD, role=User.Role.GUEST)
-+        response = self.login(guest, ip=OTHER_IP)
-+        self.assertEqual(response.status_code, 200, response.content)
-+
-+
-+class CredentialFailureTests(FrontDeskLoginE2ECase):
-+    """Matrix 2, 3, 4 + 14: refusals are accurate and never enumerate accounts."""
-+
-+    def test_wrong_password_is_rejected_with_the_credentials_envelope(self):
-+        response = self.login(password="definitely-not-it")
-+        self.assertEqual(response.status_code, 401, response.content)
-+        body = response.data
-+        self.assertFalse(body["success"])
-+        self.assertEqual(body["code"], "UNAUTHORIZED")
-+        self.assertEqual(body["message"], "Invalid email or password.")
-+        self.assertNotIn("tokens", body.get("data") or {})
-+
-+    def test_unknown_email_is_rejected_identically(self):
-+        response = self.client.post(
-+            LOGIN_URL, {"email": "nobody-such-account@jone.test", "password": PASSWORD},
-+            format="json", REMOTE_ADDR=DESK_IP,
-+        )
-+        self.assertEqual(response.status_code, 401, response.content)
-+        self.assertEqual(response.data["message"], "Invalid email or password.")
-+
-+    def test_inactive_account_is_rejected_without_revealing_it_exists(self):
-+        response = self.login(self.inactive_receptionist)
-+        self.assertEqual(response.status_code, 401, response.content)
-+        self.assertEqual(response.data["message"], "Invalid email or password.")
-+
-+    def test_the_desk_is_still_required_after_a_correct_password(self):
-+        """A valid password from an unenrolled device is a DESK refusal (403),
-+        not a credentials refusal (401): the two must stay distinguishable."""
-+        response = self.login(ip=OTHER_IP)
-+        self.assertEqual(response.status_code, 403, response.content)
-+        self.assertEqual(response.data["code"], "STAFF_SIGN_IN_RESTRICTED")
-+
-+
-+class DesktopEnforcementTests(FrontDeskLoginE2ECase):
-+    """Matrix 6, 7, 16 + the configuration dead end this fix closes."""
-+
-+    def test_unregistered_desktop_is_refused_and_names_the_address_to_register(self):
-+        response = self.login(ip=OTHER_IP)
-+        self.assertEqual(response.status_code, 403, response.content)
-+        body = response.data
-+        self.assertEqual(body["code"], "STAFF_SIGN_IN_RESTRICTED")
-+        self.assertEqual(body["errors"]["client_ip"], OTHER_IP)
-+
-+    def test_disabled_front_desk_workstation_stops_admitting_staff(self):
-+        self.desk.is_active = False
-+        self.desk.save(update_fields=["is_active"])
-+        response = self.login()
-+        self.assertEqual(response.status_code, 403, response.content)
-+        self.assertEqual(response.data["code"], "STAFF_SIGN_IN_RESTRICTED")
-+
-+    def test_settings_address_alone_with_no_workstation_is_the_dead_end_now_named(self):
-+        """The exact 'configured desktop' trap: the Settings field is filled in
-+        (the Settings page invites it) but no Front Desk workstation record
-+        exists, so NOTHING can match. The refusal must say which step is
-+        missing; registering the workstation then makes the same address work."""
-+        self.desk.delete()
-+        hotel_settings(front_desk_desktop_ip=DESK_IP)
-+        refused = self.login()
-+        self.assertEqual(refused.status_code, 403, refused.content)
-+        self.assertTrue(refused.data["errors"]["no_active_front_desk_workstation"])
-+        self.assertIn("Receptionist Desktop", refused.data["message"])
-+
-+        # The administrator follows the instruction: register the workstation.
-+        Workstation.objects.create(
-+            name="Front desk reception 1", department=Workstation.Department.FRONT_DESK,
-+        )
-+        allowed = self.login()
-+        self.assertEqual(allowed.status_code, 200, allowed.content)
-+
-+    def test_a_forged_desktop_key_from_any_device_is_refused(self):
-+        response = self.login(
-+            ip=OTHER_IP, headers={"HTTP_X_JONE_DESKTOP_KEY": "totally-forged-key"},
-+        )
-+        self.assertEqual(response.status_code, 403, response.content)
-+        self.assertEqual(response.data["code"], "STAFF_SIGN_IN_RESTRICTED")
-+
-+    def test_a_browser_cannot_nominate_its_own_address_via_edge_headers(self):
-+        response = self.login(
-+            ip=OTHER_IP,
-+            headers={
-+                "HTTP_CF_CONNECTING_IP": DESK_IP,
-+                "HTTP_TRUE_CLIENT_IP": DESK_IP,
-+                "HTTP_X_REAL_IP": DESK_IP,
-+            },
-+        )
-+        self.assertEqual(response.status_code, 403, response.content)
-+        # The refusal reports the address the server actually saw, not the claim.
-+        self.assertEqual(response.data["errors"]["client_ip"], OTHER_IP)
-+
-+    def test_a_browser_cannot_nominate_its_own_address_via_the_forwarding_chain(self):
-+        response = self.login(
-+            ip=OTHER_IP, headers={"HTTP_X_FORWARDED_FOR": f"{DESK_IP}, {CF_EDGE_IP}"},
-+        )
-+        self.assertEqual(response.status_code, 403, response.content)
-+        self.assertEqual(response.data["errors"]["client_ip"], OTHER_IP)
-+
-+    def test_too_many_attempts_are_throttled_with_the_accurate_envelope(self):
-+        for _ in range(5):
-+            self.assertEqual(self.login(password="wrong").status_code, 401)
-+        throttled = self.login()  # the 6th attempt, even with correct credentials
-+        self.assertEqual(throttled.status_code, 429, throttled.content)
-+        self.assertEqual(throttled.data["code"], "RATE_LIMITED")
-+        self.assertIn("Too many", throttled.data["message"])
-+        # The throttle is per client address and expires on its own: the NEXT
-+        # person is not locked out forever (cache-based window).
-+        self.clear_login_throttle()
-+        self.assertEqual(self.login(self.second_receptionist).status_code, 200)
-+
-+
-+class DepartmentAuthorizationTests(FrontDeskLoginE2ECase):
-+    """Matrix 5: another department's staff cannot become Front Desk."""
-+
-+    def test_cross_department_sign_in_is_refused_for_the_front_desk_context(self):
-+        response = self.login(
-+            self.waiter, extra_body={"department": "frontdesk"},
-+        )
-+        self.assertEqual(response.status_code, 403, response.content)
-+        self.assertEqual(response.data["code"], "FORBIDDEN")
-+        self.assertIn("not authorized to sign in to this department", response.data["message"])
-+
-+    def test_a_receptionist_is_authorized_for_the_front_desk_context(self):
-+        response = self.login(self.receptionist, extra_body={"department": "frontdesk"})
-+        self.assertEqual(response.status_code, 200, response.content)
-+
-+    def test_another_departments_staff_cannot_reach_front_desk_data(self):
-+        """Signed in AT the desk (allowed: the desk is the staff sign-in point),
-+        a waiter still holds no Front Desk data access."""
-+        response = self.login(self.waiter)
-+        self.assertEqual(response.status_code, 200, response.content)
-+        client = APIClient()
-+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.tokens_of(response)['access']}")
-+        bookings = client.get(ADMIN_BOOKINGS_URL, REMOTE_ADDR=DESK_IP)
-+        self.assertEqual(bookings.status_code, 403, bookings.content)
-+
-+    def test_a_receptionist_keeps_front_desk_data_access(self):
-+        response = self.login(self.receptionist)
-+        client = APIClient()
-+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.tokens_of(response)['access']}")
-+        bookings = client.get(ADMIN_BOOKINGS_URL, REMOTE_ADDR=DESK_IP)
-+        self.assertEqual(bookings.status_code, 200, bookings.content)
-+
-+
-+class IndependentSessionTests(FrontDeskLoginE2ECase):
-+    """Matrix 8-11: the exact shared-desk sequence, each login independent."""
-+
-+    def test_the_full_desk_sequence_receptionist_admin_receptionist(self):
-+        # 1. A receptionist enters incorrect credentials.
-+        self.assertEqual(self.login(password="wrong").status_code, 401)
-+        # 2. She retries with the correct credentials.
-+        self.clear_login_throttle()
-+        first = self.login()
-+        self.assertEqual(first.status_code, 200, first.content)
-+        # 3. She logs out.
-+        self.logout_with(self.tokens_of(first))
-+        # 4. An administrator attempts to log in (same desk, same minute).
-+        self.clear_login_throttle()
-+        admin = self.login(self.admin)
-+        self.assertEqual(admin.status_code, 200, admin.content)
-+        # 5. The administrator logs out.
-+        self.logout_with(self.tokens_of(admin))
-+        # 6. Another authorized Front Desk employee logs in.
-+        self.clear_login_throttle()
-+        second = self.login(self.second_receptionist)
-+        self.assertEqual(second.status_code, 200, second.content)
-+        self.assertEqual(
-+            self.tokens_of(second)["access"], self.tokens_of(second)["access"],
-+        )
-+
-+    def test_a_receptionists_failed_login_does_not_block_the_administrator(self):
-+        self.assertEqual(self.login(password="wrong").status_code, 401)
-+        self.clear_login_throttle()
-+        response = self.login(self.admin)
-+        self.assertEqual(response.status_code, 200, response.content)
-+
-+    def test_an_administrators_failed_login_does_not_block_a_receptionist(self):
-+        self.assertEqual(self.login(self.admin, password="wrong").status_code, 401)
-+        self.clear_login_throttle()
-+        response = self.login(self.receptionist)
-+        self.assertEqual(response.status_code, 200, response.content)
-+
-+    def test_logout_is_idempotent_and_a_fresh_login_works_afterwards(self):
-+        tokens = self.tokens_of(self.login())
-+        client = APIClient()
-+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
-+        # First logout ends the session.
-+        self.assertEqual(
-+            client.post(LOGOUT_URL, {"refresh": tokens["refresh"]}, format="json").status_code, 200
-+        )
-+        # Repeating it (or a stale tab doing it again) stays graceful.
-+        self.assertEqual(
-+            client.post(LOGOUT_URL, {"refresh": tokens["refresh"]}, format="json").status_code, 200
-+        )
-+        # A refused refresh for the dead session does not lock the desk either.
-+        refresh = self.client.post(
-+            REFRESH_URL, {"refresh": tokens["refresh"]}, format="json", REMOTE_ADDR=DESK_IP
-+        )
-+        self.assertEqual(refresh.status_code, 401, refresh.content)
-+        # The next person signs in normally.
-+        self.clear_login_throttle()
-+        self.assertEqual(self.login(self.second_receptionist).status_code, 200)
-+
-+    def logout_with(self, tokens):
-+        client = APIClient()
-+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
-+        response = client.post(LOGOUT_URL, {"refresh": tokens["refresh"]}, format="json")
-+        self.assertEqual(response.status_code, 200, response.content)
-+        return response
-+
-+
-+class SessionExpiryRecoveryTests(FrontDeskLoginE2ECase):
-+    """Matrix 12: an expired access token recovers at the desk, and only there."""
-+
-+    def test_the_session_refreshes_at_the_desk(self):
-+        tokens = self.tokens_of(self.login())
-+        response = self.client.post(
-+            REFRESH_URL, {"refresh": tokens["refresh"]}, format="json", REMOTE_ADDR=DESK_IP
-+        )
-+        self.assertEqual(response.status_code, 200, response.content)
-+        refreshed = response.data["data"]["tokens"]
-+        self.assertTrue(refreshed["access"])
-+        # The new access token actually works.
-+        client = APIClient()
-+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {refreshed['access']}")
-+        self.assertEqual(client.get(PROFILE_URL).status_code, 200)
-+
-+    def test_a_refresh_from_outside_the_desk_is_refused_but_keeps_the_session(self):
-+        tokens = self.tokens_of(self.login())
-+        # Away from the desk the refresh is refused...
-+        away = self.client.post(
-+            REFRESH_URL, {"refresh": tokens["refresh"]}, format="json", REMOTE_ADDR=HOME_IP
-+        )
-+        self.assertEqual(away.status_code, 403, away.content)
-+        self.assertEqual(away.data["code"], "STAFF_SIGN_IN_RESTRICTED")
-+        # ...without consuming or rotating the token: back at the desk the very
-+        # same refresh token still works (a refused refresh is not a logout).
-+        back = self.client.post(
-+            REFRESH_URL, {"refresh": tokens["refresh"]}, format="json", REMOTE_ADDR=DESK_IP
-+        )
-+        self.assertEqual(back.status_code, 200, back.content)
-+
-+    def test_relogin_after_session_loss_works_from_the_desk(self):
-+        tokens = self.tokens_of(self.login())
-+        client = APIClient()
-+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
-+        client.post(LOGOUT_URL, {"refresh": tokens["refresh"]}, format="json")
-+        self.clear_login_throttle()
-+        fresh = self.login(self.receptionist)
-+        self.assertEqual(fresh.status_code, 200, fresh.content)
-+
-+
-+class AttendanceWorkflowIntactTests(FrontDeskLoginE2ECase):
-+    """Matrix 17: the numeric-code and fingerprint flows are untouched."""
-+
-+    def setUp(self):
-+        super().setUp()
-+        self.worker = make_staff("e2e.chef@staff.dev", role=User.Role.CHEF)
-+        StaffProfile.objects.update_or_create(
-+            user=self.worker,
-+            defaults={
-+                "employee_code": "STF-E2E-CHEF",
-+                "department": "Kitchen",
-+                "employment_status": StaffProfile.EmploymentStatus.ACTIVE,
-+            },
-+        )
-+        template = fingerprint_service.request_fingerprint_enrollment(
-+            staff=self.worker, actor=self.worker, minutiae=MINUTIAE
-+        )
-+        fingerprint_service.approve_fingerprint_enrollment(
-+            template=template, approver=self.manager
-+        )
-+
-+    def terminal(self, payload):
-+        return self.client.post(TERMINAL_URL, payload, format="json", REMOTE_ADDR=DESK_IP)
-+
-+    def test_clock_in_issues_a_code_that_signs_the_staff_member_in(self):
-+        issued = self.terminal(
-+            {"action": "CLOCK_IN", "email": self.worker.email, "fingerprint_probe": MATCHING_PROBE}
-+        )
-+        self.assertEqual(issued.status_code, 200, issued.content)
-+        code = issued.data["data"]["access_code"]
-+        self.clear_login_throttle()
-+        response = self.client.post(
-+            LOGIN_URL, {"access_code": code, "email": self.worker.email},
-+            format="json", REMOTE_ADDR=DESK_IP,
-+        )
-+        self.assertEqual(response.status_code, 200, response.content)
-+        tokens = self.tokens_of(response)
-+        client = APIClient()
-+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
-+        profile = client.get(PROFILE_URL)
-+        self.assertEqual(profile.status_code, 200, profile.content)
-+        self.assertEqual(profile.data["data"]["email"], self.worker.email)
-+
-+
-+class FrontDeskDoctorCommandTests(FrontDeskLoginE2ECase):
-+    """The read-only diagnostic an administrator runs on the server."""
-+
-+    def run_doctor(self, *args):
-+        out = StringIO()
-+        call_command("frontdesk_login_doctor", *args, stdout=out)
-+        return out.getvalue()
-+
-+    def test_reports_the_missing_workstation_as_the_blocking_gap(self):
-+        self.desk.delete()
-+        text = self.run_doctor()
-+        self.assertIn("NONE REGISTERED", text)
-+        self.assertIn("blocking gap", text)
-+        self.assertIn("Terminals", text)
-+
-+    def test_reports_each_enrolment_route_and_matches_an_observed_address(self):
-+        raw_key = issue_desktop_key(self.desk)
-+        self.desk.save(update_fields=["sign_in_key_hash", "sign_in_key_issued_at", "updated_at"])
-+        hotel_settings(front_desk_desktop_ip=f"{DESK_IP}/32")
-+        text = self.run_doctor("--observed-ip", DESK_IP)
-+        self.assertIn("desktop key issued", text)
-+        self.assertIn(f"registered address {DESK_IP}", text)
-+        self.assertIn(f"MATCHES this binding", text)
-+        self.assertIn("Diagnosis complete. Nothing was changed.", text)
-+        self.assertNotIn(raw_key, text)
-+
-+    def test_flags_an_ambiguous_duplicate_address_registration(self):
-+        Workstation.objects.create(
-+            name="Front desk reception 2", department=Workstation.Department.FRONT_DESK,
-+            ip_address=DESK_IP,
-+        )
-+        text = self.run_doctor("--observed-ip", DESK_IP)
-+        self.assertIn("AMBIGUOUS", text)
-+
-+    def test_the_command_changes_nothing(self):
-+        before = (
-+            Workstation.objects.count(),
-+            str(HotelSettings.get_settings().front_desk_desktop_ip),
-+            User.objects.count(),
-+        )
-+        self.run_doctor("--observed-ip", DESK_IP)
-+        after = (
-+            Workstation.objects.count(),
-+            str(HotelSettings.get_settings().front_desk_desktop_ip),
-+            User.objects.count(),
-+        )
-+        self.assertEqual(before, after)
-+
-+
-+class SettingsPayloadTests(FrontDeskLoginE2ECase):
-+    """The Settings page must tell an administrator which step is missing."""
-+
-+    def test_the_settings_payload_reports_the_workstation_registration(self):
-+        self.auth(self.admin)
-+        with_workstation = self.client.get(SETTINGS_URL, REMOTE_ADDR=OTHER_IP)
-+        self.assertEqual(with_workstation.status_code, 200, with_workstation.content)
-+        self.assertTrue(with_workstation.data["data"]["front_desk_workstation_registered"])
-+
-+        self.desk.delete()
-+        hotel_settings(front_desk_desktop_ip=DESK_IP)
-+        without = self.client.get(SETTINGS_URL, REMOTE_ADDR=OTHER_IP)
-+        self.assertEqual(without.status_code, 200, without.content)
-+        self.assertFalse(without.data["data"]["front_desk_workstation_registered"])
-diff --git a/frontend/dashboard/settings.html b/frontend/dashboard/settings.html
-index 06e3040..8f2a505 100644
---- a/frontend/dashboard/settings.html
-+++ b/frontend/dashboard/settings.html
-@@ -316,7 +316,17 @@
-     var ipWarning = $("st-request-ip-warning");
-     var ipIsInfrastructure = !!current.request_ip_is_infrastructure;
-     var savedIpUnusable = !!current.front_desk_desktop_ip_unusable;
-+    var workstationMissing = current.front_desk_workstation_registered === false;
-     var ipNotices = [];
-+    if(workstationMissing){
-+      /* The address field below only takes effect once a real Front Desk
-+         workstation exists. Without that record no address and no key can
-+         authorize the desk, so the configuration looks complete while every
-+         password sign-in at the desk is still refused. */
-+      ipNotices.push("<strong>No active Front Desk workstation is registered yet.</strong> " +
-+        "The address below only authorizes sign-ins once a Front Desk workstation exists, and a desktop key can only be issued for one. " +
-+        "Open <strong>Dashboard \u2192 Terminals</strong>, register the Front Desk workstation, then enrol this browser with its desktop key or register this desk\u2019s address on it.");
-+    }
-     if(ipIsInfrastructure){
-       ipNotices.push("<strong>This is the hosting network\u2019s address, not the Front Desk desktop.</strong> " +
-         "The server is reporting its own proxy, so registering this value cannot work \u2014 it changes on every request. " +
-diff --git a/frontend/login.html b/frontend/login.html
-index fbc03a7..bf2e804 100644
---- a/frontend/login.html
-+++ b/frontend/login.html
-@@ -213,6 +213,13 @@
-       var lines = [];
-       lines.push("Staff sign-in is limited to the Receptionist Desktop. This browser reached the server from "
-         + (ip ? ip + "." : "an address the server could not determine."));
-+      if (meta.no_active_front_desk_workstation) {
-+        // Nothing can authorize this browser yet: no active Front Desk
-+        // workstation record exists, so no address (and no desktop key) can be
-+        // enrolled for the desk. Saying only "register this address" would send
-+        // the administrator in a circle — the address alone is never enough.
-+        lines.push("No active Front Desk workstation is registered on the server yet, so no address can authorize this browser. An administrator must first register the Front Desk workstation in Dashboard \u2192 Terminals, then either install that workstation\u2019s desktop key in this browser or register the address the server reports above on it.");
-+      }
-       if (meta.client_ip_is_infrastructure) {
-         // The address is the hosting platform's own proxy, not the desk. Saying
-         // "register it" would send the administrator in a circle: it changes on
-diff --git a/frontend/tests-js/test-frontdesk-login-ui.js b/frontend/tests-js/test-frontdesk-login-ui.js
-new file mode 100644
-index 0000000..31e1f98
---- /dev/null
-+++ b/frontend/tests-js/test-frontdesk-login-ui.js
-@@ -0,0 +1,80 @@
-+/* tests-js/test-frontdesk-login-ui.js
-+   Front Desk email/password login — UI contracts for the refusal that names
-+   the missing enrolment step (static source assertions, same style as
-+   test-login-error-states.js):
-+
-+   The blocking configuration trap: an administrator can fill the Settings
-+   "Front Desk desktop address" field (the Settings page invites it) while NO
-+   Front Desk workstation record exists. Every enrolment route needs that
-+   record, so no address and no key can authorize the desk — yet the old
-+   refusal just said "register this address", sending the administrator in a
-+   circle. The server now sends errors.no_active_front_desk_workstation and
-+   BOTH surfaces (login refusal, Settings page) must say which step is missing.
-+
-+   Run from /frontend: node --test tests-js/test-frontdesk-login-ui.js */
-+"use strict";
-+
-+const test = require("node:test");
-+const assert = require("node:assert/strict");
-+const fs = require("node:fs");
-+const path = require("node:path");
-+const { FRONTEND } = require("./harness");
-+
-+const LOGIN = fs.readFileSync(path.join(FRONTEND, "login.html"), "utf8");
-+const SETTINGS = fs.readFileSync(path.join(FRONTEND, "dashboard", "settings.html"), "utf8");
-+
-+test("the login refusal names a missing Front Desk workstation as the blocking step", () => {
-+  assert.match(LOGIN, /if \(meta\.no_active_front_desk_workstation\) \{/,
-+    "the refusal handles the server's no-workstation flag");
-+  assert.match(LOGIN, /No active Front Desk workstation is registered on the server yet, so no address can authorize this browser\./,
-+    "the message says plainly that no address can help yet");
-+  assert.match(LOGIN, /register the Front Desk workstation in Dashboard \\u2192 Terminals/,
-+    "and names the exact administrator action (Terminals page)");
-+});
-+
-+test("the missing-workstation line is additive, not a replacement for the address advice", () => {
-+  const notice = LOGIN.slice(LOGIN.indexOf("function desktopRefusalNotice"), LOGIN.indexOf('window.Auth.bindLoginForm'));
-+  const branches = notice.match(/\} else if \(meta\./g) || [];
-+  assert.ok(branches.length >= 2, "the address-quality branches (unusable / mismatch) are still there");
-+  assert.match(notice, /if \(meta\.no_active_front_desk_workstation\) \{[\s\S]*?\}\s*if \(meta\.client_ip_is_infrastructure\) \{/,
-+    "the workstation line stands BEFORE and independently of the address-quality chain, so both can appear together");
-+});
-+
-+test("the refusal still reports every address quality case it did before", () => {
-+  const notice = LOGIN.slice(LOGIN.indexOf("function desktopRefusalNotice"), LOGIN.indexOf('window.Auth.bindLoginForm'));
-+  assert.match(notice, /meta\.client_ip_is_infrastructure/);
-+  assert.match(notice, /meta\.configured_address_unusable/);
-+  assert.match(notice, /meta\.reason === "front_desk_ip_mismatch"/);
-+  assert.match(notice, /This browser reached the server from/);
-+  assert.match(notice, /6-digit code issued at the Reception Attendance Workstation/,
-+    "the numeric-code fallback is still offered");
-+});
-+
-+test("the Settings page warns when no Front Desk workstation is registered", () => {
-+  assert.match(SETTINGS, /current\.front_desk_workstation_registered === false/,
-+    "the payload flag drives the warning");
-+  assert.match(SETTINGS, /No active Front Desk workstation is registered yet\./,
-+    "the warning names the missing step");
-+  assert.match(SETTINGS, /[Tt]he address below only authorizes sign-ins once a Front Desk workstation exists/,
-+    "and explains why the address field alone cannot work");
-+  assert.match(SETTINGS, /Dashboard \\u2192 Terminals/,
-+    "with the exact administrator action");
-+});
-+
-+test("the shared sign-in flow is unchanged: email + password, one submission, independent retries", () => {
-+  assert.match(LOGIN, /<form id="login-form" novalidate>/);
-+  assert.match(LOGIN, /<input class="input" id="email" name="email" type="email" required autocomplete="email">/);
-+  assert.match(LOGIN, /<input class="input" id="password" name="password" type="password" required autocomplete="current-password"/);
-+  assert.match(LOGIN, /bindLoginForm\("#login-form", \{ onRestricted: desktopRefusalNotice \}\);/,
-+    "the shared binder (guard, reset, message mapping) still drives the form");
-+});
-+
-+test("no fingerprint, attendance code, or clock-in is required to submit the password form", () => {
-+  const form = LOGIN.slice(LOGIN.indexOf('<form id="login-form"'), LOGIN.indexOf("</form>") + 7);
-+  assert.ok(form.length > 200, "the password form was found");
-+  for (const forbidden of ["fingerprint", "attendance", "clock", "access_code", "temporary_token"]) {
-+    assert.ok(!form.includes(forbidden), `the password form must not require "${forbidden}"`);
+     )
+ 
+ 
+@@ -998,11 +1035,19 @@
+         tender = order_service.capture_direct_tender(
+             order=order, method=data["method"], amount=data["amount"], actor=request.user,
+             cash_session=cash_session, external_reference=data["external_reference"], notes=data["notes"],
++            currency=data["currency"], idempotency_key=data["idempotency_key"],
++            expected_outstanding_balance=data.get("expected_outstanding_balance"),
+         )
++        # A repeated idempotency key converges on the tender already recorded, so
++        # the answer is 200 (nothing new was collected) rather than 201.
++        replayed = bool(getattr(tender, "idempotent_replay", False))
+         return success_response(
+             PosOrderDetailSerializer(_get_order(tender.order.reference, detail=True)).data,
+-            message="POS tender captured.",
+-            status=status.HTTP_201_CREATED,
++            message=(
++                "This tender was already captured; the existing record was returned."
++                if replayed else "POS tender captured."
++            ),
++            status=status.HTTP_200_OK if replayed else status.HTTP_201_CREATED,
+         )
+ 
+ 
+--- a/backend/apps/inventory/services/inventory_service.py
++++ b/backend/apps/inventory/services/inventory_service.py
+@@ -1020,7 +1020,68 @@
+     return rules
+ 
+ 
+-def pos_stock_summaries(menu_item_ids):
++def _open_pos_order_statuses():
++    """POS order statuses whose lines still hold stock for an undelivered sale.
++
++    Imported lazily to keep ``inventory`` free of a module-level dependency on
++    ``pos``. The tuple is asserted against the delivery-time authority
++    (``apps.pos.services.order_service._STOCK_COMMITTED_STATUSES``) by the test
++    suite so the two can never drift.
++    """
++    from apps.pos.models import PosOrder
++
++    return (
++        PosOrder.Status.DRAFT, PosOrder.Status.SUBMITTED, PosOrder.Status.PREPARING, PosOrder.Status.READY,
++    )
++
++
++def open_pos_order_demand(required_keys, *, exclude_order=None):
++    """Base-unit demand already committed by OPEN POS orders, per stock key.
++
++    The single implementation of "stock other orders have already promised" for
++    both the order-entry validator (``apps.pos.services.order_service``) and the
++    menu availability projection below, so a displayed quantity and the
++    quantity the validator will actually accept are computed from one rule.
++
++    ``required_keys`` iterates ``(stock_item_id, location_id)`` pairs. Demand is
++    resolved through the same recipe/direct-sale mapping the deduction uses, so
++    a dish whose recipe shares rice with another dish reduces rice's
++    availability for both. Delivered orders are excluded: their deduction is
++    already in the balance, and cancelled/voided orders never deduct.
++
++    Callers that need a stable answer must hold the balance row locks before
++    calling (the POS order validator does); readers that only display the number
++    may call it without locks.
++    """
++    from apps.pos.models import PosOrderLine
++
++    keys = {key for key in required_keys}
++    if not keys:
++        return {}
++    lines = PosOrderLine.objects.filter(
++        order__status__in=_open_pos_order_statuses(), menu_item_id__isnull=False,
++    )
++    if exclude_order is not None:
++        lines = lines.exclude(order=exclude_order)
++    rows = [(int(row["menu_item_id"]), int(row["quantity"])) for row in lines.values("menu_item_id", "quantity")]
++    if not rows:
++        return {}
++    rules = pos_stock_rules({row[0] for row in rows})
++    demand = {}
++    for menu_item_id, quantity in rows:
++        rule = rules.get(menu_item_id)
++        if not rule or not rule["tracked"]:
++            continue
++        for component in rule["components"]:
++            key = (component["item_id"], rule["location_id"])
++            if key not in keys:
++                continue  # cannot affect the keys the caller asked about
++            amount = (component["quantity_per_menu_unit"] * quantity).quantize(QTY)
++            demand[key] = (demand.get(key, Decimal("0.0000")) + amount).quantize(QTY)
++    return demand
++
++
++def pos_stock_summaries(menu_item_ids, *, include_open_order_demand=True):
+     """Bulk, read-only stock summaries for the POS order-entry interfaces.
+ 
+     One shared implementation for the POS menu payload and the barcode lookup:
+@@ -1030,12 +1091,31 @@
+     only — order validation locks its own rows).
+ 
+     Returns ``{menu_item_id: summary}`` with the keys
+-    ``tracked / unconfigured / unconfigured_reason / location_code /
++    ``tracked / no_stock / unconfigured / unconfigured_reason / location_code /
+     location_name / saleable_quantity / sufficient_for_one / stock_unit /
+-    components``. ``saleable_quantity`` is how many whole menu units the
+-    scarcest component can still produce; ``stock_unit`` is the limiting
+-    component's base unit for single-component (direct-sale) products and is
+-    empty for mixed-unit recipes.
++    available_quantity / available_sufficient_for_one / committed_quantity /
++    availability_unit / components``.
++
++    Two different quantities are reported and they must not be confused:
++
++    * ``saleable_quantity`` — how many whole menu units the STORE's physical
++      balance can still produce (on-hand only);
++    * ``available_quantity`` — how many the order validator will ACCEPT right
++      now, i.e. the same figure minus stock already promised to other open
++      (draft/submitted/preparing/ready) POS orders, resolved through
++      :func:`open_pos_order_demand`. This is the number the POS must show,
++      because it is the number the next order will be measured against.
++
++    ``stock_unit`` is the limiting component's base unit for single-component
++    (direct-sale) products and stays empty for mixed-unit recipes, matching the
++    existing API contract; ``availability_unit`` is the word the UI should use
++    for a menu unit — ``"portion"`` for a recipe-based prepared food, the stock
++    item's base unit for a direct-sale product.
++
++    Every figure here is a snapshot: a concurrent order, a goods receipt or a
++    correction in the inventory console can change it one moment later, so it
++    is display guidance only. Submission-time validation in
++    ``apps.pos.services.order_service`` remains authoritative.
+     """
+     rules = pos_stock_rules(menu_item_ids)
+     balance_keys = {
+@@ -1051,6 +1131,7 @@
+             location_id__in={key[1] for key in balance_keys},
+         ):
+             balances[(row.item_id, row.location_id)] = Decimal(row.quantity_on_hand)
++    demand = open_pos_order_demand(balance_keys) if include_open_order_demand else {}
+     summaries = {}
+     for menu_item_id, rule in rules.items():
+         summary = {
+@@ -1063,21 +1144,34 @@
+             "saleable_quantity": None,
+             "sufficient_for_one": None,
+             "stock_unit": "",
++            "available_quantity": None,
++            "available_sufficient_for_one": None,
++            "committed_quantity": "0",
++            "availability_unit": "",
+             "components": [],
+         }
+         if not rule["tracked"]:
+             summaries[menu_item_id] = summary
+             continue
+         saleable = None
++        available_units = None
+         limiting_unit = ""
+         component_rows = []
+         for component in rule["components"]:
+             per_unit = component["quantity_per_menu_unit"]
+-            on_hand = balances.get((component["item_id"], rule["location_id"]), Decimal("0.0000"))
++            key = (component["item_id"], rule["location_id"])
++            on_hand = balances.get(key, Decimal("0.0000"))
++            committed = demand.get(key, Decimal("0.0000")) if include_open_order_demand else Decimal("0.0000")
++            free = on_hand - committed
++            if free < Decimal("0.0000"):
++                free = Decimal("0.0000")
+             component_saleable = (on_hand / per_unit) if per_unit > 0 else Decimal("0")
++            component_available = (free / per_unit) if per_unit > 0 else Decimal("0")
+             if saleable is None or component_saleable < saleable:
+                 saleable = component_saleable
+                 limiting_unit = component["unit"]
++            if available_units is None or component_available < available_units:
++                available_units = component_available
+             component_rows.append({
+                 "item_id": component["item_id"],
+                 "item_sku": component["item_sku"],
+@@ -1085,12 +1179,24 @@
+                 "unit": component["unit"],
+                 "quantity_per_menu_unit": str(per_unit),
+                 "quantity_on_hand": str(on_hand),
++                "quantity_committed": str(committed.quantize(QTY)),
++                "quantity_available": str(free.quantize(QTY)),
+             })
+         whole_units = int(saleable) if saleable is not None else 0
++        whole_available = int(available_units) if available_units is not None else 0
++        single_component = len(rule["components"]) == 1
+         summary.update({
+             "saleable_quantity": str(whole_units),
+             "sufficient_for_one": whole_units >= 1,
+-            "stock_unit": limiting_unit if len(rule["components"]) == 1 else "",
++            "stock_unit": limiting_unit if single_component else "",
++            "available_quantity": str(whole_available),
++            "available_sufficient_for_one": whole_available >= 1,
++            # Whole menu units of THIS product already promised to open orders.
++            "committed_quantity": str(max(whole_units - whole_available, 0)),
++            # The unit a menu unit is counted in: the stock item's own base unit
++            # for a direct-sale product, "portion" for a prepared recipe (whose
++            # ingredients are measured in several different units at once).
++            "availability_unit": limiting_unit if single_component else "portion",
+             "components": component_rows,
+         })
+         summaries[menu_item_id] = summary
+--- a/frontend/dashboard/pos.html
++++ b/frontend/dashboard/pos.html
+@@ -374,7 +374,8 @@
+     cartEl.innerHTML=state.cart.map(function(line,index){
+       var mods=(line.modifier_labels||[]).join(", ");
+       var unit=lineUnitPrice(line),lineTotal=unit*Number(line.quantity||0);
+-      var stockLine=line.stock_location?'<small class="caption" style="display:block;margin-top:.15rem;">Stock location: '+JONE.esc(line.stock_location)+(line.stock_available!=null?(' · '+JONE.esc(String(line.stock_available))+' '+JONE.esc(unitWord(line.stock_unit,line.stock_available))+' available'):'')+'</small>':(line.stock_unconfigured?'<small class="caption" style="display:block;margin-top:.15rem;">No stock control configured — this sale will not reduce a store balance.</small>':'');
++      var cartAvailability=(line.stock_available_now!=null?(' · '+JONE.esc(String(line.stock_available_now))+' '+JONE.esc(unitWord(line.stock_availability_unit||line.stock_unit,line.stock_available_now))+' available to order now'):'')+(Number(line.stock_committed||0)>0?(' · '+JONE.esc(String(line.stock_committed))+' '+JONE.esc(unitWord(line.stock_availability_unit||line.stock_unit,line.stock_committed))+' held by other open orders'):'');
++      var stockLine=line.stock_location?'<small class="caption" style="display:block;margin-top:.15rem;">Stock location: '+JONE.esc(line.stock_location)+(line.stock_available!=null?(' · '+JONE.esc(String(line.stock_available))+' '+JONE.esc(unitWord(line.stock_unit,line.stock_available))+' available'):'')+cartAvailability+' · confirmed by the server when the draft is created</small>':(line.stock_unconfigured?'<small class="caption" style="display:block;margin-top:.15rem;">No stock control configured — this sale will not reduce a store balance.</small>':'');
+       return '<div class="pos-cart-row"><div><strong>'+JONE.esc(line.item_name)+'</strong><p>'+JONE.esc(String(line.quantity))+' × '+JONE.esc(money(unit,line.currency||currency))+' = '+JONE.esc(money(lineTotal,line.currency||currency))+(mods?' · '+JONE.esc(mods):'')+(line.notes?' · '+JONE.esc(line.notes):'')+'</p>'+stockLine+'</div><div class="pos-action-stack"><button class="btn btn-sm btn-ghost" type="button" data-pos-dec-line="'+index+'" aria-label="Decrease quantity of '+JONE.esc(line.item_name)+'">−</button><button class="btn btn-sm btn-ghost" type="button" data-pos-inc-line="'+index+'" aria-label="Increase quantity of '+JONE.esc(line.item_name)+'">+</button><button class="btn btn-sm btn-ghost" type="button" data-pos-remove-line="'+index+'" aria-label="Remove '+JONE.esc(line.item_name)+'"><span data-icon="x" data-size="16"></span></button></div></div>';
+     }).join('')+'<div class="pos-summary" data-pos-cart-total><span>Subtotal (final total is calculated by the server)</span><strong class="caption" style="margin-left:auto;">'+JONE.esc(money(cartTotal(),currency))+'</strong></div>';
+     JONE.icons.inject(cartEl);
+@@ -407,6 +408,46 @@
+     return token;
+   }
+   function stockLocationName(stock){return (stock&&(stock.location_name||stock.location_code))||"its stock location";}
++  /* ===== Availability the ORDER VALIDATOR will accept =====================
++     The server sends two quantities per tracked product:
++
++       stock.saleable_quantity  — what the store physically holds;
++       stock.available_quantity — that minus what other OPEN POS orders have
++                                  already promised (the figure order entry is
++                                  actually measured against).
++
++     The POS displays the second one, because showing the first told an operator
++     "5 available" and then failed the draft with a stock conflict. Both come
++     from apps.inventory.services.inventory_service.pos_stock_summaries: no
++     stock arithmetic happens in this file.
++
++     These figures are a snapshot. A concurrent order, a delivery, a goods
++     receipt or a correction in the inventory console can change them a second
++     later, so they are guidance only — the server revalidates when the draft is
++     created and again when it is submitted, and the 409 POS_STOCK_CONFLICT path
++     reloads this menu so the numbers on screen become current. */
++  function availableNow(stock){
++    if(!stock||!stock.tracked)return null;
++    return Number(stock.available_quantity!=null?stock.available_quantity:(stock.saleable_quantity||0));
 +  }
-+  // The 6-digit code stays a SEPARATE, opt-in tab.
-+  assert.match(LOGIN, /id="access-code-login-form" novalidate style="display:none;"/);
-+});
++  function availabilityUnit(stock){return (stock&&(stock.availability_unit||stock.stock_unit))||"";}
++  function availabilityWord(stock,quantity){return unitWord(availabilityUnit(stock),quantity);}
++  function isRecipeProduct(stock){return !!stock&&(stock.components||[]).length>1;}
++  /* A prepared food is counted in portions, not in one ingredient's unit: its
++     ingredients are measured in grams, litres and pieces at the same time. */
++  function committedNote(stock){
++    var committed=Number((stock&&stock.committed_quantity)||0);
++    return committed>0?(" · "+committed+" "+availabilityWord(stock,committed)+" are held by other open orders"):"";
++  }
++  function recipeNote(stock,available){
++    if(!isRecipeProduct(stock))return "";
++    var parts=(stock.components||[]).map(function(row){
++      return String(row.quantity_per_menu_unit)+" "+String(row.unit||"")+" "+String(row.item_name||row.item_sku||"");
++    });
++    return " · Recipe ("+parts.length+" ingredients): "+parts.join(" + ")+" makes 1 "+availabilityWord(stock,1)+
++      (available>0?(" — "+available+" "+availabilityWord(stock,available)+" can be made now"):"");
++  }
++  function stalenessNote(){return " · Live figure: stock can change before the order is submitted.";}
+   /* Three different states must not look alike in the picker: stock-controlled
+      (a store and a live quantity), explicitly excluded from stock tracking (a
+      deliberate NO_STOCK decision), and NOT CONFIGURED AT ALL. The last one used
+@@ -423,8 +464,11 @@
+     if(unconfiguredForStock(stock))return " · no stock tracking configured";
+     if(!stock.tracked||stock.saleable_quantity==null)return "";
+     var location=stockLocationName(stock);
+-    var available=Number(stock.saleable_quantity||0);
+-    return (location?" · "+location:"")+(available>0?" · "+available+" available":" · out of stock");
++    // "available" is what the validator will accept: on-hand MINUS what other
++    // open orders already hold (see availableNow above).
++    var available=availableNow(stock);
++    var unit=availabilityWord(stock,available);
++    return (location?" · "+location:"")+(available>0?" · "+available+" available":" · out of stock")+(isRecipeProduct(stock)?" "+unit:"")+(Number(stock.committed_quantity||0)>0?" · "+Number(stock.committed_quantity)+" held":"");
+   }
+   function renderItemStockHint(){
+     var node=document.querySelector("[data-pos-item-stock]");
+@@ -442,8 +486,9 @@
+       node.textContent="Stock location unavailable for "+item.name+": "+(stock.unconfigured_reason||"its inventory location is not configured")+". This item cannot be added to the order until its inventory configuration is corrected.";
+       return;
+     }
+-    var available=Number(stock.saleable_quantity||0);
+-    node.textContent="Stock location: "+stockLocationName(stock)+" · Available stock: "+available+" "+unitWord(stock.stock_unit,available)+(available<=0?" · out of stock":"");
++    var available=availableNow(stock);
++    var portion=isRecipeProduct(stock)?(" ("+available+" "+availabilityWord(stock,available)+" of this dish)"):"";
++    node.textContent="Stock location: "+stockLocationName(stock)+" · Available stock: "+available+" "+unitWord(stock.stock_unit,available)+portion+committedNote(stock)+recipeNote(stock,available)+stalenessNote()+(available<=0?" · out of stock":"");
+   }
+   function renderItemChoices(preferredItemId){
+     var select=document.getElementById("pos-item");
+@@ -675,9 +720,11 @@
+         return;
+       }
+       if(stock.tracked){
+-        var available=Number(stock.saleable_quantity||0);
++        // The figure the server will validate this order against: on-hand minus
++        // what other open orders already hold.
++        var available=availableNow(stock);
+         var location=stockLocationName(stock);
+-        var unit=unitWord(stock.stock_unit,available||1);
++        var unit=availabilityWord(stock,available||1);
+         if(available<=0){
+           reportItemNotAdded("Out of stock: "+item.name+" is unavailable at "+location+". Available stock: 0 "+unit+". This item has not been added to the "+orderNoun()+".");
+           return;
+@@ -705,6 +752,11 @@
+         stock_location:stock.tracked?stockLocationName(stock):"",
+         stock_available:stock.tracked?Number(stock.saleable_quantity||0):null,
+         stock_unit:stock.tracked?(stock.stock_unit||""):"",
++        // What the order will actually be validated against when it is created,
++        // and the word a menu unit is counted in ("portion" for a recipe).
++        stock_available_now:stock.tracked?availableNow(stock):null,
++        stock_committed:stock.tracked?Number(stock.committed_quantity||0):0,
++        stock_availability_unit:stock.tracked?availabilityUnit(stock):"",
+         stock_unconfigured:unconfiguredForStock(stock)});
+       document.getElementById("pos-quantity").value="1";document.getElementById("pos-line-note").value="";document.querySelectorAll("[data-pos-modifier]").forEach(function(input){input.checked=false;});
+       setCreateError("");renderCart();renderItemStockHint();
+@@ -720,7 +772,13 @@
+     // obsolete duplicates of the production-queue workflow and are gone.
+     if(["DRAFT","SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-action="DELIVERED" data-pos-ref="'+ref+'" data-pos-status="'+JONE.esc(status)+'">Deliver</button>';
+     if(["DRAFT","SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-action="CANCELLED" data-pos-ref="'+ref+'">Cancel</button>';
+-    if(status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&order.settlement_status!=="PAID"&&canTender())buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-tender="'+ref+'">Tender</button>';
++    // The server decides whether a collection is still possible: the order must
++    // be delivered and charged, a direct-sale mode (room service settles on the
++    // folio), and a positive outstanding balance. A fully paid order therefore
++    // never offers another payment, and the button states the amount owed.
++    var outstanding=order.outstanding_balance;
++    var collectable=order.settlement_action_available!=null?!!order.settlement_action_available:Number(outstanding||0)>0;
++    if(status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&collectable&&canTender())buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-tender="'+ref+'">Collect'+(outstanding!=null?" "+JONE.esc(money(outstanding,order.currency)):"")+'</button>';
+     if(status==="DELIVERED"&&order.settlement_status==="PAID")buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-thermal="'+ref+'">Print receipt</button>';
+     return '<div class="pos-action-stack">'+buttons+'</div>';
+   }
+@@ -728,7 +786,7 @@
+     if(!rows.length){DATA.empty(orderBody,"utensils","No POS orders found","Create an order or change the filters.",7);return;}
+     orderBody.innerHTML=rows.map(function(order){
+       var guest=order.guest_name||"Walk-in";var location=(order.mode==="RESTAURANT"||order.mode==="BAR")?(order.table_number||order.delivery_location||"—"):(order.delivery_location||((order.stay_reference||"—")));
+-      return '<tr><td class="cell-nowrap"><strong>'+JONE.esc(order.reference)+'</strong><small class="receipt-mobile-guest hide-md">'+JONE.esc(guest)+'</small></td><td>'+JONE.esc(label(order.mode))+'<br><small class="hide-sm">'+JONE.esc(guest)+'</small></td><td class="hide-sm"><span class="cell-sub">'+JONE.esc(location)+'</span></td><td class="num cell-nowrap">'+JONE.esc(money(order.total_amount,order.currency))+'</td><td>'+JONE.dashboard.statusPill(order.status)+'</td><td class="hide-sm">'+JONE.dashboard.statusPill(order.settlement_status)+'</td><td>'+actionButtons(order)+'</td></tr>';
++      return '<tr><td class="cell-nowrap"><strong>'+JONE.esc(order.reference)+'</strong><small class="receipt-mobile-guest hide-md">'+JONE.esc(guest)+'</small></td><td>'+JONE.esc(label(order.mode))+'<br><small class="hide-sm">'+JONE.esc(guest)+'</small></td><td class="hide-sm"><span class="cell-sub">'+JONE.esc(location)+'</span></td><td class="num cell-nowrap">'+JONE.esc(money(order.total_amount,order.currency))+'</td><td>'+JONE.dashboard.statusPill(order.status)+'</td><td class="hide-sm">'+JONE.dashboard.statusPill(order.settlement_status)+(order.status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&Number(order.outstanding_balance||0)>0?'<br><small class="caption">Due '+JONE.esc(money(order.outstanding_balance,order.currency))+'</small>':'')+'</td><td>'+actionButtons(order)+'</td></tr>';
+     }).join('');JONE.icons.inject(orderBody);
+   }
+   function filters(){
+@@ -817,7 +875,9 @@
+     if(order.status!=="DELIVERED"||order.mode==="ROOM_SERVICE"||order.settlement_status!=="PAID"){JONE.ui.toast("Payment is no longer confirmed; receipt printing was stopped.","warning");return;}
+     var capturedTenders=(order.tenders||[]).filter(function(t){return t.status==="CAPTURED";});
+     var capturedAmount=capturedTenders.reduce(function(total,t){return total+Number(t.amount||0);},0);
+-    if(!capturedTenders.length||capturedAmount+0.0001<Number(order.total_amount||0)){JONE.ui.toast("Captured payment records do not cover this order total; ask Finance to reconcile before printing.","error");return;}
++    if(!capturedTenders.length){JONE.ui.toast("No captured tender is recorded for this order; ask Finance to reconcile before printing.","error");return;}
++    var receiptBalance=tenderBalance(order);
++    if(capturedAmount+0.0001<receiptBalance.net||receiptBalance.outstanding>0){JONE.ui.toast("Captured payment records do not cover the charge now due ("+money(receiptBalance.net,receiptBalance.currency)+"); ask Finance to reconcile before printing.","error");return;}
+     var tender=capturedTenders[capturedTenders.length-1];
+     var receipt={
+       hotel:{name:"J-ONE HOTEL & LODGE",address:"Plot 566 Mgbowo Street, off Ezike Street, Enugu State",phone:"+234 803 211 2874"},
+@@ -830,10 +890,10 @@
+       subtotal:order.subtotal,
+       discount:order.discount_amount||0,
+       tax:order.tax_amount||0,
+-      total:order.total_amount,
++      total:receiptBalance.net,
+       paid:capturedAmount,
+-      change:Math.max(0,capturedAmount-Number(order.total_amount||0)),
+-      balance_due:0,
++      change:Math.max(0,capturedAmount-receiptBalance.net),
++      balance_due:receiptBalance.outstanding,
+       payment_method:tender?tender.method:"",
+       payment_reference:tender?(tender.external_reference||""):""
+     };
+@@ -863,25 +923,102 @@
+     catch(err){JONE.ui.toast((err&&err.message)||"The order could not be updated.","error");}
+     finally{JONE.releaseGuard(button);}
+   }
++  /* ======================================================================
++     TENDER / SETTLEMENT
++     The amount box is filled from the SERVER's outstanding balance — the
++     order's net total (its total minus unopened-item returns) minus the money
++     already collected — never from the frozen order total and never from a
++     figure the browser worked out for itself. Partial collections keep
++     working: the box holds what is still owed, and the operator may lower it.
++
++     Three different things keep a second collection from happening:
++       1. the tender button disappears once nothing is owed
++          (order.settlement_action_available / outstanding_balance);
++       2. every submission carries a balance snapshot
++          (expected_outstanding_balance) that the server refuses if the balance
++          moved while the form was open;
++       3. every submission carries one idempotency key per form
++          (state.tenderKey), so a double click or a retried request returns the
++          tender already recorded instead of collecting twice.
++     ====================================================================== */
++  function tenderBalance(order){
++    var total=Number(order.total_amount||0);
++    var returned=Number(order.returned_amount||0);
++    var net=order.net_total!=null?Number(order.net_total):Math.max(0,total-returned);
++    var paid=Number(order.amount_paid||0);
++    var outstanding=order.outstanding_balance!=null?Number(order.outstanding_balance):Math.max(0,net-paid);
++    return {currency:order.currency||"NGN",total:total,returned:returned,net:net,paid:paid,outstanding:outstanding};
++  }
++  function tenderSummaryHtml(balance){
++    var rows=[["Order total",money(balance.total,balance.currency)]];
++    if(balance.returned>0)rows.push(["Returned unopened items","−"+money(balance.returned,balance.currency)]);
++    rows.push(["Charge now due",money(balance.net,balance.currency)]);
++    rows.push(["Already collected",money(balance.paid,balance.currency)]);
++    rows.push(["Outstanding balance",money(balance.outstanding,balance.currency)]);
++    return '<div class="pos-summary" data-pos-tender-summary style="display:block;margin-bottom:.9rem;">'+
++      '<strong style="display:block;margin-bottom:.35rem;">Balance owed</strong>'+
++      rows.map(function(row){return '<div style="display:flex;justify-content:space-between;gap:1rem;"><span class="caption">'+JONE.esc(row[0])+'</span><span>'+JONE.esc(row[1])+'</span></div>';}).join("")+
++      '<p class="caption" style="margin:.45rem 0 0;">Amount is prefilled with the outstanding balance. Server figures are authoritative and recalculated when you submit.</p></div>';
++  }
+   async function captureTender(reference){
+     await loadDrawer();
+     var orderRes;try{orderRes=await window.API.getOne("posOrders",reference);}catch(err){JONE.ui.toast((err&&err.message)||"Order could not be loaded.","error");return;}
+     var order=orderRes.data||{};
++    if(order.mode==="ROOM_SERVICE"){
++      JONE.ui.toast("Room-service orders are billed to the guest's folio, not collected at the POS. Settle it with Front desk / Finance.","warning",{title:"No direct tender for room service"});
++      return;
++    }
++    if(order.status!=="DELIVERED"){
++      JONE.ui.toast("Only a delivered order can take a payment. Mark "+reference+" delivered first.","warning");
++      return;
++    }
++    var balance=tenderBalance(order);
++    if(balance.outstanding<=0||order.settlement_action_available===false){
++      JONE.ui.toast("Order "+reference+" is fully settled: "+money(balance.paid,balance.currency)+" of "+money(balance.net,balance.currency)+" collected. There is no balance to collect.","warning",{title:"Nothing outstanding"});
++      loadOrders(true);
++      return;
++    }
+     var tenderOptions=[{value:"CARD",label:"Card / POS terminal"},{value:"BANK_TRANSFER",label:"Bank transfer"}];
+     if(canOpenCash())tenderOptions.unshift({value:"CASH",label:"Cash"});
++    var prefilled=balance.outstanding.toFixed(2);
++    // One idempotency key per opened form: a retried or double-clicked submit
++    // converges on the same tender, a fresh collection gets a fresh key.
++    state.tenderKey=newKey();
+     var tenderFields=[
+       {name:"method",label:"Method",type:"select",required:true,options:tenderOptions},
+-      {name:"amount",label:"Amount ("+(order.currency||"NGN")+")",type:"number",step:"0.01",required:true,placeholder:"Server rejects an amount above the unpaid balance."},
+-      {name:"external_reference",label:"Terminal / transfer reference",type:"text",placeholder:"Optional for cash"}
++      {name:"amount",label:"Amount ("+balance.currency+")",type:"number",step:"0.01",min:"0.01",required:true,value:prefilled,help:"Prefilled with the outstanding balance. Lower it to record a partial payment; the server refuses anything above the balance."},
++      {name:"external_reference",label:"Terminal / transfer reference",type:"text",placeholder:"Optional for cash"},
+     ];
+     if(canOpenCash())tenderFields.push({name:"cash_session_reference",label:"Cash-session reference",type:"text",value:(state.drawer&&state.drawer.reference)||"",help:"Required for cash. Your open drawer is prefilled when available."});
+     tenderFields.push({name:"notes",label:"Notes",type:"textarea",rows:2});
+-    var result=await JONE.dashboard.formModal({title:"Capture tender · "+reference,submitText:"Capture tender",wide:true,fields:tenderFields,onSubmit:async function(values){
+-      if(values.method!=="CASH")values.cash_session_reference="";
+-      await window.API.capturePosTender(reference,{method:values.method,amount:String(values.amount),cash_session_reference:values.cash_session_reference||"",external_reference:values.external_reference||"",notes:values.notes||""});
+-      return {message:"Tender captured."};
+-    }});
+-    if(result){loadOrders();loadDrawer();viewOrder(reference);}
++    var result=await JONE.dashboard.formModal({title:"Capture tender · "+reference,submitText:"Capture tender",wide:true,fields:tenderFields,
++      onRender:function(panel){var head=panel.querySelector(".modal-head");if(head&&head.insertAdjacentHTML)head.insertAdjacentHTML("afterend",tenderSummaryHtml(balance));},
++      onSubmit:async function(values){
++        var amount=Number(values.amount);
++        if(!isFinite(amount)||amount<=0)throw new Error("Enter an amount greater than zero.");
++        if(amount>balance.outstanding+0.001)throw new Error("Amount exceeds the outstanding balance of "+money(balance.outstanding,balance.currency)+". Enter at most the remaining balance.");
++        if(values.method!=="CASH")values.cash_session_reference="";
++        if(values.method==="CASH"&&!String(values.cash_session_reference||"").trim())throw new Error("Cash tender needs your open cash-session reference. Open a drawer first.");
++        var response=await window.API.capturePosTender(reference,{
++          method:values.method,
++          amount:amount.toFixed(2),
++          currency:balance.currency,
++          // The balance this screen displayed: if another payment landed while
++          // the form was open the server refuses instead of double-collecting.
++          expected_outstanding_balance:prefilled,
++          idempotency_key:state.tenderKey,
++          cash_session_reference:values.cash_session_reference||"",
++          external_reference:values.external_reference||"",
++          notes:values.notes||""
++        });
++        var updated=(response&&response.data)||{};
++        var after=tenderBalance(updated);
++        state.tenderKey=newKey();
++        return {message:after.outstanding<=0
++          ? ("Tender captured. Order "+reference+" is fully paid ("+money(after.paid,after.currency)+").")
++          : ("Tender captured. Remaining balance: "+money(after.outstanding,after.currency)+".")};
++      }});
++    if(result){loadOrders(true);loadDrawer();viewOrder(reference);}
+   }
+   async function openDrawer(){
+     var result=await JONE.dashboard.formModal({title:"Open cash drawer",submitText:"Open drawer",fields:[{name:"opening_float",label:"Opening float (NGN)",type:"number",step:"0.01",value:"0.00",required:true},{name:"location",label:"Location",type:"text"},{name:"terminal",label:"Terminal",type:"text"},{name:"notes",label:"Notes",type:"textarea",rows:2}],onSubmit:async function(values){await window.API.openPosCashSession(values);return{message:"Cash drawer opened."};}});
+@@ -914,7 +1051,7 @@
+   document.getElementById("pos-find-stay").addEventListener("click",findStays);
+   document.getElementById("pos-stay-search").addEventListener("keydown",function(event){if(event.key==="Enter"){event.preventDefault();findStays();}});
+   stayResults.addEventListener("click",function(event){var button=event.target.closest("[data-pos-stay]");if(button)selectStay(button.getAttribute("data-pos-stay"));});
+-  cartEl.addEventListener("click",function(event){var remove=event.target.closest("[data-pos-remove-line]");var inc=event.target.closest("[data-pos-inc-line]");var dec=event.target.closest("[data-pos-dec-line]");if(remove){state.cart.splice(Number(remove.getAttribute("data-pos-remove-line")),1);}else if(inc){var incIdx=Number(inc.getAttribute("data-pos-inc-line")),il=state.cart[incIdx];if(il){var incOthers=state.cart.reduce(function(sum,line,i){return i===incIdx?sum:(String(line.menu_item_id)===String(il.menu_item_id)?sum+(Number(line.quantity)||0):sum);},0);var stockCeiling=il.stock_available==null?100:Math.min(100,Math.max(0,Number(il.stock_available)-incOthers));if(il.quantity>=stockCeiling){JONE.ui.toast("Insufficient stock: only "+(il.stock_available==null?"":String(il.stock_available)+" ")+unitWord(il.stock_unit,stockCeiling)+" of "+il.item_name+" are available at "+(il.stock_location||"its stock location")+(incOthers>0?", and "+incOthers+" are already in this order":"")+".","warning");}else if(il.quantity<100)il.quantity+=1;}}else if(dec){var dl=state.cart[Number(dec.getAttribute("data-pos-dec-line"))];if(dl&&dl.quantity>1)dl.quantity-=1;}else return;renderCart();});
++  cartEl.addEventListener("click",function(event){var remove=event.target.closest("[data-pos-remove-line]");var inc=event.target.closest("[data-pos-inc-line]");var dec=event.target.closest("[data-pos-dec-line]");if(remove){state.cart.splice(Number(remove.getAttribute("data-pos-remove-line")),1);}else if(inc){var incIdx=Number(inc.getAttribute("data-pos-inc-line")),il=state.cart[incIdx];if(il){var incOthers=state.cart.reduce(function(sum,line,i){return i===incIdx?sum:(String(line.menu_item_id)===String(il.menu_item_id)?sum+(Number(line.quantity)||0):sum);},0);var stockCeiling=il.stock_available==null?100:Math.min(100,Math.max(0,Number(il.stock_available)-incOthers));if(il.stock_available_now!=null)stockCeiling=Math.min(stockCeiling,Math.max(0,Number(il.stock_available_now)-incOthers));if(il.quantity>=stockCeiling){JONE.ui.toast("Insufficient stock: only "+(il.stock_available==null?"":String(il.stock_available)+" ")+unitWord(il.stock_unit,stockCeiling)+" of "+il.item_name+" are available at "+(il.stock_location||"its stock location")+(incOthers>0?", and "+incOthers+" are already in this order":"")+".","warning");}else if(il.quantity<100)il.quantity+=1;}}else if(dec){var dl=state.cart[Number(dec.getAttribute("data-pos-dec-line"))];if(dl&&dl.quantity>1)dl.quantity-=1;}else return;renderCart();});
+   document.getElementById("pos-create-form").addEventListener("submit",async function(event){
+     event.preventDefault();setCreateError("");
+     if(state.serviceRequestReference&&!state.serviceRequest){reportCreateFailure("The linked QR request has not been verified. Return to Guest requests and reopen the action.");return;}
+--- a/frontend/tests-js/test-pos-receipt-and-transfer-ui.js
++++ b/frontend/tests-js/test-pos-receipt-and-transfer-ui.js
+@@ -9,7 +9,14 @@
+   assert.match(PAGE,/status==="DELIVERED"&&order\.settlement_status==="PAID"/);
+   assert.match(PAGE,/A paid receipt is available only after the backend confirms full payment/);
+   assert.match(PAGE,/Payment is no longer confirmed; receipt printing was stopped/);
+-  assert.match(PAGE,/capturedAmount\+0\.0001<Number\(order\.total_amount\|\|0\)/);
++  /* The ceiling for a paid receipt is the charge NOW DUE (net total after
++     unopened-item returns), read from the server — not the frozen original
++     order total. A settled order whose returned bottles reduced the bill must
++     still print; the previous comparison against `total_amount` wrongly
++     refused it. */
++  assert.match(PAGE,/var receiptBalance=tenderBalance\(order\);/);
++  assert.match(PAGE,/capturedAmount\+0\.0001<receiptBalance\.net\|\|receiptBalance\.outstanding>0/);
++  assert.doesNotMatch(PAGE,/capturedAmount\+0\.0001<Number\(order\.total_amount\|\|0\)/);
+   assert.match(PAGE,/paid:capturedAmount/);
+   assert.doesNotMatch(PAGE,/tender\?tender\.amount:order\.total_amount/);
+ });

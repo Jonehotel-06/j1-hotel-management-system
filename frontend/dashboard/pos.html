@@ -374,7 +374,8 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     cartEl.innerHTML=state.cart.map(function(line,index){
       var mods=(line.modifier_labels||[]).join(", ");
       var unit=lineUnitPrice(line),lineTotal=unit*Number(line.quantity||0);
-      var stockLine=line.stock_location?'<small class="caption" style="display:block;margin-top:.15rem;">Stock location: '+JONE.esc(line.stock_location)+(line.stock_available!=null?(' · '+JONE.esc(String(line.stock_available))+' '+JONE.esc(unitWord(line.stock_unit,line.stock_available))+' available'):'')+'</small>':(line.stock_unconfigured?'<small class="caption" style="display:block;margin-top:.15rem;">No stock control configured — this sale will not reduce a store balance.</small>':'');
+      var cartAvailability=(line.stock_available_now!=null?(' · '+JONE.esc(String(line.stock_available_now))+' '+JONE.esc(unitWord(line.stock_availability_unit||line.stock_unit,line.stock_available_now))+' available to order now'):'')+(Number(line.stock_committed||0)>0?(' · '+JONE.esc(String(line.stock_committed))+' '+JONE.esc(unitWord(line.stock_availability_unit||line.stock_unit,line.stock_committed))+' held by other open orders'):'');
+      var stockLine=line.stock_location?'<small class="caption" style="display:block;margin-top:.15rem;">Stock location: '+JONE.esc(line.stock_location)+(line.stock_available!=null?(' · '+JONE.esc(String(line.stock_available))+' '+JONE.esc(unitWord(line.stock_unit,line.stock_available))+' available'):'')+cartAvailability+' · confirmed by the server when the draft is created</small>':(line.stock_unconfigured?'<small class="caption" style="display:block;margin-top:.15rem;">No stock control configured — this sale will not reduce a store balance.</small>':'');
       return '<div class="pos-cart-row"><div><strong>'+JONE.esc(line.item_name)+'</strong><p>'+JONE.esc(String(line.quantity))+' × '+JONE.esc(money(unit,line.currency||currency))+' = '+JONE.esc(money(lineTotal,line.currency||currency))+(mods?' · '+JONE.esc(mods):'')+(line.notes?' · '+JONE.esc(line.notes):'')+'</p>'+stockLine+'</div><div class="pos-action-stack"><button class="btn btn-sm btn-ghost" type="button" data-pos-dec-line="'+index+'" aria-label="Decrease quantity of '+JONE.esc(line.item_name)+'">−</button><button class="btn btn-sm btn-ghost" type="button" data-pos-inc-line="'+index+'" aria-label="Increase quantity of '+JONE.esc(line.item_name)+'">+</button><button class="btn btn-sm btn-ghost" type="button" data-pos-remove-line="'+index+'" aria-label="Remove '+JONE.esc(line.item_name)+'"><span data-icon="x" data-size="16"></span></button></div></div>';
     }).join('')+'<div class="pos-summary" data-pos-cart-total><span>Subtotal (final total is calculated by the server)</span><strong class="caption" style="margin-left:auto;">'+JONE.esc(money(cartTotal(),currency))+'</strong></div>';
     JONE.icons.inject(cartEl);
@@ -407,6 +408,46 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     return token;
   }
   function stockLocationName(stock){return (stock&&(stock.location_name||stock.location_code))||"its stock location";}
+  /* ===== Availability the ORDER VALIDATOR will accept =====================
+     The server sends two quantities per tracked product:
+
+       stock.saleable_quantity  — what the store physically holds;
+       stock.available_quantity — that minus what other OPEN POS orders have
+                                  already promised (the figure order entry is
+                                  actually measured against).
+
+     The POS displays the second one, because showing the first told an operator
+     "5 available" and then failed the draft with a stock conflict. Both come
+     from apps.inventory.services.inventory_service.pos_stock_summaries: no
+     stock arithmetic happens in this file.
+
+     These figures are a snapshot. A concurrent order, a delivery, a goods
+     receipt or a correction in the inventory console can change them a second
+     later, so they are guidance only — the server revalidates when the draft is
+     created and again when it is submitted, and the 409 POS_STOCK_CONFLICT path
+     reloads this menu so the numbers on screen become current. */
+  function availableNow(stock){
+    if(!stock||!stock.tracked)return null;
+    return Number(stock.available_quantity!=null?stock.available_quantity:(stock.saleable_quantity||0));
+  }
+  function availabilityUnit(stock){return (stock&&(stock.availability_unit||stock.stock_unit))||"";}
+  function availabilityWord(stock,quantity){return unitWord(availabilityUnit(stock),quantity);}
+  function isRecipeProduct(stock){return !!stock&&(stock.components||[]).length>1;}
+  /* A prepared food is counted in portions, not in one ingredient's unit: its
+     ingredients are measured in grams, litres and pieces at the same time. */
+  function committedNote(stock){
+    var committed=Number((stock&&stock.committed_quantity)||0);
+    return committed>0?(" · "+committed+" "+availabilityWord(stock,committed)+" are held by other open orders"):"";
+  }
+  function recipeNote(stock,available){
+    if(!isRecipeProduct(stock))return "";
+    var parts=(stock.components||[]).map(function(row){
+      return String(row.quantity_per_menu_unit)+" "+String(row.unit||"")+" "+String(row.item_name||row.item_sku||"");
+    });
+    return " · Recipe ("+parts.length+" ingredients): "+parts.join(" + ")+" makes 1 "+availabilityWord(stock,1)+
+      (available>0?(" — "+available+" "+availabilityWord(stock,available)+" can be made now"):"");
+  }
+  function stalenessNote(){return " · Live figure: stock can change before the order is submitted.";}
   /* Three different states must not look alike in the picker: stock-controlled
      (a store and a live quantity), explicitly excluded from stock tracking (a
      deliberate NO_STOCK decision), and NOT CONFIGURED AT ALL. The last one used
@@ -423,8 +464,11 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(unconfiguredForStock(stock))return " · no stock tracking configured";
     if(!stock.tracked||stock.saleable_quantity==null)return "";
     var location=stockLocationName(stock);
-    var available=Number(stock.saleable_quantity||0);
-    return (location?" · "+location:"")+(available>0?" · "+available+" available":" · out of stock");
+    // "available" is what the validator will accept: on-hand MINUS what other
+    // open orders already hold (see availableNow above).
+    var available=availableNow(stock);
+    var unit=availabilityWord(stock,available);
+    return (location?" · "+location:"")+(available>0?" · "+available+" available":" · out of stock")+(isRecipeProduct(stock)?" "+unit:"")+(Number(stock.committed_quantity||0)>0?" · "+Number(stock.committed_quantity)+" held":"");
   }
   function renderItemStockHint(){
     var node=document.querySelector("[data-pos-item-stock]");
@@ -442,8 +486,9 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       node.textContent="Stock location unavailable for "+item.name+": "+(stock.unconfigured_reason||"its inventory location is not configured")+". This item cannot be added to the order until its inventory configuration is corrected.";
       return;
     }
-    var available=Number(stock.saleable_quantity||0);
-    node.textContent="Stock location: "+stockLocationName(stock)+" · Available stock: "+available+" "+unitWord(stock.stock_unit,available)+(available<=0?" · out of stock":"");
+    var available=availableNow(stock);
+    var portion=isRecipeProduct(stock)?(" ("+available+" "+availabilityWord(stock,available)+" of this dish)"):"";
+    node.textContent="Stock location: "+stockLocationName(stock)+" · Available stock: "+available+" "+unitWord(stock.stock_unit,available)+portion+committedNote(stock)+recipeNote(stock,available)+stalenessNote()+(available<=0?" · out of stock":"");
   }
   function renderItemChoices(preferredItemId){
     var select=document.getElementById("pos-item");
@@ -675,9 +720,11 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
         return;
       }
       if(stock.tracked){
-        var available=Number(stock.saleable_quantity||0);
+        // The figure the server will validate this order against: on-hand minus
+        // what other open orders already hold.
+        var available=availableNow(stock);
         var location=stockLocationName(stock);
-        var unit=unitWord(stock.stock_unit,available||1);
+        var unit=availabilityWord(stock,available||1);
         if(available<=0){
           reportItemNotAdded("Out of stock: "+item.name+" is unavailable at "+location+". Available stock: 0 "+unit+". This item has not been added to the "+orderNoun()+".");
           return;
@@ -705,6 +752,11 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
         stock_location:stock.tracked?stockLocationName(stock):"",
         stock_available:stock.tracked?Number(stock.saleable_quantity||0):null,
         stock_unit:stock.tracked?(stock.stock_unit||""):"",
+        // What the order will actually be validated against when it is created,
+        // and the word a menu unit is counted in ("portion" for a recipe).
+        stock_available_now:stock.tracked?availableNow(stock):null,
+        stock_committed:stock.tracked?Number(stock.committed_quantity||0):0,
+        stock_availability_unit:stock.tracked?availabilityUnit(stock):"",
         stock_unconfigured:unconfiguredForStock(stock)});
       document.getElementById("pos-quantity").value="1";document.getElementById("pos-line-note").value="";document.querySelectorAll("[data-pos-modifier]").forEach(function(input){input.checked=false;});
       setCreateError("");renderCart();renderItemStockHint();
@@ -720,7 +772,13 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     // obsolete duplicates of the production-queue workflow and are gone.
     if(["DRAFT","SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-action="DELIVERED" data-pos-ref="'+ref+'" data-pos-status="'+JONE.esc(status)+'">Deliver</button>';
     if(["DRAFT","SUBMITTED","PREPARING","READY"].indexOf(status)>=0)buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-action="CANCELLED" data-pos-ref="'+ref+'">Cancel</button>';
-    if(status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&order.settlement_status!=="PAID"&&canTender())buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-tender="'+ref+'">Tender</button>';
+    // The server decides whether a collection is still possible: the order must
+    // be delivered and charged, a direct-sale mode (room service settles on the
+    // folio), and a positive outstanding balance. A fully paid order therefore
+    // never offers another payment, and the button states the amount owed.
+    var outstanding=order.outstanding_balance;
+    var collectable=order.settlement_action_available!=null?!!order.settlement_action_available:Number(outstanding||0)>0;
+    if(status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&collectable&&canTender())buttons+='<button class="btn btn-sm btn-accent" type="button" data-pos-tender="'+ref+'">Collect'+(outstanding!=null?" "+JONE.esc(money(outstanding,order.currency)):"")+'</button>';
     if(status==="DELIVERED"&&order.settlement_status==="PAID")buttons+='<button class="btn btn-sm btn-outline" type="button" data-pos-thermal="'+ref+'">Print receipt</button>';
     return '<div class="pos-action-stack">'+buttons+'</div>';
   }
@@ -728,7 +786,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(!rows.length){DATA.empty(orderBody,"utensils","No POS orders found","Create an order or change the filters.",7);return;}
     orderBody.innerHTML=rows.map(function(order){
       var guest=order.guest_name||"Walk-in";var location=(order.mode==="RESTAURANT"||order.mode==="BAR")?(order.table_number||order.delivery_location||"—"):(order.delivery_location||((order.stay_reference||"—")));
-      return '<tr><td class="cell-nowrap"><strong>'+JONE.esc(order.reference)+'</strong><small class="receipt-mobile-guest hide-md">'+JONE.esc(guest)+'</small></td><td>'+JONE.esc(label(order.mode))+'<br><small class="hide-sm">'+JONE.esc(guest)+'</small></td><td class="hide-sm"><span class="cell-sub">'+JONE.esc(location)+'</span></td><td class="num cell-nowrap">'+JONE.esc(money(order.total_amount,order.currency))+'</td><td>'+JONE.dashboard.statusPill(order.status)+'</td><td class="hide-sm">'+JONE.dashboard.statusPill(order.settlement_status)+'</td><td>'+actionButtons(order)+'</td></tr>';
+      return '<tr><td class="cell-nowrap"><strong>'+JONE.esc(order.reference)+'</strong><small class="receipt-mobile-guest hide-md">'+JONE.esc(guest)+'</small></td><td>'+JONE.esc(label(order.mode))+'<br><small class="hide-sm">'+JONE.esc(guest)+'</small></td><td class="hide-sm"><span class="cell-sub">'+JONE.esc(location)+'</span></td><td class="num cell-nowrap">'+JONE.esc(money(order.total_amount,order.currency))+'</td><td>'+JONE.dashboard.statusPill(order.status)+'</td><td class="hide-sm">'+JONE.dashboard.statusPill(order.settlement_status)+(order.status==="DELIVERED"&&order.mode!=="ROOM_SERVICE"&&Number(order.outstanding_balance||0)>0?'<br><small class="caption">Due '+JONE.esc(money(order.outstanding_balance,order.currency))+'</small>':'')+'</td><td>'+actionButtons(order)+'</td></tr>';
     }).join('');JONE.icons.inject(orderBody);
   }
   function filters(){
@@ -817,7 +875,9 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(order.status!=="DELIVERED"||order.mode==="ROOM_SERVICE"||order.settlement_status!=="PAID"){JONE.ui.toast("Payment is no longer confirmed; receipt printing was stopped.","warning");return;}
     var capturedTenders=(order.tenders||[]).filter(function(t){return t.status==="CAPTURED";});
     var capturedAmount=capturedTenders.reduce(function(total,t){return total+Number(t.amount||0);},0);
-    if(!capturedTenders.length||capturedAmount+0.0001<Number(order.total_amount||0)){JONE.ui.toast("Captured payment records do not cover this order total; ask Finance to reconcile before printing.","error");return;}
+    if(!capturedTenders.length){JONE.ui.toast("No captured tender is recorded for this order; ask Finance to reconcile before printing.","error");return;}
+    var receiptBalance=tenderBalance(order);
+    if(capturedAmount+0.0001<receiptBalance.net||receiptBalance.outstanding>0){JONE.ui.toast("Captured payment records do not cover the charge now due ("+money(receiptBalance.net,receiptBalance.currency)+"); ask Finance to reconcile before printing.","error");return;}
     var tender=capturedTenders[capturedTenders.length-1];
     var receipt={
       hotel:{name:"J-ONE HOTEL & LODGE",address:"Plot 566 Mgbowo Street, off Ezike Street, Enugu State",phone:"+234 803 211 2874"},
@@ -830,10 +890,10 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       subtotal:order.subtotal,
       discount:order.discount_amount||0,
       tax:order.tax_amount||0,
-      total:order.total_amount,
+      total:receiptBalance.net,
       paid:capturedAmount,
-      change:Math.max(0,capturedAmount-Number(order.total_amount||0)),
-      balance_due:0,
+      change:Math.max(0,capturedAmount-receiptBalance.net),
+      balance_due:receiptBalance.outstanding,
       payment_method:tender?tender.method:"",
       payment_reference:tender?(tender.external_reference||""):""
     };
@@ -863,25 +923,102 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     catch(err){JONE.ui.toast((err&&err.message)||"The order could not be updated.","error");}
     finally{JONE.releaseGuard(button);}
   }
+  /* ======================================================================
+     TENDER / SETTLEMENT
+     The amount box is filled from the SERVER's outstanding balance — the
+     order's net total (its total minus unopened-item returns) minus the money
+     already collected — never from the frozen order total and never from a
+     figure the browser worked out for itself. Partial collections keep
+     working: the box holds what is still owed, and the operator may lower it.
+
+     Three different things keep a second collection from happening:
+       1. the tender button disappears once nothing is owed
+          (order.settlement_action_available / outstanding_balance);
+       2. every submission carries a balance snapshot
+          (expected_outstanding_balance) that the server refuses if the balance
+          moved while the form was open;
+       3. every submission carries one idempotency key per form
+          (state.tenderKey), so a double click or a retried request returns the
+          tender already recorded instead of collecting twice.
+     ====================================================================== */
+  function tenderBalance(order){
+    var total=Number(order.total_amount||0);
+    var returned=Number(order.returned_amount||0);
+    var net=order.net_total!=null?Number(order.net_total):Math.max(0,total-returned);
+    var paid=Number(order.amount_paid||0);
+    var outstanding=order.outstanding_balance!=null?Number(order.outstanding_balance):Math.max(0,net-paid);
+    return {currency:order.currency||"NGN",total:total,returned:returned,net:net,paid:paid,outstanding:outstanding};
+  }
+  function tenderSummaryHtml(balance){
+    var rows=[["Order total",money(balance.total,balance.currency)]];
+    if(balance.returned>0)rows.push(["Returned unopened items","−"+money(balance.returned,balance.currency)]);
+    rows.push(["Charge now due",money(balance.net,balance.currency)]);
+    rows.push(["Already collected",money(balance.paid,balance.currency)]);
+    rows.push(["Outstanding balance",money(balance.outstanding,balance.currency)]);
+    return '<div class="pos-summary" data-pos-tender-summary style="display:block;margin-bottom:.9rem;">'+
+      '<strong style="display:block;margin-bottom:.35rem;">Balance owed</strong>'+
+      rows.map(function(row){return '<div style="display:flex;justify-content:space-between;gap:1rem;"><span class="caption">'+JONE.esc(row[0])+'</span><span>'+JONE.esc(row[1])+'</span></div>';}).join("")+
+      '<p class="caption" style="margin:.45rem 0 0;">Amount is prefilled with the outstanding balance. Server figures are authoritative and recalculated when you submit.</p></div>';
+  }
   async function captureTender(reference){
     await loadDrawer();
     var orderRes;try{orderRes=await window.API.getOne("posOrders",reference);}catch(err){JONE.ui.toast((err&&err.message)||"Order could not be loaded.","error");return;}
     var order=orderRes.data||{};
+    if(order.mode==="ROOM_SERVICE"){
+      JONE.ui.toast("Room-service orders are billed to the guest's folio, not collected at the POS. Settle it with Front desk / Finance.","warning",{title:"No direct tender for room service"});
+      return;
+    }
+    if(order.status!=="DELIVERED"){
+      JONE.ui.toast("Only a delivered order can take a payment. Mark "+reference+" delivered first.","warning");
+      return;
+    }
+    var balance=tenderBalance(order);
+    if(balance.outstanding<=0||order.settlement_action_available===false){
+      JONE.ui.toast("Order "+reference+" is fully settled: "+money(balance.paid,balance.currency)+" of "+money(balance.net,balance.currency)+" collected. There is no balance to collect.","warning",{title:"Nothing outstanding"});
+      loadOrders(true);
+      return;
+    }
     var tenderOptions=[{value:"CARD",label:"Card / POS terminal"},{value:"BANK_TRANSFER",label:"Bank transfer"}];
     if(canOpenCash())tenderOptions.unshift({value:"CASH",label:"Cash"});
+    var prefilled=balance.outstanding.toFixed(2);
+    // One idempotency key per opened form: a retried or double-clicked submit
+    // converges on the same tender, a fresh collection gets a fresh key.
+    state.tenderKey=newKey();
     var tenderFields=[
       {name:"method",label:"Method",type:"select",required:true,options:tenderOptions},
-      {name:"amount",label:"Amount ("+(order.currency||"NGN")+")",type:"number",step:"0.01",required:true,placeholder:"Server rejects an amount above the unpaid balance."},
-      {name:"external_reference",label:"Terminal / transfer reference",type:"text",placeholder:"Optional for cash"}
+      {name:"amount",label:"Amount ("+balance.currency+")",type:"number",step:"0.01",min:"0.01",required:true,value:prefilled,help:"Prefilled with the outstanding balance. Lower it to record a partial payment; the server refuses anything above the balance."},
+      {name:"external_reference",label:"Terminal / transfer reference",type:"text",placeholder:"Optional for cash"},
     ];
     if(canOpenCash())tenderFields.push({name:"cash_session_reference",label:"Cash-session reference",type:"text",value:(state.drawer&&state.drawer.reference)||"",help:"Required for cash. Your open drawer is prefilled when available."});
     tenderFields.push({name:"notes",label:"Notes",type:"textarea",rows:2});
-    var result=await JONE.dashboard.formModal({title:"Capture tender · "+reference,submitText:"Capture tender",wide:true,fields:tenderFields,onSubmit:async function(values){
-      if(values.method!=="CASH")values.cash_session_reference="";
-      await window.API.capturePosTender(reference,{method:values.method,amount:String(values.amount),cash_session_reference:values.cash_session_reference||"",external_reference:values.external_reference||"",notes:values.notes||""});
-      return {message:"Tender captured."};
-    }});
-    if(result){loadOrders();loadDrawer();viewOrder(reference);}
+    var result=await JONE.dashboard.formModal({title:"Capture tender · "+reference,submitText:"Capture tender",wide:true,fields:tenderFields,
+      onRender:function(panel){var head=panel.querySelector(".modal-head");if(head&&head.insertAdjacentHTML)head.insertAdjacentHTML("afterend",tenderSummaryHtml(balance));},
+      onSubmit:async function(values){
+        var amount=Number(values.amount);
+        if(!isFinite(amount)||amount<=0)throw new Error("Enter an amount greater than zero.");
+        if(amount>balance.outstanding+0.001)throw new Error("Amount exceeds the outstanding balance of "+money(balance.outstanding,balance.currency)+". Enter at most the remaining balance.");
+        if(values.method!=="CASH")values.cash_session_reference="";
+        if(values.method==="CASH"&&!String(values.cash_session_reference||"").trim())throw new Error("Cash tender needs your open cash-session reference. Open a drawer first.");
+        var response=await window.API.capturePosTender(reference,{
+          method:values.method,
+          amount:amount.toFixed(2),
+          currency:balance.currency,
+          // The balance this screen displayed: if another payment landed while
+          // the form was open the server refuses instead of double-collecting.
+          expected_outstanding_balance:prefilled,
+          idempotency_key:state.tenderKey,
+          cash_session_reference:values.cash_session_reference||"",
+          external_reference:values.external_reference||"",
+          notes:values.notes||""
+        });
+        var updated=(response&&response.data)||{};
+        var after=tenderBalance(updated);
+        state.tenderKey=newKey();
+        return {message:after.outstanding<=0
+          ? ("Tender captured. Order "+reference+" is fully paid ("+money(after.paid,after.currency)+").")
+          : ("Tender captured. Remaining balance: "+money(after.outstanding,after.currency)+".")};
+      }});
+    if(result){loadOrders(true);loadDrawer();viewOrder(reference);}
   }
   async function openDrawer(){
     var result=await JONE.dashboard.formModal({title:"Open cash drawer",submitText:"Open drawer",fields:[{name:"opening_float",label:"Opening float (NGN)",type:"number",step:"0.01",value:"0.00",required:true},{name:"location",label:"Location",type:"text"},{name:"terminal",label:"Terminal",type:"text"},{name:"notes",label:"Notes",type:"textarea",rows:2}],onSubmit:async function(values){await window.API.openPosCashSession(values);return{message:"Cash drawer opened."};}});
@@ -914,7 +1051,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   document.getElementById("pos-find-stay").addEventListener("click",findStays);
   document.getElementById("pos-stay-search").addEventListener("keydown",function(event){if(event.key==="Enter"){event.preventDefault();findStays();}});
   stayResults.addEventListener("click",function(event){var button=event.target.closest("[data-pos-stay]");if(button)selectStay(button.getAttribute("data-pos-stay"));});
-  cartEl.addEventListener("click",function(event){var remove=event.target.closest("[data-pos-remove-line]");var inc=event.target.closest("[data-pos-inc-line]");var dec=event.target.closest("[data-pos-dec-line]");if(remove){state.cart.splice(Number(remove.getAttribute("data-pos-remove-line")),1);}else if(inc){var incIdx=Number(inc.getAttribute("data-pos-inc-line")),il=state.cart[incIdx];if(il){var incOthers=state.cart.reduce(function(sum,line,i){return i===incIdx?sum:(String(line.menu_item_id)===String(il.menu_item_id)?sum+(Number(line.quantity)||0):sum);},0);var stockCeiling=il.stock_available==null?100:Math.min(100,Math.max(0,Number(il.stock_available)-incOthers));if(il.quantity>=stockCeiling){JONE.ui.toast("Insufficient stock: only "+(il.stock_available==null?"":String(il.stock_available)+" ")+unitWord(il.stock_unit,stockCeiling)+" of "+il.item_name+" are available at "+(il.stock_location||"its stock location")+(incOthers>0?", and "+incOthers+" are already in this order":"")+".","warning");}else if(il.quantity<100)il.quantity+=1;}}else if(dec){var dl=state.cart[Number(dec.getAttribute("data-pos-dec-line"))];if(dl&&dl.quantity>1)dl.quantity-=1;}else return;renderCart();});
+  cartEl.addEventListener("click",function(event){var remove=event.target.closest("[data-pos-remove-line]");var inc=event.target.closest("[data-pos-inc-line]");var dec=event.target.closest("[data-pos-dec-line]");if(remove){state.cart.splice(Number(remove.getAttribute("data-pos-remove-line")),1);}else if(inc){var incIdx=Number(inc.getAttribute("data-pos-inc-line")),il=state.cart[incIdx];if(il){var incOthers=state.cart.reduce(function(sum,line,i){return i===incIdx?sum:(String(line.menu_item_id)===String(il.menu_item_id)?sum+(Number(line.quantity)||0):sum);},0);var stockCeiling=il.stock_available==null?100:Math.min(100,Math.max(0,Number(il.stock_available)-incOthers));if(il.stock_available_now!=null)stockCeiling=Math.min(stockCeiling,Math.max(0,Number(il.stock_available_now)-incOthers));if(il.quantity>=stockCeiling){JONE.ui.toast("Insufficient stock: only "+(il.stock_available==null?"":String(il.stock_available)+" ")+unitWord(il.stock_unit,stockCeiling)+" of "+il.item_name+" are available at "+(il.stock_location||"its stock location")+(incOthers>0?", and "+incOthers+" are already in this order":"")+".","warning");}else if(il.quantity<100)il.quantity+=1;}}else if(dec){var dl=state.cart[Number(dec.getAttribute("data-pos-dec-line"))];if(dl&&dl.quantity>1)dl.quantity-=1;}else return;renderCart();});
   document.getElementById("pos-create-form").addEventListener("submit",async function(event){
     event.preventDefault();setCreateError("");
     if(state.serviceRequestReference&&!state.serviceRequest){reportCreateFailure("The linked QR request has not been verified. Return to Guest requests and reopen the action.");return;}

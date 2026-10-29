@@ -330,6 +330,20 @@ class PosOrderListSerializer(serializers.ModelSerializer):
     table_session_reference = serializers.CharField(source="table_session.reference", read_only=True, allow_null=True)
     table_session_code = serializers.CharField(source="table_session.table.code", read_only=True, allow_null=True)
     service_request_reference = serializers.CharField(source="service_request.reference", read_only=True, allow_null=True)
+    # --- Server-derived settlement figures (read-only) ---------------------
+    # The POS screen must never compute what a guest owes. These four values
+    # come from the same rules ``capture_direct_tender`` enforces: the charge
+    # ceiling is ``net_total`` (order total minus unopened-item returns), what
+    # was collected is the sum of CAPTURED tenders, and what is left is the
+    # difference. ``captured_amount`` is annotated by the views so listing
+    # orders stays a single query; the fallback keeps the field correct for any
+    # caller that serialises an order without that annotation.
+    net_total = serializers.SerializerMethodField()
+    returned_amount = serializers.SerializerMethodField()
+    amount_paid = serializers.SerializerMethodField()
+    outstanding_balance = serializers.SerializerMethodField()
+    #: True only when a direct tender may legally be captured right now.
+    settlement_action_available = serializers.SerializerMethodField()
 
     class Meta:
         model = PosOrder
@@ -338,8 +352,47 @@ class PosOrderListSerializer(serializers.ModelSerializer):
             "guest_name", "table_number", "table_session_reference", "table_session_code", "service_request_reference",
             "delivery_location", "currency", "subtotal", "tax_amount",
             "total_amount", "submitted_at", "delivered_at", "created_at", "created_by_email", "line_count",
+            "net_total", "returned_amount", "amount_paid", "outstanding_balance", "settlement_action_available",
         ]
         read_only_fields = fields
+
+    @staticmethod
+    def _captured(obj):
+        """Captured total: from the view's annotation when present, else computed."""
+        annotated = getattr(obj, "captured_amount", None)
+        if annotated is not None:
+            return Decimal(annotated).quantize(Decimal("0.01"))
+        from .services.order_service import tender_captured_amount
+
+        return tender_captured_amount(obj)
+
+    def get_net_total(self, obj):
+        return str(Decimal(obj.net_total).quantize(Decimal("0.01")))
+
+    def get_returned_amount(self, obj):
+        return str(Decimal(obj.returned_amount or 0).quantize(Decimal("0.01")))
+
+    def get_amount_paid(self, obj):
+        return str(self._captured(obj).quantize(Decimal("0.01")))
+
+    def get_outstanding_balance(self, obj):
+        from .services.order_service import order_outstanding_balance
+
+        return str(order_outstanding_balance(obj, captured=self._captured(obj)).quantize(Decimal("0.01")))
+
+    def get_settlement_action_available(self, obj):
+        """Whether a tender can be captured for this order right now.
+
+        Mirrors every server-side precondition of ``capture_direct_tender`` so
+        the button cannot offer a collection the API will refuse: delivered,
+        charged, a direct-sale mode (room service settles on the folio), and a
+        positive outstanding balance.
+        """
+        if obj.mode == PosOrder.Mode.ROOM_SERVICE:
+            return False
+        if obj.status != PosOrder.Status.DELIVERED or not obj.charge_transaction_id:
+            return False
+        return self.get_outstanding_balance(obj) != "0.00"
 
 
 class PosOrderDetailSerializer(PosOrderListSerializer):
@@ -401,15 +454,42 @@ class PosOrderStatusSerializer(serializers.Serializer):
 
 
 class PosTenderCaptureSerializer(serializers.Serializer):
+    """Input for one direct POS collection.
+
+    ``amount`` stays required and is the amount the cashier actually took, but
+    it is never trusted as a balance: the service recomputes what is owed from
+    the order and its captured tenders and refuses anything above it.
+
+    The optional fields are additive and backwards compatible:
+
+    * ``currency`` — when supplied it must match the order's currency;
+    * ``idempotency_key`` — one key per tender form; a repeated key returns the
+      tender already recorded instead of collecting twice (double click,
+      network retry, lost response);
+    * ``expected_outstanding_balance`` — the balance the screen displayed. A
+      mismatch refuses the collection so a stale form cannot bank an amount that
+      another cashier already changed.
+    """
+
     method = serializers.ChoiceField(choices=PosTender.Method.choices)
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
     cash_session_reference = serializers.CharField(required=False, allow_blank=True, max_length=64, default="")
     external_reference = serializers.CharField(required=False, allow_blank=True, max_length=120, default="")
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
+    currency = serializers.CharField(required=False, allow_blank=True, max_length=3, default="")
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=96, default="")
+    expected_outstanding_balance = serializers.DecimalField(
+        required=False, allow_null=True, max_digits=12, decimal_places=2, min_value=Decimal("0.00")
+    )
 
     def validate(self, attrs):
         if attrs["method"] == PosTender.Method.CASH and not attrs.get("cash_session_reference"):
             raise serializers.ValidationError({"cash_session_reference": "Cash tender requires an open cash session."})
+        currency = (attrs.get("currency") or "").strip().upper()
+        if currency and len(currency) != 3:
+            raise serializers.ValidationError({"currency": "Currency must be a three-letter ISO code."})
+        attrs["currency"] = currency
+        attrs["idempotency_key"] = (attrs.get("idempotency_key") or "").strip()
         return attrs
 
 

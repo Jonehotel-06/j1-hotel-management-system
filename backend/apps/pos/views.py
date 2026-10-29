@@ -56,10 +56,40 @@ from .services import return_service
 from .services import table_service
 
 
+def _order_captured_amount_subquery():
+    """Captured tender total for one order, as a correlated subquery.
+
+    The order list already aggregates ``line_count``; adding the collection
+    total as another aggregate would multiply rows and inflate both figures, so
+    it is a single-value subquery instead. The serializer turns this into
+    ``amount_paid`` / ``outstanding_balance`` — the POS never derives what a
+    guest owes from the frozen order total.
+    """
+    return Subquery(
+        PosTender.objects.filter(order=OuterRef("pk"), status=PosTender.Status.CAPTURED)
+        .values("order")
+        .annotate(
+            captured=Coalesce(
+                Sum("amount"),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            )
+        )
+        .values("captured")[:1]
+    )
+
+
 def _order_queryset():
     return (
         PosOrder.objects.select_related("stay", "folio", "created_by", "charge_transaction", "table_session__table", "service_request")
-        .annotate(line_count=Count("lines"))
+        .annotate(
+            line_count=Count("lines"),
+            captured_amount=Coalesce(
+                _order_captured_amount_subquery(),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            ),
+        )
         .order_by("-created_at", "-pk")
     )
 
@@ -193,7 +223,14 @@ def _order_detail_queryset():
             Prefetch("events", queryset=PosOrderEvent.objects.select_related("actor")),
             "kitchen_ticket",
         )
-        .annotate(line_count=Count("lines"))
+        .annotate(
+            line_count=Count("lines"),
+            captured_amount=Coalesce(
+                _order_captured_amount_subquery(),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            ),
+        )
     )
 
 
@@ -998,11 +1035,19 @@ class PosTenderCaptureView(APIView):
         tender = order_service.capture_direct_tender(
             order=order, method=data["method"], amount=data["amount"], actor=request.user,
             cash_session=cash_session, external_reference=data["external_reference"], notes=data["notes"],
+            currency=data["currency"], idempotency_key=data["idempotency_key"],
+            expected_outstanding_balance=data.get("expected_outstanding_balance"),
         )
+        # A repeated idempotency key converges on the tender already recorded, so
+        # the answer is 200 (nothing new was collected) rather than 201.
+        replayed = bool(getattr(tender, "idempotent_replay", False))
         return success_response(
             PosOrderDetailSerializer(_get_order(tender.order.reference, detail=True)).data,
-            message="POS tender captured.",
-            status=status.HTTP_201_CREATED,
+            message=(
+                "This tender was already captured; the existing record was returned."
+                if replayed else "POS tender captured."
+            ),
+            status=status.HTTP_200_OK if replayed else status.HTTP_201_CREATED,
         )
 
 

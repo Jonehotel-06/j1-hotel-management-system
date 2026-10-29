@@ -6,6 +6,7 @@ from typing import Iterable, Mapping
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from apps.core.utils import hotel_today
@@ -199,7 +200,7 @@ def _validate_order_lines_stock(lines, *, exclude_order=None):
     """
     from apps.core.exceptions import PosStockConflictError
     from apps.inventory.models import StockItem as _StockItem, StockLocation as _StockLocation
-    from apps.inventory.services.inventory_service import _locked_balance, pos_stock_rules
+    from apps.inventory.services.inventory_service import _locked_balance, open_pos_order_demand, pos_stock_rules
 
     normalised = []
     for line in lines or ():
@@ -269,25 +270,13 @@ def _validate_order_lines_stock(lines, *, exclude_order=None):
         balance = _locked_balance(item=_StockItem(pk=item_id), location=_StockLocation(pk=location_id))
         balances[key] = Decimal(balance.quantity_on_hand)
 
-    demand_lines = PosOrderLine.objects.filter(
-        order__status__in=_STOCK_COMMITTED_STATUSES, menu_item_id__isnull=False,
-    )
-    if exclude_order is not None:
-        demand_lines = demand_lines.exclude(order=exclude_order)
-    demand_rows = [(int(row["menu_item_id"]), int(row["quantity"])) for row in demand_lines.values("menu_item_id", "quantity")]
-    demand = {}
-    if demand_rows:
-        demand_rules = pos_stock_rules({row[0] for row in demand_rows})
-        for menu_item_id, quantity in demand_rows:
-            rule = demand_rules.get(menu_item_id)
-            if not rule or not rule["tracked"]:
-                continue
-            for component in rule["components"]:
-                key = (component["item_id"], rule["location_id"])
-                if key not in required:
-                    continue  # cannot affect this order's availability
-                amount = (component["quantity_per_menu_unit"] * quantity).quantize(Decimal("0.0001"))
-                demand[key] = (demand.get(key, Decimal("0.0000")) + amount).quantize(Decimal("0.0001"))
+    # The "stock other open orders already promised" rule lives in ONE place:
+    # the inventory service's shared helper, which the POS menu availability
+    # projection also uses. Keeping the two identical is what makes a displayed
+    # quantity agree with what this validator will accept. It runs while the
+    # balance locks above are held, so a draft committed a moment earlier is
+    # already visible here.
+    demand = open_pos_order_demand(required, exclude_order=exclude_order)
 
     shortages = []
     for key in sorted(required):
@@ -358,12 +347,22 @@ def _validate_order_lines_stock(lines, *, exclude_order=None):
                     "Reduce the quantity or replenish stock before adding this item."
                 )
         else:
+            # A prepared food is limited by an INGREDIENT, so the refusal must
+            # name both the ingredient that ran short and the dish(es) that
+            # asked for it — otherwise an operator has no way to know which
+            # quantity to reduce.
+            dish_labels = []
+            for menu_item_id_in, _quantity_in, _component_in in lines_in:
+                dish_label = names.get(menu_item_id_in) or ""
+                if dish_label and dish_label not in dish_labels:
+                    dish_labels.append(dish_label)
+            dish_note = (" for " + ", ".join(dish_labels)) if dish_labels else ""
             unit_word = _display_unit(component.get("unit"), Decimal("2"))
             messages.append(
                 f"Insufficient stock: {location_name} has {_qty_text(on_hand)} {unit_word} of "
                 f"{component.get('item_name') or component.get('item_sku')} on hand"
                 + (f" ({_qty_text(held)} {unit_word} already held by other open orders)" if held > Decimal("0.0000") else "")
-                + f", but this order needs {_qty_text(needed)} {unit_word}. "
+                + f", but this order needs {_qty_text(needed)} {unit_word}{dish_note}. "
                 "Reduce the quantities or replenish stock before adding these items."
             )
     raise PosStockConflictError(
@@ -791,9 +790,70 @@ def _tender_asset_account(method: str) -> str:
     return accounting.BANK_CLEARING
 
 
+def tender_captured_amount(order) -> Decimal:
+    """Money already collected against one POS order (captured tenders only).
+
+    Voided and refunded tenders never count towards what the guest has paid, so
+    only ``CAPTURED`` rows are summed. Uses the prefetched ``tenders`` cache when
+    the caller has it (the order detail API does) so serialising a list does not
+    issue a query per row.
+    """
+    prefetched = getattr(order, "_prefetched_objects_cache", None) or {}
+    if "tenders" in prefetched:
+        return sum(
+            (Decimal(row.amount) for row in prefetched["tenders"] if row.status == PosTender.Status.CAPTURED),
+            Decimal("0.00"),
+        ).quantize(CENT)
+    total = order.tenders.filter(status=PosTender.Status.CAPTURED).aggregate(total=Sum("amount"))["total"]
+    return Decimal(total or 0).quantize(CENT)
+
+
+def order_outstanding_balance(order, *, captured=None) -> Decimal:
+    """What the guest still owes on a POS order: ``net_total - captured``.
+
+    ``net_total`` (order total minus unopened-item returns) is the collection
+    ceiling — never the frozen ``total_amount`` — so a return reduces what may
+    be collected instead of leaving the guest owing money they already got back.
+    Fully paid orders return ``0.00`` and an over-collected legacy order is
+    clamped to ``0.00`` so a display can never show a negative balance.
+    """
+    total = Decimal(order.net_total)
+    paid = Decimal(captured if captured is not None else tender_captured_amount(order))
+    outstanding = (total - paid).quantize(CENT)
+    return outstanding if outstanding > Decimal("0.00") else Decimal("0.00")
+
+
 @transaction.atomic
-def capture_direct_tender(*, order, method: str, amount, actor, cash_session=None, external_reference="", notes="") -> PosTender:
-    """Capture tender for a delivered direct sale as a distinct collection entry."""
+def capture_direct_tender(
+    *, order, method: str, amount, actor, cash_session=None, external_reference="", notes="",
+    currency="", idempotency_key="", expected_outstanding_balance=None,
+):
+    """Capture tender for a delivered direct sale as a distinct collection entry.
+
+    The browser never decides how much is owed. Everything that gates the
+    collection is derived here, inside one transaction holding the order's row
+    lock:
+
+    * the outstanding balance is recomputed from ``net_total`` and the captured
+      tenders (so a partially paid order can only ever be topped up by the
+      remainder, and a fully paid order cannot be collected again);
+    * the amount is validated against that server figure — never against a
+      client-submitted total — and an over-collection is refused;
+    * the currency must match the order's currency;
+    * when the caller states the balance it displayed
+      (``expected_outstanding_balance``), a mismatch is refused so a stale
+      screen cannot collect an amount that another cashier already changed;
+    * a repeated ``idempotency_key`` (double click, retried request, lost
+      response) returns the tender that already exists instead of collecting a
+      second time.
+
+    The hotel's existing evidence conventions are preserved: the tender keeps its
+    own reference, is posted to the ledger as a PAYMENT_COLLECTION against the
+    method's clearing account, and updates the cashier's expected cash for cash
+    collections. Room-service orders still settle through the guest folio and are
+    refused here, and no processing fee is invented (this codebase models no POS
+    tender fee; if the hotel introduces one it must be added deliberately).
+    """
     order = PosOrder.objects.select_for_update().get(pk=order.pk)
     if order.mode == PosOrder.Mode.ROOM_SERVICE:
         raise ValidationError("Room-service orders settle through the guest folio, not a direct POS tender.")
@@ -801,19 +861,67 @@ def capture_direct_tender(*, order, method: str, amount, actor, cash_session=Non
         raise ValidationError("Only a delivered and charged POS order can accept tender.")
     if method not in PosTender.Method.values:
         raise ValidationError("Invalid POS tender method.")
+    order_currency = (order.currency or "NGN").upper()
+    presented_currency = str(currency or "").strip().upper()
+    if presented_currency and presented_currency != order_currency:
+        raise ValidationError(
+            f"This order is denominated in {order_currency}; a {presented_currency} tender cannot settle it."
+        )
     amount = _money(amount, positive=True)
-    captured = sum(
-        PosTender.objects.select_for_update()
-        .filter(order=order, status=PosTender.Status.CAPTURED)
-        .values_list("amount", flat=True),
-        Decimal("0.00"),
+
+    # Recompute what is owed from the immutable order figures and the tenders
+    # already captured, while holding the order lock: two cashiers (or a double
+    # click) can never both pass on the same balance.
+    captured_rows = list(
+        PosTender.objects.select_for_update().filter(order=order, status=PosTender.Status.CAPTURED)
     )
+    captured = sum((Decimal(row.amount) for row in captured_rows), Decimal("0.00")).quantize(CENT)
     # Returns of untouched, unopened items reduce what the guest actually owes.
     # ``total_amount`` stays frozen as the originally charged amount, so the
     # collection ceiling is the live ``net_total`` and over-collection after a
     # return is refused instead of silently banking the difference.
-    if captured + amount > order.net_total:
-        raise ValidationError("Tender exceeds the order's unpaid balance.")
+    outstanding = order_outstanding_balance(order, captured=captured)
+    if outstanding <= Decimal("0.00"):
+        raise ValidationError(
+            f"Order {order.reference} is already fully settled "
+            f"({captured} of {order.net_total} {order_currency} collected); there is no balance to collect."
+        )
+
+    idempotency_key = str(idempotency_key or "").strip()[:96]
+    if idempotency_key:
+        # Checked under the order row lock, so a concurrent duplicate either
+        # waits for this transaction or finds the tender below.
+        existing = (
+            PosTender.objects.select_for_update()
+            .filter(order=order, metadata__idempotency_key=idempotency_key)
+            .order_by("pk")
+            .first()
+        )
+        if existing is not None:
+            # A replay must never collect twice: the caller gets the tender that
+            # already exists, flagged so the API can answer 200 instead of 201.
+            existing.idempotent_replay = True
+            return existing
+
+    if expected_outstanding_balance is not None:
+        try:
+            expected = Decimal(str(expected_outstanding_balance)).quantize(CENT)
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValidationError(
+                {"expected_outstanding_balance": "Enter a valid outstanding balance."}
+            ) from exc
+        if expected != outstanding:
+            raise ValidationError(
+                f"The outstanding balance changed: this screen showed {expected} {order_currency}, "
+                f"but {outstanding} {order_currency} is still owed. Reload the order and collect the "
+                "current balance."
+            )
+    if amount > outstanding:
+        raise ValidationError(
+            f"Tender exceeds the order's unpaid balance: {amount} {order_currency} was presented but only "
+            f"{outstanding} {order_currency} is still owed. Collect at most the remaining balance."
+        )
+
     session = None
     if method == PosTender.Method.CASH:
         if cash_session is None:
@@ -829,11 +937,12 @@ def capture_direct_tender(*, order, method: str, amount, actor, cash_session=Non
         order=order,
         method=method,
         amount=amount,
-        currency=order.currency,
+        currency=order_currency,
         external_reference=(external_reference or "")[:120],
         cash_session=session,
         captured_by=actor,
         notes=(notes or "")[:500],
+        metadata={"idempotency_key": idempotency_key} if idempotency_key else {},
     )
     source_key = f"pos-collection:{tender.reference}"
     financial_transaction, _ = create_posted_transaction(
@@ -845,7 +954,7 @@ def capture_direct_tender(*, order, method: str, amount, actor, cash_session=Non
         external_reference=tender.external_reference or tender.reference,
         narrative=f"POS tender {tender.reference} for {order.reference}",
         metadata={"pos_order_id": order.pk, "pos_tender_id": tender.pk, "method": method},
-        currency=order.currency,
+        currency=order_currency,
         business_date=hotel_today(),
         lines=[
             {
@@ -872,17 +981,17 @@ def capture_direct_tender(*, order, method: str, amount, actor, cash_session=Non
             transaction=financial_transaction,
             type=CashMovement.Type.COLLECTION,
             amount=amount,
-            currency=order.currency,
+            currency=order_currency,
             actor=actor,
             source_reference=tender.reference,
             notes=f"POS order {order.reference}",
         )
         session.expected_cash = (session.expected_cash + amount).quantize(CENT)
         session.save(update_fields=["expected_cash", "updated_at"])
-    new_captured = captured + amount
+    new_captured = (captured + amount).quantize(CENT)
     order.settlement_status = (
         PosOrder.SettlementStatus.PAID
-        if new_captured == order.net_total
+        if new_captured >= order.net_total
         else PosOrder.SettlementStatus.PARTIALLY_PAID
     )
     order.save(update_fields=["settlement_status", "updated_at"])
@@ -890,6 +999,12 @@ def capture_direct_tender(*, order, method: str, amount, actor, cash_session=Non
         order=order,
         type=PosOrderEvent.Type.TENDER_CAPTURED,
         actor=actor,
-        details={"tender_reference": tender.reference, "amount": str(amount), "method": method},
+        details={
+            "tender_reference": tender.reference,
+            "amount": str(amount),
+            "method": method,
+            "balance_before": str(outstanding),
+            "balance_after": str(order_outstanding_balance(order, captured=new_captured)),
+        },
     )
     return tender
