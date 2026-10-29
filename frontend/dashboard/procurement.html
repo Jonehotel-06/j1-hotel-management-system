@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="J-ONE Staff"><link rel="stylesheet" href="../css/main.css?v=1.1.23"><style>.op-tabs{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}.op-tabs .is-active{background:var(--color-primary);color:var(--color-primary-ink);border-color:var(--color-primary)}</style></head>
+<meta name="apple-mobile-web-app-title" content="J-ONE Staff"><link rel="stylesheet" href="../css/main.css?v=1.1.23"><style>.op-tabs{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}.op-tabs .is-active{background:var(--color-primary);color:var(--color-primary-ink);border-color:var(--color-primary)}tr.is-highlighted>td{background:var(--color-accent-soft)}</style></head>
 <body><div class="dash"><aside class="dash-sidebar" aria-label="Staff navigation"><div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div><nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
     <script>
     /* Sidebar pre-paint: the menu is painted from this ROLE's cached snapshot
@@ -67,6 +67,113 @@ function setPage(name,page){state.pages[name]=Math.max(1,page||1);}
 function pager(selector,items,response,loader){JONE.dashboard.renderPagination(document.querySelector(selector),items.length?response.pagination:null,{onPage:function(next){setPage(state.tab,next);loader(next);}});}
 function trimmed(value,places){var factor=Math.pow(10,places);return String(Math.round(Number(value||0)*factor)/factor);}
 function baseUnitOf(line){return String((line&&line.base_unit)||"PIECE");}
+/* A configured pack size, or 0. "0.00" must never become a default: a hidden
+   pieces-per-pack control holding 0 fails its min and blocks the form. */
+function packSizeOf(record){var per=Number((record&&record.units_per_pack)||0);return per>0?per:0;}
+
+/* The picker hands back {item_id, …} without the record; remember every item
+   record it displays so messages can name the SKU and pack sizes resolve. */
+var itemRecords={};
+function rememberItem(row){if(row&&row.id!=null)itemRecords[String(row.id)]=row;return row;}
+
+/* Procurement-scoped read-only lookups (a Procurement Officer holds
+   procurement.manage, not inventory.manage). A stale cached config.js on the
+   first load after a deploy may not list them yet: fall back to the inventory
+   directories, which still serve every role that also holds inventory.manage. */
+function resourceOr(preferred,fallback){var eps=(window.APP_CONFIG&&window.APP_CONFIG.API_ENDPOINTS)||{};return eps[preferred]?preferred:fallback;}
+
+/* Dialog plumbing shared by create/edit: the dialog's own submit button (via
+   formModal's onRender hook) shows what is happening while the request runs. */
+function dialogHandle(){var handle={panel:null};handle.onRender=function(panel){handle.panel=panel;};return handle;}
+function busyLabel(handle,text){
+  var button=handle&&handle.panel&&handle.panel.querySelector('button[type="submit"]');
+  if(!button)return function(){};
+  var previous=button.textContent;button.textContent=text;
+  return function(){button.textContent=previous;};
+}
+
+/* Never report a success the server did not confirm. A 2xx without the
+   order's reference and status (a proxy's HTML page, an empty body) is a
+   failure the user must hear about, not a phantom draft. */
+function confirmedOrder(response){
+  var order=response&&response.data;
+  if(!order||typeof order!=="object"||!order.reference||!order.status){
+    throw new Error("The server did not confirm this purchase order (no reference came back). Check the purchase-order list before trying again.");
+  }
+  return{reference:String(order.reference),status:String(order.status),replayed:Number(response.status)===200};
+}
+
+/* Server errors, made actionable. A bad line arrives as
+   {lines:{"0":{quantity_ordered:[…]}}}; the shared form renderer would print
+   that as "[object Object]", so each problem becomes one sentence naming the
+   line and its item. */
+var LINE_FIELD_LABELS={item_id:"Item",quantity_ordered:"Quantity (in pieces)",unit_cost:"Unit cost per piece",notes:"Line notes"};
+function errorStrings(node){
+  if(node==null)return[];
+  if(typeof node==="string")return node.trim()?[node.trim()]:[];
+  if(Array.isArray(node))return node.reduce(function(all,part){return all.concat(errorStrings(part));},[]);
+  if(typeof node==="object")return Object.keys(node).reduce(function(all,key){return all.concat(errorStrings(node[key]));},[]);
+  return[String(node)];
+}
+function lineErrorMessages(lines,typedLines){
+  var messages=[];
+  Object.keys(lines).forEach(function(key){
+    var entry=lines[key];
+    if(entry==null)return;
+    if(typeof entry!=="object"||Array.isArray(entry)||!/^\d+$/.test(key)){messages=messages.concat(errorStrings(entry));return;}
+    var index=Number(key),typed=(typedLines||[])[index]||{},record=typed.record||itemRecords[String(typed.item_id)]||{};
+    var who="Line "+(index+1)+(record.sku?" ("+record.sku+")":"");
+    Object.keys(entry).forEach(function(field){
+      errorStrings(entry[field]).forEach(function(text){messages.push(who+" — "+(LINE_FIELD_LABELS[field]||field)+": "+text);});
+    });
+  });
+  return messages;
+}
+function explainOrderError(err,typedLines,retryHint){
+  if(!err||typeof err!=="object")return err;
+  var errs=err.data&&err.data.errors;
+  if(Array.isArray(errs)){
+    err.data.errors={non_field_errors:errorStrings(errs)};
+  }else if(errs&&typeof errs==="object"&&errs.lines&&typeof errs.lines==="object"&&errorStrings(errs.lines).length){
+    var lines=errs.lines,structured=Array.isArray(lines)?lines.some(function(entry){return entry&&typeof entry==="object";}):true;
+    if(structured)errs.lines=lineErrorMessages(lines,typedLines);
+  }
+  if(err.status===403&&/required permission|permission to perform/i.test(String(err.message||""))){
+    err.message="You don't have permission to do this on purchase orders. Ask an administrator to check your procurement access.";
+  }else if(err.kind==="parse"||(err.status===0&&["timeout","network","offline"].indexOf(err.kind)!==-1)||err.status>=500){
+    // The outcome is unknown (the server may have saved it); repeating the
+    // same request is safe because the dialog keeps its idempotency key.
+    err.message=String(err.message||"The request failed.")+(retryHint?" "+retryHint:"");
+  }
+  return err;
+}
+async function saveOrder(run,typedLines,retryHint){
+  try{return await run();}
+  catch(err){throw explainOrderError(err,typedLines,retryHint);}
+}
+
+/* Exact decimal arithmetic for the order-total preview, matching the server:
+   SUM(Decimal quantity × Decimal unit cost), rounded half-up to 2 places.
+   Values are scaled integers (quantity ×10^4, cost ×10^2), so no float drift. */
+function toScaled(text,places){
+  var match=/^(\d+)(?:\.(\d+))?$/.exec(String(text==null?"":text).trim());
+  if(!match||typeof BigInt!=="function")return null;
+  var fraction=match[2]||"";
+  if(fraction.length>places)return null;
+  return BigInt(match[1]+fraction+new Array(places-fraction.length+1).join("0"));
+}
+function orderTotalText(apiLines){
+  if(typeof BigInt!=="function")return null;
+  var sum=BigInt(0);
+  for(var i=0;i<(apiLines||[]).length;i+=1){
+    var quantity=toScaled(apiLines[i].quantity_ordered,4),cost=toScaled(apiLines[i].unit_cost,2);
+    if(quantity===null||cost===null)return null;
+    sum+=quantity*cost;
+  }
+  var cents=(sum+BigInt(5000))/BigInt(10000),digits=cents.toString();
+  while(digits.length<3)digits="0"+digits;
+  return digits.slice(0,-2)+"."+digits.slice(-2);
+}
 
 /* ---------------------------------------------------------------------------
    Quantity types.
@@ -91,8 +198,13 @@ function quantityUnitField(){
 }
 function piecesPerPackField(){
   return {
-    name:"pieces_per_pack",label:"Pieces in one pack/bag",type:"number",min:"0.01",step:"1",
-    defaultValue:function(record){return record&&record.units_per_pack?JONE.trimQuantityValue(String(record.units_per_pack)):"";},
+    /* step "any", NOT "1". The step base of a number input is its min, so
+       min 0.01 + step 1 accepted only 0.01, 1.01, 2.01, … and rejected the
+       item's own whole pack size (24). The control is hidden while pieces are
+       typed, so the browser could not show its message and "Create draft" /
+       "Save changes" silently did nothing for any item with a pack size. */
+    name:"pieces_per_pack",label:"Pieces in one pack/bag",type:"number",min:"0.01",step:"any",
+    defaultValue:function(record){return packSizeOf(record)?JONE.trimQuantityValue(String(record.units_per_pack)):"";},
     when:function(record,values){return String(values.quantity_unit||"PIECE")!=="PIECE";},
     hint:function(record){return "How many "+baseUnitOf(record)+" pieces one whole pack/bag contains.";}
   };
@@ -114,18 +226,31 @@ function poLineFields(){
      hint:function(record,values){
        var mode=String(values.quantity_unit||"PIECE");
        var typed=Number(values.unit_cost||0);
-       if(mode==="PIECE")return "Cost of one "+baseUnitOf(record)+".";
+       var free=String(values.unit_cost==null?"":values.unit_cost).trim()!==""&&typed===0?" A cost of 0 records this line as free of charge.":"";
+       if(mode==="PIECE")return "Cost of one "+baseUnitOf(record)+"."+free;
        var per=Number(values.pieces_per_pack||0);
-       if(!(per>0)||!(typed>0))return "Cost of one whole pack/bag; the per-piece cost is derived.";
-       return "= "+money(trimmed(typed/per,2))+" per "+baseUnitOf(record)+".";
+       if(!(per>0)||!(typed>0))return "Cost of one whole pack/bag; the per-piece cost is derived."+free;
+       var perPiece=trimmed(typed/per,2),text="= "+money(perPiece)+" per "+baseUnitOf(record)+".";
+       /* The order stores cost per piece to 2 decimals (kobo). Say so when that
+          rounding moves the line total away from the supplier's pack quote. */
+       var packs=Number(values.quantity_ordered||0);
+       if(packs>0){
+         var recorded=orderTotalText([{quantity_ordered:trimmed(packs*per,4),unit_cost:perPiece}]);
+         var quoted=orderTotalText([{quantity_ordered:trimmed(packs,4),unit_cost:trimmed(typed,2)}]);
+         if(recorded&&quoted&&recorded!==quoted)text+=" Recorded line total "+money(recorded)+" (quoted "+money(quoted)+") because the per-piece cost is rounded to 2 decimals.";
+       }
+       return text;
      }}
   ];
 }
 
-/* Turn the typed lines into the API's base-unit contract. */
-function linesToBaseUnits(lines){
+/* Turn the typed lines into the API's base-unit contract. `records` (item id ->
+   record; defaults to the records the pickers displayed) supplies the SKU and
+   pack size that the picker's value does not carry. */
+function linesToBaseUnits(lines,records){
+  var known=records||(typeof itemRecords==="object"?itemRecords:null);
   return (lines||[]).map(function(line){
-    var record=line.record||{};
+    var record=line.record||(known&&known[String(line.item_id)])||{};
     var mode=String(line.quantity_unit||"PIECE").toUpperCase();
     var per=Number(line.pieces_per_pack||(record&&record.units_per_pack)||0);
     var typed=Number(line.quantity_ordered||0),cost=Number(line.unit_cost||0);
@@ -143,6 +268,26 @@ function linesToBaseUnits(lines){
    Orders
 --------------------------------------------------------------------------- */
 function canEdit(status){return status==="DRAFT"||status==="SUBMITTED";}
+/* The server cancels only unapproved orders (an approved order is a commitment). */
+function canCancel(status){return status==="DRAFT"||status==="SUBMITTED";}
+/* What happens next, in words — from the stored status plus the server's
+   derived receipt/payment progress (goods arriving and money leaving are
+   independent: a PAID order may still be awaiting goods, and vice versa). */
+function nextStep(order){
+  var status=order&&order.status,receipt=order&&order.receipt_progress,payment=order&&order.payment_progress;
+  var owing=payment==="UNPAID"||payment==="PARTIALLY_PAID";
+  switch(status){
+    case "DRAFT":return "Next: submit for approval";
+    case "SUBMITTED":return "Next: approval by an authorised approver";
+    case "APPROVED":return "Next: mark ordered, then record the delivery";
+    case "ORDERED":return "Next: record the goods receipt";
+    case "PARTIALLY_RECEIVED":return "Next: receive the remaining goods"+(payment==="PARTIALLY_PAID"?" · part-paid":"");
+    case "RECEIVED":return owing?"Next: supplier payment (payable outstanding)":"Received";
+    case "PAID":return receipt&&receipt!=="RECEIVED"?"Paid · goods still to be received":"Complete";
+    case "CANCELLED":return "Cancelled · no further action";
+    default:return "";
+  }
+}
 function canAttachReceipt(status){return ["APPROVED","ORDERED","PARTIALLY_RECEIVED","RECEIVED","PAID"].indexOf(status)!==-1;}
 function canReceive(order){
   if(["APPROVED","ORDERED","PARTIALLY_RECEIVED","PAID"].indexOf(order.status)===-1)return false;
@@ -170,11 +315,12 @@ async function loadOrders(page){
         // the same boundary — approving removes it from the very same render.
         var actions=(canEdit(row.status)?'<button class="btn btn-sm btn-outline" type="button" data-proc-order-edit="'+JONE.esc(row.reference)+'">Edit</button> ':"")+
           '<button class="btn btn-sm btn-outline" type="button" data-proc-order-view="'+JONE.esc(row.reference)+'">View</button>';
-        return '<tr>'+
+        var step=nextStep(row);
+        return '<tr data-proc-order-row="'+JONE.esc(row.reference)+'">'+
           '<td class="cell-nowrap"><strong>'+JONE.esc(row.reference)+'</strong><br><small class="caption">'+JONE.esc(row.supplier_reference||"—")+'</small></td>'+
           '<td class="cell-clamp">'+JONE.esc(row.supplier_name)+'</td>'+
           '<td class="cell-nowrap">'+JONE.esc(row.delivery_location_code)+'</td>'+
-          '<td class="cell-nowrap">'+JONE.dashboard.statusPill(row.status)+'</td>'+
+          '<td class="cell-nowrap">'+JONE.dashboard.statusPill(row.status)+(step?'<br><small class="caption" data-proc-next-step>'+JONE.esc(step)+'</small>':'')+'</td>'+
           '<td class="hide-sm cell-nowrap">'+JONE.esc(date(row.expected_on))+'</td>'+
           '<td class="hide-sm num cell-nowrap">'+JONE.esc(row.line_count)+'</td>'+
           '<td class="cell-nowrap"><div class="row-actions">'+actions+'</div></td></tr>';
@@ -248,37 +394,117 @@ function supplierPicker(initial){
     display:function(row){return row.name+(row.reference?" · "+row.reference:"");}});
 }
 function locationPicker(initial){
-  return OPS.searchPicker({name:"delivery_location_id",label:"Delivery location",required:true,resource:"inventoryLocations",
+  return OPS.searchPicker({name:"delivery_location_id",label:"Delivery location",required:true,resource:resourceOr("procurementLocations","inventoryLocations"),
     params:{active:"true"},placeholder:"Search location code or name",initial:initial||null,
     display:function(row){return (row.code||"")+" · "+(row.name||"");}});
 }
 function itemDisplay(row){
+  rememberItem(row);
   var text=(row.sku||"")+" · "+(row.name||"");
   if(row.base_unit)text+=" · "+row.base_unit;
-  if(row.units_per_pack)text+=" ("+JONE.trimQuantityValue(String(row.units_per_pack))+" pieces per pack/bag)";
+  if(packSizeOf(row))text+=" ("+JONE.trimQuantityValue(String(row.units_per_pack))+" pieces per pack/bag)";
   return text;
 }
+/* Safety net: native validation stops the submit when ANY control is invalid,
+   and a hidden control cannot show the browser's bubble — exactly how "Create
+   draft" went dead. Any invalid line control is now revealed and named (item,
+   field, reason) under the lines field instead of failing silently. */
+function watchLineValidity(mount,form){
+  form=form||(mount.closest&&mount.closest("form"));
+  if(!form)return;
+  form.addEventListener("invalid",function(event){
+    var control=event.target;
+    if(!control||!mount.contains(control))return;
+    var wrap=control.closest(".field"),row=control.closest(".op-line-picker-row");
+    if(wrap&&wrap.hidden)wrap.hidden=false;
+    var title=row&&row.querySelector("strong"),label=wrap&&wrap.querySelector(".field-label");
+    var host=mount.closest("[data-fm-field]"),error=host&&host.querySelector(".field-error");
+    if(host)host.classList.add("has-error");
+    if(error){
+      error.textContent=(label?label.textContent:control.name)+" for "+(title?title.textContent:"a line")+": "+(control.validationMessage||"enter a valid value.");
+      error.style.display="block";
+    }
+  },true);
+}
 function orderLines(initial){
-  return OPS.linePicker({name:"lines",label:"purchase-order line",required:true,resource:"inventoryItems",params:{active:"true"},
+  var picker=OPS.linePicker({name:"lines",label:"purchase-order line",required:true,resource:resourceOr("procurementItems","inventoryItems"),params:{active:"true"},
     placeholder:"Search a stock item to add",display:itemDisplay,initialLines:initial||[],lineFields:poLineFields()});
+  var render=picker.render;
+  picker.render=function(mount,form){
+    render(mount,form);
+    try{watchLineValidity(mount,form);}catch(_){/* the net must never break the form */}
+  };
+  return picker;
+}
+/* Live total, computed exactly as the server will (see orderTotalText) from
+   the converted base-unit lines, so staff see the figure that will be stored. */
+function orderTotalField(picker){
+  var output=null;
+  function refresh(){
+    if(!output)return;
+    var lines=(picker.getValue()||{}).lines||[];
+    if(!lines.length){output.textContent="Add a line to see the order total.";return;}
+    var total=null;
+    try{total=orderTotalText(linesToBaseUnits(lines,itemRecords));}catch(_){total=null;}
+    output.textContent=total==null?"Complete every line to see the order total.":
+      "Order total as it will be recorded: "+money(total)+" ("+lines.length+" line"+(lines.length===1?"":"s")+").";
+  }
+  return{name:"order_total_preview",label:"Order total",type:"custom",
+    render:function(mount,form){
+      output=document.createElement("p");output.className="caption";output.setAttribute("aria-live","polite");
+      output.setAttribute("data-proc-order-total","");mount.appendChild(output);
+      var schedule=function(){setTimeout(refresh,0);};
+      ["input","change","click"].forEach(function(type){(form||mount).addEventListener(type,schedule);});
+      refresh();
+    },
+    getValue:function(){return{};}};
 }
 function orderFormFields(initial,supplier,location){
-  return [supplierPicker(supplier),locationPicker(location),orderLines(initial),
+  var lines=orderLines(initial);
+  return [supplierPicker(supplier),locationPicker(location),lines,orderTotalField(lines),
     {name:"expected_on",label:"Expected delivery date",type:"date"},
     {name:"supplier_reference",label:"Supplier quotation/reference",type:"text"},
     {name:"notes",label:"Notes",type:"textarea",rows:3}];
 }
 
+/* After a save, make the order visible in the list without a page reload —
+   clearing a status filter that would hide it — and point at it. */
+async function showOrderInList(reference,status){
+  var filter=document.getElementById("proc-order-status");
+  if(filter&&filter.value&&filter.value!==status)filter.value="";
+  await loadOrders(1);
+  var row=orderRows.querySelector('[data-proc-order-row="'+(window.CSS&&CSS.escape?CSS.escape(reference):reference)+'"]');
+  if(row){row.classList.add("is-highlighted");row.setAttribute("aria-current","true");}
+}
+
 async function newOrder(){
+  /* ONE key per dialog, made before the first attempt (as the goods-receipt
+     dialog does). A timeout or lost reply followed by "Create draft" again
+     replays the same request, and the server returns the draft it already
+     made instead of creating a duplicate. */
+  var draftContext={};
+  draftContext.idempotency_key=OPS.newIdempotencyKey("purchase-order");
+  var dialog=dialogHandle(),created=null;
   var result=await JONE.dashboard.formModal({title:"Create purchase-order draft",submitText:"Create draft",wide:true,fields:orderFormFields([]),
+    onRender:dialog.onRender,
     onSubmit:async function(values){
-      values=OPS.omitEmpty(values);
-      values.lines=linesToBaseUnits(values.lines);
-      values.idempotency_key=OPS.newIdempotencyKey("purchase-order");
-      await window.API.create("purchaseOrders",values);
+      var typedLines=values.lines||[];
+      var payload=OPS.omitEmpty(values);
+      payload.lines=linesToBaseUnits(typedLines,itemRecords);
+      payload.idempotency_key=draftContext.idempotency_key;
+      var restore=busyLabel(dialog,"Creating draft…");
+      try{
+        created=confirmedOrder(await saveOrder(function(){return window.API.create("purchaseOrders",payload);},typedLines,
+          "Your entries are kept: press “Create draft” again. It safely repeats the same request, so no duplicate draft is created."));
+      }finally{restore();}
       return{message:"Purchase-order draft created."};
     }});
-  if(result){JONE.ui.toast("Purchase-order draft created.","success");loadOrders(1);}
+  if(result&&created){
+    JONE.ui.toast(created.replayed
+      ?"This draft was already saved as "+created.reference+". No duplicate was created."
+      :"Draft "+created.reference+" created. Next: open it and submit it for approval.","success");
+    showOrderInList(created.reference,created.status);
+  }
 }
 
 async function getOrder(reference){return (await window.API.getOne("purchaseOrders",reference)).data||{};}
@@ -313,6 +539,9 @@ async function viewOrder(reference){
       '<div><dt>Supplier</dt><dd>'+JONE.esc(order.supplier_name)+'</dd></div>'+
       '<div><dt>Delivery location</dt><dd>'+JONE.esc(order.delivery_location_code)+'</dd></div>'+
       '<div><dt>Status</dt><dd>'+JONE.dashboard.statusPill(order.status)+'</dd></div>'+
+      '<div><dt>Next step</dt><dd data-proc-next-step>'+JONE.esc(nextStep(order)||"—")+'</dd></div>'+
+      '<div><dt>Goods received</dt><dd>'+JONE.esc(RECEIPT_PROGRESS[order.receipt_progress]||"—")+'</dd></div>'+
+      '<div><dt>Supplier payment</dt><dd>'+JONE.esc(PAYMENT_PROGRESS[order.payment_progress]||"—")+'</dd></div>'+
       '<div><dt>Expected</dt><dd>'+JONE.esc(date(order.expected_on))+'</dd></div>'+
       '<div><dt>Requested by</dt><dd>'+JONE.esc(order.requested_by_email||"—")+'</dd></div>'+
       '<div><dt>Approved by</dt><dd>'+JONE.esc(order.approved_by_email||"—")+'</dd></div>'+
@@ -327,6 +556,8 @@ async function viewOrder(reference){
     if(canEdit(order.status))action("Edit","btn-outline",function(){JONE.ui.modal.close();editOrder(reference,order);});
     if(order.status==="DRAFT")action("Submit for approval","",function(){JONE.ui.modal.close();transitionOrder(reference,"submit");});
     if(order.status==="SUBMITTED"&&manager())action("Approve","btn-accent",function(){JONE.ui.modal.close();approveOrder(order);});
+    if(order.status==="SUBMITTED"&&manager())action("Reject","btn-outline",function(){JONE.ui.modal.close();rejectOrder(order);});
+    if(canCancel(order.status))action("Cancel order","btn-ghost",function(){JONE.ui.modal.close();cancelOrder(order);});
     if(order.status==="APPROVED")action("Mark ordered","",function(){JONE.ui.modal.close();transitionOrder(reference,"ordered");});
     if(canReceive(order))action("Record receipt","",function(){JONE.ui.modal.close();recordReceipt(reference,order);});
     if(canAttachReceipt(order.status)&&manager())action("Upload invoice / receipt","btn-outline",function(){JONE.ui.modal.close();uploadApprovalReceipt(reference,order);});
@@ -336,9 +567,40 @@ async function viewOrder(reference){
   }
 }
 
+var RECEIPT_PROGRESS={NOT_RECEIVED:"Nothing received yet",PARTIALLY_RECEIVED:"Partly received",RECEIVED:"Everything received"};
+var PAYMENT_PROGRESS={UNPAID:"Unpaid",PARTIALLY_PAID:"Part-paid",PAID:"Paid in full",NOTHING_DUE:"Nothing due (zero-cost order)"};
+var TRANSITION_MESSAGES={submit:"Purchase order submitted for approval.",ordered:"Purchase order marked as ordered with the supplier."};
+
 async function transitionOrder(reference,action){
-  try{await window.API.resourceAction("purchaseOrders",reference,action,{});JONE.ui.toast("Purchase order updated.","success");loadOrders();}
-  catch(err){JONE.ui.toast((err&&err.message)||"The purchase order couldn't be updated.","error");}
+  try{await window.API.resourceAction("purchaseOrders",reference,action,{});JONE.ui.toast(TRANSITION_MESSAGES[action]||"Purchase order updated.","success");loadOrders();}
+  catch(err){JONE.ui.toast((explainOrderError(err)&&err.message)||"The purchase order couldn't be updated.","error");loadOrders();}
+}
+
+/* Rejection returns the order to its requester as a DRAFT (the server keeps
+   the reason on the order and in the audit log); cancellation withdraws an
+   unapproved order without deleting it. Both need a reason. */
+async function rejectOrder(order){
+  var result=await JONE.dashboard.formModal({title:"Reject purchase order · "+order.reference,submitText:"Reject and return to draft",wide:true,fields:[
+    {name:"reason",label:"Reason for rejecting",type:"textarea",rows:3,required:true,
+     help:"The order goes back to its requester as a draft with this reason. They can correct and resubmit it, or cancel it."}],
+    onSubmit:async function(values){
+      if(!String(values.reason||"").trim())throw new Error("Enter the reason for rejecting this purchase order.");
+      await saveOrder(function(){return window.API.resourceAction("purchaseOrders",order.reference,"reject",{reason:values.reason.trim()});});
+      return{message:"Purchase order rejected."};
+    }});
+  if(result){JONE.ui.toast("Purchase order "+order.reference+" rejected and returned to draft.","success");loadOrders();}
+}
+
+async function cancelOrder(order){
+  var result=await JONE.dashboard.formModal({title:"Cancel purchase order · "+order.reference,submitText:"Cancel this order",wide:true,fields:[
+    {name:"reason",label:"Reason for cancelling",type:"textarea",rows:3,required:true,
+     help:"Cancelling keeps the order on record as CANCELLED; nothing is deleted. Use it, for example, for a duplicate draft."}],
+    onSubmit:async function(values){
+      if(!String(values.reason||"").trim())throw new Error("Enter the reason for cancelling this purchase order.");
+      await saveOrder(function(){return window.API.resourceAction("purchaseOrders",order.reference,"cancel",{reason:values.reason.trim()});});
+      return{message:"Purchase order cancelled."};
+    }});
+  if(result){JONE.ui.toast("Purchase order "+order.reference+" cancelled.","success");loadOrders();}
 }
 
 /* ---------------------------------------------------------------------------
@@ -351,7 +613,7 @@ async function transitionOrder(reference,action){
 function initialLinesFor(order){
   return (order.lines||[]).map(function(line){
     return{record:{id:line.item,sku:line.item_sku,name:line.item_name,base_unit:line.base_unit,units_per_pack:line.units_per_pack},
-      values:{quantity_unit:"PIECE",pieces_per_pack:line.units_per_pack?JONE.trimQuantityValue(String(line.units_per_pack)):"",
+      values:{quantity_unit:"PIECE",pieces_per_pack:packSizeOf(line)?JONE.trimQuantityValue(String(line.units_per_pack)):"",
         quantity_ordered:JONE.trimQuantityValue(String(line.quantity_ordered)),unit_cost:JONE.trimQuantityValue(String(line.unit_cost))}};
   });
 }
@@ -361,15 +623,17 @@ async function editOrder(reference,known){
   try{if(!order||!order.lines)order=await getOrder(reference);}
   catch(err){JONE.ui.toast((err&&err.message)||"The purchase order couldn't be loaded.","error");return;}
   if(!canEdit(order.status)){
-    JONE.ui.toast("This order has already been approved and can no longer be edited.","error");
+    JONE.ui.toast(order.status==="CANCELLED"?"This order has been cancelled and can no longer be edited.":"This order has already been approved and can no longer be edited.","error");
     loadOrders();
     return;
   }
+  var dialog=dialogHandle(),saved=null;
   var result=await JONE.dashboard.formModal({title:"Edit purchase order · "+reference,submitText:"Save changes",wide:true,
     fields:orderFormFields(initialLinesFor(order),
       {id:order.supplier,name:order.supplier_name||"Selected supplier"},
       {id:order.delivery_location,name:order.delivery_location_code||"Selected location"}),
     values:{expected_on:order.expected_on||"",supplier_reference:order.supplier_reference||"",notes:order.notes||""},
+    onRender:dialog.onRender,
     onSubmit:async function(values){
       var payload=OPS.omitEmpty(values);
       payload.lines=linesToBaseUnits(values.lines);
@@ -378,10 +642,14 @@ async function editOrder(reference,known){
       payload.notes=values.notes||"";
       payload.supplier_reference=values.supplier_reference||"";
       payload.expected_on=values.expected_on||null;
-      await window.API.update("purchaseOrders",reference,payload);
+      var restore=busyLabel(dialog,"Saving…");
+      try{
+        saved=confirmedOrder(await saveOrder(function(){return window.API.update("purchaseOrders",reference,payload);},values.lines,
+          "Press “Save changes” again; repeating the same edit is safe."));
+      }finally{restore();}
       return{message:"Purchase order updated."};
     }});
-  if(result){JONE.ui.toast("Purchase order updated.","success");loadOrders();}
+  if(result&&saved){JONE.ui.toast("Purchase order "+saved.reference+" updated.","success");loadOrders();}
 }
 
 /* ---------------------------------------------------------------------------
@@ -444,10 +712,18 @@ async function recordPayment(reference,known){
   try{if(!order||order.total_amount==null)order=await getOrder(reference);}
   catch(err){JONE.ui.toast((err&&err.message)||"The purchase order couldn't be loaded.","error");return;}
   var outstanding=Number(order.outstanding_amount||0);
-  var result=await JONE.dashboard.formModal({title:"Record supplier payment · "+reference,submitText:"Record payment",wide:true,multipart:true,fields:[
-    {name:"amount",label:"Amount paid ("+JONE.esc(order.currency||"NGN")+")",type:"number",step:"0.01",
+  // Labels, help and thrown messages are rendered as text (textContent), so
+  // they are NOT HTML-escaped here — escaping would print "&amp;" literally.
+  var result=await JONE.dashboard.formModal({title:"Record supplier payment · "+reference,submitText:"Record payment",wide:true,multipart:true,
+    onRender:function(panel){
+      var note=document.createElement("p");note.className="hint";note.style.margin="0.75rem 1.25rem 0";
+      note.textContent="This records the money paid on the purchase order itself (the procurement record). It does not post to the finance ledger: Accounting records the supplier payable and its settlement through Expenses.";
+      panel.appendChild(note);
+    },
+    fields:[
+    {name:"amount",label:"Amount paid ("+(order.currency||"NGN")+")",type:"number",step:"0.01",
      value:String(outstanding||""),required:true,
-     help:"Defaults to the outstanding balance of "+JONE.esc(money(order.outstanding_amount,order.currency))+". Partial payments are allowed; the order is marked paid once the payments cover the total."},
+     help:"Defaults to the outstanding balance of "+money(order.outstanding_amount,order.currency)+". Partial payments are allowed; the order is marked paid once the payments cover the total."},
     {name:"method",label:"How was it paid",type:"select",required:true,options:[
       {value:"BANK_TRANSFER",label:"Bank transfer"},{value:"CARD",label:"Card / terminal"},
       {value:"CHEQUE",label:"Cheque"},{value:"CASH",label:"Cash"}]},
@@ -457,13 +733,18 @@ async function recordPayment(reference,known){
     {name:"evidence_file",label:"Supplier invoice / payment receipt",type:"file",accept:"application/pdf,image/jpeg,image/png,image/webp",
      help:"Attach the supplier's invoice or the payment slip (PDF, JPG, PNG or WebP)."},
     {name:"notes",label:"Notes",type:"textarea",rows:2}],
-    values:{paid_on:new Date().toISOString().slice(0,10)},
-    onSubmit:async function(values){
+    /* formModal prefills from `values` whenever it is given (a field's own
+       `value` is then ignored), so the outstanding balance must be here too. */
+    values:{paid_on:new Date().toISOString().slice(0,10),amount:String(outstanding||"")},
+    onSubmit:async function(values,formData){
       // Cross-field rules the native constraints cannot express;
       // the server enforces exactly the same ones.
-      if(!(Number(values.amount)||0)>0)throw new Error("Enter a payment amount greater than zero.");
-      if(Number(values.amount||0)>outstanding)throw new Error("The payment cannot exceed the outstanding balance of "+JONE.esc(money(order.outstanding_amount,order.currency))+".");
+      if(!((Number(values.amount)||0)>0))throw new Error("Enter a payment amount greater than zero.");
+      if(Number(values.amount||0)>outstanding)throw new Error("The payment cannot exceed the outstanding balance of "+money(order.outstanding_amount,order.currency)+".");
       if(values.method!=="CASH"&&!(values.reference||"").trim())throw new Error("Enter the bank, card or cheque reference for this payment.");
+      // formData is the multipart body formModal built from the fields above;
+      // it was referenced without being declared, so every payment failed with
+      // "formData is not defined" before reaching the server.
       var fd=formData||new FormData();
       await window.API.resourceAction("purchaseOrders",reference,"pay",fd);
       return{message:"Supplier payment recorded."};

@@ -21,7 +21,9 @@ from apps.core.responses import success_response
 from .models import GoodsReceipt, PurchaseOrder, StockBalance, StockConsumptionRequest, StockCount, StockItem, StockLocation, StockMovement, StockRecipe, Supplier
 from .serializers import (
     GoodsReceiptCreateSerializer, GoodsReceiptSerializer, IssueStockSerializer, OpeningStockSerializer,
-    PurchaseOrderCreateSerializer, PurchaseOrderDetailSerializer, PurchaseOrderListSerializer,
+    ProcurementItemLookupSerializer, ProcurementLocationLookupSerializer,
+    PurchaseOrderAccountingSerializer, PurchaseOrderCreateSerializer, PurchaseOrderDecisionSerializer,
+    PurchaseOrderDetailSerializer, PurchaseOrderListSerializer,
     PurchaseOrderPaymentInputSerializer, PurchaseOrderUpdateSerializer, ReturnStockSerializer,
     StockBalanceSerializer, StockConsumptionRequestSerializer,
     StockCountCreateSerializer, StockCountSerializer, StockCountSubmitSerializer, StockItemSerializer,
@@ -34,8 +36,8 @@ from .services.valuation_service import (
     SORT_KEYS, product_profitability_projection, projection_filter_choices, projection_summary, sort_projection,
 )
 from .services.inventory_service import (
-    approve_purchase_order, approve_stock_count, attach_purchase_order_receipt, create_purchase_order,
-    canonical_unit, convert_stock_quantity, create_stock_recipe, issue_stock, mark_purchase_order_ordered,
+    approve_purchase_order, approve_stock_count, attach_purchase_order_receipt, cancel_purchase_order, create_purchase_order,
+    canonical_unit, convert_stock_quantity, create_stock_recipe, issue_stock, mark_purchase_order_ordered, reject_purchase_order,
     process_pending_pos_consumption, process_pos_stock_consumption, receive_goods, record_opening_stock,
     record_purchase_order_payment, record_stock_return, retire_stock_recipe,
     reverse_pos_stock_consumption, scoped_key, start_stock_count,
@@ -56,10 +58,32 @@ def _po_or_404(reference, *, detail=False):
     queryset = PurchaseOrder.objects.select_related(
         "supplier", "delivery_location", "requested_by", "approved_by", "paid_by",
     ).annotate(line_count=Count("lines"))
-    if detail: queryset = queryset.prefetch_related("lines", "payments")
+    if detail: queryset = queryset.prefetch_related("lines__item", "payments__evidence_uploaded_by")
     po = queryset.filter(reference=reference).first()
     if po is None: raise NotFound("Purchase order not found.")
     return po
+
+
+def _po_supplier(supplier_id):
+    """Resolve the order's supplier as a FIELD error the form can highlight."""
+    supplier = Supplier.objects.filter(pk=supplier_id).first()
+    if supplier is None:
+        raise ValidationError({"supplier_id": "That supplier no longer exists. Search and choose the supplier again."})
+    return supplier
+
+
+def _po_location(location_id):
+    location = StockLocation.objects.filter(pk=location_id).first()
+    if location is None:
+        raise ValidationError({"delivery_location_id": "That delivery location no longer exists. Choose another location."})
+    return location
+
+
+#: Purchase orders the Accounting hand-off may see: submitted onwards. A DRAFT
+#: is the requester's unfinished work and is never shown outside Procurement.
+ACCOUNTING_VISIBLE_STATUSES = tuple(
+    value for value in PurchaseOrder.Status.values if value != PurchaseOrder.Status.DRAFT
+)
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="List or create stock locations")
@@ -523,20 +547,57 @@ class SupplierDetailView(APIView):
         return success_response(SupplierSerializer(supplier).data, message="Supplier updated.")
 
 
+@extend_schema(tags=["Admin · Procurement"], summary="Active delivery locations for purchase-order drafts (read-only)")
+class ProcurementLocationLookupView(APIView):
+    """Read-only directory of ACTIVE stock locations for the purchase-order form.
+
+    ``/locations/`` is gated on ``inventory.manage`` because it also creates
+    locations. A Procurement Officer holds ``procurement.manage`` only, so the
+    purchase-order form could not search a delivery location (403) and no
+    draft could ever be raised from that role. This lookup grants exactly the
+    read the form needs and nothing that changes stock.
+    """
+
+    permission_classes = [HasCapability]; required_capability = "procurement.manage"
+
+    def get(self, request):
+        queryset = StockLocation.objects.filter(is_active=True).order_by("name", "pk")
+        if search := (request.query_params.get("search") or "").strip():
+            queryset = queryset.filter(Q(code__icontains=search) | Q(name__icontains=search))
+        return _page(self, request, queryset, ProcurementLocationLookupSerializer)
+
+
+@extend_schema(tags=["Admin · Procurement"], summary="Active stock items for purchase-order lines (read-only)")
+class ProcurementItemLookupView(APIView):
+    """Read-only, purchase-side directory of ACTIVE stock items (see the
+    location lookup above for why ``/items/`` cannot be reused)."""
+
+    permission_classes = [HasCapability]; required_capability = "procurement.manage"
+
+    def get(self, request):
+        queryset = StockItem.objects.filter(is_active=True).select_related("preferred_supplier").order_by("category", "name", "pk")
+        if category := request.query_params.get("category"):
+            queryset = queryset.filter(category=category)
+        if search := (request.query_params.get("search") or "").strip():
+            queryset = queryset.filter(Q(sku__icontains=search) | Q(name__icontains=search))
+        return _page(self, request, queryset, ProcurementItemLookupSerializer)
+
+
 @extend_schema(tags=["Admin · Procurement"], summary="List or create purchase orders")
 class PurchaseOrderListCreateView(APIView):
     permission_classes = [HasCapability]; required_capability = "procurement.manage"
     def get(self, request):
-        queryset=PurchaseOrder.objects.select_related("supplier", "delivery_location", "requested_by", "approved_by").annotate(line_count=Count("lines")).order_by("-created_at", "-pk")
+        # Totals and progress are computed from lines/payments for every row;
+        # prefetching keeps the page at a fixed number of queries.
+        queryset=(PurchaseOrder.objects.select_related("supplier", "delivery_location", "requested_by", "approved_by", "paid_by")
+                  .annotate(line_count=Count("lines")).prefetch_related("lines", "payments").order_by("-created_at", "-pk"))
         if status_value:=request.query_params.get("status"): queryset=queryset.filter(status=status_value)
         if supplier_id:=request.query_params.get("supplier_id"): queryset=queryset.filter(supplier_id=supplier_id)
         return _page(self, request, queryset, PurchaseOrderListSerializer)
     def post(self, request):
         serializer=PurchaseOrderCreateSerializer(data=request.data); serializer.is_valid(raise_exception=True); data=serializer.validated_data
-        supplier=Supplier.objects.filter(pk=data["supplier_id"]).first()
-        if supplier is None: raise NotFound("Supplier not found.")
-        location=StockLocation.objects.filter(pk=data["delivery_location_id"]).first()
-        if location is None: raise NotFound("Stock location not found.")
+        supplier=_po_supplier(data["supplier_id"])
+        location=_po_location(data["delivery_location_id"])
         key=scoped_key(prefix="purchase-order", scope=f"staff:{request.user.pk}", raw_key=data.get("idempotency_key"))
         po, created=create_purchase_order(supplier=supplier, delivery_location=location, lines=data["lines"], requested_by=request.user,
                                           expected_on=data.get("expected_on"), notes=data.get("notes", ""), supplier_reference=data.get("supplier_reference", ""), idempotency_key=key)
@@ -565,14 +626,10 @@ class PurchaseOrderDetailView(APIView):
 
         supplier = None
         if "supplier_id" in data:
-            supplier = Supplier.objects.filter(pk=data.pop("supplier_id")).first()
-            if supplier is None:
-                raise NotFound("Supplier not found.")
+            supplier = _po_supplier(data.pop("supplier_id"))
         location = None
         if "delivery_location_id" in data:
-            location = StockLocation.objects.filter(pk=data.pop("delivery_location_id")).first()
-            if location is None:
-                raise NotFound("Stock location not found.")
+            location = _po_location(data.pop("delivery_location_id"))
         lines = data.pop("lines", None)
         changes = dict(data)
         if supplier is not None:
@@ -594,8 +651,44 @@ class PurchaseOrderDetailView(APIView):
 class PurchaseOrderSubmitView(APIView):
     permission_classes = [HasCapability]; required_capability = "procurement.manage"
     def post(self, request, reference):
-        po=submit_purchase_order(purchase_order=_po_or_404(reference), actor=request.user)
+        before=_po_or_404(reference)
+        po=submit_purchase_order(purchase_order=before, actor=request.user)
+        if before.status != po.status:
+            log_action(actor=request.user, action="PURCHASE_ORDER_SUBMITTED", instance=po, request=request,
+                       metadata={"reference": po.reference, "from_status": before.status, "to_status": po.status})
         return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data, message="Purchase order submitted.")
+
+
+@extend_schema(tags=["Admin · Procurement"], summary="Reject a submitted purchase order (returns it to draft with a reason)")
+class PurchaseOrderRejectView(APIView):
+    """The approver's refusal. The order goes back to DRAFT for its requester to
+    correct and resubmit, or cancel; the reason is kept on the order and in the
+    audit log. Same capability as approval."""
+
+    permission_classes = [HasCapability]; required_capability = "procurement.approve"
+
+    def post(self, request, reference):
+        serializer = PurchaseOrderDecisionSerializer(data=request.data); serializer.is_valid(raise_exception=True)
+        po = reject_purchase_order(purchase_order=_po_or_404(reference), actor=request.user, reason=serializer.validated_data["reason"])
+        log_action(actor=request.user, action="PURCHASE_ORDER_REJECTED", instance=po, request=request,
+                   metadata={"reference": po.reference, "reason": serializer.validated_data["reason"], "to_status": po.status})
+        return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data,
+                                message="Purchase order rejected and returned to draft.")
+
+
+@extend_schema(tags=["Admin · Procurement"], summary="Cancel an unapproved purchase order (kept, never deleted)")
+class PurchaseOrderCancelView(APIView):
+    permission_classes = [HasCapability]; required_capability = "procurement.manage"
+
+    def post(self, request, reference):
+        serializer = PurchaseOrderDecisionSerializer(data=request.data); serializer.is_valid(raise_exception=True)
+        before = _po_or_404(reference)
+        po = cancel_purchase_order(purchase_order=before, actor=request.user, reason=serializer.validated_data["reason"])
+        if before.status != po.status:
+            log_action(actor=request.user, action="PURCHASE_ORDER_CANCELLED", instance=po, request=request,
+                       metadata={"reference": po.reference, "reason": serializer.validated_data["reason"], "from_status": before.status})
+        return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data,
+                                message="Purchase order cancelled." if before.status != po.status else "Purchase order was already cancelled.")
 
 
 class PurchaseOrderApproveView(APIView):
@@ -648,7 +741,11 @@ class PurchaseOrderReceiptUploadView(APIView):
 class PurchaseOrderOrderedView(APIView):
     permission_classes = [HasCapability]; required_capability = "procurement.manage"
     def post(self, request, reference):
-        po=mark_purchase_order_ordered(purchase_order=_po_or_404(reference), actor=request.user)
+        before=_po_or_404(reference)
+        po=mark_purchase_order_ordered(purchase_order=before, actor=request.user)
+        if before.status != po.status:
+            log_action(actor=request.user, action="PURCHASE_ORDER_ORDERED", instance=po, request=request,
+                       metadata={"reference": po.reference, "from_status": before.status})
         return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data, message="Purchase order marked ordered.")
 
 
@@ -712,6 +809,63 @@ class GoodsReceiptCreateView(APIView):
         receipt=GoodsReceipt.objects.select_related("location", "supplier").prefetch_related("lines__item", "lines__stock_movement").get(pk=receipt.pk)
         if created: log_action(actor=request.user, action="GOODS_RECEIPT_POSTED", instance=receipt, request=request, metadata={"reference": receipt.reference, "purchase_order": po.reference})
         return success_response(GoodsReceiptSerializer(receipt).data, message="Goods receipt posted." if created else "Existing goods receipt returned.", status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+def _accounting_po_queryset():
+    return (
+        PurchaseOrder.objects.filter(status__in=ACCOUNTING_VISIBLE_STATUSES)
+        .select_related("supplier", "delivery_location", "requested_by", "approved_by", "paid_by")
+        .annotate(line_count=Count("lines"))
+        .prefetch_related(
+            "lines__item", "payments__evidence_uploaded_by",
+            "goods_receipts__lines", "goods_receipts__received_by",
+        )
+    )
+
+
+class _AccountingHandoffAccess:
+    """Who may READ the procurement hand-off: accounting and oversight roles.
+
+    ``expense.manage`` alone is deliberately not enough — the current matrix
+    also grants it to cashiers and waiters. ``reports.financial.view`` covers
+    ACCOUNTANT/ACCOUNTS_MANAGER and management; approvers are included so the
+    two sides of the approval see the same record. Read-only: no write method
+    exists on these views.
+    """
+
+    permission_classes = [HasCapability]
+    required_capabilities = ("reports.financial.view", "expense.approve", "procurement.approve")
+    require_any_capability = True
+
+
+@extend_schema(tags=["Admin · Procurement"], summary="Accounting hand-off: submitted purchase orders (read-only)")
+class PurchaseOrderAccountingListView(_AccountingHandoffAccess, APIView):
+    """Purchase orders from submission onwards, with totals, receipt and payment
+    progress, so Accounting can verify an order and raise the supplier payable
+    through the existing Expenses workflow. Drafts are never listed."""
+
+    def get(self, request):
+        queryset = _accounting_po_queryset().order_by("-created_at", "-pk")
+        if status_value := request.query_params.get("status"):
+            if status_value not in ACCOUNTING_VISIBLE_STATUSES:
+                raise ValidationError({"status": "Choose a submitted, approved, ordered, received, paid or cancelled status."})
+            queryset = queryset.filter(status=status_value)
+        if supplier_id := request.query_params.get("supplier_id"):
+            queryset = queryset.filter(supplier_id=supplier_id)
+        if search := (request.query_params.get("search") or "").strip():
+            queryset = queryset.filter(
+                Q(reference__icontains=search) | Q(supplier__name__icontains=search) | Q(supplier_reference__icontains=search)
+            )
+        return _page(self, request, queryset, PurchaseOrderAccountingSerializer)
+
+
+@extend_schema(tags=["Admin · Procurement"], summary="Accounting hand-off: one submitted purchase order (read-only)")
+class PurchaseOrderAccountingDetailView(_AccountingHandoffAccess, APIView):
+    def get(self, request, reference):
+        po = _accounting_po_queryset().filter(reference=reference).first()
+        if po is None:
+            raise NotFound("Purchase order not found, or it has not been submitted yet.")
+        return success_response(PurchaseOrderAccountingSerializer(po).data)
 
 
 def _bool_param(request, name):

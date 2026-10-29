@@ -1,0 +1,2115 @@
+diff --git a/backend/apps/inventory/serializers.py b/backend/apps/inventory/serializers.py
+index e0a40ce..d3bfb03 100644
+--- a/backend/apps/inventory/serializers.py
++++ b/backend/apps/inventory/serializers.py
+@@ -55,6 +55,35 @@ class StockLocationSerializer(serializers.ModelSerializer):
+         read_only_fields = ["id", "created_at", "updated_at"]
+ 
+ 
++class ProcurementLocationLookupSerializer(serializers.ModelSerializer):
++    """Active delivery location, as the purchase-order form needs to pick one."""
++
++    class Meta:
++        model = StockLocation
++        fields = ["id", "code", "name", "is_active"]
++        read_only_fields = fields
++
++
++class ProcurementItemLookupSerializer(serializers.ModelSerializer):
++    """Purchase-side projection of an active stock item for purchase-order lines.
++
++    Deliberately minimal: the unit and pack data the line needs to convert a
++    pack quantity into base units, plus PURCHASE-cost references. No POS or
++    selling-price field is exposed here — purchase cost and the customer-facing
++    price stay separate.
++    """
++
++    preferred_supplier_name = serializers.CharField(source="preferred_supplier.name", read_only=True, allow_null=True)
++
++    class Meta:
++        model = StockItem
++        fields = [
++            "id", "sku", "name", "category", "item_type", "base_unit", "units_per_pack", "pack_price",
++            "standard_cost", "currency", "preferred_supplier", "preferred_supplier_name", "is_active",
++        ]
++        read_only_fields = fields
++
++
+ class SupplierSerializer(serializers.ModelSerializer):
+     class Meta:
+         model = Supplier
+@@ -385,6 +414,13 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
+     total_amount = serializers.SerializerMethodField()
+     total_paid = serializers.SerializerMethodField()
+     outstanding_amount = serializers.SerializerMethodField()
++    # ``status`` is the one stored workflow state. These two are DERIVED,
++    # read-only projections of the lines and the recorded payments, so the
++    # independent questions "has the stock arrived?" and "has the supplier been
++    # paid?" stay answerable when status reads PAID (goods may still be due) or
++    # RECEIVED (money may still be owed). Never stored, never used for control.
++    receipt_progress = serializers.SerializerMethodField()
++    payment_progress = serializers.SerializerMethodField()
+ 
+     class Meta:
+         model = PurchaseOrder
+@@ -393,7 +429,7 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
+             "status", "currency", "supplier_reference",
+             "requested_by_email", "approved_by_email", "approved_at", "ordered_at", "expected_on", "line_count",
+             "payment_reference", "approval_receipt_url", "approval_receipt_uploaded_at",
+-            "total_amount", "total_paid", "outstanding_amount",
++            "total_amount", "total_paid", "outstanding_amount", "receipt_progress", "payment_progress",
+             "paid_at", "paid_by", "paid_by_email",
+             "created_at", "updated_at",
+         ]
+@@ -413,6 +449,23 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
+     def get_outstanding_amount(self, obj):
+         return str(obj.outstanding_amount)
+ 
++    def get_receipt_progress(self, obj):
++        lines = list(obj.lines.all())
++        received = [Decimal(line.quantity_received or 0) for line in lines]
++        if not lines or not any(value > 0 for value in received):
++            return "NOT_RECEIVED"
++        if all(Decimal(line.quantity_received or 0) >= Decimal(line.quantity_ordered or 0) for line in lines):
++            return "RECEIVED"
++        return "PARTIALLY_RECEIVED"
++
++    def get_payment_progress(self, obj):
++        total, paid = obj.total_amount, obj.total_paid
++        if total <= 0:
++            return "NOTHING_DUE"
++        if paid <= 0:
++            return "UNPAID"
++        return "PAID" if paid >= total else "PARTIALLY_PAID"
++
+ 
+ class PurchaseOrderDetailSerializer(PurchaseOrderListSerializer):
+     lines = PurchaseOrderLineSerializer(many=True, read_only=True)
+@@ -423,6 +476,52 @@ class PurchaseOrderDetailSerializer(PurchaseOrderListSerializer):
+         fields = PurchaseOrderListSerializer.Meta.fields + ["notes", "lines", "payments"]
+ 
+ 
++class PurchaseOrderDecisionSerializer(serializers.Serializer):
++    """Reject (return to draft) or cancel: the reason is mandatory evidence."""
++
++    reason = serializers.CharField(max_length=1000, trim_whitespace=True)
++
++
++class PurchaseOrderGoodsReceiptSummarySerializer(serializers.ModelSerializer):
++    """One goods receipt against an order, valued at its own received unit costs."""
++
++    received_value = serializers.SerializerMethodField()
++    received_by_email = serializers.EmailField(source="received_by.email", read_only=True, allow_null=True)
++
++    class Meta:
++        model = GoodsReceipt
++        fields = ["reference", "received_on", "supplier_delivery_reference", "received_by_email", "received_value", "created_at"]
++        read_only_fields = fields
++
++    def get_received_value(self, obj):
++        total = sum((Decimal(line.quantity_received) * Decimal(line.unit_cost) for line in obj.lines.all()), Decimal("0.00"))
++        return str(total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
++
++
++class PurchaseOrderAccountingSerializer(PurchaseOrderDetailSerializer):
++    """Read-only hand-off view of a submitted order for Accounting.
++
++    Everything an accountant needs to verify the order before raising the
++    supplier payable through the existing Expenses workflow: the approved
++    lines and costs, what has physically arrived (and its value), what the
++    procurement desk has already recorded as paid, and the evidence files.
++    """
++
++    goods_receipts = PurchaseOrderGoodsReceiptSummarySerializer(many=True, read_only=True)
++    received_value = serializers.SerializerMethodField()
++
++    class Meta(PurchaseOrderDetailSerializer.Meta):
++        fields = PurchaseOrderDetailSerializer.Meta.fields + ["goods_receipts", "received_value"]
++
++    def get_received_value(self, obj):
++        total = sum(
++            (Decimal(line.quantity_received) * Decimal(line.unit_cost)
++             for receipt in obj.goods_receipts.all() for line in receipt.lines.all()),
++            Decimal("0.00"),
++        )
++        return str(total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
++
++
+ class PurchaseOrderCreateLineSerializer(serializers.Serializer):
+     item_id = serializers.IntegerField(min_value=1)
+     quantity_ordered = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
+diff --git a/backend/apps/inventory/services/inventory_service.py b/backend/apps/inventory/services/inventory_service.py
+index 8984618..7dfbbe8 100644
+--- a/backend/apps/inventory/services/inventory_service.py
++++ b/backend/apps/inventory/services/inventory_service.py
+@@ -224,11 +224,26 @@ def _validate_po_lines(lines):
+     for raw in values:
+         try: item_ids.append(int(raw["item_id"]))
+         except (KeyError, TypeError, ValueError) as exc: raise ValidationError({"lines": "Every line needs an item_id."}) from exc
+-    if len(set(item_ids)) != len(item_ids):
+-        raise ValidationError({"lines": "An item may appear only once per purchase order."})
++    # Name the offending item in every refusal: "one or more items" sent staff
++    # hunting through a 30-line order for the row the server meant.
++    known = {item.pk: item for item in StockItem.objects.filter(pk__in=set(item_ids))}
++    def label(item_id):
++        item = known.get(item_id)
++        return item.sku if item is not None else f"item #{item_id}"
++    duplicates = sorted({item_id for item_id in item_ids if item_ids.count(item_id) > 1}, key=item_ids.index)
++    if duplicates:
++        raise ValidationError({"lines": (
++            "An item may appear only once per purchase order: "
++            + ", ".join(label(item_id) for item_id in duplicates)
++            + " is on more than one line. Combine the quantities into one line."
++        )})
+     items = {item.pk: item for item in StockItem.objects.select_for_update().filter(pk__in=item_ids, is_active=True)}
+     if len(items) != len(item_ids):
+-        raise ValidationError({"lines": "One or more stock items are inactive or missing."})
++        unavailable = [label(item_id) for item_id in item_ids if item_id not in items]
++        raise ValidationError({"lines": (
++            "One or more stock items are inactive or missing: " + ", ".join(unavailable)
++            + ". Remove the line, or ask Inventory to reactivate the item."
++        )})
+     normalized = []
+     for raw, item_id in zip(values, item_ids):
+         item = items[item_id]
+@@ -241,16 +256,69 @@ def _validate_po_lines(lines):
+     return normalized
+ 
+ 
++def _po_replay_fingerprint(*, supplier_id, location_id, lines, expected_on, notes, supplier_reference):
++    """Comparable shape of a create request, so a key replays ONE request only."""
++    rows = []
++    for raw in lines or ():
++        try:
++            rows.append((
++                int(raw["item_id"]),
++                _quantity(raw.get("quantity_ordered"), field="quantity_ordered", positive=True),
++                _cost(raw.get("unit_cost")),
++                str(raw.get("notes") or "")[:500],
++            ))
++        except (KeyError, TypeError, ValueError, ValidationError):
++            return None  # an unreadable retry can never equal a stored order
++    return (
++        int(supplier_id), int(location_id), tuple(sorted(rows)), expected_on,
++        str(notes or ""), str(supplier_reference or "")[:120],
++    )
++
++
++def _validate_po_replay(existing, *, supplier, delivery_location, lines, expected_on, notes, supplier_reference):
++    """An idempotency key may only replay the request that created the order.
++
++    Returning the stored order for a *different* payload would tell the user
++    their changed draft was saved when it was not. Mirrors the goods-receipt
++    rule in ``_validate_receipt_retry``.
++    """
++    stored = _po_replay_fingerprint(
++        supplier_id=existing.supplier_id, location_id=existing.delivery_location_id,
++        lines=[
++            {"item_id": line.item_id, "quantity_ordered": line.quantity_ordered,
++             "unit_cost": line.unit_cost, "notes": line.notes}
++            for line in existing.lines.all()
++        ],
++        expected_on=existing.expected_on, notes=existing.notes, supplier_reference=existing.supplier_reference,
++    )
++    incoming = _po_replay_fingerprint(
++        supplier_id=supplier.pk, location_id=delivery_location.pk, lines=lines,
++        expected_on=expected_on, notes=notes, supplier_reference=supplier_reference,
++    )
++    if stored != incoming:
++        raise ValidationError({"idempotency_key": (
++            f"This form was already saved as purchase order {existing.reference} with different details, "
++            f"so nothing new was created. Close this dialog and open {existing.reference} to review or edit it."
++        )})
++
++
+ @transaction.atomic
+ def create_purchase_order(*, supplier, delivery_location, lines, requested_by, expected_on=None, notes="", supplier_reference="", idempotency_key=None):
+-    if supplier.status != Supplier.Status.ACTIVE:
+-        raise ValidationError("Purchase orders require an active supplier.")
+-    if not delivery_location.is_active:
+-        raise ValidationError("Purchase orders require an active delivery location.")
+     idempotency_key = str(idempotency_key or "").strip() or None
++    # A retry of a request that already succeeded (lost response, timeout,
++    # double submit) returns that order before any rule that may have changed
++    # since — e.g. the supplier being deactivated a minute later — can turn a
++    # successful save into a confusing refusal or, worse, a second draft.
+     if idempotency_key:
+         existing = PurchaseOrder.objects.select_for_update().filter(idempotency_key=idempotency_key).first()
+-        if existing: return existing, False
++        if existing:
++            _validate_po_replay(existing, supplier=supplier, delivery_location=delivery_location, lines=lines,
++                                expected_on=expected_on, notes=notes, supplier_reference=supplier_reference)
++            return existing, False
++    if supplier.status != Supplier.Status.ACTIVE:
++        raise ValidationError({"supplier_id": "Purchase orders require an active supplier. Choose an active supplier."})
++    if not delivery_location.is_active:
++        raise ValidationError({"delivery_location_id": "Purchase orders require an active delivery location."})
+     normalized = _validate_po_lines(lines)
+     for _ in range(8):
+         try:
+@@ -264,7 +332,10 @@ def create_purchase_order(*, supplier, delivery_location, lines, requested_by, e
+         except IntegrityError:
+             if idempotency_key:
+                 existing = PurchaseOrder.objects.select_for_update().filter(idempotency_key=idempotency_key).first()
+-                if existing: return existing, False
++                if existing:
++                    _validate_po_replay(existing, supplier=supplier, delivery_location=delivery_location, lines=lines,
++                                        expected_on=expected_on, notes=notes, supplier_reference=supplier_reference)
++                    return existing, False
+     else:
+         raise ValidationError("Could not allocate a unique purchase-order reference; please retry.")
+     PurchaseOrderLine.objects.bulk_create([
+@@ -327,6 +398,8 @@ def update_purchase_order(*, purchase_order, actor, changes=None, lines=None):
+     Edit action at the same boundary.
+     """
+     po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
++    if po.status == PurchaseOrder.Status.CANCELLED:
++        raise ValidationError("This purchase order has been cancelled and can no longer be edited. Raise a new order instead.")
+     if po.status not in {PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.SUBMITTED}:
+         raise ValidationError(
+             "This purchase order has already been approved and can no longer be edited. "
+@@ -523,6 +596,72 @@ def approve_purchase_order(*, purchase_order, actor, receipt_file=None, payment_
+     return po
+ 
+ 
++def _decision_reason(reason, *, action):
++    text = " ".join(str(reason or "").split())
++    if not text:
++        raise ValidationError({"reason": f"Enter the reason for {action} this purchase order."})
++    if len(text) > 1000:
++        raise ValidationError({"reason": "Keep the reason under 1000 characters."})
++    return text
++
++
++def _append_control_note(po, *, marker, actor, reason):
++    """Keep a workflow decision visible on the order itself (as approval overrides do).
++
++    ``notes`` is free text that is never used for control decisions; the audit
++    log written by the view remains the authoritative record.
++    """
++    who = getattr(actor, "email", "") or f"user #{getattr(actor, 'pk', '?')}"
++    po.notes = f"{po.notes}\n[{marker} by {who} on {hotel_today().isoformat()}] {reason}".strip()
++
++
++@transaction.atomic
++def reject_purchase_order(*, purchase_order, actor, reason):
++    """Refuse a submitted order: it returns to DRAFT with the approver's reason.
++
++    Rejection uses the existing status set (no REJECTED status is invented):
++    the order goes back to its requester as a DRAFT, which they can correct and
++    resubmit, or cancel. Nothing is deleted and no approval is recorded.
++    """
++    if not has_capability(actor, "procurement.approve"):
++        raise PermissionDenied("This user cannot reject purchase orders.")
++    po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
++    if po.status != PurchaseOrder.Status.SUBMITTED:
++        raise ValidationError(f"Only an order awaiting approval can be rejected; this one is {po.status}.")
++    reason = _decision_reason(reason, action="rejecting")
++    po.status = PurchaseOrder.Status.DRAFT
++    _append_control_note(po, marker="REJECTED - returned to draft", actor=actor, reason=reason)
++    po.save(update_fields=["status", "notes", "updated_at"])
++    return po
++
++
++@transaction.atomic
++def cancel_purchase_order(*, purchase_order, actor, reason):
++    """Withdraw an unapproved order without deleting it (status CANCELLED).
++
++    Only DRAFT and SUBMITTED orders can be cancelled here: from approval
++    onwards the order is an authorised commitment and needs a controlled
++    correction instead. Replaying a cancellation is a no-op.
++    """
++    if not has_capability(actor, "procurement.manage"):
++        raise PermissionDenied("This user cannot cancel purchase orders.")
++    po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
++    if po.status == PurchaseOrder.Status.CANCELLED:
++        return po
++    if po.status not in {PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.SUBMITTED}:
++        raise ValidationError(
++            f"A {po.status} purchase order is an authorised commitment and cannot be cancelled here. "
++            "Raise a controlled correction instead."
++        )
++    if GoodsReceipt.objects.filter(purchase_order=po).exists() or po.payments.exists():
++        raise ValidationError("Goods or payments are already recorded against this order, so it cannot be cancelled.")
++    reason = _decision_reason(reason, action="cancelling")
++    po.status = PurchaseOrder.Status.CANCELLED
++    _append_control_note(po, marker="CANCELLED", actor=actor, reason=reason)
++    po.save(update_fields=["status", "notes", "updated_at"])
++    return po
++
++
+ @transaction.atomic
+ def mark_purchase_order_ordered(*, purchase_order, actor):
+     po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
+diff --git a/backend/apps/inventory/urls.py b/backend/apps/inventory/urls.py
+index 3bd48dd..23f9ad3 100644
+--- a/backend/apps/inventory/urls.py
++++ b/backend/apps/inventory/urls.py
+@@ -29,9 +29,17 @@ urlpatterns = [
+     path("transfers/", views.StockTransferView.as_view(), name="transfers"),
+     path("suppliers/", views.SupplierListCreateView.as_view(), name="suppliers"),
+     path("suppliers/<int:pk>/", views.SupplierDetailView.as_view(), name="supplier-detail"),
++    # Procurement-scoped, read-only lookups for the purchase-order form.
++    path("procurement/locations/", views.ProcurementLocationLookupView.as_view(), name="procurement-locations"),
++    path("procurement/items/", views.ProcurementItemLookupView.as_view(), name="procurement-items"),
++    # Read-only Accounting hand-off (submitted onwards; drafts never listed).
++    path("accounting/purchase-orders/", views.PurchaseOrderAccountingListView.as_view(), name="accounting-purchase-orders"),
++    path("accounting/purchase-orders/<str:reference>/", views.PurchaseOrderAccountingDetailView.as_view(), name="accounting-purchase-order-detail"),
+     path("purchase-orders/", views.PurchaseOrderListCreateView.as_view(), name="purchase-orders"),
+     path("purchase-orders/<str:reference>/", views.PurchaseOrderDetailView.as_view(), name="purchase-order-detail"),
+     path("purchase-orders/<str:reference>/submit/", views.PurchaseOrderSubmitView.as_view(), name="purchase-order-submit"),
++    path("purchase-orders/<str:reference>/reject/", views.PurchaseOrderRejectView.as_view(), name="purchase-order-reject"),
++    path("purchase-orders/<str:reference>/cancel/", views.PurchaseOrderCancelView.as_view(), name="purchase-order-cancel"),
+     path("purchase-orders/<str:reference>/approve/", views.PurchaseOrderApproveView.as_view(), name="purchase-order-approve"),
+     path("purchase-orders/<str:reference>/approval-receipt/", views.PurchaseOrderReceiptUploadView.as_view(), name="purchase-order-approval-receipt"),
+     path("purchase-orders/<str:reference>/ordered/", views.PurchaseOrderOrderedView.as_view(), name="purchase-order-ordered"),
+diff --git a/backend/apps/inventory/views.py b/backend/apps/inventory/views.py
+index 20152b4..3c039c4 100644
+--- a/backend/apps/inventory/views.py
++++ b/backend/apps/inventory/views.py
+@@ -21,7 +21,9 @@ from apps.core.responses import success_response
+ from .models import GoodsReceipt, PurchaseOrder, StockBalance, StockConsumptionRequest, StockCount, StockItem, StockLocation, StockMovement, StockRecipe, Supplier
+ from .serializers import (
+     GoodsReceiptCreateSerializer, GoodsReceiptSerializer, IssueStockSerializer, OpeningStockSerializer,
+-    PurchaseOrderCreateSerializer, PurchaseOrderDetailSerializer, PurchaseOrderListSerializer,
++    ProcurementItemLookupSerializer, ProcurementLocationLookupSerializer,
++    PurchaseOrderAccountingSerializer, PurchaseOrderCreateSerializer, PurchaseOrderDecisionSerializer,
++    PurchaseOrderDetailSerializer, PurchaseOrderListSerializer,
+     PurchaseOrderPaymentInputSerializer, PurchaseOrderUpdateSerializer, ReturnStockSerializer,
+     StockBalanceSerializer, StockConsumptionRequestSerializer,
+     StockCountCreateSerializer, StockCountSerializer, StockCountSubmitSerializer, StockItemSerializer,
+@@ -34,8 +36,8 @@ from .services.valuation_service import (
+     SORT_KEYS, product_profitability_projection, projection_filter_choices, projection_summary, sort_projection,
+ )
+ from .services.inventory_service import (
+-    approve_purchase_order, approve_stock_count, attach_purchase_order_receipt, create_purchase_order,
+-    canonical_unit, convert_stock_quantity, create_stock_recipe, issue_stock, mark_purchase_order_ordered,
++    approve_purchase_order, approve_stock_count, attach_purchase_order_receipt, cancel_purchase_order, create_purchase_order,
++    canonical_unit, convert_stock_quantity, create_stock_recipe, issue_stock, mark_purchase_order_ordered, reject_purchase_order,
+     process_pending_pos_consumption, process_pos_stock_consumption, receive_goods, record_opening_stock,
+     record_purchase_order_payment, record_stock_return, retire_stock_recipe,
+     reverse_pos_stock_consumption, scoped_key, start_stock_count,
+@@ -56,12 +58,34 @@ def _po_or_404(reference, *, detail=False):
+     queryset = PurchaseOrder.objects.select_related(
+         "supplier", "delivery_location", "requested_by", "approved_by", "paid_by",
+     ).annotate(line_count=Count("lines"))
+-    if detail: queryset = queryset.prefetch_related("lines", "payments")
++    if detail: queryset = queryset.prefetch_related("lines__item", "payments__evidence_uploaded_by")
+     po = queryset.filter(reference=reference).first()
+     if po is None: raise NotFound("Purchase order not found.")
+     return po
+ 
+ 
++def _po_supplier(supplier_id):
++    """Resolve the order's supplier as a FIELD error the form can highlight."""
++    supplier = Supplier.objects.filter(pk=supplier_id).first()
++    if supplier is None:
++        raise ValidationError({"supplier_id": "That supplier no longer exists. Search and choose the supplier again."})
++    return supplier
++
++
++def _po_location(location_id):
++    location = StockLocation.objects.filter(pk=location_id).first()
++    if location is None:
++        raise ValidationError({"delivery_location_id": "That delivery location no longer exists. Choose another location."})
++    return location
++
++
++#: Purchase orders the Accounting hand-off may see: submitted onwards. A DRAFT
++#: is the requester's unfinished work and is never shown outside Procurement.
++ACCOUNTING_VISIBLE_STATUSES = tuple(
++    value for value in PurchaseOrder.Status.values if value != PurchaseOrder.Status.DRAFT
++)
++
++
+ @extend_schema(tags=["Admin · Inventory"], summary="List or create stock locations")
+ class StockLocationListCreateView(APIView):
+     permission_classes = [HasCapability]; required_capability = "inventory.manage"
+@@ -523,20 +547,57 @@ class SupplierDetailView(APIView):
+         return success_response(SupplierSerializer(supplier).data, message="Supplier updated.")
+ 
+ 
++@extend_schema(tags=["Admin · Procurement"], summary="Active delivery locations for purchase-order drafts (read-only)")
++class ProcurementLocationLookupView(APIView):
++    """Read-only directory of ACTIVE stock locations for the purchase-order form.
++
++    ``/locations/`` is gated on ``inventory.manage`` because it also creates
++    locations. A Procurement Officer holds ``procurement.manage`` only, so the
++    purchase-order form could not search a delivery location (403) and no
++    draft could ever be raised from that role. This lookup grants exactly the
++    read the form needs and nothing that changes stock.
++    """
++
++    permission_classes = [HasCapability]; required_capability = "procurement.manage"
++
++    def get(self, request):
++        queryset = StockLocation.objects.filter(is_active=True).order_by("name", "pk")
++        if search := (request.query_params.get("search") or "").strip():
++            queryset = queryset.filter(Q(code__icontains=search) | Q(name__icontains=search))
++        return _page(self, request, queryset, ProcurementLocationLookupSerializer)
++
++
++@extend_schema(tags=["Admin · Procurement"], summary="Active stock items for purchase-order lines (read-only)")
++class ProcurementItemLookupView(APIView):
++    """Read-only, purchase-side directory of ACTIVE stock items (see the
++    location lookup above for why ``/items/`` cannot be reused)."""
++
++    permission_classes = [HasCapability]; required_capability = "procurement.manage"
++
++    def get(self, request):
++        queryset = StockItem.objects.filter(is_active=True).select_related("preferred_supplier").order_by("category", "name", "pk")
++        if category := request.query_params.get("category"):
++            queryset = queryset.filter(category=category)
++        if search := (request.query_params.get("search") or "").strip():
++            queryset = queryset.filter(Q(sku__icontains=search) | Q(name__icontains=search))
++        return _page(self, request, queryset, ProcurementItemLookupSerializer)
++
++
+ @extend_schema(tags=["Admin · Procurement"], summary="List or create purchase orders")
+ class PurchaseOrderListCreateView(APIView):
+     permission_classes = [HasCapability]; required_capability = "procurement.manage"
+     def get(self, request):
+-        queryset=PurchaseOrder.objects.select_related("supplier", "delivery_location", "requested_by", "approved_by").annotate(line_count=Count("lines")).order_by("-created_at", "-pk")
++        # Totals and progress are computed from lines/payments for every row;
++        # prefetching keeps the page at a fixed number of queries.
++        queryset=(PurchaseOrder.objects.select_related("supplier", "delivery_location", "requested_by", "approved_by", "paid_by")
++                  .annotate(line_count=Count("lines")).prefetch_related("lines", "payments").order_by("-created_at", "-pk"))
+         if status_value:=request.query_params.get("status"): queryset=queryset.filter(status=status_value)
+         if supplier_id:=request.query_params.get("supplier_id"): queryset=queryset.filter(supplier_id=supplier_id)
+         return _page(self, request, queryset, PurchaseOrderListSerializer)
+     def post(self, request):
+         serializer=PurchaseOrderCreateSerializer(data=request.data); serializer.is_valid(raise_exception=True); data=serializer.validated_data
+-        supplier=Supplier.objects.filter(pk=data["supplier_id"]).first()
+-        if supplier is None: raise NotFound("Supplier not found.")
+-        location=StockLocation.objects.filter(pk=data["delivery_location_id"]).first()
+-        if location is None: raise NotFound("Stock location not found.")
++        supplier=_po_supplier(data["supplier_id"])
++        location=_po_location(data["delivery_location_id"])
+         key=scoped_key(prefix="purchase-order", scope=f"staff:{request.user.pk}", raw_key=data.get("idempotency_key"))
+         po, created=create_purchase_order(supplier=supplier, delivery_location=location, lines=data["lines"], requested_by=request.user,
+                                           expected_on=data.get("expected_on"), notes=data.get("notes", ""), supplier_reference=data.get("supplier_reference", ""), idempotency_key=key)
+@@ -565,14 +626,10 @@ class PurchaseOrderDetailView(APIView):
+ 
+         supplier = None
+         if "supplier_id" in data:
+-            supplier = Supplier.objects.filter(pk=data.pop("supplier_id")).first()
+-            if supplier is None:
+-                raise NotFound("Supplier not found.")
++            supplier = _po_supplier(data.pop("supplier_id"))
+         location = None
+         if "delivery_location_id" in data:
+-            location = StockLocation.objects.filter(pk=data.pop("delivery_location_id")).first()
+-            if location is None:
+-                raise NotFound("Stock location not found.")
++            location = _po_location(data.pop("delivery_location_id"))
+         lines = data.pop("lines", None)
+         changes = dict(data)
+         if supplier is not None:
+@@ -594,10 +651,46 @@ class PurchaseOrderDetailView(APIView):
+ class PurchaseOrderSubmitView(APIView):
+     permission_classes = [HasCapability]; required_capability = "procurement.manage"
+     def post(self, request, reference):
+-        po=submit_purchase_order(purchase_order=_po_or_404(reference), actor=request.user)
++        before=_po_or_404(reference)
++        po=submit_purchase_order(purchase_order=before, actor=request.user)
++        if before.status != po.status:
++            log_action(actor=request.user, action="PURCHASE_ORDER_SUBMITTED", instance=po, request=request,
++                       metadata={"reference": po.reference, "from_status": before.status, "to_status": po.status})
+         return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data, message="Purchase order submitted.")
+ 
+ 
++@extend_schema(tags=["Admin · Procurement"], summary="Reject a submitted purchase order (returns it to draft with a reason)")
++class PurchaseOrderRejectView(APIView):
++    """The approver's refusal. The order goes back to DRAFT for its requester to
++    correct and resubmit, or cancel; the reason is kept on the order and in the
++    audit log. Same capability as approval."""
++
++    permission_classes = [HasCapability]; required_capability = "procurement.approve"
++
++    def post(self, request, reference):
++        serializer = PurchaseOrderDecisionSerializer(data=request.data); serializer.is_valid(raise_exception=True)
++        po = reject_purchase_order(purchase_order=_po_or_404(reference), actor=request.user, reason=serializer.validated_data["reason"])
++        log_action(actor=request.user, action="PURCHASE_ORDER_REJECTED", instance=po, request=request,
++                   metadata={"reference": po.reference, "reason": serializer.validated_data["reason"], "to_status": po.status})
++        return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data,
++                                message="Purchase order rejected and returned to draft.")
++
++
++@extend_schema(tags=["Admin · Procurement"], summary="Cancel an unapproved purchase order (kept, never deleted)")
++class PurchaseOrderCancelView(APIView):
++    permission_classes = [HasCapability]; required_capability = "procurement.manage"
++
++    def post(self, request, reference):
++        serializer = PurchaseOrderDecisionSerializer(data=request.data); serializer.is_valid(raise_exception=True)
++        before = _po_or_404(reference)
++        po = cancel_purchase_order(purchase_order=before, actor=request.user, reason=serializer.validated_data["reason"])
++        if before.status != po.status:
++            log_action(actor=request.user, action="PURCHASE_ORDER_CANCELLED", instance=po, request=request,
++                       metadata={"reference": po.reference, "reason": serializer.validated_data["reason"], "from_status": before.status})
++        return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data,
++                                message="Purchase order cancelled." if before.status != po.status else "Purchase order was already cancelled.")
++
++
+ class PurchaseOrderApproveView(APIView):
+     permission_classes = [HasCapability]; required_capability = "procurement.approve"
+     # Approval accepts the optional invoice/payment receipt in the same action.
+@@ -648,7 +741,11 @@ class PurchaseOrderReceiptUploadView(APIView):
+ class PurchaseOrderOrderedView(APIView):
+     permission_classes = [HasCapability]; required_capability = "procurement.manage"
+     def post(self, request, reference):
+-        po=mark_purchase_order_ordered(purchase_order=_po_or_404(reference), actor=request.user)
++        before=_po_or_404(reference)
++        po=mark_purchase_order_ordered(purchase_order=before, actor=request.user)
++        if before.status != po.status:
++            log_action(actor=request.user, action="PURCHASE_ORDER_ORDERED", instance=po, request=request,
++                       metadata={"reference": po.reference, "from_status": before.status})
+         return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data, message="Purchase order marked ordered.")
+ 
+ 
+@@ -714,6 +811,63 @@ class GoodsReceiptCreateView(APIView):
+         return success_response(GoodsReceiptSerializer(receipt).data, message="Goods receipt posted." if created else "Existing goods receipt returned.", status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+ 
+ 
++def _accounting_po_queryset():
++    return (
++        PurchaseOrder.objects.filter(status__in=ACCOUNTING_VISIBLE_STATUSES)
++        .select_related("supplier", "delivery_location", "requested_by", "approved_by", "paid_by")
++        .annotate(line_count=Count("lines"))
++        .prefetch_related(
++            "lines__item", "payments__evidence_uploaded_by",
++            "goods_receipts__lines", "goods_receipts__received_by",
++        )
++    )
++
++
++class _AccountingHandoffAccess:
++    """Who may READ the procurement hand-off: accounting and oversight roles.
++
++    ``expense.manage`` alone is deliberately not enough — the current matrix
++    also grants it to cashiers and waiters. ``reports.financial.view`` covers
++    ACCOUNTANT/ACCOUNTS_MANAGER and management; approvers are included so the
++    two sides of the approval see the same record. Read-only: no write method
++    exists on these views.
++    """
++
++    permission_classes = [HasCapability]
++    required_capabilities = ("reports.financial.view", "expense.approve", "procurement.approve")
++    require_any_capability = True
++
++
++@extend_schema(tags=["Admin · Procurement"], summary="Accounting hand-off: submitted purchase orders (read-only)")
++class PurchaseOrderAccountingListView(_AccountingHandoffAccess, APIView):
++    """Purchase orders from submission onwards, with totals, receipt and payment
++    progress, so Accounting can verify an order and raise the supplier payable
++    through the existing Expenses workflow. Drafts are never listed."""
++
++    def get(self, request):
++        queryset = _accounting_po_queryset().order_by("-created_at", "-pk")
++        if status_value := request.query_params.get("status"):
++            if status_value not in ACCOUNTING_VISIBLE_STATUSES:
++                raise ValidationError({"status": "Choose a submitted, approved, ordered, received, paid or cancelled status."})
++            queryset = queryset.filter(status=status_value)
++        if supplier_id := request.query_params.get("supplier_id"):
++            queryset = queryset.filter(supplier_id=supplier_id)
++        if search := (request.query_params.get("search") or "").strip():
++            queryset = queryset.filter(
++                Q(reference__icontains=search) | Q(supplier__name__icontains=search) | Q(supplier_reference__icontains=search)
++            )
++        return _page(self, request, queryset, PurchaseOrderAccountingSerializer)
++
++
++@extend_schema(tags=["Admin · Procurement"], summary="Accounting hand-off: one submitted purchase order (read-only)")
++class PurchaseOrderAccountingDetailView(_AccountingHandoffAccess, APIView):
++    def get(self, request, reference):
++        po = _accounting_po_queryset().filter(reference=reference).first()
++        if po is None:
++            raise NotFound("Purchase order not found, or it has not been submitted yet.")
++        return success_response(PurchaseOrderAccountingSerializer(po).data)
++
++
+ def _bool_param(request, name):
+     """Tri-state boolean query parameter: absent -> None, "true"/"false" -> bool."""
+     raw = request.query_params.get(name)
+diff --git a/backend/docs/API.md b/backend/docs/API.md
+index 8fd3e15..a9573dd 100644
+--- a/backend/docs/API.md
++++ b/backend/docs/API.md
+@@ -236,6 +236,12 @@ shown in the middle column, including additive operational roles.
+ | `GET/POST /inventory/purchase-orders/` · `GET /inventory/purchase-orders/<ref>/` | 🔐 `procurement.manage` | Purchase-order drafts and immutable line snapshots |
+ | `POST /inventory/purchase-orders/<ref>/submit/` · `ordered/` · `receipts/` | 🔐 `procurement.manage` | PO lifecycle and source-keyed partial/full goods receipts; receipts append `RECEIPT` movements and reject over-receipt |
+ | `POST /inventory/purchase-orders/<ref>/approve/` | 🔐 `procurement.approve` | Separate maker-checker approval; requester self-approval is rejected |
++| `POST /inventory/purchase-orders/<ref>/reject/` | 🔐 `procurement.approve` | Body `{reason}` (required). Refuses a SUBMITTED order: it returns to `DRAFT` for its requester to correct and resubmit; the reason is appended to the order notes and audited (`PURCHASE_ORDER_REJECTED`) |
++| `POST /inventory/purchase-orders/<ref>/cancel/` | 🔐 `procurement.manage` | Body `{reason}` (required). Withdraws a `DRAFT`/`SUBMITTED` order to the existing `CANCELLED` status — never deletes; replay is a no-op; approved orders are refused |
++| `GET /inventory/procurement/locations/` · `GET /inventory/procurement/items/` | 🔐 `procurement.manage` | Read-only lookups of ACTIVE delivery locations and stock items (purchase-side fields only) for the purchase-order form; the inventory catalogs above stay `inventory.manage` |
++| `GET /inventory/accounting/purchase-orders/` · `GET .../<ref>/` | 🔐 any of `reports.financial.view`, `expense.approve`, `procurement.approve` | Read-only Accounting hand-off: orders from `SUBMITTED` onwards (never drafts) with lines, totals, `total_paid`/`outstanding_amount`, derived `receipt_progress`/`payment_progress`, goods receipts with `received_value`, payments and evidence URLs. Filters: `status`, `supplier_id`, `search` |
++
++Purchase-order create (`POST /inventory/purchase-orders/`): an `idempotency_key` replays exactly one request — the same payload returns the stored order (`200`, "Existing purchase order returned."), a different payload is refused (`400`, `errors.idempotency_key` names the existing order). Unknown or inactive suppliers/locations are `400` field errors (`supplier_id`, `delivery_location_id`).
+ | `GET/POST /users/terminals/` · `PATCH /users/terminals/<id>/` | 🔐 `terminal.manage` | Register, label, list (`active`, `department`, `search`), or deactivate optional workstation metadata; current-user presence is informational, not a session lock. `ip_address` registers the address a front desk desk reaches the API from (one address, or a CIDR network; stored canonically, blank clears) and `desktop_ip_registered_at` records when; `receptionist_desktop_ready` reports whether an active FRONT_DESK row can identify the desk at all (key or address). A non-front-desk row never acts as the Receptionist Desktop. |
+ | `POST /users/terminals/<id>/desktop-key/` | 🔐 `terminal.manage` | Rotate a FRONT_DESK workstation's desk key (returned once; the previous key stops working) — the per-browser route, kept alongside the registered address. |
+ | `GET /users/directory/` | 🔐 dispatch/profile/shift/`payroll.manage` capability | Minimal active-staff picker projection without account-management data; supports employee-code search for authorized payroll preparers. |
+diff --git a/backend/tests/test_procurement_agent_workflow.py b/backend/tests/test_procurement_agent_workflow.py
+new file mode 100644
+index 0000000..4c0b6a4
+--- /dev/null
++++ b/backend/tests/test_procurement_agent_workflow.py
+@@ -0,0 +1,596 @@
++"""Procurement draft → approval → receipt → payable → Accounting hand-off.
++
++Pins the fixes of the procurement audit (2026-10-29):
++
++* a Procurement Officer (``procurement.manage`` only) can search the delivery
++  locations and stock items a purchase order needs, through read-only,
++  procurement-scoped lookups — the inventory directories stay inventory-only;
++* an idempotency key replays exactly ONE create request: the same payload
++  returns the stored draft (no duplicate), a changed payload is refused;
++* unknown/inactive suppliers and locations, bad quantities/costs, duplicate
++  and inactive item lines are refused server-side with field-level messages
++  that name the offending item;
++* approval keeps its maker-checker rule; rejection returns a submitted order
++  to DRAFT with a reason; cancellation keeps the record (never deletes);
++* approval never receives goods, a receipt never pays the supplier, and the
++  derived receipt/payment progress stays truthful through partial receipts
++  and partial payments;
++* Accounting can read submitted orders (never drafts) with totals, receipts
++  and payments, read-only, without opening procurement to cashiers/waiters.
++
++Run: python manage.py test tests.test_procurement_agent_workflow
++"""
++from decimal import Decimal
++
++from django.db import connection
++from django.test.utils import CaptureQueriesContext
++
++from apps.accounts.models import User
++from apps.audit.models import AuditLog
++from apps.inventory.models import (
++    GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, StockItem, StockLocation, Supplier,
++)
++
++from .base import BaseAPITestCase
++from .factories import make_staff
++
++PO_URL = "/api/admin/inventory/purchase-orders/"
++LOOKUP_LOCATIONS = "/api/admin/inventory/procurement/locations/"
++LOOKUP_ITEMS = "/api/admin/inventory/procurement/items/"
++ACCOUNTING_URL = "/api/admin/inventory/accounting/purchase-orders/"
++
++
++class ProcurementWorkflowBase(BaseAPITestCase):
++    def setUp(self):
++        super().setUp()
++        self.officer = make_staff("agent-officer@staff.dev", role=User.Role.PROCUREMENT_OFFICER)
++        self.storekeeper = make_staff("agent-store@staff.dev", role=User.Role.STOREKEEPER)
++        self.gm = make_staff("agent-gm@staff.dev", role=User.Role.GENERAL_MANAGER)
++        self.accountant = make_staff("agent-accountant@staff.dev", role=User.Role.ACCOUNTANT)
++        self.waiter = make_staff("agent-waiter@staff.dev", role=User.Role.WAITER)
++        self.supplier = Supplier.objects.create(reference="SUP-AGENT-1", name="Agent Beverages Ltd")
++        self.dormant_supplier = Supplier.objects.create(
++            reference="SUP-AGENT-2", name="Dormant Foods Ltd", status=Supplier.Status.INACTIVE,
++        )
++        self.location = StockLocation.objects.create(code="AGENT-STORE", name="Agent main store")
++        self.closed_location = StockLocation.objects.create(code="AGENT-OLD", name="Old store", is_active=False)
++        self.water = StockItem.objects.create(
++            sku="AG-WATER", name="Bottled water 75cl", base_unit="BOTTLE",
++            units_per_pack=Decimal("24"), pack_price=Decimal("2400"), standard_cost=Decimal("100"),
++        )
++        self.rice = StockItem.objects.create(sku="AG-RICE", name="Rice 50kg", base_unit="BAG", standard_cost=Decimal("65000"))
++        self.retired = StockItem.objects.create(sku="AG-RETIRED", name="Discontinued juice", is_active=False)
++
++    # ------------------------------------------------------------------ helpers
++    def payload(self, **overrides):
++        data = {
++            "supplier_id": self.supplier.pk,
++            "delivery_location_id": self.location.pk,
++            "supplier_reference": "QUOTE-77",
++            "notes": "Weekly restock",
++            "lines": [
++                {"item_id": self.water.pk, "quantity_ordered": "48", "unit_cost": "41.67", "notes": ""},
++                {"item_id": self.rice.pk, "quantity_ordered": "2", "unit_cost": "65000", "notes": ""},
++            ],
++        }
++        data.update(overrides)
++        return data
++
++    def create(self, user=None, **overrides):
++        self.auth(user or self.officer)
++        return self.client.post(PO_URL, self.payload(**overrides), format="json")
++
++    def create_ref(self, user=None, **overrides):
++        response = self.create(user, **overrides)
++        self.assertEqual(response.status_code, 201, response.content)
++        return response.json()["data"]["reference"]
++
++    def action(self, user, reference, name, body=None):
++        self.auth(user)
++        return self.client.post(f"{PO_URL}{reference}/{name}/", body or {}, format="json")
++
++    def approved_ref(self, **overrides):
++        reference = self.create_ref(**overrides)
++        self.assertEqual(self.action(self.officer, reference, "submit").status_code, 200)
++        response = self.action(self.gm, reference, "approve")
++        self.assertEqual(response.status_code, 200, response.content)
++        return reference
++
++    def detail(self, reference, user=None):
++        self.auth(user or self.gm)
++        response = self.client.get(f"{PO_URL}{reference}/")
++        self.assertEqual(response.status_code, 200, response.content)
++        return response.json()["data"]
++
++    def receive(self, reference, quantities, *, key, unit_cost=None):
++        order = self.detail(reference)
++        by_item = {line["item_sku"]: line["id"] for line in order["lines"]}
++        lines = []
++        for sku, quantity in quantities.items():
++            line = {"purchase_order_line_id": by_item[sku], "quantity_received": quantity}
++            if unit_cost is not None:
++                line["unit_cost"] = unit_cost
++            lines.append(line)
++        return self.action(self.storekeeper, reference, "receipts", {"idempotency_key": key, "lines": lines})
++
++    def pay(self, reference, amount, reference_text):
++        self.auth(self.gm)
++        return self.client.post(
++            f"{PO_URL}{reference}/pay/",
++            {"amount": amount, "method": "BANK_TRANSFER", "reference": reference_text},
++            format="json",
++        )
++
++
++class ProcurementLookupTests(ProcurementWorkflowBase):
++    def test_procurement_officer_can_search_locations_and_items_and_create_a_draft(self):
++        self.auth(self.officer)
++        locations = self.client.get(LOOKUP_LOCATIONS, {"search": "AGENT"})
++        items = self.client.get(LOOKUP_ITEMS, {"search": "AG-"})
++        self.assertEqual(locations.status_code, 200, locations.content)
++        self.assertEqual(items.status_code, 200, items.content)
++        self.assertEqual([row["code"] for row in locations.json()["data"]], ["AGENT-STORE"])
++        self.assertEqual(sorted(row["sku"] for row in items.json()["data"]), ["AG-RICE", "AG-WATER"])
++
++        response = self.create(self.officer)
++        self.assertEqual(response.status_code, 201, response.content)
++        data = response.json()["data"]
++        self.assertTrue(data["reference"].startswith("PO-"))
++        self.assertEqual(data["status"], "DRAFT")
++        self.assertIsNone(data["approved_by_email"])
++
++    def test_lookups_expose_purchase_side_fields_only(self):
++        self.auth(self.officer)
++        water = next(row for row in self.client.get(LOOKUP_ITEMS, {"search": "AG-WATER"}).json()["data"])
++        self.assertEqual(Decimal(water["units_per_pack"]), Decimal("24"))
++        self.assertEqual(water["base_unit"], "BOTTLE")
++        self.assertEqual(Decimal(water["standard_cost"]), Decimal("100"))
++        for selling_side in ("direct_sale_menu_item", "direct_sale_quantity", "direct_sale_location", "price"):
++            self.assertNotIn(selling_side, water)
++        location = self.client.get(LOOKUP_LOCATIONS).json()["data"][0]
++        self.assertEqual(set(location), {"id", "code", "name", "is_active"})
++
++    def test_lookups_never_offer_inactive_records(self):
++        self.auth(self.officer)
++        self.assertNotIn("AGENT-OLD", [row["code"] for row in self.client.get(LOOKUP_LOCATIONS).json()["data"]])
++        self.assertNotIn("AG-RETIRED", [row["sku"] for row in self.client.get(LOOKUP_ITEMS).json()["data"]])
++
++    def test_lookups_need_the_procurement_capability_and_are_read_only(self):
++        for user in (self.accountant, self.waiter):
++            self.auth(user)
++            self.assertEqual(self.client.get(LOOKUP_ITEMS).status_code, 403)
++            self.assertEqual(self.client.get(LOOKUP_LOCATIONS).status_code, 403)
++        self.auth(self.officer)
++        self.assertEqual(self.client.post(LOOKUP_ITEMS, {"sku": "X", "name": "X"}, format="json").status_code, 405)
++        self.assertEqual(self.client.post(LOOKUP_LOCATIONS, {"code": "X", "name": "X"}, format="json").status_code, 405)
++
++    def test_inventory_directories_were_not_widened(self):
++        self.auth(self.officer)
++        self.assertEqual(self.client.get("/api/admin/inventory/items/").status_code, 403)
++        self.assertEqual(self.client.get("/api/admin/inventory/locations/").status_code, 403)
++
++
++class DraftValidationTests(ProcurementWorkflowBase):
++    def test_required_fields_are_reported_per_field(self):
++        self.auth(self.officer)
++        response = self.client.post(PO_URL, {"notes": "nothing else"}, format="json")
++        self.assertEqual(response.status_code, 400)
++        errors = response.json()["errors"]
++        for field in ("supplier_id", "delivery_location_id", "lines"):
++            self.assertIn(field, errors)
++        empty_lines = self.create(lines=[])
++        self.assertEqual(empty_lines.status_code, 400)
++        self.assertIn("lines", empty_lines.json()["errors"])
++        self.assertEqual(PurchaseOrder.objects.count(), 0)
++
++    def test_unknown_or_inactive_supplier_and_location_are_field_errors(self):
++        cases = [
++            ({"supplier_id": 999999}, "supplier_id"),
++            ({"delivery_location_id": 999999}, "delivery_location_id"),
++            ({"supplier_id": self.dormant_supplier.pk}, "supplier_id"),
++            ({"delivery_location_id": self.closed_location.pk}, "delivery_location_id"),
++        ]
++        for overrides, field in cases:
++            with self.subTest(field=field, overrides=overrides):
++                response = self.create(**overrides)
++                self.assertEqual(response.status_code, 400, response.content)
++                self.assertIn(field, response.json()["errors"])
++        self.assertEqual(PurchaseOrder.objects.count(), 0)
++
++    def test_invalid_quantities_and_costs_are_refused_by_the_server(self):
++        bad_lines = [
++            {"item_id": self.rice.pk, "quantity_ordered": "0", "unit_cost": "10"},
++            {"item_id": self.rice.pk, "quantity_ordered": "-3", "unit_cost": "10"},
++            {"item_id": self.rice.pk, "quantity_ordered": "1", "unit_cost": "-0.01"},
++            {"item_id": self.rice.pk, "quantity_ordered": "99999999999", "unit_cost": "10"},
++            {"item_id": self.rice.pk, "quantity_ordered": "1.00001", "unit_cost": "10"},
++            {"item_id": self.rice.pk, "quantity_ordered": "abc", "unit_cost": "10"},
++        ]
++        for line in bad_lines:
++            with self.subTest(line=line):
++                response = self.create(lines=[line])
++                self.assertEqual(response.status_code, 400, response.content)
++                self.assertIn("lines", response.json()["errors"])
++        self.assertEqual(PurchaseOrder.objects.count(), 0)
++
++    def test_duplicate_item_lines_are_refused_naming_the_item(self):
++        response = self.create(lines=[
++            {"item_id": self.rice.pk, "quantity_ordered": "1", "unit_cost": "10"},
++            {"item_id": self.rice.pk, "quantity_ordered": "2", "unit_cost": "10"},
++        ])
++        self.assertEqual(response.status_code, 400, response.content)
++        message = " ".join(response.json()["errors"]["lines"])
++        self.assertIn("AG-RICE", message)
++        self.assertEqual(PurchaseOrder.objects.count(), 0)
++
++    def test_inactive_or_missing_items_are_refused_naming_them(self):
++        response = self.create(lines=[
++            {"item_id": self.retired.pk, "quantity_ordered": "1", "unit_cost": "10"},
++            {"item_id": 987654, "quantity_ordered": "1", "unit_cost": "10"},
++        ])
++        self.assertEqual(response.status_code, 400, response.content)
++        message = " ".join(response.json()["errors"]["lines"])
++        self.assertIn("AG-RETIRED", message)
++        self.assertIn("item #987654", message)
++        self.assertEqual(PurchaseOrder.objects.count(), 0)
++
++    def test_permission_failures_are_explicit(self):
++        for user in (self.accountant, self.waiter):
++            with self.subTest(role=user.role):
++                response = self.create(user)
++                self.assertEqual(response.status_code, 403)
++                self.assertEqual(response.json()["code"], "FORBIDDEN")
++        self.assertEqual(PurchaseOrder.objects.count(), 0)
++
++
++class DuplicateSubmissionTests(ProcurementWorkflowBase):
++    def test_replaying_the_same_request_returns_the_same_draft(self):
++        first = self.create(idempotency_key="dialog-key-1")
++        second = self.create(idempotency_key="dialog-key-1")
++        self.assertEqual(first.status_code, 201, first.content)
++        self.assertEqual(second.status_code, 200, second.content)
++        self.assertEqual(first.json()["data"]["reference"], second.json()["data"]["reference"])
++        self.assertEqual(second.json()["message"], "Existing purchase order returned.")
++        self.assertEqual(PurchaseOrder.objects.count(), 1)
++        self.assertEqual(AuditLog.objects.filter(action="PURCHASE_ORDER_CREATED").count(), 1)
++
++    def test_a_key_cannot_replay_different_details(self):
++        reference = self.create(idempotency_key="dialog-key-2").json()["data"]["reference"]
++        changed = self.create(
++            idempotency_key="dialog-key-2",
++            lines=[{"item_id": self.rice.pk, "quantity_ordered": "3", "unit_cost": "65000", "notes": ""}],
++        )
++        self.assertEqual(changed.status_code, 400, changed.content)
++        message = " ".join(changed.json()["errors"]["idempotency_key"])
++        self.assertIn(reference, message)
++        self.assertEqual(PurchaseOrder.objects.count(), 1)
++        self.assertEqual(PurchaseOrderLine.objects.filter(purchase_order__reference=reference).count(), 2)
++
++    def test_replay_is_tolerant_of_equivalent_number_formats(self):
++        self.create(idempotency_key="dialog-key-3")
++        same = self.create(idempotency_key="dialog-key-3", lines=[
++            {"item_id": self.rice.pk, "quantity_ordered": "2.0000", "unit_cost": "65000.00", "notes": ""},
++            {"item_id": self.water.pk, "quantity_ordered": "48.0", "unit_cost": "41.67", "notes": ""},
++        ])
++        self.assertEqual(same.status_code, 200, same.content)
++        self.assertEqual(PurchaseOrder.objects.count(), 1)
++
++    def test_a_retry_still_returns_the_draft_after_the_supplier_is_deactivated(self):
++        reference = self.create(idempotency_key="dialog-key-4").json()["data"]["reference"]
++        Supplier.objects.filter(pk=self.supplier.pk).update(status=Supplier.Status.INACTIVE)
++        retry = self.create(idempotency_key="dialog-key-4")
++        self.assertEqual(retry.status_code, 200, retry.content)
++        self.assertEqual(retry.json()["data"]["reference"], reference)
++        self.assertEqual(PurchaseOrder.objects.count(), 1)
++
++    def test_keys_are_scoped_to_the_person(self):
++        mine = self.create(self.officer, idempotency_key="shared-key")
++        theirs = self.create(self.storekeeper, idempotency_key="shared-key")
++        self.assertEqual(mine.status_code, 201)
++        self.assertEqual(theirs.status_code, 201)
++        self.assertNotEqual(mine.json()["data"]["reference"], theirs.json()["data"]["reference"])
++
++    def test_without_a_key_each_request_is_a_new_draft(self):
++        self.create()
++        self.create()
++        self.assertEqual(PurchaseOrder.objects.count(), 2)
++
++
++class DraftEditingTests(ProcurementWorkflowBase):
++    def test_a_draft_edit_replaces_lines_and_the_total_follows(self):
++        reference = self.create_ref()
++        self.auth(self.officer)
++        response = self.client.patch(f"{PO_URL}{reference}/", {
++            "lines": [{"item_id": self.rice.pk, "quantity_ordered": "3", "unit_cost": "64000"}], "notes": "",
++        }, format="json")
++        self.assertEqual(response.status_code, 200, response.content)
++        data = response.json()["data"]
++        self.assertEqual([line["item_sku"] for line in data["lines"]], ["AG-RICE"])
++        self.assertEqual(data["total_amount"], "192000.00")
++        self.assertEqual(data["status"], "DRAFT")
++
++    def test_an_edit_to_an_unknown_supplier_is_a_field_error(self):
++        reference = self.create_ref()
++        self.auth(self.officer)
++        response = self.client.patch(f"{PO_URL}{reference}/", {"supplier_id": 424242}, format="json")
++        self.assertEqual(response.status_code, 400, response.content)
++        self.assertIn("supplier_id", response.json()["errors"])
++
++    def test_a_cancelled_order_cannot_be_edited(self):
++        reference = self.create_ref()
++        self.assertEqual(self.action(self.officer, reference, "cancel", {"reason": "Duplicate draft"}).status_code, 200)
++        self.auth(self.officer)
++        response = self.client.patch(f"{PO_URL}{reference}/", {"notes": "late edit"}, format="json")
++        self.assertEqual(response.status_code, 400)
++        self.assertIn("cancelled", response.content.decode().lower())
++
++    def test_an_approved_order_cannot_be_edited(self):
++        reference = self.approved_ref()
++        self.auth(self.officer)
++        response = self.client.patch(f"{PO_URL}{reference}/", {
++            "lines": [{"item_id": self.rice.pk, "quantity_ordered": "99", "unit_cost": "1"}],
++        }, format="json")
++        self.assertEqual(response.status_code, 400)
++        self.assertEqual(self.detail(reference)["total_amount"], "132000.16")
++
++
++class ApprovalAndRejectionTests(ProcurementWorkflowBase):
++    def test_a_draft_is_neither_approved_nor_received_on_creation(self):
++        data = self.create().json()["data"]
++        self.assertEqual(data["status"], "DRAFT")
++        self.assertIsNone(data["approved_at"])
++        self.assertEqual(data["receipt_progress"], "NOT_RECEIVED")
++        self.assertEqual(data["payment_progress"], "UNPAID")
++        # A draft cannot skip review.
++        response = self.action(self.gm, data["reference"], "approve")
++        self.assertEqual(response.status_code, 400)
++
++    def test_submission_needs_procurement_rights(self):
++        reference = self.create_ref()
++        self.assertEqual(self.action(self.accountant, reference, "submit").status_code, 403)
++        self.assertEqual(self.action(self.officer, reference, "submit").status_code, 200)
++        self.assertEqual(self.detail(reference)["status"], "SUBMITTED")
++
++    def test_approval_needs_the_approver_capability_and_a_different_person(self):
++        reference = self.create_ref(self.gm)
++        self.assertEqual(self.action(self.gm, reference, "submit").status_code, 200)
++        self.assertEqual(self.action(self.officer, reference, "approve").status_code, 403)
++        own = self.action(self.gm, reference, "approve")
++        self.assertEqual(own.status_code, 403, own.content)
++        self.assertIn("cannot approve their own", own.json()["message"])
++        self.assertEqual(self.detail(reference)["status"], "SUBMITTED")
++
++        other = self.create_ref(self.officer)
++        self.action(self.officer, other, "submit")
++        approved = self.action(self.gm, other, "approve")
++        self.assertEqual(approved.status_code, 200, approved.content)
++        data = approved.json()["data"]
++        self.assertEqual(data["status"], "APPROVED")
++        self.assertEqual(data["receipt_progress"], "NOT_RECEIVED")  # approved is not received
++        self.assertEqual(data["payment_progress"], "UNPAID")        # approved is not paid
++
++    def test_rejection_returns_the_order_to_draft_with_the_reason(self):
++        reference = self.create_ref()
++        self.action(self.officer, reference, "submit")
++        response = self.action(self.gm, reference, "reject", {"reason": "Prices above the agreed quote."})
++        self.assertEqual(response.status_code, 200, response.content)
++        data = response.json()["data"]
++        self.assertEqual(data["status"], "DRAFT")
++        self.assertIsNone(data["approved_by_email"])
++        self.assertIn("Prices above the agreed quote.", data["notes"])
++        self.assertIn("agent-gm@staff.dev", data["notes"])
++        log = AuditLog.objects.get(action="PURCHASE_ORDER_REJECTED")
++        self.assertEqual(log.metadata["reference"], reference)
++        # The requester can correct and resubmit.
++        self.assertEqual(self.action(self.officer, reference, "submit").status_code, 200)
++
++    def test_rejection_needs_a_reason_the_right_role_and_a_submitted_order(self):
++        reference = self.create_ref()
++        self.assertEqual(self.action(self.gm, reference, "reject", {"reason": "x"}).status_code, 400)  # still DRAFT
++        self.action(self.officer, reference, "submit")
++        self.assertEqual(self.action(self.officer, reference, "reject", {"reason": "x"}).status_code, 403)
++        self.assertEqual(self.action(self.gm, reference, "reject", {"reason": "   "}).status_code, 400)
++        self.assertEqual(self.action(self.gm, reference, "reject", {}).status_code, 400)
++        self.assertEqual(self.detail(reference)["status"], "SUBMITTED")
++
++    def test_cancellation_keeps_the_record_and_ends_the_workflow(self):
++        reference = self.create_ref()
++        response = self.action(self.officer, reference, "cancel", {"reason": "Raised twice by mistake"})
++        self.assertEqual(response.status_code, 200, response.content)
++        self.assertEqual(response.json()["data"]["status"], "CANCELLED")
++        self.assertTrue(PurchaseOrder.objects.filter(reference=reference).exists())
++        self.assertEqual(PurchaseOrderLine.objects.filter(purchase_order__reference=reference).count(), 2)
++        self.assertEqual(self.action(self.officer, reference, "submit").status_code, 400)
++        replay = self.action(self.officer, reference, "cancel", {"reason": "again"})
++        self.assertEqual(replay.status_code, 200)
++        self.assertEqual(AuditLog.objects.filter(action="PURCHASE_ORDER_CANCELLED").count(), 1)
++
++    def test_an_approved_order_cannot_be_cancelled_here(self):
++        reference = self.approved_ref()
++        response = self.action(self.gm, reference, "cancel", {"reason": "Supplier failed"})
++        self.assertEqual(response.status_code, 400)
++        self.assertEqual(self.detail(reference)["status"], "APPROVED")
++
++    def test_submit_and_ordered_transitions_are_audited_once(self):
++        reference = self.create_ref()
++        self.action(self.officer, reference, "submit")
++        self.action(self.officer, reference, "submit")  # idempotent replay
++        self.action(self.gm, reference, "approve")
++        self.action(self.officer, reference, "ordered")
++        self.assertEqual(AuditLog.objects.filter(action="PURCHASE_ORDER_SUBMITTED").count(), 1)
++        self.assertEqual(AuditLog.objects.filter(action="PURCHASE_ORDER_ORDERED").count(), 1)
++
++
++class CostAndUnitTests(ProcurementWorkflowBase):
++    def test_the_total_is_the_sum_of_exact_line_products_rounded_half_up_once(self):
++        data = self.create(lines=[
++            {"item_id": self.rice.pk, "quantity_ordered": "0.3333", "unit_cost": "0.15"},   # 0.049995
++            {"item_id": self.water.pk, "quantity_ordered": "1", "unit_cost": "0.01"},
++        ]).json()["data"]
++        # 0.049995 + 0.01 = 0.059995 -> 0.06 (rounded once, at the order level)
++        self.assertEqual(data["total_amount"], "0.06")
++        self.assertEqual(data["outstanding_amount"], "0.06")
++
++    def test_pack_quantities_arrive_in_base_units_and_rounding_is_visible_in_the_total(self):
++        # The page converts 2 packs x NGN 1,000 (24 per pack) into 48 bottles at
++        # NGN 41.67, because the order stores cost per BASE unit to 2 decimals.
++        data = self.create(lines=[{"item_id": self.water.pk, "quantity_ordered": "48", "unit_cost": "41.67"}]).json()["data"]
++        line = data["lines"][0]
++        self.assertEqual(Decimal(line["quantity_ordered"]), Decimal("48"))
++        self.assertEqual(line["base_unit"], "BOTTLE")
++        self.assertEqual(Decimal(line["units_per_pack"]), Decimal("24"))
++        self.assertEqual(data["total_amount"], "2000.16")
++
++    def test_purchase_prices_and_item_identity_are_snapshotted_on_the_order(self):
++        reference = self.create_ref()
++        StockItem.objects.filter(pk=self.water.pk).update(
++            name="Water (renamed)", sku="AG-WATER-NEW", standard_cost=Decimal("150"), pack_price=Decimal("3600"),
++        )
++        data = self.detail(reference)
++        water = next(line for line in data["lines"] if line["item"] == self.water.pk)
++        self.assertEqual(water["item_sku"], "AG-WATER")
++        self.assertEqual(water["item_name"], "Bottled water 75cl")
++        self.assertEqual(Decimal(water["unit_cost"]), Decimal("41.67"))
++        self.assertEqual(data["total_amount"], "132000.16")
++
++    def test_a_receipt_at_a_different_price_keeps_the_ordered_price(self):
++        reference = self.approved_ref()
++        response = self.receive(reference, {"AG-RICE": "2"}, key="price-change", unit_cost="66000")
++        self.assertEqual(response.status_code, 201, response.content)
++        data = self.detail(reference)
++        rice = next(line for line in data["lines"] if line["item_sku"] == "AG-RICE")
++        self.assertEqual(Decimal(rice["unit_cost"]), Decimal("65000"))
++        self.assertEqual(data["total_amount"], "132000.16")
++        self.assertEqual(GoodsReceiptLine.objects.get(item=self.rice).unit_cost, Decimal("66000.00"))
++
++
++class ReceiptAndPayableLinkageTests(ProcurementWorkflowBase):
++    def test_a_receipt_never_pays_and_a_payment_never_receives(self):
++        reference = self.approved_ref()
++        self.assertEqual(self.receive(reference, {"AG-RICE": "1"}, key="r-1").status_code, 201)
++        data = self.detail(reference)
++        self.assertEqual(data["status"], "PARTIALLY_RECEIVED")
++        self.assertEqual(data["receipt_progress"], "PARTIALLY_RECEIVED")
++        self.assertEqual(data["payment_progress"], "UNPAID")
++        self.assertEqual(data["outstanding_amount"], data["total_amount"])
++
++        self.assertEqual(self.pay(reference, "50000.00", "TRF-1").status_code, 200)
++        data = self.detail(reference)
++        self.assertEqual(data["status"], "PARTIALLY_RECEIVED")
++        self.assertEqual(data["payment_progress"], "PARTIALLY_PAID")
++        self.assertEqual(data["outstanding_amount"], "82000.16")
++
++    def test_partial_receipts_then_the_rest(self):
++        reference = self.approved_ref()
++        self.receive(reference, {"AG-WATER": "24"}, key="r-a")
++        self.assertEqual(self.detail(reference)["receipt_progress"], "PARTIALLY_RECEIVED")
++        self.receive(reference, {"AG-WATER": "24", "AG-RICE": "2"}, key="r-b")
++        data = self.detail(reference)
++        self.assertEqual(data["status"], "RECEIVED")
++        self.assertEqual(data["receipt_progress"], "RECEIVED")
++        self.assertEqual(data["payment_progress"], "UNPAID")
++        over = self.receive(reference, {"AG-RICE": "1"}, key="r-c")
++        self.assertEqual(over.status_code, 400)
++
++    def test_partial_payments_then_the_balance(self):
++        reference = self.approved_ref()
++        self.receive(reference, {"AG-WATER": "48", "AG-RICE": "2"}, key="r-full")
++        self.assertEqual(self.pay(reference, "100000.00", "TRF-A").status_code, 200)
++        self.assertEqual(self.detail(reference)["payment_progress"], "PARTIALLY_PAID")
++        self.assertEqual(self.pay(reference, "50000.00", "TRF-B").status_code, 400)  # more than outstanding
++        self.assertEqual(self.pay(reference, "32000.16", "TRF-A").status_code, 400)  # same transfer twice
++        self.assertEqual(self.pay(reference, "32000.16", "TRF-C").status_code, 200)
++        data = self.detail(reference)
++        self.assertEqual(data["status"], "PAID")
++        self.assertEqual(data["payment_progress"], "PAID")
++        self.assertEqual(data["outstanding_amount"], "0.00")
++        self.assertEqual(len(data["payments"]), 2)
++
++    def test_an_order_paid_before_delivery_still_shows_the_goods_due(self):
++        reference = self.approved_ref()
++        self.assertEqual(self.pay(reference, "132000.16", "ADV-1").status_code, 200)
++        data = self.detail(reference)
++        self.assertEqual(data["status"], "PAID")
++        self.assertEqual(data["receipt_progress"], "NOT_RECEIVED")
++        self.receive(reference, {"AG-WATER": "48"}, key="after-pay")
++        data = self.detail(reference)
++        self.assertEqual(data["status"], "PAID")
++        self.assertEqual(data["receipt_progress"], "PARTIALLY_RECEIVED")
++
++    def test_unapproved_or_cancelled_orders_cannot_be_paid(self):
++        reference = self.create_ref()
++        self.assertEqual(self.pay(reference, "1.00", "T-1").status_code, 400)
++        self.action(self.officer, reference, "cancel", {"reason": "not needed"})
++        self.assertEqual(self.pay(reference, "1.00", "T-2").status_code, 400)
++
++
++class AccountingHandoffTests(ProcurementWorkflowBase):
++    def test_drafts_are_never_shown_to_accounting(self):
++        reference = self.create_ref()
++        self.auth(self.accountant)
++        self.assertEqual(self.client.get(ACCOUNTING_URL).json()["data"], [])
++        self.assertEqual(self.client.get(f"{ACCOUNTING_URL}{reference}/").status_code, 404)
++        self.assertEqual(self.client.get(ACCOUNTING_URL, {"status": "DRAFT"}).status_code, 400)
++
++    def test_a_submitted_order_reaches_accounting_with_everything_needed_to_verify_it(self):
++        reference = self.approved_ref()
++        self.receive(reference, {"AG-RICE": "1"}, key="acc-r")
++        self.pay(reference, "65000.00", "ACC-TRF-1")
++        self.auth(self.accountant)
++        listed = self.client.get(ACCOUNTING_URL, {"search": "Agent Beverages"})
++        self.assertEqual(listed.status_code, 200, listed.content)
++        self.assertEqual([row["reference"] for row in listed.json()["data"]], [reference])
++        data = self.client.get(f"{ACCOUNTING_URL}{reference}/").json()["data"]
++        self.assertEqual(data["status"], "PARTIALLY_RECEIVED")
++        self.assertEqual(data["supplier_name"], "Agent Beverages Ltd")
++        self.assertEqual(data["total_amount"], "132000.16")
++        self.assertEqual(data["total_paid"], "65000.00")
++        self.assertEqual(data["outstanding_amount"], "67000.16")
++        self.assertEqual(data["receipt_progress"], "PARTIALLY_RECEIVED")
++        self.assertEqual(data["payment_progress"], "PARTIALLY_PAID")
++        self.assertEqual(data["received_value"], "65000.00")
++        self.assertEqual(len(data["goods_receipts"]), 1)
++        self.assertEqual(data["goods_receipts"][0]["received_value"], "65000.00")
++        self.assertEqual(data["payments"][0]["reference"], "ACC-TRF-1")
++        self.assertEqual(data["approved_by_email"], "agent-gm@staff.dev")
++        self.assertEqual(len(data["lines"]), 2)
++
++    def test_the_hand_off_is_read_only(self):
++        reference = self.approved_ref()
++        self.auth(self.accountant)
++        self.assertEqual(self.client.post(ACCOUNTING_URL, {}, format="json").status_code, 405)
++        self.assertEqual(self.client.patch(f"{ACCOUNTING_URL}{reference}/", {"notes": "x"}, format="json").status_code, 405)
++        # ...and accounting still cannot touch the procurement endpoints.
++        self.assertEqual(self.client.get(PO_URL).status_code, 403)
++        self.assertEqual(self.client.post(f"{PO_URL}{reference}/ordered/", {}, format="json").status_code, 403)
++
++    def test_only_accounting_and_oversight_roles_can_read_it(self):
++        self.approved_ref()
++        expectations = {self.accountant: 200, self.gm: 200, self.officer: 403, self.storekeeper: 403, self.waiter: 403}
++        for user, expected in expectations.items():
++            with self.subTest(role=user.role):
++                self.auth(user)
++                self.assertEqual(self.client.get(ACCOUNTING_URL).status_code, expected)
++
++
++class ListQueryBudgetTests(ProcurementWorkflowBase):
++    def _queries(self, url, user):
++        self.auth(user)
++        # Warm the per-user capability/department cache first: those lookups
++        # run once per user, not per order, and would blur the comparison.
++        self.client.get(url, {"page_size": 50})
++        with CaptureQueriesContext(connection) as ctx:
++            response = self.client.get(url, {"page_size": 50})
++        self.assertEqual(response.status_code, 200, response.content)
++        return len(ctx.captured_queries)
++
++    def test_list_endpoints_do_not_grow_with_the_number_of_orders(self):
++        reference = self.approved_ref(idempotency_key="budget-0")
++        self.receive(reference, {"AG-RICE": "1"}, key="budget-r")
++        procurement_one = self._queries(PO_URL, self.gm)
++        accounting_one = self._queries(ACCOUNTING_URL, self.accountant)
++        for index in range(1, 6):
++            other = self.approved_ref(idempotency_key=f"budget-{index}")
++            self.receive(other, {"AG-RICE": "1"}, key=f"budget-r-{index}")
++        self.assertEqual(self._queries(PO_URL, self.gm), procurement_one)
++        self.assertEqual(self._queries(ACCOUNTING_URL, self.accountant), accounting_one)
+diff --git a/frontend/dashboard/procurement.html b/frontend/dashboard/procurement.html
+index 2318477..7828234 100644
+--- a/frontend/dashboard/procurement.html
++++ b/frontend/dashboard/procurement.html
+@@ -8,7 +8,7 @@
+ <meta name="apple-mobile-web-app-capable" content="yes">
+ <meta name="mobile-web-app-capable" content="yes">
+ <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+-<meta name="apple-mobile-web-app-title" content="J-ONE Staff"><link rel="stylesheet" href="../css/main.css?v=1.1.23"><style>.op-tabs{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}.op-tabs .is-active{background:var(--color-primary);color:var(--color-primary-ink);border-color:var(--color-primary)}</style></head>
++<meta name="apple-mobile-web-app-title" content="J-ONE Staff"><link rel="stylesheet" href="../css/main.css?v=1.1.23"><style>.op-tabs{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem}.op-tabs .is-active{background:var(--color-primary);color:var(--color-primary-ink);border-color:var(--color-primary)}tr.is-highlighted>td{background:var(--color-accent-soft)}</style></head>
+ <body><div class="dash"><aside class="dash-sidebar" aria-label="Staff navigation"><div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div><nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+     <script>
+     /* Sidebar pre-paint: the menu is painted from this ROLE's cached snapshot
+@@ -67,6 +67,113 @@ function setPage(name,page){state.pages[name]=Math.max(1,page||1);}
+ function pager(selector,items,response,loader){JONE.dashboard.renderPagination(document.querySelector(selector),items.length?response.pagination:null,{onPage:function(next){setPage(state.tab,next);loader(next);}});}
+ function trimmed(value,places){var factor=Math.pow(10,places);return String(Math.round(Number(value||0)*factor)/factor);}
+ function baseUnitOf(line){return String((line&&line.base_unit)||"PIECE");}
++/* A configured pack size, or 0. "0.00" must never become a default: a hidden
++   pieces-per-pack control holding 0 fails its min and blocks the form. */
++function packSizeOf(record){var per=Number((record&&record.units_per_pack)||0);return per>0?per:0;}
++
++/* The picker hands back {item_id, …} without the record; remember every item
++   record it displays so messages can name the SKU and pack sizes resolve. */
++var itemRecords={};
++function rememberItem(row){if(row&&row.id!=null)itemRecords[String(row.id)]=row;return row;}
++
++/* Procurement-scoped read-only lookups (a Procurement Officer holds
++   procurement.manage, not inventory.manage). A stale cached config.js on the
++   first load after a deploy may not list them yet: fall back to the inventory
++   directories, which still serve every role that also holds inventory.manage. */
++function resourceOr(preferred,fallback){var eps=(window.APP_CONFIG&&window.APP_CONFIG.API_ENDPOINTS)||{};return eps[preferred]?preferred:fallback;}
++
++/* Dialog plumbing shared by create/edit: the dialog's own submit button (via
++   formModal's onRender hook) shows what is happening while the request runs. */
++function dialogHandle(){var handle={panel:null};handle.onRender=function(panel){handle.panel=panel;};return handle;}
++function busyLabel(handle,text){
++  var button=handle&&handle.panel&&handle.panel.querySelector('button[type="submit"]');
++  if(!button)return function(){};
++  var previous=button.textContent;button.textContent=text;
++  return function(){button.textContent=previous;};
++}
++
++/* Never report a success the server did not confirm. A 2xx without the
++   order's reference and status (a proxy's HTML page, an empty body) is a
++   failure the user must hear about, not a phantom draft. */
++function confirmedOrder(response){
++  var order=response&&response.data;
++  if(!order||typeof order!=="object"||!order.reference||!order.status){
++    throw new Error("The server did not confirm this purchase order (no reference came back). Check the purchase-order list before trying again.");
++  }
++  return{reference:String(order.reference),status:String(order.status),replayed:Number(response.status)===200};
++}
++
++/* Server errors, made actionable. A bad line arrives as
++   {lines:{"0":{quantity_ordered:[…]}}}; the shared form renderer would print
++   that as "[object Object]", so each problem becomes one sentence naming the
++   line and its item. */
++var LINE_FIELD_LABELS={item_id:"Item",quantity_ordered:"Quantity (in pieces)",unit_cost:"Unit cost per piece",notes:"Line notes"};
++function errorStrings(node){
++  if(node==null)return[];
++  if(typeof node==="string")return node.trim()?[node.trim()]:[];
++  if(Array.isArray(node))return node.reduce(function(all,part){return all.concat(errorStrings(part));},[]);
++  if(typeof node==="object")return Object.keys(node).reduce(function(all,key){return all.concat(errorStrings(node[key]));},[]);
++  return[String(node)];
++}
++function lineErrorMessages(lines,typedLines){
++  var messages=[];
++  Object.keys(lines).forEach(function(key){
++    var entry=lines[key];
++    if(entry==null)return;
++    if(typeof entry!=="object"||Array.isArray(entry)||!/^\d+$/.test(key)){messages=messages.concat(errorStrings(entry));return;}
++    var index=Number(key),typed=(typedLines||[])[index]||{},record=typed.record||itemRecords[String(typed.item_id)]||{};
++    var who="Line "+(index+1)+(record.sku?" ("+record.sku+")":"");
++    Object.keys(entry).forEach(function(field){
++      errorStrings(entry[field]).forEach(function(text){messages.push(who+" — "+(LINE_FIELD_LABELS[field]||field)+": "+text);});
++    });
++  });
++  return messages;
++}
++function explainOrderError(err,typedLines,retryHint){
++  if(!err||typeof err!=="object")return err;
++  var errs=err.data&&err.data.errors;
++  if(Array.isArray(errs)){
++    err.data.errors={non_field_errors:errorStrings(errs)};
++  }else if(errs&&typeof errs==="object"&&errs.lines&&typeof errs.lines==="object"&&errorStrings(errs.lines).length){
++    var lines=errs.lines,structured=Array.isArray(lines)?lines.some(function(entry){return entry&&typeof entry==="object";}):true;
++    if(structured)errs.lines=lineErrorMessages(lines,typedLines);
++  }
++  if(err.status===403&&/required permission|permission to perform/i.test(String(err.message||""))){
++    err.message="You don't have permission to do this on purchase orders. Ask an administrator to check your procurement access.";
++  }else if(err.kind==="parse"||(err.status===0&&["timeout","network","offline"].indexOf(err.kind)!==-1)||err.status>=500){
++    // The outcome is unknown (the server may have saved it); repeating the
++    // same request is safe because the dialog keeps its idempotency key.
++    err.message=String(err.message||"The request failed.")+(retryHint?" "+retryHint:"");
++  }
++  return err;
++}
++async function saveOrder(run,typedLines,retryHint){
++  try{return await run();}
++  catch(err){throw explainOrderError(err,typedLines,retryHint);}
++}
++
++/* Exact decimal arithmetic for the order-total preview, matching the server:
++   SUM(Decimal quantity × Decimal unit cost), rounded half-up to 2 places.
++   Values are scaled integers (quantity ×10^4, cost ×10^2), so no float drift. */
++function toScaled(text,places){
++  var match=/^(\d+)(?:\.(\d+))?$/.exec(String(text==null?"":text).trim());
++  if(!match||typeof BigInt!=="function")return null;
++  var fraction=match[2]||"";
++  if(fraction.length>places)return null;
++  return BigInt(match[1]+fraction+new Array(places-fraction.length+1).join("0"));
++}
++function orderTotalText(apiLines){
++  if(typeof BigInt!=="function")return null;
++  var sum=BigInt(0);
++  for(var i=0;i<(apiLines||[]).length;i+=1){
++    var quantity=toScaled(apiLines[i].quantity_ordered,4),cost=toScaled(apiLines[i].unit_cost,2);
++    if(quantity===null||cost===null)return null;
++    sum+=quantity*cost;
++  }
++  var cents=(sum+BigInt(5000))/BigInt(10000),digits=cents.toString();
++  while(digits.length<3)digits="0"+digits;
++  return digits.slice(0,-2)+"."+digits.slice(-2);
++}
+ 
+ /* ---------------------------------------------------------------------------
+    Quantity types.
+@@ -91,8 +198,13 @@ function quantityUnitField(){
+ }
+ function piecesPerPackField(){
+   return {
+-    name:"pieces_per_pack",label:"Pieces in one pack/bag",type:"number",min:"0.01",step:"1",
+-    defaultValue:function(record){return record&&record.units_per_pack?JONE.trimQuantityValue(String(record.units_per_pack)):"";},
++    /* step "any", NOT "1". The step base of a number input is its min, so
++       min 0.01 + step 1 accepted only 0.01, 1.01, 2.01, … and rejected the
++       item's own whole pack size (24). The control is hidden while pieces are
++       typed, so the browser could not show its message and "Create draft" /
++       "Save changes" silently did nothing for any item with a pack size. */
++    name:"pieces_per_pack",label:"Pieces in one pack/bag",type:"number",min:"0.01",step:"any",
++    defaultValue:function(record){return packSizeOf(record)?JONE.trimQuantityValue(String(record.units_per_pack)):"";},
+     when:function(record,values){return String(values.quantity_unit||"PIECE")!=="PIECE";},
+     hint:function(record){return "How many "+baseUnitOf(record)+" pieces one whole pack/bag contains.";}
+   };
+@@ -114,18 +226,31 @@ function poLineFields(){
+      hint:function(record,values){
+        var mode=String(values.quantity_unit||"PIECE");
+        var typed=Number(values.unit_cost||0);
+-       if(mode==="PIECE")return "Cost of one "+baseUnitOf(record)+".";
++       var free=String(values.unit_cost==null?"":values.unit_cost).trim()!==""&&typed===0?" A cost of 0 records this line as free of charge.":"";
++       if(mode==="PIECE")return "Cost of one "+baseUnitOf(record)+"."+free;
+        var per=Number(values.pieces_per_pack||0);
+-       if(!(per>0)||!(typed>0))return "Cost of one whole pack/bag; the per-piece cost is derived.";
+-       return "= "+money(trimmed(typed/per,2))+" per "+baseUnitOf(record)+".";
++       if(!(per>0)||!(typed>0))return "Cost of one whole pack/bag; the per-piece cost is derived."+free;
++       var perPiece=trimmed(typed/per,2),text="= "+money(perPiece)+" per "+baseUnitOf(record)+".";
++       /* The order stores cost per piece to 2 decimals (kobo). Say so when that
++          rounding moves the line total away from the supplier's pack quote. */
++       var packs=Number(values.quantity_ordered||0);
++       if(packs>0){
++         var recorded=orderTotalText([{quantity_ordered:trimmed(packs*per,4),unit_cost:perPiece}]);
++         var quoted=orderTotalText([{quantity_ordered:trimmed(packs,4),unit_cost:trimmed(typed,2)}]);
++         if(recorded&&quoted&&recorded!==quoted)text+=" Recorded line total "+money(recorded)+" (quoted "+money(quoted)+") because the per-piece cost is rounded to 2 decimals.";
++       }
++       return text;
+      }}
+   ];
+ }
+ 
+-/* Turn the typed lines into the API's base-unit contract. */
+-function linesToBaseUnits(lines){
++/* Turn the typed lines into the API's base-unit contract. `records` (item id ->
++   record; defaults to the records the pickers displayed) supplies the SKU and
++   pack size that the picker's value does not carry. */
++function linesToBaseUnits(lines,records){
++  var known=records||(typeof itemRecords==="object"?itemRecords:null);
+   return (lines||[]).map(function(line){
+-    var record=line.record||{};
++    var record=line.record||(known&&known[String(line.item_id)])||{};
+     var mode=String(line.quantity_unit||"PIECE").toUpperCase();
+     var per=Number(line.pieces_per_pack||(record&&record.units_per_pack)||0);
+     var typed=Number(line.quantity_ordered||0),cost=Number(line.unit_cost||0);
+@@ -143,6 +268,26 @@ function linesToBaseUnits(lines){
+    Orders
+ --------------------------------------------------------------------------- */
+ function canEdit(status){return status==="DRAFT"||status==="SUBMITTED";}
++/* The server cancels only unapproved orders (an approved order is a commitment). */
++function canCancel(status){return status==="DRAFT"||status==="SUBMITTED";}
++/* What happens next, in words — from the stored status plus the server's
++   derived receipt/payment progress (goods arriving and money leaving are
++   independent: a PAID order may still be awaiting goods, and vice versa). */
++function nextStep(order){
++  var status=order&&order.status,receipt=order&&order.receipt_progress,payment=order&&order.payment_progress;
++  var owing=payment==="UNPAID"||payment==="PARTIALLY_PAID";
++  switch(status){
++    case "DRAFT":return "Next: submit for approval";
++    case "SUBMITTED":return "Next: approval by an authorised approver";
++    case "APPROVED":return "Next: mark ordered, then record the delivery";
++    case "ORDERED":return "Next: record the goods receipt";
++    case "PARTIALLY_RECEIVED":return "Next: receive the remaining goods"+(payment==="PARTIALLY_PAID"?" · part-paid":"");
++    case "RECEIVED":return owing?"Next: supplier payment (payable outstanding)":"Received";
++    case "PAID":return receipt&&receipt!=="RECEIVED"?"Paid · goods still to be received":"Complete";
++    case "CANCELLED":return "Cancelled · no further action";
++    default:return "";
++  }
++}
+ function canAttachReceipt(status){return ["APPROVED","ORDERED","PARTIALLY_RECEIVED","RECEIVED","PAID"].indexOf(status)!==-1;}
+ function canReceive(order){
+   if(["APPROVED","ORDERED","PARTIALLY_RECEIVED","PAID"].indexOf(order.status)===-1)return false;
+@@ -170,11 +315,12 @@ async function loadOrders(page){
+         // the same boundary — approving removes it from the very same render.
+         var actions=(canEdit(row.status)?'<button class="btn btn-sm btn-outline" type="button" data-proc-order-edit="'+JONE.esc(row.reference)+'">Edit</button> ':"")+
+           '<button class="btn btn-sm btn-outline" type="button" data-proc-order-view="'+JONE.esc(row.reference)+'">View</button>';
+-        return '<tr>'+
++        var step=nextStep(row);
++        return '<tr data-proc-order-row="'+JONE.esc(row.reference)+'">'+
+           '<td class="cell-nowrap"><strong>'+JONE.esc(row.reference)+'</strong><br><small class="caption">'+JONE.esc(row.supplier_reference||"—")+'</small></td>'+
+           '<td class="cell-clamp">'+JONE.esc(row.supplier_name)+'</td>'+
+           '<td class="cell-nowrap">'+JONE.esc(row.delivery_location_code)+'</td>'+
+-          '<td class="cell-nowrap">'+JONE.dashboard.statusPill(row.status)+'</td>'+
++          '<td class="cell-nowrap">'+JONE.dashboard.statusPill(row.status)+(step?'<br><small class="caption" data-proc-next-step>'+JONE.esc(step)+'</small>':'')+'</td>'+
+           '<td class="hide-sm cell-nowrap">'+JONE.esc(date(row.expected_on))+'</td>'+
+           '<td class="hide-sm num cell-nowrap">'+JONE.esc(row.line_count)+'</td>'+
+           '<td class="cell-nowrap"><div class="row-actions">'+actions+'</div></td></tr>';
+@@ -248,37 +394,117 @@ function supplierPicker(initial){
+     display:function(row){return row.name+(row.reference?" · "+row.reference:"");}});
+ }
+ function locationPicker(initial){
+-  return OPS.searchPicker({name:"delivery_location_id",label:"Delivery location",required:true,resource:"inventoryLocations",
++  return OPS.searchPicker({name:"delivery_location_id",label:"Delivery location",required:true,resource:resourceOr("procurementLocations","inventoryLocations"),
+     params:{active:"true"},placeholder:"Search location code or name",initial:initial||null,
+     display:function(row){return (row.code||"")+" · "+(row.name||"");}});
+ }
+ function itemDisplay(row){
++  rememberItem(row);
+   var text=(row.sku||"")+" · "+(row.name||"");
+   if(row.base_unit)text+=" · "+row.base_unit;
+-  if(row.units_per_pack)text+=" ("+JONE.trimQuantityValue(String(row.units_per_pack))+" pieces per pack/bag)";
++  if(packSizeOf(row))text+=" ("+JONE.trimQuantityValue(String(row.units_per_pack))+" pieces per pack/bag)";
+   return text;
+ }
++/* Safety net: native validation stops the submit when ANY control is invalid,
++   and a hidden control cannot show the browser's bubble — exactly how "Create
++   draft" went dead. Any invalid line control is now revealed and named (item,
++   field, reason) under the lines field instead of failing silently. */
++function watchLineValidity(mount,form){
++  form=form||(mount.closest&&mount.closest("form"));
++  if(!form)return;
++  form.addEventListener("invalid",function(event){
++    var control=event.target;
++    if(!control||!mount.contains(control))return;
++    var wrap=control.closest(".field"),row=control.closest(".op-line-picker-row");
++    if(wrap&&wrap.hidden)wrap.hidden=false;
++    var title=row&&row.querySelector("strong"),label=wrap&&wrap.querySelector(".field-label");
++    var host=mount.closest("[data-fm-field]"),error=host&&host.querySelector(".field-error");
++    if(host)host.classList.add("has-error");
++    if(error){
++      error.textContent=(label?label.textContent:control.name)+" for "+(title?title.textContent:"a line")+": "+(control.validationMessage||"enter a valid value.");
++      error.style.display="block";
++    }
++  },true);
++}
+ function orderLines(initial){
+-  return OPS.linePicker({name:"lines",label:"purchase-order line",required:true,resource:"inventoryItems",params:{active:"true"},
++  var picker=OPS.linePicker({name:"lines",label:"purchase-order line",required:true,resource:resourceOr("procurementItems","inventoryItems"),params:{active:"true"},
+     placeholder:"Search a stock item to add",display:itemDisplay,initialLines:initial||[],lineFields:poLineFields()});
++  var render=picker.render;
++  picker.render=function(mount,form){
++    render(mount,form);
++    try{watchLineValidity(mount,form);}catch(_){/* the net must never break the form */}
++  };
++  return picker;
++}
++/* Live total, computed exactly as the server will (see orderTotalText) from
++   the converted base-unit lines, so staff see the figure that will be stored. */
++function orderTotalField(picker){
++  var output=null;
++  function refresh(){
++    if(!output)return;
++    var lines=(picker.getValue()||{}).lines||[];
++    if(!lines.length){output.textContent="Add a line to see the order total.";return;}
++    var total=null;
++    try{total=orderTotalText(linesToBaseUnits(lines,itemRecords));}catch(_){total=null;}
++    output.textContent=total==null?"Complete every line to see the order total.":
++      "Order total as it will be recorded: "+money(total)+" ("+lines.length+" line"+(lines.length===1?"":"s")+").";
++  }
++  return{name:"order_total_preview",label:"Order total",type:"custom",
++    render:function(mount,form){
++      output=document.createElement("p");output.className="caption";output.setAttribute("aria-live","polite");
++      output.setAttribute("data-proc-order-total","");mount.appendChild(output);
++      var schedule=function(){setTimeout(refresh,0);};
++      ["input","change","click"].forEach(function(type){(form||mount).addEventListener(type,schedule);});
++      refresh();
++    },
++    getValue:function(){return{};}};
+ }
+ function orderFormFields(initial,supplier,location){
+-  return [supplierPicker(supplier),locationPicker(location),orderLines(initial),
++  var lines=orderLines(initial);
++  return [supplierPicker(supplier),locationPicker(location),lines,orderTotalField(lines),
+     {name:"expected_on",label:"Expected delivery date",type:"date"},
+     {name:"supplier_reference",label:"Supplier quotation/reference",type:"text"},
+     {name:"notes",label:"Notes",type:"textarea",rows:3}];
+ }
+ 
++/* After a save, make the order visible in the list without a page reload —
++   clearing a status filter that would hide it — and point at it. */
++async function showOrderInList(reference,status){
++  var filter=document.getElementById("proc-order-status");
++  if(filter&&filter.value&&filter.value!==status)filter.value="";
++  await loadOrders(1);
++  var row=orderRows.querySelector('[data-proc-order-row="'+(window.CSS&&CSS.escape?CSS.escape(reference):reference)+'"]');
++  if(row){row.classList.add("is-highlighted");row.setAttribute("aria-current","true");}
++}
++
+ async function newOrder(){
++  /* ONE key per dialog, made before the first attempt (as the goods-receipt
++     dialog does). A timeout or lost reply followed by "Create draft" again
++     replays the same request, and the server returns the draft it already
++     made instead of creating a duplicate. */
++  var draftContext={};
++  draftContext.idempotency_key=OPS.newIdempotencyKey("purchase-order");
++  var dialog=dialogHandle(),created=null;
+   var result=await JONE.dashboard.formModal({title:"Create purchase-order draft",submitText:"Create draft",wide:true,fields:orderFormFields([]),
++    onRender:dialog.onRender,
+     onSubmit:async function(values){
+-      values=OPS.omitEmpty(values);
+-      values.lines=linesToBaseUnits(values.lines);
+-      values.idempotency_key=OPS.newIdempotencyKey("purchase-order");
+-      await window.API.create("purchaseOrders",values);
++      var typedLines=values.lines||[];
++      var payload=OPS.omitEmpty(values);
++      payload.lines=linesToBaseUnits(typedLines,itemRecords);
++      payload.idempotency_key=draftContext.idempotency_key;
++      var restore=busyLabel(dialog,"Creating draft…");
++      try{
++        created=confirmedOrder(await saveOrder(function(){return window.API.create("purchaseOrders",payload);},typedLines,
++          "Your entries are kept: press “Create draft” again. It safely repeats the same request, so no duplicate draft is created."));
++      }finally{restore();}
+       return{message:"Purchase-order draft created."};
+     }});
+-  if(result){JONE.ui.toast("Purchase-order draft created.","success");loadOrders(1);}
++  if(result&&created){
++    JONE.ui.toast(created.replayed
++      ?"This draft was already saved as "+created.reference+". No duplicate was created."
++      :"Draft "+created.reference+" created. Next: open it and submit it for approval.","success");
++    showOrderInList(created.reference,created.status);
++  }
+ }
+ 
+ async function getOrder(reference){return (await window.API.getOne("purchaseOrders",reference)).data||{};}
+@@ -313,6 +539,9 @@ async function viewOrder(reference){
+       '<div><dt>Supplier</dt><dd>'+JONE.esc(order.supplier_name)+'</dd></div>'+
+       '<div><dt>Delivery location</dt><dd>'+JONE.esc(order.delivery_location_code)+'</dd></div>'+
+       '<div><dt>Status</dt><dd>'+JONE.dashboard.statusPill(order.status)+'</dd></div>'+
++      '<div><dt>Next step</dt><dd data-proc-next-step>'+JONE.esc(nextStep(order)||"—")+'</dd></div>'+
++      '<div><dt>Goods received</dt><dd>'+JONE.esc(RECEIPT_PROGRESS[order.receipt_progress]||"—")+'</dd></div>'+
++      '<div><dt>Supplier payment</dt><dd>'+JONE.esc(PAYMENT_PROGRESS[order.payment_progress]||"—")+'</dd></div>'+
+       '<div><dt>Expected</dt><dd>'+JONE.esc(date(order.expected_on))+'</dd></div>'+
+       '<div><dt>Requested by</dt><dd>'+JONE.esc(order.requested_by_email||"—")+'</dd></div>'+
+       '<div><dt>Approved by</dt><dd>'+JONE.esc(order.approved_by_email||"—")+'</dd></div>'+
+@@ -327,6 +556,8 @@ async function viewOrder(reference){
+     if(canEdit(order.status))action("Edit","btn-outline",function(){JONE.ui.modal.close();editOrder(reference,order);});
+     if(order.status==="DRAFT")action("Submit for approval","",function(){JONE.ui.modal.close();transitionOrder(reference,"submit");});
+     if(order.status==="SUBMITTED"&&manager())action("Approve","btn-accent",function(){JONE.ui.modal.close();approveOrder(order);});
++    if(order.status==="SUBMITTED"&&manager())action("Reject","btn-outline",function(){JONE.ui.modal.close();rejectOrder(order);});
++    if(canCancel(order.status))action("Cancel order","btn-ghost",function(){JONE.ui.modal.close();cancelOrder(order);});
+     if(order.status==="APPROVED")action("Mark ordered","",function(){JONE.ui.modal.close();transitionOrder(reference,"ordered");});
+     if(canReceive(order))action("Record receipt","",function(){JONE.ui.modal.close();recordReceipt(reference,order);});
+     if(canAttachReceipt(order.status)&&manager())action("Upload invoice / receipt","btn-outline",function(){JONE.ui.modal.close();uploadApprovalReceipt(reference,order);});
+@@ -336,9 +567,40 @@ async function viewOrder(reference){
+   }
+ }
+ 
++var RECEIPT_PROGRESS={NOT_RECEIVED:"Nothing received yet",PARTIALLY_RECEIVED:"Partly received",RECEIVED:"Everything received"};
++var PAYMENT_PROGRESS={UNPAID:"Unpaid",PARTIALLY_PAID:"Part-paid",PAID:"Paid in full",NOTHING_DUE:"Nothing due (zero-cost order)"};
++var TRANSITION_MESSAGES={submit:"Purchase order submitted for approval.",ordered:"Purchase order marked as ordered with the supplier."};
++
+ async function transitionOrder(reference,action){
+-  try{await window.API.resourceAction("purchaseOrders",reference,action,{});JONE.ui.toast("Purchase order updated.","success");loadOrders();}
+-  catch(err){JONE.ui.toast((err&&err.message)||"The purchase order couldn't be updated.","error");}
++  try{await window.API.resourceAction("purchaseOrders",reference,action,{});JONE.ui.toast(TRANSITION_MESSAGES[action]||"Purchase order updated.","success");loadOrders();}
++  catch(err){JONE.ui.toast((explainOrderError(err)&&err.message)||"The purchase order couldn't be updated.","error");loadOrders();}
++}
++
++/* Rejection returns the order to its requester as a DRAFT (the server keeps
++   the reason on the order and in the audit log); cancellation withdraws an
++   unapproved order without deleting it. Both need a reason. */
++async function rejectOrder(order){
++  var result=await JONE.dashboard.formModal({title:"Reject purchase order · "+order.reference,submitText:"Reject and return to draft",wide:true,fields:[
++    {name:"reason",label:"Reason for rejecting",type:"textarea",rows:3,required:true,
++     help:"The order goes back to its requester as a draft with this reason. They can correct and resubmit it, or cancel it."}],
++    onSubmit:async function(values){
++      if(!String(values.reason||"").trim())throw new Error("Enter the reason for rejecting this purchase order.");
++      await saveOrder(function(){return window.API.resourceAction("purchaseOrders",order.reference,"reject",{reason:values.reason.trim()});});
++      return{message:"Purchase order rejected."};
++    }});
++  if(result){JONE.ui.toast("Purchase order "+order.reference+" rejected and returned to draft.","success");loadOrders();}
++}
++
++async function cancelOrder(order){
++  var result=await JONE.dashboard.formModal({title:"Cancel purchase order · "+order.reference,submitText:"Cancel this order",wide:true,fields:[
++    {name:"reason",label:"Reason for cancelling",type:"textarea",rows:3,required:true,
++     help:"Cancelling keeps the order on record as CANCELLED; nothing is deleted. Use it, for example, for a duplicate draft."}],
++    onSubmit:async function(values){
++      if(!String(values.reason||"").trim())throw new Error("Enter the reason for cancelling this purchase order.");
++      await saveOrder(function(){return window.API.resourceAction("purchaseOrders",order.reference,"cancel",{reason:values.reason.trim()});});
++      return{message:"Purchase order cancelled."};
++    }});
++  if(result){JONE.ui.toast("Purchase order "+order.reference+" cancelled.","success");loadOrders();}
+ }
+ 
+ /* ---------------------------------------------------------------------------
+@@ -351,7 +613,7 @@ async function transitionOrder(reference,action){
+ function initialLinesFor(order){
+   return (order.lines||[]).map(function(line){
+     return{record:{id:line.item,sku:line.item_sku,name:line.item_name,base_unit:line.base_unit,units_per_pack:line.units_per_pack},
+-      values:{quantity_unit:"PIECE",pieces_per_pack:line.units_per_pack?JONE.trimQuantityValue(String(line.units_per_pack)):"",
++      values:{quantity_unit:"PIECE",pieces_per_pack:packSizeOf(line)?JONE.trimQuantityValue(String(line.units_per_pack)):"",
+         quantity_ordered:JONE.trimQuantityValue(String(line.quantity_ordered)),unit_cost:JONE.trimQuantityValue(String(line.unit_cost))}};
+   });
+ }
+@@ -361,15 +623,17 @@ async function editOrder(reference,known){
+   try{if(!order||!order.lines)order=await getOrder(reference);}
+   catch(err){JONE.ui.toast((err&&err.message)||"The purchase order couldn't be loaded.","error");return;}
+   if(!canEdit(order.status)){
+-    JONE.ui.toast("This order has already been approved and can no longer be edited.","error");
++    JONE.ui.toast(order.status==="CANCELLED"?"This order has been cancelled and can no longer be edited.":"This order has already been approved and can no longer be edited.","error");
+     loadOrders();
+     return;
+   }
++  var dialog=dialogHandle(),saved=null;
+   var result=await JONE.dashboard.formModal({title:"Edit purchase order · "+reference,submitText:"Save changes",wide:true,
+     fields:orderFormFields(initialLinesFor(order),
+       {id:order.supplier,name:order.supplier_name||"Selected supplier"},
+       {id:order.delivery_location,name:order.delivery_location_code||"Selected location"}),
+     values:{expected_on:order.expected_on||"",supplier_reference:order.supplier_reference||"",notes:order.notes||""},
++    onRender:dialog.onRender,
+     onSubmit:async function(values){
+       var payload=OPS.omitEmpty(values);
+       payload.lines=linesToBaseUnits(values.lines);
+@@ -378,10 +642,14 @@ async function editOrder(reference,known){
+       payload.notes=values.notes||"";
+       payload.supplier_reference=values.supplier_reference||"";
+       payload.expected_on=values.expected_on||null;
+-      await window.API.update("purchaseOrders",reference,payload);
++      var restore=busyLabel(dialog,"Saving…");
++      try{
++        saved=confirmedOrder(await saveOrder(function(){return window.API.update("purchaseOrders",reference,payload);},values.lines,
++          "Press “Save changes” again; repeating the same edit is safe."));
++      }finally{restore();}
+       return{message:"Purchase order updated."};
+     }});
+-  if(result){JONE.ui.toast("Purchase order updated.","success");loadOrders();}
++  if(result&&saved){JONE.ui.toast("Purchase order "+saved.reference+" updated.","success");loadOrders();}
+ }
+ 
+ /* ---------------------------------------------------------------------------
+@@ -444,10 +712,18 @@ async function recordPayment(reference,known){
+   try{if(!order||order.total_amount==null)order=await getOrder(reference);}
+   catch(err){JONE.ui.toast((err&&err.message)||"The purchase order couldn't be loaded.","error");return;}
+   var outstanding=Number(order.outstanding_amount||0);
+-  var result=await JONE.dashboard.formModal({title:"Record supplier payment · "+reference,submitText:"Record payment",wide:true,multipart:true,fields:[
+-    {name:"amount",label:"Amount paid ("+JONE.esc(order.currency||"NGN")+")",type:"number",step:"0.01",
++  // Labels, help and thrown messages are rendered as text (textContent), so
++  // they are NOT HTML-escaped here — escaping would print "&amp;" literally.
++  var result=await JONE.dashboard.formModal({title:"Record supplier payment · "+reference,submitText:"Record payment",wide:true,multipart:true,
++    onRender:function(panel){
++      var note=document.createElement("p");note.className="hint";note.style.margin="0.75rem 1.25rem 0";
++      note.textContent="This records the money paid on the purchase order itself (the procurement record). It does not post to the finance ledger: Accounting records the supplier payable and its settlement through Expenses.";
++      panel.appendChild(note);
++    },
++    fields:[
++    {name:"amount",label:"Amount paid ("+(order.currency||"NGN")+")",type:"number",step:"0.01",
+      value:String(outstanding||""),required:true,
+-     help:"Defaults to the outstanding balance of "+JONE.esc(money(order.outstanding_amount,order.currency))+". Partial payments are allowed; the order is marked paid once the payments cover the total."},
++     help:"Defaults to the outstanding balance of "+money(order.outstanding_amount,order.currency)+". Partial payments are allowed; the order is marked paid once the payments cover the total."},
+     {name:"method",label:"How was it paid",type:"select",required:true,options:[
+       {value:"BANK_TRANSFER",label:"Bank transfer"},{value:"CARD",label:"Card / terminal"},
+       {value:"CHEQUE",label:"Cheque"},{value:"CASH",label:"Cash"}]},
+@@ -457,13 +733,18 @@ async function recordPayment(reference,known){
+     {name:"evidence_file",label:"Supplier invoice / payment receipt",type:"file",accept:"application/pdf,image/jpeg,image/png,image/webp",
+      help:"Attach the supplier's invoice or the payment slip (PDF, JPG, PNG or WebP)."},
+     {name:"notes",label:"Notes",type:"textarea",rows:2}],
+-    values:{paid_on:new Date().toISOString().slice(0,10)},
+-    onSubmit:async function(values){
++    /* formModal prefills from `values` whenever it is given (a field's own
++       `value` is then ignored), so the outstanding balance must be here too. */
++    values:{paid_on:new Date().toISOString().slice(0,10),amount:String(outstanding||"")},
++    onSubmit:async function(values,formData){
+       // Cross-field rules the native constraints cannot express;
+       // the server enforces exactly the same ones.
+-      if(!(Number(values.amount)||0)>0)throw new Error("Enter a payment amount greater than zero.");
+-      if(Number(values.amount||0)>outstanding)throw new Error("The payment cannot exceed the outstanding balance of "+JONE.esc(money(order.outstanding_amount,order.currency))+".");
++      if(!((Number(values.amount)||0)>0))throw new Error("Enter a payment amount greater than zero.");
++      if(Number(values.amount||0)>outstanding)throw new Error("The payment cannot exceed the outstanding balance of "+money(order.outstanding_amount,order.currency)+".");
+       if(values.method!=="CASH"&&!(values.reference||"").trim())throw new Error("Enter the bank, card or cheque reference for this payment.");
++      // formData is the multipart body formModal built from the fields above;
++      // it was referenced without being declared, so every payment failed with
++      // "formData is not defined" before reaching the server.
+       var fd=formData||new FormData();
+       await window.API.resourceAction("purchaseOrders",reference,"pay",fd);
+       return{message:"Supplier payment recorded."};
+diff --git a/frontend/js/config.js b/frontend/js/config.js
+index b3f2fdf..1d93530 100644
+--- a/frontend/js/config.js
++++ b/frontend/js/config.js
+@@ -340,6 +340,13 @@
+     inventoryTransfers:           "/api/admin/inventory/transfers/",
+     suppliers:                    "/api/admin/inventory/suppliers/",
+     purchaseOrders:               "/api/admin/inventory/purchase-orders/",
++    /* Procurement-scoped, read-only lookups for the purchase-order form: a
++       Procurement Officer holds procurement.manage but not inventory.manage. */
++    procurementLocations:         "/api/admin/inventory/procurement/locations/",
++    procurementItems:             "/api/admin/inventory/procurement/items/",
++    /* Read-only Accounting hand-off of purchase orders from submission onwards
++       (reports.financial.view / expense.approve / procurement.approve). */
++    purchaseOrderAccounting:      "/api/admin/inventory/accounting/purchase-orders/",
+ 
+     /* Reports (MANAGER+) — financial ledger summary stays separate from
+        legacy booking/occupancy compatibility projections.
+diff --git a/frontend/tests-js/test-procurement-draft-create-ui.js b/frontend/tests-js/test-procurement-draft-create-ui.js
+new file mode 100644
+index 0000000..04e3b27
+--- /dev/null
++++ b/frontend/tests-js/test-procurement-draft-create-ui.js
+@@ -0,0 +1,338 @@
++/* Purchase-order draft creation: the "Create draft does nothing" fix.
++   Run from /frontend: node --test tests-js/test-procurement-draft-create-ui.js
++
++   Unlike a source-pattern check, these tests EXECUTE the shipped page
++   functions (sliced out of dashboard/procurement.html into a vm context with
++   small stubs), so they fail if the behaviour regresses:
++
++   * the hidden "pieces per pack" control accepts the item's own whole pack
++     size (min 0.01 + step 1 rejected 24 — a hidden, silent stepMismatch);
++   * one idempotency key per dialog, reused on every retry;
++   * success only when the server returned the order's reference and status;
++   * server errors become sentences that name the line and the item;
++   * the order-total preview equals the server's Decimal arithmetic;
++   * the supplier-payment dialog really sends the multipart body it built. */
++"use strict";
++
++const test = require("node:test");
++const assert = require("node:assert/strict");
++const fs = require("node:fs");
++const path = require("node:path");
++const vm = require("node:vm");
++const { FRONTEND } = require("./harness");
++
++const PAGE = fs.readFileSync(path.join(FRONTEND, "dashboard", "procurement.html"), "utf8");
++const CONFIG = fs.readFileSync(path.join(FRONTEND, "js", "config.js"), "utf8");
++
++function sliceFunction(name) {
++  const marker = PAGE.indexOf("function " + name + "(");
++  assert.ok(marker > 0, name + " is missing from the shipped page");
++  const start = PAGE.lastIndexOf("async ", marker) === marker - 6 ? marker - 6 : marker;
++  const open = PAGE.indexOf("{", marker);
++  let depth = 0;
++  for (let i = open; i < PAGE.length; i += 1) {
++    if (PAGE[i] === "{") depth += 1;
++    else if (PAGE[i] === "}") {
++      depth -= 1;
++      if (depth === 0) return PAGE.slice(start, i + 1);
++    }
++  }
++  throw new Error("unbalanced braces in " + name);
++}
++
++function sliceVar(name) {
++  const match = new RegExp("var " + name + "=[^\\n]*;").exec(PAGE);
++  assert.ok(match, "var " + name + " is missing from the shipped page");
++  return match[0];
++}
++
++function context(extra) {
++  const toasts = [];
++  const ctx = Object.assign({
++    Math, String, Number, Error, Object, Array, JSON, RegExp, BigInt, Promise, setTimeout,
++    toasts,
++    window: { APP_CONFIG: { API_ENDPOINTS: {} } },
++    JONE: {
++      trimQuantityValue: (value) => String(Number(value)),
++      formatMoney: (value) => "NGN " + value,
++      formatQuantity: (value) => String(value),
++      esc: (value) => String(value),
++      ui: { toast: (message, kind) => toasts.push([kind, message]) },
++      dashboard: {},
++    },
++    OPS: { omitEmpty: (values) => Object.assign({}, values) },
++  }, extra || {});
++  vm.createContext(ctx);
++  return ctx;
++}
++
++function load(ctx, names, vars) {
++  (vars || []).forEach((name) => vm.runInContext(sliceVar(name), ctx));
++  names.forEach((name) => vm.runInContext(sliceFunction(name), ctx));
++  return ctx;
++}
++
++/* The HTML number-input step rule: with a step other than "any", a value is
++   valid only when (value - stepBase) / step is an integer; stepBase is min. */
++function satisfiesStep(control, value) {
++  if (control.step === "any") return Number(value) >= Number(control.min);
++  const base = Number(control.min || 0), step = Number(control.step || 1);
++  const ratio = (Number(value) - base) / step;
++  return Number(value) >= base && Math.abs(ratio - Math.round(ratio)) < 1e-9;
++}
++
++/* ------------------------------ Root cause -------------------------------- */
++
++test("the original pieces-per-pack constraint rejected a whole pack size (the dead button)", () => {
++  // min 0.01 + step 1: the only valid values were 0.01, 1.01, 2.01, ...
++  assert.equal(satisfiesStep({ min: "0.01", step: "1" }, "24"), false);
++  assert.equal(satisfiesStep({ min: "0.01", step: "1" }, "24.01"), true);
++});
++
++test("the pieces-per-pack control now accepts every real pack size, hidden or shown", () => {
++  const ctx = load(context(), ["packSizeOf", "piecesPerPackField"]);
++  const field = ctx.piecesPerPackField();
++  assert.equal(field.step, "any");
++  for (const size of ["1", "6", "12", "24", "50", "144", "1000", "0.5", "12.5"]) {
++    assert.ok(satisfiesStep(field, size), "pack size " + size + " must be valid");
++  }
++  // The default comes from the item, and only when it is a real pack size:
++  // a "0.00" default would sit hidden below min and block the form again.
++  assert.equal(field.defaultValue({ units_per_pack: "24.00" }), "24");
++  assert.equal(field.defaultValue({ units_per_pack: "0.00" }), "");
++  assert.equal(field.defaultValue({ units_per_pack: null }), "");
++  assert.equal(field.defaultValue(null), "");
++});
++
++test("no purchase-order line control combines min and a step that excludes whole numbers", () => {
++  const ctx = load(context(), ["packSizeOf", "piecesPerPackField", "quantityUnitField", "poLineFields", "trimmed", "baseUnitOf", "orderTotalText", "toScaled"]);
++  ctx.money = (value) => "NGN " + value;
++  for (const field of ctx.poLineFields()) {
++    if (field.type !== "number") continue;
++    for (const value of ["1", "24", "100"]) {
++      assert.ok(satisfiesStep(field, value), field.name + " must accept " + value);
++    }
++  }
++});
++
++test("hidden invalid line controls can never fail silently again", () => {
++  const lines = sliceFunction("orderLines");
++  const net = sliceFunction("watchLineValidity");
++  assert.match(lines, /watchLineValidity\(mount,form\)/);
++  assert.match(net, /addEventListener\("invalid",function\(event\)\{/);
++  assert.match(net, /\},true\);/, "the listener must capture (invalid events do not bubble)");
++  assert.match(net, /wrap\.hidden=false/, "a hidden invalid control is revealed");
++  assert.match(net, /control\.validationMessage/, "and its reason is shown under the lines field");
++});
++
++/* ------------------------------ Duplicates -------------------------------- */
++
++test("one idempotency key per dialog: a retry after a timeout replays the same key", async () => {
++  let minted = 0;
++  const sent = [];
++  let opts = null;
++  let resolveModal;
++  const ctx = context({
++    orderFormFields: () => [],
++    showOrderInList: (reference, status) => ctx.shown.push([reference, status]),
++    shown: [],
++    itemRecords: { 7: { id: 7, sku: "RICE" } },
++  });
++  ctx.OPS.newIdempotencyKey = (prefix) => prefix + "-key-" + (minted += 1);
++  ctx.JONE.dashboard.formModal = (options) => { opts = options; return new Promise((resolve) => { resolveModal = resolve; }); };
++  let attempt = 0;
++  ctx.window.API = {
++    create: async (resource, payload) => {
++      sent.push(JSON.parse(JSON.stringify(payload)));
++      attempt += 1;
++      if (attempt === 1) {
++        const err = new Error("The request timed out.");
++        err.status = 0; err.kind = "timeout";
++        throw err;
++      }
++      return { status: 200, data: { reference: "PO-20261029-AAAA", status: "DRAFT" } };
++    },
++  };
++  load(ctx, ["newOrder", "dialogHandle", "busyLabel", "confirmedOrder", "saveOrder", "explainOrderError",
++    "errorStrings", "lineErrorMessages", "linesToBaseUnits", "trimmed"], ["LINE_FIELD_LABELS"]);
++
++  const running = ctx.newOrder();
++  const values = { supplier_id: 3, delivery_location_id: 4, lines: [{ item_id: 7, quantity_unit: "PIECE", quantity_ordered: "2", unit_cost: "65000" }] };
++  await assert.rejects(opts.onSubmit(values), /timed out[\s\S]*press “Create draft” again/);
++  const outcome = await opts.onSubmit(values);
++  resolveModal(outcome);
++  await running;
++
++  assert.equal(minted, 1, "the key is minted once, when the dialog opens");
++  assert.equal(sent.length, 2);
++  assert.equal(sent[0].idempotency_key, "purchase-order-key-1");
++  assert.equal(sent[1].idempotency_key, sent[0].idempotency_key);
++  assert.deepEqual(sent[0].lines, [{ item_id: 7, quantity_ordered: "2", unit_cost: "65000", notes: "" }]);
++  // A 200 is the server returning the draft it already had: say so.
++  assert.match(ctx.toasts.at(-1)[1], /already saved as PO-20261029-AAAA\. No duplicate/);
++  assert.deepEqual(JSON.parse(JSON.stringify(ctx.shown)), [["PO-20261029-AAAA", "DRAFT"]]);
++});
++
++test("the key is created outside onSubmit (shipped source)", () => {
++  const create = sliceFunction("newOrder");
++  const submit = create.slice(create.indexOf("onSubmit:"));
++  assert.match(create, /draftContext\.idempotency_key=OPS\.newIdempotencyKey\("purchase-order"\)/);
++  assert.doesNotMatch(submit, /newIdempotencyKey/);
++  assert.match(submit, /payload\.idempotency_key=draftContext\.idempotency_key/);
++});
++
++/* ---------------------------- Honest outcomes ----------------------------- */
++
++test("success is reported only when the server confirmed a reference and status", () => {
++  const ctx = load(context(), ["confirmedOrder"]);
++  assert.throws(() => ctx.confirmedOrder({ status: 200, data: "<html>proxy page</html>" }), /did not confirm/);
++  assert.throws(() => ctx.confirmedOrder({ status: 201, data: {} }), /did not confirm/);
++  assert.throws(() => ctx.confirmedOrder({ status: 201, data: { reference: "PO-1" } }), /did not confirm/);
++  assert.throws(() => ctx.confirmedOrder(undefined), /did not confirm/);
++  const made = ctx.confirmedOrder({ status: 201, data: { reference: "PO-1", status: "DRAFT" } });
++  assert.equal(made.reference, "PO-1");
++  assert.equal(made.status, "DRAFT");
++  assert.equal(made.replayed, false);
++  assert.equal(ctx.confirmedOrder({ status: 200, data: { reference: "PO-1", status: "DRAFT" } }).replayed, true);
++});
++
++test("a nested line error names the line and the item instead of [object Object]", () => {
++  const ctx = load(context({ itemRecords: { 9: { id: 9, sku: "WATER-75CL" } } }),
++    ["explainOrderError", "errorStrings", "lineErrorMessages"], ["LINE_FIELD_LABELS"]);
++  const err = { status: 400, message: "Validation failed.", data: { errors: {
++    lines: { 1: { quantity_ordered: ["Ensure that there are no more than 10 digits before the decimal point."] } },
++  } } };
++  ctx.explainOrderError(err, [{ item_id: 4, record: { sku: "RICE" } }, { item_id: 9 }]);
++  assert.deepEqual(JSON.parse(JSON.stringify(err.data.errors.lines)), [
++    "Line 2 (WATER-75CL) — Quantity (in pieces): Ensure that there are no more than 10 digits before the decimal point.",
++  ]);
++  // The older list shape and the list-level message shape are handled too.
++  const listShape = { status: 400, data: { errors: { lines: [{}, { unit_cost: ["Ensure this value is greater than or equal to 0."] }] } } };
++  ctx.explainOrderError(listShape, [{ item_id: 4, record: { sku: "RICE" } }, { item_id: 9 }]);
++  assert.deepEqual(JSON.parse(JSON.stringify(listShape.data.errors.lines)), [
++    "Line 2 (WATER-75CL) — Unit cost per piece: Ensure this value is greater than or equal to 0.",
++  ]);
++  const plain = { status: 400, data: { errors: { lines: ["An item may appear only once per purchase order: RICE is on more than one line."] } } };
++  ctx.explainOrderError(plain, []);
++  assert.deepEqual(JSON.parse(JSON.stringify(plain.data.errors.lines)), ["An item may appear only once per purchase order: RICE is on more than one line."]);
++});
++
++test("business-rule, permission and connection failures stay actionable", () => {
++  const ctx = load(context(), ["explainOrderError", "errorStrings", "lineErrorMessages"], ["LINE_FIELD_LABELS"]);
++  const rule = { status: 400, message: "Validation failed.", data: { errors: ["Could not allocate a unique purchase-order reference; please retry."] } };
++  ctx.explainOrderError(rule);
++  assert.deepEqual(JSON.parse(JSON.stringify(rule.data.errors)), { non_field_errors: ["Could not allocate a unique purchase-order reference; please retry."] });
++
++  const denied = { status: 403, message: "You do not have the required permission for this action.", data: {} };
++  ctx.explainOrderError(denied);
++  assert.match(denied.message, /procurement access/);
++  const reasoned = { status: 403, message: "A requester cannot approve their own purchase order.", data: {} };
++  ctx.explainOrderError(reasoned);
++  assert.equal(reasoned.message, "A requester cannot approve their own purchase order.", "a specific server reason is kept");
++
++  const offline = { status: 0, kind: "network", message: "We couldn't reach our servers." };
++  ctx.explainOrderError(offline, [], "Press again; it is safe.");
++  assert.equal(offline.message, "We couldn't reach our servers. Press again; it is safe.");
++  const crashed = { status: 500, message: "We're having trouble completing this request." };
++  ctx.explainOrderError(crashed, [], "Press again; it is safe.");
++  assert.match(crashed.message, /Press again; it is safe\.$/);
++});
++
++/* --------------------------- Costs and units ------------------------------ */
++
++test("the order-total preview uses the server's exact Decimal arithmetic", () => {
++  const ctx = load(context(), ["orderTotalText", "toScaled"]);
++  // 2 packs x NGN 1,000 (24 per pack) are stored as 48 x 41.67.
++  assert.equal(ctx.orderTotalText([{ quantity_ordered: "48", unit_cost: "41.67" }]), "2000.16");
++  // Rounded half-up ONCE at the order level, like PurchaseOrder.total_amount.
++  assert.equal(ctx.orderTotalText([
++    { quantity_ordered: "0.3333", unit_cost: "0.15" },
++    { quantity_ordered: "1", unit_cost: "0.01" },
++  ]), "0.06");
++  assert.equal(ctx.orderTotalText([{ quantity_ordered: "0.1", unit_cost: "0.2" }, { quantity_ordered: "0.2", unit_cost: "0.1" }]), "0.04");
++  assert.equal(ctx.orderTotalText([{ quantity_ordered: "9999999999.9999", unit_cost: "9999999999.99" }]), "99999999999899000000.00");
++  assert.equal(ctx.orderTotalText([]), "0.00");
++  assert.equal(ctx.orderTotalText([{ quantity_ordered: "1e-7", unit_cost: "1" }]), null);
++  assert.equal(ctx.orderTotalText([{ quantity_ordered: "1.00001", unit_cost: "1" }]), null);
++});
++
++test("lines resolve SKU and pack size from the records the picker displayed", () => {
++  const ctx = load(context(), ["linesToBaseUnits", "trimmed"]);
++  const records = { 8: { id: 8, sku: "WATER", units_per_pack: "24.00" } };
++  const converted = ctx.linesToBaseUnits([
++    { item_id: 8, quantity_unit: "PACK", pieces_per_pack: "", quantity_ordered: "2", unit_cost: "2400" },
++  ], records);
++  assert.equal(JSON.stringify(converted), JSON.stringify([{ item_id: 8, quantity_ordered: "48", unit_cost: "100", notes: "" }]));
++  assert.throws(() => ctx.linesToBaseUnits([{ item_id: 8, quantity_unit: "PIECE", quantity_ordered: "0", unit_cost: "1" }], records),
++    /Enter a quantity for WATER/);
++});
++
++test("pack pricing discloses the per-piece rounding it causes", () => {
++  const ctx = load(context(), ["packSizeOf", "piecesPerPackField", "quantityUnitField", "poLineFields", "trimmed", "baseUnitOf", "orderTotalText", "toScaled"]);
++  ctx.money = (value) => "NGN " + value;
++  const cost = ctx.poLineFields().find((field) => field.name === "unit_cost");
++  const hint = cost.hint({ base_unit: "BOTTLE" }, { quantity_unit: "PACK", pieces_per_pack: "24", quantity_ordered: "2", unit_cost: "1000" });
++  assert.match(hint, /= NGN 41\.67 per BOTTLE/);
++  assert.match(hint, /Recorded line total NGN 2000\.16 \(quoted NGN 2000\.00\)/);
++  const exact = cost.hint({ base_unit: "BOTTLE" }, { quantity_unit: "PACK", pieces_per_pack: "24", quantity_ordered: "2", unit_cost: "2400" });
++  assert.doesNotMatch(exact, /Recorded line total/);
++  assert.match(cost.hint({ base_unit: "BAG" }, { quantity_unit: "PIECE", unit_cost: "0" }), /free of charge/);
++});
++
++/* ------------------------------- Lifecycle -------------------------------- */
++
++test("the next permitted step follows the stored status and the derived progress", () => {
++  const ctx = load(context(), ["nextStep"]);
++  assert.equal(ctx.nextStep({ status: "DRAFT" }), "Next: submit for approval");
++  assert.match(ctx.nextStep({ status: "SUBMITTED" }), /approval/);
++  assert.match(ctx.nextStep({ status: "ORDERED" }), /goods receipt/);
++  assert.match(ctx.nextStep({ status: "RECEIVED", payment_progress: "UNPAID" }), /supplier payment/);
++  assert.equal(ctx.nextStep({ status: "RECEIVED", payment_progress: "PAID" }), "Received");
++  assert.match(ctx.nextStep({ status: "PAID", receipt_progress: "NOT_RECEIVED" }), /goods still to be received/);
++  assert.equal(ctx.nextStep({ status: "PAID", receipt_progress: "RECEIVED" }), "Complete");
++  assert.match(ctx.nextStep({ status: "CANCELLED" }), /Cancelled/);
++});
++
++test("approvers can reject and procurement can cancel, each with a reason", () => {
++  assert.match(PAGE, /if\(order\.status==="SUBMITTED"&&manager\(\)\)action\("Reject"/);
++  assert.match(PAGE, /if\(canCancel\(order\.status\)\)action\("Cancel order"/);
++  assert.match(sliceFunction("rejectOrder"), /resourceAction\("purchaseOrders",order\.reference,"reject",\{reason:/);
++  assert.match(sliceFunction("cancelOrder"), /resourceAction\("purchaseOrders",order\.reference,"cancel",\{reason:/);
++  const ctx = load(context(), ["canCancel"]);
++  assert.deepEqual(["DRAFT", "SUBMITTED", "APPROVED", "PAID", "CANCELLED"].map(ctx.canCancel), [true, true, false, false, false]);
++});
++
++test("the form searches the procurement lookups, with a safe fallback", () => {
++  assert.match(CONFIG, /procurementLocations:\s*"\/api\/admin\/inventory\/procurement\/locations\/"/);
++  assert.match(CONFIG, /procurementItems:\s*"\/api\/admin\/inventory\/procurement\/items\/"/);
++  assert.match(CONFIG, /purchaseOrderAccounting:\s*"\/api\/admin\/inventory\/accounting\/purchase-orders\/"/);
++  const ctx = load(context(), ["resourceOr"]);
++  assert.equal(ctx.resourceOr("procurementItems", "inventoryItems"), "inventoryItems", "stale cached config.js");
++  ctx.window.APP_CONFIG.API_ENDPOINTS.procurementItems = "/api/admin/inventory/procurement/items/";
++  assert.equal(ctx.resourceOr("procurementItems", "inventoryItems"), "procurementItems");
++  assert.match(sliceFunction("locationPicker"), /resourceOr\("procurementLocations","inventoryLocations"\)/);
++  assert.match(sliceFunction("orderLines"), /resourceOr\("procurementItems","inventoryItems"\)/);
++});
++
++/* ---------------------------- Supplier payment ---------------------------- */
++
++test("the payment dialog sends the multipart body it built, prefilled with the balance", async () => {
++  let opts = null;
++  const calls = [];
++  const ctx = context({ loadOrders: () => {}, money: (value) => "NGN " + value, getOrder: async () => ({}) });
++  ctx.JONE.dashboard.formModal = async (options) => { opts = options; return null; };
++  ctx.window.API = { resourceAction: async (...args) => { calls.push(args); return { data: {} }; } };
++  load(ctx, ["recordPayment"]);
++  await ctx.recordPayment("PO-9", { reference: "PO-9", total_amount: "130000.00", outstanding_amount: "130000.00", currency: "NGN" });
++  assert.equal(opts.values.amount, "130000", "formModal prefills from values, so the balance must be there");
++  const body = { has: () => true, marker: "multipart-body" };
++  await opts.onSubmit({ amount: "1000", method: "CASH", reference: "" }, body);
++  assert.equal(calls.length, 1);
++  assert.deepEqual(calls[0].slice(0, 3), ["purchaseOrders", "PO-9", "pay"]);
++  assert.equal(calls[0][3], body, "the FormData formModal built is what gets sent");
++  await assert.rejects(opts.onSubmit({ amount: "-5", method: "CASH" }, body), /greater than zero/);
++  await assert.rejects(opts.onSubmit({ amount: "200000", method: "CASH" }, body), /cannot exceed/);
++  await assert.rejects(opts.onSubmit({ amount: "10", method: "BANK_TRANSFER", reference: " " }, body), /reference/);
++  assert.equal(calls.length, 1);
++  assert.doesNotMatch(sliceFunction("recordPayment"), /JONE\.esc\(/, "text contexts must not be HTML-escaped");
++});

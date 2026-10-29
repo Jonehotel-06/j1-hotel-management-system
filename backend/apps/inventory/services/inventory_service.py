@@ -224,11 +224,26 @@ def _validate_po_lines(lines):
     for raw in values:
         try: item_ids.append(int(raw["item_id"]))
         except (KeyError, TypeError, ValueError) as exc: raise ValidationError({"lines": "Every line needs an item_id."}) from exc
-    if len(set(item_ids)) != len(item_ids):
-        raise ValidationError({"lines": "An item may appear only once per purchase order."})
+    # Name the offending item in every refusal: "one or more items" sent staff
+    # hunting through a 30-line order for the row the server meant.
+    known = {item.pk: item for item in StockItem.objects.filter(pk__in=set(item_ids))}
+    def label(item_id):
+        item = known.get(item_id)
+        return item.sku if item is not None else f"item #{item_id}"
+    duplicates = sorted({item_id for item_id in item_ids if item_ids.count(item_id) > 1}, key=item_ids.index)
+    if duplicates:
+        raise ValidationError({"lines": (
+            "An item may appear only once per purchase order: "
+            + ", ".join(label(item_id) for item_id in duplicates)
+            + " is on more than one line. Combine the quantities into one line."
+        )})
     items = {item.pk: item for item in StockItem.objects.select_for_update().filter(pk__in=item_ids, is_active=True)}
     if len(items) != len(item_ids):
-        raise ValidationError({"lines": "One or more stock items are inactive or missing."})
+        unavailable = [label(item_id) for item_id in item_ids if item_id not in items]
+        raise ValidationError({"lines": (
+            "One or more stock items are inactive or missing: " + ", ".join(unavailable)
+            + ". Remove the line, or ask Inventory to reactivate the item."
+        )})
     normalized = []
     for raw, item_id in zip(values, item_ids):
         item = items[item_id]
@@ -241,16 +256,69 @@ def _validate_po_lines(lines):
     return normalized
 
 
+def _po_replay_fingerprint(*, supplier_id, location_id, lines, expected_on, notes, supplier_reference):
+    """Comparable shape of a create request, so a key replays ONE request only."""
+    rows = []
+    for raw in lines or ():
+        try:
+            rows.append((
+                int(raw["item_id"]),
+                _quantity(raw.get("quantity_ordered"), field="quantity_ordered", positive=True),
+                _cost(raw.get("unit_cost")),
+                str(raw.get("notes") or "")[:500],
+            ))
+        except (KeyError, TypeError, ValueError, ValidationError):
+            return None  # an unreadable retry can never equal a stored order
+    return (
+        int(supplier_id), int(location_id), tuple(sorted(rows)), expected_on,
+        str(notes or ""), str(supplier_reference or "")[:120],
+    )
+
+
+def _validate_po_replay(existing, *, supplier, delivery_location, lines, expected_on, notes, supplier_reference):
+    """An idempotency key may only replay the request that created the order.
+
+    Returning the stored order for a *different* payload would tell the user
+    their changed draft was saved when it was not. Mirrors the goods-receipt
+    rule in ``_validate_receipt_retry``.
+    """
+    stored = _po_replay_fingerprint(
+        supplier_id=existing.supplier_id, location_id=existing.delivery_location_id,
+        lines=[
+            {"item_id": line.item_id, "quantity_ordered": line.quantity_ordered,
+             "unit_cost": line.unit_cost, "notes": line.notes}
+            for line in existing.lines.all()
+        ],
+        expected_on=existing.expected_on, notes=existing.notes, supplier_reference=existing.supplier_reference,
+    )
+    incoming = _po_replay_fingerprint(
+        supplier_id=supplier.pk, location_id=delivery_location.pk, lines=lines,
+        expected_on=expected_on, notes=notes, supplier_reference=supplier_reference,
+    )
+    if stored != incoming:
+        raise ValidationError({"idempotency_key": (
+            f"This form was already saved as purchase order {existing.reference} with different details, "
+            f"so nothing new was created. Close this dialog and open {existing.reference} to review or edit it."
+        )})
+
+
 @transaction.atomic
 def create_purchase_order(*, supplier, delivery_location, lines, requested_by, expected_on=None, notes="", supplier_reference="", idempotency_key=None):
-    if supplier.status != Supplier.Status.ACTIVE:
-        raise ValidationError("Purchase orders require an active supplier.")
-    if not delivery_location.is_active:
-        raise ValidationError("Purchase orders require an active delivery location.")
     idempotency_key = str(idempotency_key or "").strip() or None
+    # A retry of a request that already succeeded (lost response, timeout,
+    # double submit) returns that order before any rule that may have changed
+    # since — e.g. the supplier being deactivated a minute later — can turn a
+    # successful save into a confusing refusal or, worse, a second draft.
     if idempotency_key:
         existing = PurchaseOrder.objects.select_for_update().filter(idempotency_key=idempotency_key).first()
-        if existing: return existing, False
+        if existing:
+            _validate_po_replay(existing, supplier=supplier, delivery_location=delivery_location, lines=lines,
+                                expected_on=expected_on, notes=notes, supplier_reference=supplier_reference)
+            return existing, False
+    if supplier.status != Supplier.Status.ACTIVE:
+        raise ValidationError({"supplier_id": "Purchase orders require an active supplier. Choose an active supplier."})
+    if not delivery_location.is_active:
+        raise ValidationError({"delivery_location_id": "Purchase orders require an active delivery location."})
     normalized = _validate_po_lines(lines)
     for _ in range(8):
         try:
@@ -264,7 +332,10 @@ def create_purchase_order(*, supplier, delivery_location, lines, requested_by, e
         except IntegrityError:
             if idempotency_key:
                 existing = PurchaseOrder.objects.select_for_update().filter(idempotency_key=idempotency_key).first()
-                if existing: return existing, False
+                if existing:
+                    _validate_po_replay(existing, supplier=supplier, delivery_location=delivery_location, lines=lines,
+                                        expected_on=expected_on, notes=notes, supplier_reference=supplier_reference)
+                    return existing, False
     else:
         raise ValidationError("Could not allocate a unique purchase-order reference; please retry.")
     PurchaseOrderLine.objects.bulk_create([
@@ -327,6 +398,8 @@ def update_purchase_order(*, purchase_order, actor, changes=None, lines=None):
     Edit action at the same boundary.
     """
     po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
+    if po.status == PurchaseOrder.Status.CANCELLED:
+        raise ValidationError("This purchase order has been cancelled and can no longer be edited. Raise a new order instead.")
     if po.status not in {PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.SUBMITTED}:
         raise ValidationError(
             "This purchase order has already been approved and can no longer be edited. "
@@ -520,6 +593,72 @@ def approve_purchase_order(*, purchase_order, actor, receipt_file=None, payment_
         # Approval is the point the advance is normally paid, so the approver
         # can file the supplier invoice/payment slip in the same action.
         _write_approval_receipt(po, receipt_file, actor)
+    return po
+
+
+def _decision_reason(reason, *, action):
+    text = " ".join(str(reason or "").split())
+    if not text:
+        raise ValidationError({"reason": f"Enter the reason for {action} this purchase order."})
+    if len(text) > 1000:
+        raise ValidationError({"reason": "Keep the reason under 1000 characters."})
+    return text
+
+
+def _append_control_note(po, *, marker, actor, reason):
+    """Keep a workflow decision visible on the order itself (as approval overrides do).
+
+    ``notes`` is free text that is never used for control decisions; the audit
+    log written by the view remains the authoritative record.
+    """
+    who = getattr(actor, "email", "") or f"user #{getattr(actor, 'pk', '?')}"
+    po.notes = f"{po.notes}\n[{marker} by {who} on {hotel_today().isoformat()}] {reason}".strip()
+
+
+@transaction.atomic
+def reject_purchase_order(*, purchase_order, actor, reason):
+    """Refuse a submitted order: it returns to DRAFT with the approver's reason.
+
+    Rejection uses the existing status set (no REJECTED status is invented):
+    the order goes back to its requester as a DRAFT, which they can correct and
+    resubmit, or cancel. Nothing is deleted and no approval is recorded.
+    """
+    if not has_capability(actor, "procurement.approve"):
+        raise PermissionDenied("This user cannot reject purchase orders.")
+    po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
+    if po.status != PurchaseOrder.Status.SUBMITTED:
+        raise ValidationError(f"Only an order awaiting approval can be rejected; this one is {po.status}.")
+    reason = _decision_reason(reason, action="rejecting")
+    po.status = PurchaseOrder.Status.DRAFT
+    _append_control_note(po, marker="REJECTED - returned to draft", actor=actor, reason=reason)
+    po.save(update_fields=["status", "notes", "updated_at"])
+    return po
+
+
+@transaction.atomic
+def cancel_purchase_order(*, purchase_order, actor, reason):
+    """Withdraw an unapproved order without deleting it (status CANCELLED).
+
+    Only DRAFT and SUBMITTED orders can be cancelled here: from approval
+    onwards the order is an authorised commitment and needs a controlled
+    correction instead. Replaying a cancellation is a no-op.
+    """
+    if not has_capability(actor, "procurement.manage"):
+        raise PermissionDenied("This user cannot cancel purchase orders.")
+    po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
+    if po.status == PurchaseOrder.Status.CANCELLED:
+        return po
+    if po.status not in {PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.SUBMITTED}:
+        raise ValidationError(
+            f"A {po.status} purchase order is an authorised commitment and cannot be cancelled here. "
+            "Raise a controlled correction instead."
+        )
+    if GoodsReceipt.objects.filter(purchase_order=po).exists() or po.payments.exists():
+        raise ValidationError("Goods or payments are already recorded against this order, so it cannot be cancelled.")
+    reason = _decision_reason(reason, action="cancelling")
+    po.status = PurchaseOrder.Status.CANCELLED
+    _append_control_note(po, marker="CANCELLED", actor=actor, reason=reason)
+    po.save(update_fields=["status", "notes", "updated_at"])
     return po
 
 

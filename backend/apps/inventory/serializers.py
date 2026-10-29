@@ -55,6 +55,35 @@ class StockLocationSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at"]
 
 
+class ProcurementLocationLookupSerializer(serializers.ModelSerializer):
+    """Active delivery location, as the purchase-order form needs to pick one."""
+
+    class Meta:
+        model = StockLocation
+        fields = ["id", "code", "name", "is_active"]
+        read_only_fields = fields
+
+
+class ProcurementItemLookupSerializer(serializers.ModelSerializer):
+    """Purchase-side projection of an active stock item for purchase-order lines.
+
+    Deliberately minimal: the unit and pack data the line needs to convert a
+    pack quantity into base units, plus PURCHASE-cost references. No POS or
+    selling-price field is exposed here — purchase cost and the customer-facing
+    price stay separate.
+    """
+
+    preferred_supplier_name = serializers.CharField(source="preferred_supplier.name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = StockItem
+        fields = [
+            "id", "sku", "name", "category", "item_type", "base_unit", "units_per_pack", "pack_price",
+            "standard_cost", "currency", "preferred_supplier", "preferred_supplier_name", "is_active",
+        ]
+        read_only_fields = fields
+
+
 class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
@@ -385,6 +414,13 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
     total_amount = serializers.SerializerMethodField()
     total_paid = serializers.SerializerMethodField()
     outstanding_amount = serializers.SerializerMethodField()
+    # ``status`` is the one stored workflow state. These two are DERIVED,
+    # read-only projections of the lines and the recorded payments, so the
+    # independent questions "has the stock arrived?" and "has the supplier been
+    # paid?" stay answerable when status reads PAID (goods may still be due) or
+    # RECEIVED (money may still be owed). Never stored, never used for control.
+    receipt_progress = serializers.SerializerMethodField()
+    payment_progress = serializers.SerializerMethodField()
 
     class Meta:
         model = PurchaseOrder
@@ -393,7 +429,7 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
             "status", "currency", "supplier_reference",
             "requested_by_email", "approved_by_email", "approved_at", "ordered_at", "expected_on", "line_count",
             "payment_reference", "approval_receipt_url", "approval_receipt_uploaded_at",
-            "total_amount", "total_paid", "outstanding_amount",
+            "total_amount", "total_paid", "outstanding_amount", "receipt_progress", "payment_progress",
             "paid_at", "paid_by", "paid_by_email",
             "created_at", "updated_at",
         ]
@@ -413,6 +449,23 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
     def get_outstanding_amount(self, obj):
         return str(obj.outstanding_amount)
 
+    def get_receipt_progress(self, obj):
+        lines = list(obj.lines.all())
+        received = [Decimal(line.quantity_received or 0) for line in lines]
+        if not lines or not any(value > 0 for value in received):
+            return "NOT_RECEIVED"
+        if all(Decimal(line.quantity_received or 0) >= Decimal(line.quantity_ordered or 0) for line in lines):
+            return "RECEIVED"
+        return "PARTIALLY_RECEIVED"
+
+    def get_payment_progress(self, obj):
+        total, paid = obj.total_amount, obj.total_paid
+        if total <= 0:
+            return "NOTHING_DUE"
+        if paid <= 0:
+            return "UNPAID"
+        return "PAID" if paid >= total else "PARTIALLY_PAID"
+
 
 class PurchaseOrderDetailSerializer(PurchaseOrderListSerializer):
     lines = PurchaseOrderLineSerializer(many=True, read_only=True)
@@ -421,6 +474,52 @@ class PurchaseOrderDetailSerializer(PurchaseOrderListSerializer):
 
     class Meta(PurchaseOrderListSerializer.Meta):
         fields = PurchaseOrderListSerializer.Meta.fields + ["notes", "lines", "payments"]
+
+
+class PurchaseOrderDecisionSerializer(serializers.Serializer):
+    """Reject (return to draft) or cancel: the reason is mandatory evidence."""
+
+    reason = serializers.CharField(max_length=1000, trim_whitespace=True)
+
+
+class PurchaseOrderGoodsReceiptSummarySerializer(serializers.ModelSerializer):
+    """One goods receipt against an order, valued at its own received unit costs."""
+
+    received_value = serializers.SerializerMethodField()
+    received_by_email = serializers.EmailField(source="received_by.email", read_only=True, allow_null=True)
+
+    class Meta:
+        model = GoodsReceipt
+        fields = ["reference", "received_on", "supplier_delivery_reference", "received_by_email", "received_value", "created_at"]
+        read_only_fields = fields
+
+    def get_received_value(self, obj):
+        total = sum((Decimal(line.quantity_received) * Decimal(line.unit_cost) for line in obj.lines.all()), Decimal("0.00"))
+        return str(total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+class PurchaseOrderAccountingSerializer(PurchaseOrderDetailSerializer):
+    """Read-only hand-off view of a submitted order for Accounting.
+
+    Everything an accountant needs to verify the order before raising the
+    supplier payable through the existing Expenses workflow: the approved
+    lines and costs, what has physically arrived (and its value), what the
+    procurement desk has already recorded as paid, and the evidence files.
+    """
+
+    goods_receipts = PurchaseOrderGoodsReceiptSummarySerializer(many=True, read_only=True)
+    received_value = serializers.SerializerMethodField()
+
+    class Meta(PurchaseOrderDetailSerializer.Meta):
+        fields = PurchaseOrderDetailSerializer.Meta.fields + ["goods_receipts", "received_value"]
+
+    def get_received_value(self, obj):
+        total = sum(
+            (Decimal(line.quantity_received) * Decimal(line.unit_cost)
+             for receipt in obj.goods_receipts.all() for line in receipt.lines.all()),
+            Decimal("0.00"),
+        )
+        return str(total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 class PurchaseOrderCreateLineSerializer(serializers.Serializer):

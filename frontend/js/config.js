@@ -340,6 +340,13 @@
     inventoryTransfers:           "/api/admin/inventory/transfers/",
     suppliers:                    "/api/admin/inventory/suppliers/",
     purchaseOrders:               "/api/admin/inventory/purchase-orders/",
+    /* Procurement-scoped, read-only lookups for the purchase-order form: a
+       Procurement Officer holds procurement.manage but not inventory.manage. */
+    procurementLocations:         "/api/admin/inventory/procurement/locations/",
+    procurementItems:             "/api/admin/inventory/procurement/items/",
+    /* Read-only Accounting hand-off of purchase orders from submission onwards
+       (reports.financial.view / expense.approve / procurement.approve). */
+    purchaseOrderAccounting:      "/api/admin/inventory/accounting/purchase-orders/",
 
     /* Reports (MANAGER+) — financial ledger summary stays separate from
        legacy booking/occupancy compatibility projections.

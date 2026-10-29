@@ -29,9 +29,17 @@ urlpatterns = [
     path("transfers/", views.StockTransferView.as_view(), name="transfers"),
     path("suppliers/", views.SupplierListCreateView.as_view(), name="suppliers"),
     path("suppliers/<int:pk>/", views.SupplierDetailView.as_view(), name="supplier-detail"),
+    # Procurement-scoped, read-only lookups for the purchase-order form.
+    path("procurement/locations/", views.ProcurementLocationLookupView.as_view(), name="procurement-locations"),
+    path("procurement/items/", views.ProcurementItemLookupView.as_view(), name="procurement-items"),
+    # Read-only Accounting hand-off (submitted onwards; drafts never listed).
+    path("accounting/purchase-orders/", views.PurchaseOrderAccountingListView.as_view(), name="accounting-purchase-orders"),
+    path("accounting/purchase-orders/<str:reference>/", views.PurchaseOrderAccountingDetailView.as_view(), name="accounting-purchase-order-detail"),
     path("purchase-orders/", views.PurchaseOrderListCreateView.as_view(), name="purchase-orders"),
     path("purchase-orders/<str:reference>/", views.PurchaseOrderDetailView.as_view(), name="purchase-order-detail"),
     path("purchase-orders/<str:reference>/submit/", views.PurchaseOrderSubmitView.as_view(), name="purchase-order-submit"),
+    path("purchase-orders/<str:reference>/reject/", views.PurchaseOrderRejectView.as_view(), name="purchase-order-reject"),
+    path("purchase-orders/<str:reference>/cancel/", views.PurchaseOrderCancelView.as_view(), name="purchase-order-cancel"),
     path("purchase-orders/<str:reference>/approve/", views.PurchaseOrderApproveView.as_view(), name="purchase-order-approve"),
     path("purchase-orders/<str:reference>/approval-receipt/", views.PurchaseOrderReceiptUploadView.as_view(), name="purchase-order-approval-receipt"),
     path("purchase-orders/<str:reference>/ordered/", views.PurchaseOrderOrderedView.as_view(), name="purchase-order-ordered"),
