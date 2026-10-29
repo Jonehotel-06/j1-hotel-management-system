@@ -2,7 +2,7 @@
 import secrets
 from decimal import Decimal, InvalidOperation
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Q
 from django.utils.dateparse import parse_date
 
@@ -35,7 +35,7 @@ from .services.valuation_service import (
 )
 from .services.inventory_service import (
     approve_purchase_order, approve_stock_count, attach_purchase_order_receipt, create_purchase_order,
-    create_stock_recipe, issue_stock, mark_purchase_order_ordered,
+    canonical_unit, convert_stock_quantity, create_stock_recipe, issue_stock, mark_purchase_order_ordered,
     process_pending_pos_consumption, process_pos_stock_consumption, receive_goods, record_opening_stock,
     record_purchase_order_payment, record_stock_return, retire_stock_recipe,
     reverse_pos_stock_consumption, scoped_key, start_stock_count,
@@ -95,29 +95,38 @@ class StockItemListCreateView(APIView):
         if category:=request.query_params.get("category"): queryset=queryset.filter(category=category)
         if search:=request.query_params.get("search"): queryset=queryset.filter(Q(sku__icontains=search)|Q(name__icontains=search))
         return _page(self, request, queryset, StockItemSerializer)
+    @transaction.atomic
     def post(self, request):
-        serializer=StockItemSerializer(data=request.data); serializer.is_valid(raise_exception=True)
-        try:
-            item=serializer.save()
-        except IntegrityError as exc:
-            # The serializer pre-checks the direct-sale configuration; this is
-            # the database's unique constraint winning a race, and it must come
-            # back as a readable 400 rather than a 500.
-            raise ValidationError({"detail": "Another record was saved with the same code or the same direct-sale POS menu item. Reload and try again."}) from exc
+        serializer = StockItemSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         opening_qty = request.data.get("opening_quantity")
-        opening_loc_id = request.data.get("opening_location_id")
-        if opening_qty not in (None, "", "0", 0, "0.0000") and opening_loc_id:
-            loc = StockLocation.objects.filter(pk=opening_loc_id, is_active=True).first()
-            if loc is not None:
-                record_opening_stock(
-                    item=item,
-                    location=loc,
-                    quantity=opening_qty,
-                    actor=request.user,
-                    source_key=f"item-opening:{item.pk}:{loc.pk}",
-                    unit_cost=item.standard_cost,
-                    notes="Initial opening stock on item creation",
-                )
+        opening_loc = request.data.get("opening_location_id")
+        opening_unit = request.data.get("opening_unit")
+        opening_factor = request.data.get("opening_conversion_factor")
+        supplied = any(value not in (None, "") for value in (opening_qty, opening_loc, opening_unit, opening_factor))
+        opening = None
+        if supplied:
+            raw = {"item_id": 1, "location_id": opening_loc, "quantity": opening_qty,
+                   "unit": opening_unit or "", "conversion_factor": opening_factor or None}
+            opening_serializer = OpeningStockSerializer(data=raw)
+            if not opening_serializer.is_valid():
+                aliases = {"quantity": "opening_quantity", "location_id": "opening_location_id",
+                           "unit": "opening_unit", "conversion_factor": "opening_conversion_factor"}
+                raise ValidationError({aliases.get(k, k): v for k, v in opening_serializer.errors.items()})
+            opening = opening_serializer.validated_data
+            location = StockLocation.objects.filter(pk=opening["location_id"], is_active=True).first()
+            if location is None:
+                raise ValidationError({"opening_location_id": "Choose an active stock location."})
+        try:
+            with transaction.atomic():
+                item = serializer.save()
+        except IntegrityError as exc:
+            raise ValidationError({"detail": "Another record was saved with the same code or the same direct-sale POS menu item. Reload and try again."}) from exc
+        if opening is not None:
+            quantity, evidence = _opening_in_base_units(item, opening)
+            record_opening_stock(item=item, location=location, quantity=quantity, actor=request.user,
+                source_key=f"item-opening:{item.pk}:{location.pk}", unit_cost=item.standard_cost,
+                notes="Initial opening stock on item creation", metadata=evidence)
         log_action(actor=request.user, action="STOCK_ITEM_CREATED", instance=item, request=request)
         return success_response(StockItemSerializer(item).data, message="Stock item created.", status=status.HTTP_201_CREATED)
 
@@ -379,20 +388,53 @@ class StockIssueView(APIView):
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="Record a source-keyed opening stock balance")
+def _opening_in_base_units(item, data):
+    unit = data.get("unit") or item.base_unit
+    factor = data.get("conversion_factor")
+    if factor is not None and canonical_unit(unit) == canonical_unit(item.base_unit):
+        raise ValidationError({"conversion_factor": "Do not enter a conversion factor when recording in the base unit."})
+    if factor is None and "shot" in {canonical_unit(unit), canonical_unit(item.base_unit)} and canonical_unit(unit) != canonical_unit(item.base_unit):
+        raise ValidationError({"conversion_factor": "Enter the actual conversion for a shot; its size is not assumed."})
+    # No implicit pack-size lookup: one item's saved pack size does not identify
+    # whether it describes a carton, crate, bag or another container.
+    try:
+        quantity = convert_stock_quantity(data["quantity"], from_unit=unit, to_unit=item.base_unit,
+                                          conversion_factor=factor)
+    except InvalidOperation as exc:
+        raise ValidationError({"quantity": "The converted quantity is too large to record."}) from exc
+    if quantity <= 0 or quantity >= Decimal("10000000000"):
+        raise ValidationError({"quantity": "Converted quantity must fit the stock ledger and be greater than zero."})
+    return quantity, {"entered_quantity": str(data["quantity"]), "entered_unit": unit,
+                      "base_unit": item.base_unit,
+                      "conversion_factor": str(factor) if factor is not None else None}
+
+
 class StockOpeningView(APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
+    @transaction.atomic
     def post(self, request):
         serializer = OpeningStockSerializer(data=request.data); serializer.is_valid(raise_exception=True); data = serializer.validated_data
-        item = StockItem.objects.filter(pk=data["item_id"]).first()
-        if item is None: raise NotFound("Stock item not found.")
-        location = StockLocation.objects.filter(pk=data["location_id"]).first()
-        if location is None: raise NotFound("Stock location not found.")
+        item = StockItem.objects.select_for_update().filter(pk=data["item_id"], is_active=True).first()
+        if item is None: raise ValidationError({"item_id": "Choose an active stock item."})
+        location = StockLocation.objects.filter(pk=data["location_id"], is_active=True).first()
+        if location is None: raise ValidationError({"location_id": "Choose an active stock location."})
+        quantity, evidence = _opening_in_base_units(item, data)
         raw_key = data.get("idempotency_key") or f"opening:{item.pk}:{location.pk}:{data['quantity']}"
         key = scoped_key(prefix="stock-opening", scope=f"staff:{request.user.pk}", raw_key=raw_key)
-        movement, created = record_opening_stock(
-            item=item, location=location, quantity=data["quantity"], actor=request.user,
-            source_key=key, unit_cost=data.get("unit_cost"), notes=data.get("notes", ""),
-        )
+        existing = StockMovement.objects.filter(source_key=key).first()
+        if existing:
+            if (existing.item_id != item.pk or existing.location_id != location.pk or
+                    existing.quantity_delta != quantity or
+                    (data.get("unit_cost") is not None and existing.unit_cost != data["unit_cost"])):
+                raise ValidationError({"idempotency_key": "This key was already used for different opening stock."})
+            movement, created = existing, False
+        else:
+            if StockMovement.objects.filter(item=item, location=location, type=StockMovement.Type.OPENING).exists():
+                raise ValidationError({"item_id": "An opening balance already exists for this item and location. Use a receipt or an approved adjustment instead."})
+            movement, created = record_opening_stock(
+                item=item, location=location, quantity=quantity, actor=request.user,
+                source_key=key, unit_cost=data.get("unit_cost"), notes=data.get("notes", ""), metadata=evidence,
+            )
         return success_response(
             StockMovementSerializer(StockMovement.objects.select_related("item", "location", "actor").get(pk=movement.pk)).data,
             message="Opening stock recorded." if created else "Existing opening stock returned.",

@@ -1673,7 +1673,7 @@ def key_for_pos_return(*, return_reference, location_id, item_id):
 
 
 @transaction.atomic
-def record_opening_stock(*, item, location, quantity, actor, source_key="", idempotency_key="", unit_cost=None, notes=""):
+def record_opening_stock(*, item, location, quantity, actor, source_key="", idempotency_key="", unit_cost=None, notes="", metadata=None):
     """Record an idempotent opening-balance stock movement."""
     key = source_key or idempotency_key
     quantity = _quantity(quantity, positive=True)
@@ -1688,6 +1688,7 @@ def record_opening_stock(*, item, location, quantity, actor, source_key="", idem
         unit_cost=cost,
         source_reference="OPENING_BALANCE",
         notes=notes or "Opening stock balance",
+        metadata=metadata,
     )
 
 

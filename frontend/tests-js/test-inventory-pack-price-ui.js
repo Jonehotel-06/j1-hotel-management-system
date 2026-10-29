@@ -29,17 +29,18 @@ test("resolved hand-offs show only View; open ones show View and Process", () =>
   assert.match(INVENTORY, /consumptionCache\[row\.reference\]=row/);
 });
 
-test("stock items record pack/bag packaging and pack + piece prices", () => {
-  assert.match(INVENTORY, /name:"units_per_pack",label:"Pieces in one pack\/bag \(optional\)"/);
-  assert.match(INVENTORY, /name:"pack_price",label:"Actual price per pack\/bag \(NGN, optional\)"/);
-  assert.match(INVENTORY, /label:"Price per piece \\u2014 standard cost \(NGN\)"/);
+test("stock items retain packaging and label purchase cost per base unit", () => {
+  assert.match(INVENTORY, /name:"units_per_pack"/);
+  assert.match(INVENTORY, /name:"pack_price"/);
+  assert.match(INVENTORY, /Purchase cost per base unit/);
   assert.match(INVENTORY, /function stockUnitOptions\(current\)/);
 });
 
-test("opening stock can be recorded as pieces, pack, or bag and converts to pieces", () => {
-  assert.match(INVENTORY, /name:"recording_unit",label:"Record stock as"/);
-  assert.match(INVENTORY, /values\.quantity=String\(Number\(values\.quantity\)\*perPack\)/);
-  assert.match(INVENTORY, /values\.unit_cost=String\(Number\(values\.pack_price\)\/perPack\)/);
+test("opening stock sends selected units and explicit conversion to the server", () => {
+  assert.match(INVENTORY, /name:"unit",label:"Quantity unit"/);
+  assert.match(INVENTORY, /name:"conversion_factor",label:"Base units in one selected unit/);
+  assert.doesNotMatch(INVENTORY, /values\.quantity=String\(Number\(values\.quantity\)\*perPack\)/);
+  assert.match(INVENTORY, /idempotency_key=key/);
 });
 
 test("goods receipts can be recorded as pieces, pack, or bag with pack and piece prices", () => {

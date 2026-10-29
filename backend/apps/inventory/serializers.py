@@ -200,17 +200,23 @@ class StockBalanceSerializer(serializers.ModelSerializer):
     reorder_level = serializers.DecimalField(source="item.reorder_level", max_digits=14, decimal_places=4, read_only=True)
     location_code = serializers.CharField(source="location.code", read_only=True)
     needs_reorder = serializers.SerializerMethodField()
+    stock_state = serializers.SerializerMethodField()
 
     class Meta:
         model = StockBalance
         fields = [
             "id", "item", "item_sku", "item_name", "item_type", "item_type_label", "base_unit", "reorder_level",
-            "location", "location_code", "quantity_on_hand", "needs_reorder", "last_movement_at", "updated_at",
+            "location", "location_code", "quantity_on_hand", "needs_reorder", "stock_state", "last_movement_at", "updated_at",
         ]
         read_only_fields = fields
 
     def get_needs_reorder(self, obj):
         return obj.quantity_on_hand <= obj.item.reorder_level
+
+    def get_stock_state(self, obj):
+        if obj.quantity_on_hand <= 0:
+            return "OUT_OF_STOCK"
+        return "LOW_STOCK" if self.get_needs_reorder(obj) else "ADEQUATE"
 
 
 class StockMovementSerializer(serializers.ModelSerializer):
@@ -274,6 +280,8 @@ class OpeningStockSerializer(serializers.Serializer):
     location_id = serializers.IntegerField(min_value=1)
     quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
     unit_cost = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.00"), required=False, allow_null=True)
+    unit = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    conversion_factor = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
 
