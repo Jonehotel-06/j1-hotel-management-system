@@ -237,13 +237,14 @@ class GuestPortalRoomOrderTests(BaseAPITestCase):
         self.assertEqual(result.status_code, 409, result.content)
         self.assert_no_sale()
 
-    def test_explicit_no_stock_recipe_is_not_a_physical_food_mapping(self):
+    def test_explicit_no_stock_food_can_be_ordered_without_ingredients(self):
         dish = MenuItem.objects.create(category=self.restaurant, name="Untracked meal", sku="PO-NOSTOCK", base_price="500.00")
         create_stock_recipe(menu_item=dish, location=self.kitchen, tracking_mode="NO_STOCK", components=[],
                             actor=self.waiter, idempotency_key="portal-no-stock-recipe")
         result = self.post_order(self.payload(lines=[self.line(dish)]))
-        self.assertEqual(result.status_code, 409, result.content)
-        self.assert_no_sale()
+        self.assertEqual(result.status_code, 201, result.content)
+        self.assertEqual(PosOrder.objects.get().status, PosOrder.Status.DRAFT)
+        self.assertFalse(StockMovement.objects.filter(type=StockMovement.Type.POS_CONSUMPTION).exists())
 
     def test_price_change_and_guest_supplied_financial_fields_are_not_trusted(self):
         bad_price = self.post_order(self.payload(lines=[self.line(price="0.01")]))
@@ -516,6 +517,68 @@ class GuestPortalRoomOrderTests(BaseAPITestCase):
         self.malt.is_active = False; self.malt.save(update_fields=["is_active"])
         StockItem.objects.create(sku=self.drink.sku, name="Lookalike", standard_cost="1")
         self.assertIsNone(menu_item_cost_basis(self.drink))
+
+
+    def test_batch05_recipe_free_food_catalog_order_and_delivery(self):
+        from apps.pos.services.order_service import submit_order, transition_order
+        dish = MenuItem.objects.create(category=self.restaurant, name="Pepper soup", sku="B05-PORTAL-SOUP", base_price="3000")
+        result = self.client.get("/api/portal/catalog/menu/", HTTP_X_PORTAL_SESSION=self.token)
+        menu = {x["id"]: x for cat in result.json()["data"]["categories"] for x in cat["items"]}
+        self.assertTrue(menu[dish.pk]["is_available"])
+        self.assertFalse(menu[dish.pk]["quantity_limited"])
+        req, _ = self.create_order(self.payload(lines=[self.line(dish)]))
+        order = req.pos_order
+        submit_order(order=order, actor=self.waiter)
+        dish.is_available = False
+        dish.save()
+        transition_order(order=order, actor=self.waiter, target_status="DELIVERED")
+        self.assertEqual(StockConsumptionRequest.objects.get(pos_order=order).status, "SKIPPED")
+        self.assertFalse(StockRecipe.objects.filter(menu_item=dish).exists())
+        self.assertFalse(StockMovement.objects.filter(type="POS_CONSUMPTION").exists())
+
+    def test_batch05_portions_published_and_room_order_backend_limits(self):
+        dish = MenuItem.objects.create(category=self.restaurant, name="Prepared rice", sku="B05-PORTAL-RICE", base_price="3000", portion_tracking=True, prepared_portions=2)
+        result = self.client.get("/api/portal/catalog/menu/", HTTP_X_PORTAL_SESSION=self.token)
+        menu = {x["id"]: x for cat in result.json()["data"]["categories"] for x in cat["items"]}
+        self.assertEqual(menu[dish.pk]["available_quantity"], 2)
+        self.assertTrue(menu[dish.pk]["portion_tracking"])
+        rejected = self.post_order(self.payload(lines=[self.line(dish, 3)]))
+        self.assertEqual(rejected.status_code, 400, rejected.content)
+        self.assert_no_sale()
+        req, _ = self.create_order(self.payload(lines=[self.line(dish, 2)]))
+        from apps.pos.services.order_service import submit_order
+        submit_order(order=req.pos_order, actor=self.waiter)
+        dish.refresh_from_db()
+        self.assertEqual(dish.prepared_portions, 0)
+        rejected = self.post_order(self.payload(lines=[self.line(dish)], key="b05-new-draft"))
+        self.assertEqual(rejected.status_code, 400, rejected.content)
+
+    def test_batch05_guest_cancel_releases_submitted_portions(self):
+        from apps.pos.services.order_service import submit_order
+        from apps.guest_services.services.request_service import cancel_service_request_by_guest
+        dish = MenuItem.objects.create(category=self.restaurant, name="White rice", sku="B05-PORTAL-WHITE", base_price="1000", portion_tracking=True, prepared_portions=5)
+        req, _ = self.create_order(self.payload(lines=[self.line(dish, 2)]))
+        submit_order(order=req.pos_order, actor=self.waiter)
+        cancel_service_request_by_guest(service_request=req, portal_email=self.guest.email)
+        cancel_service_request_by_guest(service_request=req, portal_email=self.guest.email)
+        dish.refresh_from_db()
+        self.assertEqual(dish.prepared_portions, 5)
+        self.assertEqual(PosOrder.objects.get(pk=req.pos_order.pk).status, "CANCELLED")
+
+    def test_batch05_mixed_recipe_and_simple_food_delivers(self):
+        from apps.pos.services.order_service import submit_order, transition_order
+        dish = MenuItem.objects.create(category=self.restaurant, name="Prepared soup", sku="B05-PORTAL-MIX", base_price="1000")
+        req, _ = self.create_order(self.payload(lines=[self.line(dish), self.line(self.rice_dish)]))
+        submit_order(order=req.pos_order, actor=self.waiter)
+        transition_order(order=req.pos_order, actor=self.waiter, target_status="DELIVERED")
+        self.assertEqual(StockBalance.objects.get(item=self.rice, location=self.kitchen).quantity_on_hand, Decimal("1.75"))
+        self.assertEqual(StockConsumptionRequest.objects.get(pos_order=req.pos_order).status, "PROCESSED")
+
+    def test_batch05_not_available_cannot_enter_guest_draft(self):
+        dish = MenuItem.objects.create(category=self.restaurant, name="Finished soup", sku="B05-PORTAL-OFF", base_price="1000", is_available=False)
+        result = self.post_order(self.payload(lines=[self.line(dish)]))
+        self.assertEqual(result.status_code, 400, result.content)
+        self.assert_no_sale()
 
 
 class ConcurrentPortalOrderTests(TransactionTestCase):

@@ -262,6 +262,7 @@
     // order-detail route on the server, which the URLconf already guarantees.
     posOrderReturns:     "/api/admin/pos/orders/returns/",
     posOrderReturnEligible: "/api/admin/pos/orders/returns/eligible/",
+    posKitchenFood:      "/api/admin/pos/kitchen-food/",
     posKitchenTickets:   "/api/admin/pos/kitchen-tickets/",
     /* Cash sessions have ONE model (apps.finance.models.CashSession) with two
        distinct route surfaces on the backend, so both keys are deliberate:

@@ -356,9 +356,12 @@ class PosMenuView(APIView):
         menu_item_ids = [
             item.pk for category in categories for item in category._available_items
         ]
+        from .services.food_service import prepared_stock_summaries
+        prepared_items = [item for category in categories for item in category._available_items]
+        summaries = prepared_stock_summaries(prepared_items, pos_stock_summaries(menu_item_ids))
         return success_response(
             MenuCategoryMenuSerializer(
-                categories, many=True, context={"pos_stock_summaries": pos_stock_summaries(menu_item_ids)}
+                categories, many=True, context={"pos_stock_summaries": summaries}
             ).data
         )
 
@@ -644,16 +647,22 @@ class PosMenuItemManagementDetailView(APIView):
     required_capabilities = ("pos.menu.manage", "restaurant.menu.manage", "bar.menu.manage")
     require_any_capability = True
 
+    @transaction.atomic
     def patch(self, request, pk):
-        item = MenuItem.objects.select_related("category").filter(pk=pk).first()
+        item = MenuItem.objects.select_for_update().select_related("category").filter(pk=pk).first()
         if item is None:
             raise NotFound("Menu item not found.")
         _ensure_menu_area(request.user, item.category.service_area)
         serializer = MenuItemManageSerializer(item, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         _ensure_menu_area(request.user, serializer.validated_data.get("category", item.category).service_area)
+        previous_ready = item.is_available
+        item = serializer.save()
+        if previous_ready != item.is_available and item.category.service_area == "RESTAURANT":
+            from .services.food_service import _event
+            _event(item, action="READY" if item.is_available else "NOT_AVAILABLE", actor=request.user)
         return success_response(
-            MenuItemManageSerializer(serializer.save(), context={"request": request, "include_margin": True}).data,
+            MenuItemManageSerializer(item, context={"request": request, "include_margin": True}).data,
             message="Menu item updated.",
         )
 

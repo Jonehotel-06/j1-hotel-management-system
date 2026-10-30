@@ -1,10 +1,12 @@
 from django.urls import path
 
-from . import views
+from . import views, food_views
 
 app_name = "pos"
 
 urlpatterns = [
+    path("kitchen-food/", food_views.KitchenFoodView.as_view(), name="kitchen-food"),
+    path("kitchen-food/<int:pk>/", food_views.KitchenFoodDetailView.as_view(), name="kitchen-food-detail"),
     path("menu/", views.PosMenuView.as_view(), name="menu"),
     path("menu/barcode-lookup/", views.PosBarcodeLookupView.as_view(), name="menu-barcode-lookup"),
     path("menu/categories/", views.PosMenuCategoryManagementView.as_view(), name="menu-categories"),

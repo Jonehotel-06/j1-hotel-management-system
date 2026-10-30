@@ -85,7 +85,8 @@ def stock_summary_for_menu_item(menu_item: MenuItem) -> dict:
     """
     from apps.inventory.services.inventory_service import pos_stock_summaries
 
-    summary = pos_stock_summaries([menu_item.pk]).get(menu_item.pk)
+    from .food_service import prepared_stock_summaries
+    summary = prepared_stock_summaries([menu_item], pos_stock_summaries([menu_item.pk])).get(menu_item.pk)
     if summary is None:  # pragma: no cover - defensive; resolver always answers
         return {
             "tracked": False,

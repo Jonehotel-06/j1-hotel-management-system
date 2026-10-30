@@ -72,7 +72,7 @@
 
   function availabilityBadge(item) {
     var available = !!(item && item.is_available);
-    var quantity = item && Number(item.available_quantity);
+    var quantity = item && item.quantity_limited !== false && Number(item.available_quantity);
     return {
       label: available ? (Number.isInteger(quantity) && quantity > 0 ? "Available · up to " + quantity : "Available") : "Currently unavailable",
       unavailable: !available,
@@ -206,16 +206,20 @@
       }).join("");
     }
 
-    function load() {
-      stateBox(list, '<div class="loading-skeleton"><span></span><span></span><span></span></div>');
-      status.textContent = "";
+    var loading = false;
+    function load(silent) {
+      if (loading) return Promise.resolve();
+      loading = true;
+      if (!silent) stateBox(list, '<div class="loading-skeleton"><span></span><span></span><span></span></div>');
+      if (!silent) status.textContent = "";
       return Promise.resolve(api.load()).then(function (payload) {
         state.data = payload || { categories: [] };
         paint();
       }).catch(function (err) {
         if (api.onAuthError && err && err.status === 401) { api.onAuthError(err); return; }
-        errorBox(list, (err && err.message) || "The menu could not be loaded.", 'data-menu-retry');
-      });
+        if (silent && state.data) status.textContent = "Availability refresh failed. Your order will be checked by the server.";
+        else errorBox(list, (err && err.message) || "The menu could not be loaded.", 'data-menu-retry');
+      }).finally(function () { loading = false; });
     }
 
     root.addEventListener("click", function (event) {
@@ -248,7 +252,11 @@
     select.addEventListener("change", function () { state.categoryId = select.value; paint(); });
     search.addEventListener("input", function () { state.query = search.value; paint(); });
 
-    return { load: load, state: state };
+    var timer = window.setInterval(function () {
+      if (!document.hidden && root.isConnected !== false) load(true);
+    }, 15000);
+    window.addEventListener("pagehide", function () { window.clearInterval(timer); }, { once: true });
+    return { load: load, state: state, destroy: function () { window.clearInterval(timer); } };
   };
 
   function renderService(service) {

@@ -28,7 +28,7 @@ class MenuItemSerializer(serializers.ModelSerializer):
         fields = [
             "id", "category", "category_name", "name", "sku", "barcode", "description", "base_price", "currency",
             "tax_rate_percent", "preparation_minutes", "is_available", "is_active", "sort_order", "modifiers",
-            "stock",
+            "stock", "portion_tracking", "prepared_portions",
         ]
         read_only_fields = fields
 
@@ -543,10 +543,10 @@ class MenuItemManageSerializer(serializers.ModelSerializer):
         fields = [
             "id", "category", "category_name", "service_area", "name", "sku", "barcode", "description",
             "base_price", "currency", "tax_rate_percent", "preparation_minutes", "is_available",
-            "is_active", "sort_order", "stock_linkage", "margin", "created_at", "updated_at",
+            "is_active", "sort_order", "stock_linkage", "margin", "created_at", "updated_at", "portion_tracking", "prepared_portions",
         ]
         read_only_fields = [
-            "id", "category_name", "service_area", "stock_linkage", "margin", "created_at", "updated_at",
+            "id", "category_name", "service_area", "stock_linkage", "margin", "created_at", "updated_at", "portion_tracking", "prepared_portions",
         ]
 
     def get_stock_linkage(self, obj):

@@ -114,11 +114,9 @@ class PosWorkflowTests(BaseAPITestCase):
         # be resolved in the same transaction — it may never be left PENDING,
         # which was the defect that stopped Stock on Hand from following sales.
         self.assertNotEqual(consumption.status, StockConsumptionRequest.Status.PENDING)
-        # This fixture configures no stock recipe for FOOD-JOLLOF, so inventory
-        # cannot know what to deplete: the hand-off is parked for review with an
-        # explicit reason instead of silently doing nothing.
-        self.assertEqual(consumption.status, StockConsumptionRequest.Status.FAILED)
-        self.assertIn("FOOD-JOLLOF", consumption.resolution_note)
+        # Batch 05: simple prepared food deliberately skips raw inventory.
+        self.assertEqual(consumption.status, StockConsumptionRequest.Status.SKIPPED)
+        self.assertIn("non-stock", consumption.resolution_note)
         self.assertEqual(consumption.payload["lines"][0]["item_sku"], self.item.sku)
         # No recipe means no deduced quantity, so nothing may be deducted.
         self.assertFalse(StockMovement.objects.filter(type=StockMovement.Type.POS_CONSUMPTION).exists())

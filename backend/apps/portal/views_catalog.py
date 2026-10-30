@@ -43,10 +43,11 @@ def _menu_item_payload(item, service_area, stock_summary, *, ordering_enabled=Tr
     ]
     summary = stock_summary or {}
     available = bool(
-        item.is_available and item.base_price > 0 and ordering_enabled and summary.get("tracked")
-        and not summary.get("unconfigured") and summary.get("available_sufficient_for_one")
+        item.is_available and item.base_price > 0 and ordering_enabled
+        and not summary.get("unconfigured")
+        and (summary.get("available_sufficient_for_one") if summary.get("tracked") else service_area == "RESTAURANT")
     )
-    quantity = int(summary.get("available_quantity") or 0) if summary.get("tracked") else 0
+    quantity = int(summary.get("available_quantity") or 0) if summary.get("tracked") else (100 if available else 0)
     return {
         "id": item.pk,
         "name": item.name,
@@ -54,7 +55,9 @@ def _menu_item_payload(item, service_area, stock_summary, *, ordering_enabled=Tr
         "price": _money(item.base_price),
         "currency": item.currency or "NGN",
         "is_available": available,
-        "availability_label": "Available" if available else "Currently unavailable",
+        "availability_label": "Ready" if available else "Not Available",
+        "portion_tracking": item.portion_tracking,
+        "quantity_limited": bool(summary.get("tracked")),
         "available_quantity": min(100, max(quantity, 0)),
         "preparation_minutes": item.preparation_minutes,
         "modifiers": modifiers,
@@ -91,7 +94,11 @@ class PortalMenuView(APIView):
         from apps.inventory.services.inventory_service import pos_stock_summaries
 
         all_ids = [item.pk for category in categories for item in getattr(category, "_portal_items", [])]
-        summaries = pos_stock_summaries(all_ids, strict=True)
+        from apps.pos.services.food_service import prepared_stock_summaries
+        summaries = prepared_stock_summaries(
+            [item for category in categories for item in category._portal_items],
+            pos_stock_summaries(all_ids, strict=True),
+        )
         enabled = set(getattr(settings, "PORTAL_ENABLED_SERVICE_CATEGORIES", None) or ServiceRequest.Category.values)
         payload = []
         for category in categories:

@@ -565,14 +565,21 @@ def record_unopened_return(
 
     # 1. Put the stock back (append-only POS_RETURN movements, one per
     #    item/location, keyed on this return record).
-    movements, aggregates, per_line_base, skipped_reason = restock_returned_pos_items(
-        order=order,
-        line_quantities={row["line"].pk: row["quantity"] for row in planned},
-        actor=actor,
-        return_reference=record.reference,
-        reason=reason or f"Unopened items returned for {order.reference}",
-        location=restock_location,
-    )
+    from .food_service import record_prepared_returns
+    food_line_ids = record_prepared_returns(order=order, planned=planned, actor=actor, return_reference=record.reference)
+    restock_quantities = {row["line"].pk: row["quantity"] for row in planned if row["line"].pk not in food_line_ids}
+    if restock_quantities:
+        movements, aggregates, per_line_base, skipped_reason = restock_returned_pos_items(
+            order=order,
+            line_quantities=restock_quantities,
+            actor=actor,
+            return_reference=record.reference,
+            reason=reason or f"Unopened items returned for {order.reference}",
+            location=restock_location,
+        )
+    else:
+        movements, aggregates, per_line_base = [], {}, {}
+        skipped_reason = "Returned prepared food discarded; no prepared portions or raw ingredients restocked."
     for row in planned:
         PosOrderReturnLine.objects.create(
             return_record=record,

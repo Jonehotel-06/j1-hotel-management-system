@@ -256,6 +256,7 @@ def _validate_order_lines_stock(lines, *, exclude_order=None, require_configurat
         # differently ordered baskets cannot deadlock each other.
         list(MenuItem.objects.select_for_update().filter(pk__in=menu_ids).order_by("pk").values_list("pk", flat=True))
     rules = pos_stock_rules(menu_ids, strict=require_configuration)
+    food_ids = set(MenuItem.objects.filter(pk__in=menu_ids, category__service_area="RESTAURANT").values_list("pk", flat=True))
     names = {}
     unconfigured = []
     for menu_item_id, quantity, item_name in normalised:
@@ -265,7 +266,7 @@ def _validate_order_lines_stock(lines, *, exclude_order=None, require_configurat
         names[menu_item_id] = item_name
         if rule["unconfigured"]:
             unconfigured.append((menu_item_id, item_name, rule["unconfigured_reason"]))
-        elif require_configuration and not rule["tracked"]:
+        elif require_configuration and not rule["tracked"] and menu_item_id not in food_ids:
             # A SKU/name resemblance, or even a NO_STOCK recipe, is not a
             # verifiable physical food/drink deduction for guest ordering.
             unconfigured.append((menu_item_id, item_name, "a physical stock mapping is required"))
@@ -326,7 +327,7 @@ def _validate_order_lines_stock(lines, *, exclude_order=None, require_configurat
         # and our stock-item/location locks. Re-read only after those locks;
         # never accept against a mapping that was replaced while we waited.
         current_rules = pos_stock_rules(menu_ids, strict=True)
-        if (any(not rule["tracked"] or rule["unconfigured"] for rule in current_rules.values())
+        if (any(rule["unconfigured"] or (not rule["tracked"] and mid not in food_ids) for mid, rule in current_rules.items())
                 or _portal_stock_snapshot(current_rules) != _portal_stock_snapshot(rules)):
             raise PosStockConflictError(
                 "An ordered item's inventory configuration changed; refresh the menu or contact staff.",
@@ -577,6 +578,8 @@ def create_order(
     # an accepted order line, so this runs before anything is persisted. A
     # rejection rolls the whole transaction back — no order row, no lines, and
     # any pre-existing drafts by other staff are untouched.
+    from .food_service import validate_food_lines
+    validate_food_lines(snapshotted_lines)
     stock_rules = _validate_order_lines_stock(snapshotted_lines, require_configuration=is_portal_order)
     subtotal = sum((item["line_total"] for item in snapshotted_lines), Decimal("0.00")).quantize(CENT)
     tax_amount = sum((item["tax_amount"] for item in snapshotted_lines), Decimal("0.00")).quantize(CENT)
@@ -762,6 +765,8 @@ def submit_order(*, order, actor, priority=0) -> PosOrder:
             stay_id=portal_request.stay_id, room_id=portal_request.room_id,
         ).exists():
             raise ValidationError("The guest's room is no longer active for this order. Contact the front desk.")
+    from .food_service import validate_food_lines
+    validate_food_lines(order.lines.values("menu_item_id", "quantity"), order=order, actor=actor, reserve=True)
     _validate_order_lines_stock(
         PosOrderLine.objects.filter(order=order).values("menu_item_id", "quantity", "item_name"),
         exclude_order=order,
@@ -974,7 +979,11 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
     if target_status == PosOrder.Status.CANCELLED:
         update_fields.append("cancelled_at")
     order.save(update_fields=update_fields)
+    from .food_service import finish_portions, prepare_nonstock_food_handoff
+    if target_status in {PosOrder.Status.CANCELLED, PosOrder.Status.DELIVERED}:
+        finish_portions(order=order, actor=actor, cancelled=target_status == PosOrder.Status.CANCELLED)
     if target_status == PosOrder.Status.DELIVERED:
+        prepare_nonstock_food_handoff(order=order, actor=actor)
         # Inventory owns recipe resolution and stock balances. POS only emits a
         # source-keyed immutable hand-off from its frozen order-line snapshot.
         #
@@ -988,7 +997,7 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
         consumption, _ = consume_stock_for_delivered_order(order=order, actor=actor)
         if portal_snapshot is not None:
             from apps.inventory.models import StockConsumptionRequest
-            if consumption.status != StockConsumptionRequest.Status.PROCESSED:
+            if consumption.status not in {StockConsumptionRequest.Status.PROCESSED, StockConsumptionRequest.Status.SKIPPED}:
                 from apps.core.exceptions import PosStockConflictError
                 # Roll back the charge, delivery, and any stock writes together.
                 raise PosStockConflictError("Stock could not be recorded for this order. Contact inventory and retry.")

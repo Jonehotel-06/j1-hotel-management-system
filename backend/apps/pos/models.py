@@ -57,6 +57,9 @@ class MenuItem(TimeStampedModel):
     is_available = models.BooleanField(default=True, db_index=True)
     is_active = models.BooleanField(default=True, db_index=True)
     sort_order = models.PositiveIntegerField(default=0)
+    # Unreserved prepared portions, NOT inventory base-unit ingredient stock.
+    portion_tracking = models.BooleanField(default=False)
+    prepared_portions = models.PositiveIntegerField(default=0)
 
     class Meta:
         ordering = ["category__sort_order", "sort_order", "name"]
@@ -697,3 +700,32 @@ class RestaurantTableSessionEvent(models.Model):
 
     def __str__(self):
         return f"{self.table_session.reference} · {self.type}"
+
+
+class PreparedPortionAllocation(models.Model):
+    order = models.ForeignKey(PosOrder, on_delete=models.PROTECT, related_name="prepared_allocations")
+    menu_item = models.ForeignKey(MenuItem, on_delete=models.PROTECT)
+    quantity = models.PositiveIntegerField()
+    state = models.CharField(max_length=12, choices=[("RESERVED", "Reserved"), ("CONSUMED", "Consumed"), ("RELEASED", "Released")], default="RESERVED")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["order", "menu_item"], name="unique_order_prepared_food"),
+                       models.CheckConstraint(condition=Q(quantity__gt=0), name="prepared_allocation_positive")]
+
+
+class FoodAvailabilityEvent(models.Model):
+    menu_item = models.ForeignKey(MenuItem, on_delete=models.PROTECT, related_name="food_events")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+    action = models.CharField(max_length=24)
+    quantity_delta = models.IntegerField(default=0)
+    portions_after = models.PositiveIntegerField()
+    ready_after = models.BooleanField()
+    tracking_after = models.BooleanField()
+    source_key = models.CharField(max_length=180, unique=True, null=True)
+    reason = models.CharField(max_length=500, blank=True)
+    details = models.JSONField(default=dict)
+
+    class Meta:
+        ordering = ["-id"]
+        indexes = [models.Index(fields=["menu_item", "-id"], name="food_event_item_recent")]

@@ -185,6 +185,10 @@
             <div class="panel-head"><h2 data-pos-queue-title>Production queue</h2><div class="panel-actions"><span class="caption" data-pos-live-status>Connecting to live updates…</span><button class="btn btn-sm btn-outline" type="button" data-pos-refresh-kitchen>Refresh</button></div></div>
             <div class="panel-body"><div class="pos-ticket-list" data-pos-kitchen></div></div>
           </section>
+          <section class="panel" data-kitchen-food-panel hidden>
+            <div class="panel-head"><h2>Prepared food availability</h2></div>
+            <div class="panel-body" data-kitchen-food></div>
+          </section>
           <section class="panel" data-pos-cash-panel hidden>
             <div class="panel-head"><h2>Cash drawer</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-pos-refresh-drawer>Refresh</button></div></div>
             <div class="panel-body"><div data-pos-drawer class="caption" aria-live="polite">Loading drawer status…</div><div class="pos-action-stack" style="margin-top:.8rem;"><button class="btn btn-sm" type="button" data-pos-open-drawer>Open drawer</button><button class="btn btn-sm btn-outline" type="button" data-pos-drop-cash disabled>Record cash drop</button><button class="btn btn-sm btn-outline" type="button" data-pos-close-drawer disabled>Close drawer</button></div></div>
@@ -237,7 +241,7 @@
   </div>
 </div>
 <script src="../js/runtime-config.js?v=1.1.27"></script>
-<script src="../js/config.js?v=1.1.27"></script>
+<script src="../js/config.js?v=batch05"></script>
 <script src="../js/utils.js?v=1.1.27"></script>
 <script src="../js/icons.js?v=1.1.27"></script>
 <script src="../js/api.js?v=1.1.27"></script>
@@ -249,6 +253,7 @@
 <script src="../js/dashboard.js?v=1.1.27"></script><script src="../js/table-fit.js?v=1.1.27"></script>
 <script src="../js/barcode-scanner.js?v=1.1.27"></script>
 <script src="../js/thermal-receipt.js?v=1.1.27"></script>
+<script src="../js/kitchen-food.js?v=batch05"></script>
 <script>
 JONE.ui.initChrome();
 var __posAllowed=JONE.dashboard.boot(["admin","general_manager","waiter","chef","kitchen_assistant"]);
@@ -461,6 +466,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   function stockOptionSuffix(stock){
     if(!stock)return "";
     if(stock.unconfigured)return " · stock location unavailable";
+    if(stock.prepared_food&&!stock.tracked)return " · Ready · prepared food";
     if(unconfiguredForStock(stock))return " · no stock tracking configured";
     if(!stock.tracked||stock.saleable_quantity==null)return "";
     var location=stockLocationName(stock);
@@ -477,6 +483,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(!item){node.textContent="Choose an item to see its stock source.";return;}
     var stock=item.stock;
     if(!stock){node.textContent="";return;}
+    if(stock.prepared_food&&!stock.tracked){node.textContent="Ready · simple prepared food. No recipe or ingredient configuration is required; no raw stock will be deducted.";return;}
     if(unconfiguredForStock(stock)){
       node.textContent="No stock control is configured for "+item.name+": no active stock recipe and no direct-sale link, so this sale will not reduce any store balance. It is recorded and parked for inventory review. Ask the store keeper to configure the stock item or write the recipe.";
       return;
@@ -512,15 +519,22 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(previousCategory&&state.menu.some(function(group){return String(group.id)===previousCategory;}))category.value=previousCategory;
     renderItemChoices(previousItem);
   }
-  async function loadMenu(area){
+  async function loadMenu(area,silent){
     var params=area?{area:area}:{};
     var requestId=++state.menuRequest;
     try{
       var res=await window.API.get(endpoint("posMenu"),{params:params});
       if(requestId!==state.menuRequest)return;
-      state.menu=res.data||[];renderMenu();
+      var nextMenu=res.data||[];
+      if(JSON.stringify(nextMenu)===JSON.stringify(state.menu))return true;
+      var selectedItem=document.getElementById("pos-item").value;
+      var selectedModifiers=Array.from(document.querySelectorAll("[data-pos-modifier]:checked")).map(function(input){return input.value;});
+      state.menu=nextMenu;renderMenu();
+      if(document.getElementById("pos-item").value===selectedItem){document.querySelectorAll("[data-pos-modifier]").forEach(function(input){input.checked=selectedModifiers.indexOf(input.value)!==-1;});}
+      return true;
     }catch(err){
       if(requestId!==state.menuRequest)return;
+      if(silent)return false;
       state.menu=[];renderMenu();
       setCreateError((err&&err.message)||"The POS menu could not be loaded.");
     }
@@ -1285,7 +1299,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       var availabilityAction=row.is_available
         ? '<button class="btn btn-sm btn-outline" type="button" data-pos-toggle-item="'+JONE.esc(row.id)+'" data-pos-toggle-to="unavailable">Mark sold out</button>'
         : '<button class="btn btn-sm" type="button" data-pos-toggle-item="'+JONE.esc(row.id)+'" data-pos-toggle-to="available">Mark available</button>';
-      return '<tr><td><strong>'+JONE.esc(row.name)+'</strong></td><td>'+JONE.esc(row.sku)+(row.barcode?'<br><small class="caption">'+JONE.esc(row.barcode)+'</small>':'')+'</td><td>'+JONE.esc(row.category_name||"")+'</td><td class="hide-sm">'+JONE.esc(label(row.service_area||""))+'</td><td class="num cell-nowrap">'+JONE.esc(money(row.base_price,row.currency))+marginLine+'</td><td><span class="badge">'+(row.is_available?"Available":"Sold out")+'</span></td><td class="hide-sm">'+stockLinkLabel(row.stock_linkage)+'</td><td><span class="badge">'+(row.is_active?"Active":"Inactive")+'</span></td><td><div class="pos-action-stack"><button class="btn btn-sm btn-outline" type="button" data-pos-edit-item="'+JONE.esc(row.id)+'">Edit</button>'+availabilityAction+'</div></td></tr>';
+      return '<tr><td><strong>'+JONE.esc(row.name)+'</strong></td><td>'+JONE.esc(row.sku)+(row.barcode?'<br><small class="caption">'+JONE.esc(row.barcode)+'</small>':'')+'</td><td>'+JONE.esc(row.category_name||"")+'</td><td class="hide-sm">'+JONE.esc(label(row.service_area||""))+'</td><td class="num cell-nowrap">'+JONE.esc(money(row.base_price,row.currency))+marginLine+'</td><td><span class="badge">'+(row.service_area==="RESTAURANT"?(row.is_available?"Ready":"Not Available"):(row.is_available?"Available":"Sold out"))+'</span></td><td class="hide-sm">'+stockLinkLabel(row.stock_linkage)+'</td><td><span class="badge">'+(row.is_active?"Active":"Inactive")+'</span></td><td><div class="pos-action-stack"><button class="btn btn-sm btn-outline" type="button" data-pos-edit-item="'+JONE.esc(row.id)+'">Edit</button>'+availabilityAction+'</div></td></tr>';
     }).join("");JONE.icons.inject(menuItemBody);
   }
   async function loadCategories(page,silent){
@@ -1350,6 +1364,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     try{
       await window.API.update("posMenuItems",row.id,{is_available:next});
       row.is_available=next;
+      if(allowedModes().length)loadMenu(state.menuArea);
       renderMenuItems(state.menuItems||[]);
       JONE.ui.toast(next?("“"+row.name+"” is available to sell again."):("“"+row.name+"” is marked sold out; it stays on past orders and reports."),"success");
     }catch(err){
@@ -1521,11 +1536,19 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter'])){loadRestaurantTables();loadRestaurantSessions();}
     if(state.serviceRequestReference)loadServiceRequestContext();
     loadKitchen();loadDrawer();
+    var foodControl=null;
+    if(hasCapability("kitchen.queue.view",["chef","kitchen_assistant"])||hasCapability("pos.menu.manage",["admin","general_manager"])||hasCapability("restaurant.menu.manage",["restaurant_manager"])){
+      var foodPanel=document.querySelector("[data-kitchen-food-panel]");foodPanel.hidden=false;
+      foodControl=JONE.kitchenFood.mount(foodPanel.querySelector("[data-kitchen-food]"),function(){if(allowedModes().length)loadMenu(state.menuArea);});
+      foodControl.load();
+    }
     var liveStatus=document.querySelector("[data-pos-live-status]");
     if(liveStatus)liveStatus.textContent="Live refresh · every 15 seconds";
     if(state.liveRefreshStop)state.liveRefreshStop();
     state.liveRefreshStop=JONE.dashboard.startLiveRefresh(function(){
       var refreshes=[loadKitchen(true)];
+      if(allowedModes().length)refreshes.push(loadMenu(state.menuArea,true));
+      if(foodControl)refreshes.push(foodControl.load(true));
       if(allowedModes().length)refreshes.push(loadOrders(undefined,true));
       if(hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter'])){refreshes.push(loadRestaurantSessions(true));refreshes.push(loadRestaurantTables(true));}
       return Promise.all(refreshes).then(function(results){
