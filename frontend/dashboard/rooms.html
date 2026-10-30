@@ -349,17 +349,18 @@
       '<div class="modal-body">'+
         '<div data-img-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:0.6rem;"></div>'+
         '<form data-img-form style="margin-top:1rem;display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">'+
-          '<input class="input" type="file" name="image" accept="image/jpeg,image/png,image/webp" required style="flex:1;min-width:200px;">'+
+          '<input class="input" type="file" name="images" accept="image/jpeg,image/png,image/webp" multiple required style="flex:1;min-width:200px;">'+
           '<button class="btn btn-sm" type="submit">Upload</button>'+
         '</form>'+
-        '<p class="caption" style="margin-top:0.4rem;">JPEG/PNG/WebP. The starred image is shown first.</p>'+
+        '<div data-img-preview style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.5rem;"></div>'+
+        '<p class="caption" style="margin-top:0.4rem;">JPEG/PNG/WebP, up to 5 MB per file, 20 files per upload. Existing photos are kept. The starred image is shown first.</p>'+
       '</div></div>';
     document.body.appendChild(overlay);
     document.body.classList.add("modal-open");
     JONE.icons.inject(overlay);
     var grid=overlay.querySelector("[data-img-grid]");
 
-    function close(){ overlay.remove(); document.body.classList.remove("modal-open"); document.removeEventListener("keydown",onKey); load(); }
+    function close(){ previewUrls.forEach(URL.revokeObjectURL); overlay.remove(); document.body.classList.remove("modal-open"); document.removeEventListener("keydown",onKey); load(); }
     function onKey(e){ if(e.key==="Escape") close(); }
     document.addEventListener("keydown",onKey);
     overlay.addEventListener("click",function(e){ if(e.target.closest("[data-img-close]")) close(); });
@@ -399,21 +400,40 @@
       }
     });
 
+    var imageInput=overlay.querySelector('[data-img-form] input[type=file]');
+    var preview=overlay.querySelector('[data-img-preview]');
+    var previewUrls=[];
+    function renderPreview(){
+      previewUrls.forEach(URL.revokeObjectURL); previewUrls=[];
+      preview.replaceChildren();
+      Array.from(imageInput.files||[]).forEach(function(file){
+        var url=URL.createObjectURL(file); previewUrls.push(url);
+        var img=document.createElement('img'); img.src=url; img.alt=file.name;
+        img.style.cssText='width:88px;height:66px;object-fit:cover;border-radius:4px;';
+        preview.appendChild(img);
+      });
+    }
+    imageInput.addEventListener('change',renderPreview);
     overlay.querySelector("[data-img-form]").addEventListener("submit",async function(e){
       e.preventDefault();
       var form=e.target, input=form.querySelector("input[type=file]");
       if(!input.files||!input.files.length) return;
+      var files=Array.from(input.files);
+      if(files.length>20 || files.some(function(f){ return f.size>5*1024*1024 || !["image/jpeg","image/png","image/webp"].includes(f.type); })){
+        JONE.ui.toast("Select up to 20 JPEG, PNG or WebP images, each at most 5 MB.","error"); return;
+      }
       var btn=form.querySelector("button[type=submit]");
       if(!JONE.guardSubmit(btn)) return;
       try{
         var fd=new FormData();
-        fd.append("image", input.files[0]);
+        files.forEach(function(file){ fd.append("images", file); });
+        btn.textContent="Uploading " + files.length + " image(s)…";
         await window.API.post(ROOMS_EP+encodeURIComponent(room.id)+"/images/", fd);
-        form.reset();
-        JONE.ui.toast("Image uploaded.","success");
+        form.reset(); renderPreview();
+        JONE.ui.toast(files.length+" image(s) uploaded.","success");
         refresh();
       }catch(err){ JONE.ui.toast(err.message||"Upload failed.","error"); }
-      finally{ JONE.releaseGuard(btn); }
+      finally{ btn.textContent="Upload"; JONE.releaseGuard(btn); }
     });
   }
 

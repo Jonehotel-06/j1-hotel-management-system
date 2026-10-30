@@ -1,8 +1,7 @@
-# Dependencies and integration
+# Dependencies
 
-No new package or framework. Uses the existing Django REST Framework serializer and `SupplierSerializer` in `backend/apps/inventory/serializers.py`.
+No new dependencies. Uses existing Django, DRF and Pillow; `django-storages`/Boto3 are already listed in `backend/requirements.txt` for configured B2 storage. Existing frontend API, modal, icons, and browser FormData/Object URL APIs are reused.
 
-Migration required: **No**.
-API change: additive `supplier_details` field on purchase-order detail responses.
+Runtime prerequisites: apply gallery migration; configure durable media storage and `/api/media/` (or the configured media/CDN URL); ensure storage is writable/readable from the backend and images are publicly retrievable on the frontend. Existing `MAX_UPLOAD_MB` default is 5 MB; dashboard advice assumes this default; the server remains authoritative when customized. Existing role permission classes are reused without modifying staff permissions.
 
-Safe integration: apply only `backend/apps/inventory/serializers.py` from this package to the target branch. Run backend tests and inspect the Accounting detail panel. This package does not change permissions, financial arithmetic, workflow transitions, payment recording, or receiving operations.
+Cross-module integration: room image display still uses existing `RoomSerializer`/room-type fallback; booking module is not modified. Public image swapping integrates with existing hotel settings through `site-images.js`; the gallery slot wins if both are set. No changes to inventory/accounting/staff modules.

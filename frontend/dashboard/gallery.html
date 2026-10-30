@@ -88,6 +88,10 @@
     <main class="dash-content">
 
 <section class="panel">
+  <div class="panel-head"><h2>Homepage images</h2></div>
+  <div class="panel-body"><div data-homepage-slots style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;"></div></div>
+</section>
+<section class="panel">
   <div class="panel-head"><h2>Gallery &amp; media</h2><div class="panel-actions"><button class="btn btn-sm" data-gal-upload>Upload media</button></div></div>
   <div class="panel-body">
     <div class="gallery-grid" data-gallery-grid></div>
@@ -113,6 +117,58 @@
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
 
 (function(){
+  var slots=document.querySelector('[data-homepage-slots]');
+  var definitions=[['hero','Hero','1600 × 900'],['welcome','Welcome to J-ONE','1200 × 675'],['experience','Experience','1200 × 675'],['find_us','Find Us','1200 × 675']];
+  var slotURL=function(key){ return window.APP_CONFIG.API_ENDPOINTS.gallery+'homepage/'+encodeURIComponent(key)+'/'; };
+  async function loadSlots(){
+    try{
+      var result=await window.API.getHomepageGallery();
+      var current=result.data||{};
+      slots.replaceChildren();
+      definitions.forEach(function(def){
+        var key=def[0], item=current[key];
+        var card=document.createElement('form');
+        card.style.cssText='border:1px solid var(--color-border);padding:1rem;border-radius:8px;min-width:0;';
+        card.innerHTML='<h3>'+JONE.esc(def[1])+'</h3><p class="caption">Recommended '+JONE.esc(def[2])+'; JPEG, PNG or WebP, max 5 MB.</p>'+
+          '<div data-slot-image style="aspect-ratio:16/9;background:var(--color-surface);margin:.75rem 0;"></div>'+
+          '<p class="caption">Status: '+(item?'Published':'Built-in default')+'</p>'+
+          '<label>Alternative text <input class="input" name="alt_text" maxlength="200" value="'+JONE.esc(item&&item.alt_text||'')+'"></label>'+
+          '<label>Upload / replace <input class="input" name="image" type="file" accept="image/jpeg,image/png,image/webp"></label>'+
+          '<div data-slot-preview></div><div style="display:flex;gap:.5rem;margin-top:.7rem;">'+
+          '<button class="btn btn-sm" type="submit">Save</button>'+(item?'<button class="btn btn-sm btn-outline" data-slot-remove type="button">Remove</button>':'')+'</div>';
+        var image=card.querySelector('[data-slot-image]');
+        if(item&&item.image_url){ var img=document.createElement('img'); img.src=item.image_url; img.alt=item.alt_text||def[1]; img.loading='lazy'; img.style.cssText='width:100%;height:100%;object-fit:cover;'; image.appendChild(img); }
+        else image.textContent='No custom image';
+        var picker=card.elements.image, preview=card.querySelector('[data-slot-preview]');
+        var objectURL;
+        picker.addEventListener('change',function(){
+          if(objectURL) URL.revokeObjectURL(objectURL);
+          preview.replaceChildren();
+          if(picker.files[0]){ objectURL=URL.createObjectURL(picker.files[0]);
+            var img=document.createElement('img'); img.src=objectURL; img.alt='Image preview';
+            img.style.cssText='max-width:100%;height:90px;object-fit:cover;'; preview.appendChild(img); }
+        });
+        card.addEventListener('submit',async function(e){
+          e.preventDefault(); var file=picker.files[0];
+          if(file && (file.size>5*1024*1024 || !['image/jpeg','image/png','image/webp'].includes(file.type))){ JONE.ui.toast('Choose a JPEG, PNG or WebP under 5 MB.','error');return; }
+          var btn=card.querySelector('[type=submit]'); btn.disabled=true; btn.textContent='Saving…';
+          var fd=new FormData(); if(file) fd.append('image',file);
+          fd.append('alt_text',card.elements.alt_text.value);
+          try{ await window.API.put(slotURL(key),fd); JONE.ui.toast(def[1]+' updated.','success'); loadSlots(); }
+          catch(err){ JONE.ui.toast(err.message||'Image could not be saved.','error'); btn.disabled=false; btn.textContent='Save'; }
+        });
+        var remove=card.querySelector('[data-slot-remove]');
+        if(remove) remove.addEventListener('click',async function(){
+          var yes=await JONE.ui.confirm({title:'Remove '+def[1]+' image?',confirmText:'Remove',danger:true});
+          if(!yes)return; remove.disabled=true;
+          try{ await window.API.del(slotURL(key)); JONE.ui.toast('Using built-in image again.','success'); loadSlots(); }
+          catch(err){ JONE.ui.toast(err.message||'Removal failed.','error');remove.disabled=false; }
+        });
+        slots.appendChild(card);
+      });
+    }catch(err){ slots.textContent=(err&&err.message)||'Homepage images could not be loaded.'; }
+  }
+  loadSlots();
   var items=[];
   var grid=document.querySelector("[data-gallery-grid]");
 

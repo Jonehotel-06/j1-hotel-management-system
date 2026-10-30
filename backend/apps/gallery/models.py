@@ -14,6 +14,14 @@ class GalleryItem(models.Model):
         EXTERIOR = "EXTERIOR", "Exterior"
         OTHER = "OTHER", "Other"
 
+    class HomepageSection(models.TextChoices):
+        HERO = "hero", "Hero"
+        WELCOME = "welcome", "Welcome to J-ONE"
+        EXPERIENCE = "experience", "Experience"
+        FIND_US = "find_us", "Find Us"
+
+    homepage_section = models.CharField(max_length=20, choices=HomepageSection.choices,
+                                        unique=True, null=True, blank=True)
     image = models.ImageField(upload_to="gallery/%Y/%m/", validators=[validate_image_upload])
     title = models.CharField(max_length=150, blank=True, default="")
     description = models.TextField(blank=True, default="")

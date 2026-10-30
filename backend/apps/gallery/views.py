@@ -15,7 +15,7 @@ class GalleryPublicListView(generics.ListAPIView):
     serializer_class = GalleryItemSerializer
 
     def get_queryset(self):
-        qs = GalleryItem.objects.filter(is_active=True)
+        qs = GalleryItem.objects.filter(is_active=True, homepage_section__isnull=True)
         category = self.request.query_params.get("category")
         if category:
             qs = qs.filter(category=category.upper())
@@ -39,7 +39,7 @@ class GalleryAdminViewSet(viewsets.ModelViewSet):
     serializer_class = GalleryItemAdminSerializer
 
     def get_queryset(self):
-        qs = GalleryItem.objects.all().order_by("display_order", "-created_at")
+        qs = GalleryItem.objects.filter(homepage_section__isnull=True).order_by("display_order", "-created_at")
         if category := self.request.query_params.get("category"):
             qs = qs.filter(category=category.upper())
         if active := self.request.query_params.get("is_active"):

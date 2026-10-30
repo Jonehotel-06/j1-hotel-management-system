@@ -12,10 +12,10 @@ class GalleryItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = GalleryItem
         fields = [
-            "id", "title", "description", "category", "alt_text",
+            "id", "title", "description", "category", "alt_text", "homepage_section",
             "image_url", "display_order", "is_active", "created_at",
         ]
-        read_only_fields = ["id", "created_at"]
+        read_only_fields = ["id", "created_at", "homepage_section"]
 
     def get_image_url(self, obj):
         return absolute_media_url(obj.image, self.context.get("request"))

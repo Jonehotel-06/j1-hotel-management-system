@@ -2,7 +2,14 @@
 """Staff management for amenities, room types, images and physical rooms."""
 import logging
 from datetime import timedelta
+from pathlib import Path
+from uuid import uuid4
 
+from django.db import transaction
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework.exceptions import ValidationError
+from apps.core.validators import validate_image_upload
+from apps.core.storage import delete_quietly, verify_stored_upload, StorageUploadError
 from django.db.models import Count, Exists, OuterRef, Prefetch, Q
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
@@ -176,13 +183,44 @@ class RoomImageUploadView(generics.CreateAPIView):
         if room is None:
             from rest_framework.exceptions import NotFound
             raise NotFound()
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        image = serializer.save(room=room)
-        log_action(actor=request.user, action="ROOM_IMAGE_ADDED", instance=room,
-                   metadata={"image_id": image.pk}, request=request)
-        return success_response(self.get_serializer(image).data, message="Room image uploaded.",
-                                status=status.HTTP_201_CREATED)
+        # `images` is a repeated multipart key; retain the legacy single `image`
+        # contract for existing clients. Never interpret an omitted key as delete.
+        files = request.FILES.getlist("images") or request.FILES.getlist("image")
+        if not files:
+            raise ValidationError({"images": "Select at least one image."})
+        if len(files) > 20:
+            raise ValidationError({"images": "Upload at most 20 images at once."})
+        for index, file in enumerate(files):
+            try:
+                validate_image_upload(file)
+            except DjangoValidationError as exc:
+                raise ValidationError({"images": {index: exc.messages}}) from exc
+        created = []
+        try:
+            with transaction.atomic():
+                has_primary = room.images.filter(is_primary=True, is_active=True).exists()
+                for index, file in enumerate(files):
+                    # B2 can overwrite an identical key. Never let a new file
+                    # replace an existing room photo with the same basename.
+                    file.name = Path(file.name).stem[:60] + '-' + uuid4().hex + Path(file.name).suffix.lower()
+                    serializer = self.get_serializer(data={"image": file,
+                        "is_primary": not has_primary and index == 0})
+                    serializer.is_valid(raise_exception=True)
+                    image = serializer.save(room=room)
+                    created.append(image)
+                    valid, warning = verify_stored_upload(image.image)
+                    if not valid:
+                        raise StorageUploadError(warning)
+        except Exception:
+            for image in created:
+                delete_quietly(image.image)
+            raise
+        for image in created:
+            log_action(actor=request.user, action="ROOM_IMAGE_ADDED", instance=room,
+                       metadata={"image_id": image.pk}, request=request)
+        data = self.get_serializer(created, many=True).data
+        return success_response(data if len(created) > 1 else data[0],
+                                message="Room images uploaded.", status=status.HTTP_201_CREATED)
 
 
 @extend_schema(tags=["Admin · Rooms"])

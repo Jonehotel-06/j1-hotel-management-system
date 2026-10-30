@@ -599,6 +599,7 @@ const API = (() => {
   function getOffers(params, opts = {}) { return get("/api/offers/", { params, auth: false, ...opts }); }
   function getFacilities(params, opts = {}) { return get("/api/facilities/", { params, auth: false, ...opts }); }
   function getGallery(params, opts = {}) { return get("/api/gallery/", { params, auth: false, ...opts }); }
+  function getHomepageGallery(opts = {}) { return get("/api/gallery/homepage/", { auth: false, ...opts }); }
 
   /* Enquiries / contact (honeypot `website` field must stay blank). */
   function submitEnquiry(payload, opts = {}) { return post("/api/enquiries/", payload, { auth: false, ...opts }); }
@@ -1116,7 +1117,7 @@ const API = (() => {
     downloadFile, downloadReport,
     // Public site
     getHotelInfo, getPolicies, getRooms, getRoom, checkAvailability, getUnavailableDates,
-    getOffers, getFacilities, getGallery, submitEnquiry, submitCancellationRequest, getCancellationStatus,
+    getOffers, getFacilities, getGallery, getHomepageGallery, submitEnquiry, submitCancellationRequest, getCancellationStatus,
     verifyReviewStay, submitReview, getReviewStats,
     // Booking flow (guest)
     quoteBooking, createBooking, myBookings, getBooking, guestAccessOpts, getBookingReceipt,

@@ -1,5 +1,7 @@
 # apps/rooms/serializers.py
 from django.db import transaction
+from pathlib import Path
+from uuid import uuid4
 from rest_framework import serializers
 from rest_framework.relations import MANY_RELATION_KWARGS, ManyRelatedField
 
@@ -375,6 +377,9 @@ class RoomSerializer(serializers.ModelSerializer):
     def _apply_image(self, room, image_file):
         if image_file is None:
             return None
+        # The configured B2 backend overwrites equal keys; use a unique name
+        # before writing so a room edit cannot replace any existing object.
+        image_file.name = Path(image_file.name).stem[:60] + '-' + uuid4().hex + Path(image_file.name).suffix.lower()
 
         def _create():
             return RoomImage.objects.create(

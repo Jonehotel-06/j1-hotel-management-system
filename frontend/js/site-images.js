@@ -86,9 +86,9 @@
   /* Homepage hero: a configured image replaces the built-in slideshow with a
      single static slide. When the carousel script already ran, rebuild the
      section so its timers/listeners restart cleanly against the new markup. */
-  function singleSlideMarkup(url) {
+  function singleSlideMarkup(url, alt) {
     return '<div class="hero-slide is-active"><img src="' + JONE.esc(url) +
-      '" alt="J-ONE Hotel &amp; Lodge" fetchpriority="high"></div>';
+      '" alt="' + JONE.esc(alt || "J-ONE Hotel & Lodge") + '" width="1600" height="900" fetchpriority="high"></div>';
   }
 
   function applyHero(s) {
@@ -102,7 +102,10 @@
     var first = slides[0] && slides[0].querySelector("img");
 
     if (!url) return; // no custom hero: the built-in slideshow is the fallback
-    if (slides.length === 1 && first && first.getAttribute("src") === url) return;
+    if (slides.length === 1 && first && first.getAttribute("src") === url) {
+      if (s.hero_alt_text) first.alt = s.hero_alt_text;
+      return;
+    }
 
     var customFailed = function () {
       // Broken custom hero: restore the shipped slideshow on next navigation;
@@ -113,7 +116,7 @@
     if (document.readyState === "loading") {
       // Carousel not initialised yet: mutate in place; js/carousel.js picks up
       // a single slide and degrades to a static hero (controls removed).
-      media.innerHTML = singleSlideMarkup(url);
+      media.innerHTML = singleSlideMarkup(url, s.hero_alt_text);
       first = media.querySelector(".hero-slide img");
       if (first) first.addEventListener("error", customFailed);
       return;
@@ -125,7 +128,7 @@
     clone.innerHTML = hero.innerHTML;
     var cloneMedia = clone.querySelector(".hero-media");
     if (!cloneMedia) return;
-    cloneMedia.innerHTML = singleSlideMarkup(url);
+    cloneMedia.innerHTML = singleSlideMarkup(url, s.hero_alt_text);
     var cloneImg = cloneMedia.querySelector(".hero-slide img");
     if (cloneImg) cloneImg.addEventListener("error", customFailed);
     hero.replaceWith(clone);
@@ -140,8 +143,38 @@
       applySwaps(s);
       applyReveals(s);
       applyHero(s);
+      if (gallerySlots) applyGallery(gallerySlots);
     } catch (_) { /* image config must never break the page */ }
   }
+
+  // Gallery slots are fetched independently of hotel settings; no deployment is
+  // needed after an administrator replaces a photo.
+  var gallerySlots = null;
+  function applyGallery(slots) {
+    gallerySlots = slots;
+    var mapping = {welcome: 'intro_image', experience: 'experience_image', find_us: 'location_image'};
+    Object.keys(mapping).forEach(function(section){
+      var item=slots[section];
+      if (item && item.image_url) {
+        var key=mapping[section];
+        var swap={}; swap[key+'_url']=item.image_url;
+        applySwaps(swap);
+        document.querySelectorAll('[data-site-image="'+key+'"]').forEach(function(img){
+          if(item.alt_text) img.alt=item.alt_text;
+          img.removeAttribute('srcset');
+        });
+      }
+    });
+    if(slots.hero && slots.hero.image_url) applyHero({hero_image_url:slots.hero.image_url, hero_alt_text:slots.hero.alt_text});
+  }
+  function loadGallery(){
+    if(!window.API || !window.API.getHomepageGallery) return;
+    window.API.getHomepageGallery({cache:"no-store"}).then(function(result){
+      applyGallery(result.data || {});
+    }).catch(function(){ /* retain built-in assets on network failure */ });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadGallery);
+  else loadGallery();
 
   document.addEventListener("jone:hotel", apply);
   // When this file loads after hydration already happened, apply immediately.

@@ -1,8 +1,23 @@
-# Batch 03 manifest
+# Batch 04 file manifest
 
-Output package: `ai_updates/batch_03_procurement_purchase_orders/`
+Patch source: `https://github.com/Jonehotel-06/j1-hotel-management-system` (isolated working copy; original clone unchanged). Paths below are relative to repository root. Copy this package over the repository root, retaining paths. No other repository files are included.
 
-Changed file (repository-relative path preserved):
-- `backend/apps/inventory/serializers.py` — Adds a read-only, complete supplier projection to purchase-order detail responses using the existing supplier serializer. No schema change.
+## Modified
+- `backend/apps/gallery/models.py`
+- `backend/apps/gallery/serializers.py`
+- `backend/apps/gallery/urls.py`
+- `backend/apps/gallery/views.py`
+- `backend/apps/rooms/serializers.py`
+- `backend/apps/rooms/views_admin.py`
+- `frontend/dashboard/gallery.html`
+- `frontend/dashboard/rooms.html`
+- `frontend/js/api.js`
+- `frontend/js/site-images.js`
 
-No files were created in the application repository. No unrelated modules were edited.
+## Created
+- `backend/apps/gallery/homepage.py`
+- `backend/apps/gallery/migrations/0002_homepage_section.py`
+- `backend/apps/gallery/tests/__init__.py`
+- `backend/apps/gallery/tests/test_batch04.py`
+
+Package documents: `MANIFEST.md`, `CHANGES.md`, `TEST_REPORT.md`, `DEPENDENCIES.md`.
