@@ -597,12 +597,13 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
 
 
 class PurchaseOrderDetailSerializer(PurchaseOrderListSerializer):
+    supplier_details = SupplierSerializer(source="supplier", read_only=True)
     lines = PurchaseOrderLineSerializer(many=True, read_only=True)
     payments = PurchaseOrderPaymentSerializer(many=True, read_only=True)
     notes = serializers.CharField(read_only=True)
 
     class Meta(PurchaseOrderListSerializer.Meta):
-        fields = PurchaseOrderListSerializer.Meta.fields + ["notes", "lines", "payments"]
+        fields = PurchaseOrderListSerializer.Meta.fields + ["supplier_details", "notes", "lines", "payments"]
 
 
 class PurchaseOrderDecisionSerializer(serializers.Serializer):
