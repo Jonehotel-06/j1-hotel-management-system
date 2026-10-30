@@ -1506,18 +1506,18 @@
       const first = form.querySelector("input, select, textarea");
       if (first) first.focus();
 
+      let closed = false;
       function close(result) {
+        if (closed) return;
+        closed = true;
         document.removeEventListener("keydown", onKey);
         // Release any preview object URLs held by image drop-zones.
         Object.keys(imageFields).forEach((k) => imageFields[k].dispose());
-        backdrop.classList.remove("open");
-        setTimeout(() => {
-          backdrop.remove();
-          if (!document.querySelector(".modal.open")) document.body.classList.remove("modal-open");
-        }, 200);
+        backdrop.remove();
+        if (!document.querySelector(".modal.open")) document.body.classList.remove("modal-open");
         resolve(result || null);
       }
-      function onKey(e) { if (e.key === "Escape") close(null); }
+      function onKey(e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); } }
       document.addEventListener("keydown", onKey);
       backdrop.addEventListener("click", (e) => {
         if (e.target.closest("[data-fm-cancel]")) close(null);
@@ -1610,7 +1610,7 @@
         try {
           const out = await opts.onSubmit(values, formData);
           JONE.releaseGuard(submit);
-          close(out === undefined ? true : out);
+          if (!closed) close(out === undefined ? true : out);
         } catch (err) {
           JONE.releaseGuard(submit);
           // Field-level errors from the backend envelope (supports nested objects such as guest.*)

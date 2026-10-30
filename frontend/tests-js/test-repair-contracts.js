@@ -362,3 +362,34 @@ test("enquiries use the supported PATCH lifecycle only", () => {
   assert.match(page, /API\.list\(\s*["']enquiries["']/);
   assert.match(page, /API\.getOne\(\s*["']enquiries["']/);
 });
+
+test("batch 02: export options retain both ISO dates for Excel and PDF", async () => {
+  for (const [kind, mime] of [
+    ["xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+    ["pdf", "application/pdf"],
+  ]) {
+    let requested = "";
+    const { ctx } = bootDownload({ contentType: mime });
+    const original = ctx.fetch;
+    ctx.fetch = (url, init) => { requested = String(url); return original(url, init); };
+    await ctx.window.API.downloadReport(
+      ctx.window.APP_CONFIG.API_ENDPOINTS.financeSummary, kind,
+      { start: "2026-10-01", end: "2026-10-30", params: { currency: "NGN" } }
+    );
+    assert.match(requested, /start=2026-10-01/);
+    assert.match(requested, /end=2026-10-30/);
+    assert.match(requested, /currency=NGN/);
+    assert.match(requested, new RegExp("export=" + kind));
+  }
+});
+
+test("batch 02: receipt form cancel is non-submitting and closes synchronously", () => {
+  const source = fs.readFileSync(path.join(FRONTEND, "js", "dashboard.js"), "utf8");
+  const form = source.slice(source.indexOf("  function formModal(opts) {"), source.indexOf("  function paymentModal("));
+  assert.match(form, /cancel\.type = "button"/);
+  assert.match(form, /if \(closed\) return;/);
+  assert.match(form, /backdrop\.remove\(\);/);
+  assert.match(form, /document\.removeEventListener\("keydown", onKey\)/);
+  assert.match(form, /e\.target\.closest\("\[data-fm-cancel\]"\)/);
+  assert.match(form, /e\.key === "Escape"/);
+});

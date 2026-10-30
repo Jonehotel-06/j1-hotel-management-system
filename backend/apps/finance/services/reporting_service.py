@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
-from django.db.models import Count, F, Q, Sum
+from django.db.models import Count, F, Q, Sum, Case, When, DecimalField, Value
 
 from apps.core.utils import money
 
@@ -69,14 +69,16 @@ def _metrics() -> dict[str, Q]:
             direction=FinancialLine.Direction.CREDIT,
             account_code__startswith="REVENUE.",
         ),
+        "revenue_reversals": Q(
+            direction=FinancialLine.Direction.DEBIT,
+            account_code__startswith="REVENUE.",
+        ),
+        # Historical liability is retained in the API for audit compatibility, never
+        # displayed as a current-period statutory charge in the dashboard.
         "tax_accrued": Q(
             transaction__type__in=CHARGE_TYPES,
             direction=FinancialLine.Direction.CREDIT,
             account_code=accounting.TAX_PAYABLE,
-        ),
-        "statutory_tax_accrued": Q(
-            direction=FinancialLine.Direction.CREDIT,
-            account_code=accounting.STATUTORY_TAX_PAYABLE,
         ),
         "collections": Q(
             transaction__type=FinancialTransaction.Type.PAYMENT_COLLECTION,
@@ -92,6 +94,18 @@ def _metrics() -> dict[str, Q]:
             transaction__type=FinancialTransaction.Type.DISCOUNT,
             direction=FinancialLine.Direction.DEBIT,
             account_code__startswith="CONTRA_REVENUE.",
+        ),
+        "discount_reversals": Q(
+            direction=FinancialLine.Direction.CREDIT,
+            account_code__startswith="CONTRA_REVENUE.",
+        ),
+        "operating_expense_reversals": Q(
+            direction=FinancialLine.Direction.CREDIT,
+            account_code=accounting.OPERATING_EXPENSE,
+        ),
+        "payroll_expense_reversals": Q(
+            direction=FinancialLine.Direction.CREDIT,
+            account_code__in=[accounting.PAYROLL_EXPENSE, accounting.PAYROLL_PENSION_EXPENSE],
         ),
         "operating_expenses": Q(
             transaction__type=FinancialTransaction.Type.EXPENSE,
@@ -218,23 +232,29 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
         .order_by("transaction__business_date")
     )
     by_revenue_account = list(
-        lines.filter(
-            direction=FinancialLine.Direction.CREDIT,
-            account_code__startswith="REVENUE.",
-        )
+        lines.filter(account_code__startswith="REVENUE.")
         .values("account_code")
-        .annotate(amount=Sum("amount", default=ZERO), transactions=Count("transaction_id", distinct=True))
+        .annotate(amount=Sum(Case(
+            When(direction=FinancialLine.Direction.DEBIT, then=-F("amount")),
+            default=F("amount"), output_field=DecimalField(max_digits=14, decimal_places=2),
+        )), transactions=Count("transaction_id", distinct=True))
         .order_by("account_code")
     )
     totals_payload = _serialize_metrics(totals, metrics, include_transaction_counts=True)
     serialized_days = []
     for row in by_day:
         row_payload = _serialize_metrics(row, metrics, include_transaction_counts=False)
+        row_payload["recognized_revenue"]["amount"] = money(
+            _amount(row.get("recognized_revenue")) - _amount(row.get("revenue_reversals")))
         collections = _amount(row.get("collections"))
         refunds = _amount(row.get("refunds"))
-        revenue = _amount(row.get("recognized_revenue"))
-        operating_expenses = _amount(row.get("operating_expenses"))
-        payroll_expenses = _amount(row.get("payroll_expenses"))
+        revenue = _amount(row.get("recognized_revenue")) - _amount(row.get("revenue_reversals"))
+        operating_expenses = _amount(row.get("operating_expenses")) - _amount(row.get("operating_expense_reversals"))
+        payroll_expenses = _amount(row.get("payroll_expenses")) - _amount(row.get("payroll_expense_reversals"))
+        discounts = _amount(row.get("discounts")) - _amount(row.get("discount_reversals"))
+        row_payload["operating_expenses"]["amount"] = money(operating_expenses)
+        row_payload["payroll_expenses"]["amount"] = money(payroll_expenses)
+        row_payload["discounts"]["amount"] = money(discounts)
         payroll_payments = _amount(row.get("payroll_payments"))
         payroll_payment_reversals = _amount(row.get("payroll_payment_reversals"))
         serialized_days.append(
@@ -243,15 +263,20 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
                 **row_payload,
                 "net_collections": money(collections - refunds),
                 "net_payroll_payments": money(payroll_payments - payroll_payment_reversals),
-                "gross_operating_result": money(revenue - operating_expenses - payroll_expenses),
+                "gross_operating_result": money(revenue - operating_expenses - payroll_expenses - discounts),
             }
         )
 
     collections = _amount(totals.get("collections"))
     refunds = _amount(totals.get("refunds"))
-    revenue = _amount(totals.get("recognized_revenue"))
-    operating_expenses = _amount(totals.get("operating_expenses"))
-    payroll_expenses = _amount(totals.get("payroll_expenses"))
+    revenue = _amount(totals.get("recognized_revenue")) - _amount(totals.get("revenue_reversals"))
+    totals_payload["recognized_revenue"]["amount"] = money(revenue)
+    operating_expenses = _amount(totals.get("operating_expenses")) - _amount(totals.get("operating_expense_reversals"))
+    totals_payload["operating_expenses"]["amount"] = money(operating_expenses)
+    payroll_expenses = _amount(totals.get("payroll_expenses")) - _amount(totals.get("payroll_expense_reversals"))
+    totals_payload["payroll_expenses"]["amount"] = money(payroll_expenses)
+    discounts = _amount(totals.get("discounts")) - _amount(totals.get("discount_reversals"))
+    totals_payload["discounts"]["amount"] = money(discounts)
     payroll_payments = _amount(totals.get("payroll_payments"))
     payroll_payment_reversals = _amount(totals.get("payroll_payment_reversals"))
     cash_paid_out = _amount(totals.get("cash_paid_out"))
@@ -294,12 +319,12 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
     return {
         "basis": "posted_immutable_ledger_business_date",
         "definitions": {
-            "recognized_revenue": "Credit postings to REVENUE.* accounts in the period (earned, not necessarily collected).",
+            "recognized_revenue": "Credits less reversal debits to REVENUE.* in the period (earned, not collected).",
             "collections": "Debit postings to cash/bank/card clearing from PAYMENT_COLLECTION (money received).",
             "refunds": "Credit postings to tender assets from REFUND transactions (money returned).",
             "operating_expenses": "Debit postings to EXPENSE.OPERATING from EXPENSE transactions (recognized, not necessarily paid).",
             "cash_paid_out": "Credit postings to cash on hand from EXPENSE transactions (actual cash leaving the drawer).",
-            "gross_operating_result": "Recognized revenue less operating expense and accrued payroll. Not statutory net profit.",
+            "gross_operating_result": "Net recognized revenue less discounts, operating expenses and accrued payroll (signed posted lines).",
             "net_cash_movement": (
                 "Collections less refunds less cash actually disbursed (supplier payments, operating costs "
                 "paid, net salaries, other disbursements) in the period. A movement, not a bank balance."
@@ -313,7 +338,7 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
         "net_collections": money(collections - refunds),
         "net_payroll_payments": money(net_payroll_payments),
         "actual_payments_made": money(cash_paid_out + net_payroll_payments),
-        "gross_operating_result": money(revenue - operating_expenses - payroll_expenses),
+        "gross_operating_result": money(revenue - operating_expenses - payroll_expenses - discounts),
         "net_cash_movement": money(net_cash_movement),
         # Supplier payments, payables and every other disbursement. Additive keys
         # only: the existing contract above is unchanged.
@@ -326,8 +351,6 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
 MEASURE_LABELS = (
     ("guest_charges", "Guest charges"),
     ("recognized_revenue", "Recognized revenue"),
-    ("tax_accrued", "Historical tax collected (pre-removal)"),
-    ("statutory_tax_accrued", "Statutory tax accrued (not billed to guests)"),
     ("collections", "Collections"),
     ("refunds", "Refunds"),
     ("net_collections", "Net collections"),
@@ -405,7 +428,8 @@ def summary_xlsx_bytes(report: dict) -> bytes:
     # "₦1,000.00" string would both lose precision and change the exported value.
     # The stored precision (2 decimal places) is untouched — only how Excel shows
     # the cell changes.
-    money_format = f'#,##0.00" {report.get("currency") or "NGN"}"'
+    unit = report.get("currency") or "NGN"
+    money_format = f'#,##0.00" {unit}";(#,##0.00" {unit}");0.00" {unit}"'
     sheet.append(["Measure", "Amount", "Ledger transactions"])
     for key, label in MEASURE_LABELS:
         row_index = sheet.max_row + 1

@@ -173,19 +173,24 @@ def accounts_receivable_aging(*, as_of=None, limit=100) -> dict:
     bookings never owed the hotel money and are excluded.
     """
     from apps.bookings.models import Booking
+    from .folio_service import booking_folio_charge_map
 
     as_of = as_of or hotel_today()
     outstanding = (
         Booking.objects.exclude(status=Booking.Status.CANCELLED)
-        .filter(payment_status__in=[Booking.PaymentStatus.UNPAID, Booking.PaymentStatus.PARTIALLY_PAID])
+        .filter(check_in__lte=as_of)
         .select_related("guest")
         .order_by("check_in", "pk")
     )
     buckets = {key: {"label": label, "total": ZERO, "count": 0} for key, label, _low, _high in BUCKETS}
     items = []
     total = ZERO
-    for booking in outstanding.iterator():
-        due = _dec(booking.amount_due)
+    # Fetch the bounded booking cohort once; one aggregate covers every folio,
+    # including multiple room-level folios belonging to the same booking.
+    bookings = list(outstanding)
+    extras = booking_folio_charge_map(booking_ids=[b.pk for b in bookings])
+    for booking in bookings:
+        due = max(_dec(booking.amount_due) + _dec(extras.get(booking.pk)), ZERO)
         if due <= ZERO:
             continue
         age_days = max((as_of - (booking.check_in or booking.created_at.date())).days, 0)
@@ -205,6 +210,7 @@ def accounts_receivable_aging(*, as_of=None, limit=100) -> dict:
             "total_amount": money(booking.total_amount),
             "amount_paid": money(booking.amount_paid),
             "balance_due": money(due),
+            "folio_charges_net": money(extras.get(booking.pk, ZERO)),
             "age_days": age_days,
             "bucket": bucket_key,
         })
@@ -220,7 +226,7 @@ def accounts_receivable_aging(*, as_of=None, limit=100) -> dict:
         "items": items[:limit],
         "items_truncated": len(items) > limit,
         "definitions": {
-            "balance_due": "Booking total minus payments, from the booking record (refunds already reflected).",
+            "balance_due": "Booking total minus payments plus posted net non-accommodation folio charges across all room folios; no future bookings.",
             "age_basis": "Days since check-in; future check-ins age as current.",
         },
     }

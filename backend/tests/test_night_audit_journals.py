@@ -252,3 +252,30 @@ class NightAuditInHouseTests(BaseAPITestCase):
             any(d["type"] == "IN_HOUSE_NO_FOLIO" for d in data["discrepancies"]),
             data["discrepancies"],
         )
+
+    def test_multi_room_booking_receivable_includes_each_folio_once(self):
+        from apps.finance.models import Folio, FolioPosting
+        from apps.finance.services.night_audit_service import accounts_receivable_aging
+
+        first = make_room(self.room_type, "703")
+        second = make_room(self.room_type, "704")
+        guest = make_guest("batch02-multi-room@example.com")
+        booking = make_booking(guest, self.room_type, rooms=[first, second],
+            number_of_rooms=2, check_in=self.today - timedelta(days=1),
+            check_out=self.today + timedelta(days=1), total="10000.00", amount_paid="5000.00")
+        for i, amount in enumerate(("1000.00", "2000.00")):
+            folio = Folio.objects.create(reference=f"FOL-BATCH02-{i}", booking=booking, guest=guest)
+            create_posted_transaction(
+                transaction_type=FinancialTransaction.Type.OTHER_CHARGE,
+                actor=self.manager, source_key=f"batch02:room:{i}", business_date=self.today,
+                lines=[
+                    {"account_code": accounting.ACCOUNTS_RECEIVABLE, "direction": "DEBIT", "amount": amount, "folio": folio},
+                    {"account_code": accounting.OTHER_OPERATING_REVENUE, "direction": "CREDIT", "amount": amount},
+                ],
+                postings=[{"line_index": 0, "folio": folio, "kind": FolioPosting.Kind.CHARGE,
+                           "effect": FolioPosting.Effect.DEBIT, "amount": amount}],
+            )
+        report = accounts_receivable_aging(as_of=self.today)
+        row = next(item for item in report["items"] if item["booking_reference"] == booking.booking_reference)
+        self.assertEqual(row["balance_due"], "8000.00")
+        self.assertEqual(row["folio_charges_net"], "3000.00")

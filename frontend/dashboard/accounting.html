@@ -104,9 +104,9 @@
     <h2 class="section-title" data-finance-heading>Financial overview</h2>
     <section class="kpi-grid" data-finance-kpis aria-busy="true" aria-label="Financial overview">
       <div class="kpi"><div class="kpi-label">Recognized revenue</div><div class="kpi-value" data-rp="recognized-revenue">--</div><div class="kpi-sub" data-rp="recognized-revenue-sub">&nbsp;</div></div>
-      <div class="kpi"><div class="kpi-label">Collections</div><div class="kpi-value" data-rp="collections">--</div><div class="kpi-sub" data-rp="collections-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Total Collections</div><div class="kpi-value" data-rp="collections">--</div><div class="kpi-sub" data-rp="collections-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Operating expenses</div><div class="kpi-value" data-rp="operating-expenses">--</div><div class="kpi-sub" data-rp="operating-expenses-sub">&nbsp;</div></div>
-      <div class="kpi"><div class="kpi-label">Net operating result</div><div class="kpi-value" data-rp="operating-result">--</div><div class="kpi-sub">Recognized revenue − operating expenses − accrued payroll</div></div>
+      <div class="kpi"><div class="kpi-label">Net operating result</div><div class="kpi-value" data-rp="operating-result">--</div><div class="kpi-sub">Recognized revenue − discounts − operating expenses − accrued payroll</div></div>
       <div class="kpi"><div class="kpi-label">Outstanding supplier payables</div><div class="kpi-value" data-rp="outstanding-payables">--</div><div class="kpi-sub" data-rp="outstanding-payables-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Total cash disbursed</div><div class="kpi-value" data-rp="cash-disbursed">--</div><div class="kpi-sub" data-rp="cash-disbursed-sub">&nbsp;</div></div>
     </section>
@@ -135,7 +135,7 @@
   <div class="panel-body no-pad">
     <div class="section-actions"><button class="btn btn-sm" type="button" id="acct-journal"><span data-icon="plus" data-size="15"></span> Post journal entry</button></div>
     <div class="table-wrap"><table class="table">
-      <thead><tr><th class="cell-nowrap">Date</th><th class="cell-nowrap">Reference</th><th class="cell-nowrap">Type</th><th class="cell-clamp">Description</th><th class="cell-nowrap">Status</th></tr></thead>
+      <thead><tr><th class="cell-nowrap">Date</th><th class="cell-nowrap">Reference</th><th class="cell-nowrap">Type</th><th class="cell-clamp">Description</th><th class="cell-nowrap">Status</th><th>Details</th></tr></thead>
       <tbody data-tbody="ledger-tx"></tbody>
     </table></div>
   </div>
@@ -369,19 +369,6 @@
   </div>
 </details>
 
-<!-- CHART OF ACCOUNTS (read-only) -->
-<details class="panel finance-section" data-acc-section="coa" id="chart-of-accounts">
-  <summary class="panel-head"><h2>Chart of accounts</h2>
-    <span class="caption">Accounts available for journal entries (read-only)</span>
-    <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
-  </summary>
-  <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
-    <thead><tr><th class="cell-nowrap">Code</th><th class="cell-clamp">Account</th></tr></thead>
-    <tbody data-tbody="x-coa"></tbody>
-  </table></div></div>
-</details>
-
-<!-- PRINT REPORT (any day or range) -->
 <details class="panel finance-section" data-acc-section="print-report" id="print-report">
   <summary class="panel-head"><h2>Print report</h2>
     <span class="caption">Print the accounts for any day or date range, including past days</span>
@@ -568,7 +555,7 @@
   }
 
   function activeDates(){
-    if(range && range.value==="custom" && fromEl.value && toEl.value) return { from:fromEl.value, to:toEl.value };
+    if(range && range.value==="custom") return { from:fromEl.value, to:toEl.value };
     return defaultDates();
   }
 
@@ -791,12 +778,37 @@
   }
 
 
+  if(tx) tx.addEventListener("click",function(event){
+    var button=event.target.closest("[data-ledger-view]");
+    if(!button) return;
+    var ref=button.getAttribute("data-ledger-view");
+    button.disabled=true;
+    window.API.get(window.APP_CONFIG.API_ENDPOINTS.financeTransactions+encodeURIComponent(ref)+"/").then(function(response){
+      var record=response.data||{};
+      var fields=[["Reference",record.reference],["Type",record.type],["Description",record.narrative],
+        ["Status",record.status],["Currency",record.currency],["Source reference",record.source_reference],
+        ["External reference",record.external_reference],["Initiated by",record.initiated_by_email],
+        ["Approved by",record.approved_by_email],["Business date",record.business_date],
+        ["Occurred at",record.occurred_at],["Posted at",record.posted_at],
+        ["Reversal of",record.reversal_of_reference]];
+      var body="<dl>"+fields.filter(function(f){return f[1]!=null && f[1]!=="";}).map(function(f){
+        return "<dt>"+JONE.esc(f[0])+"</dt><dd>"+JONE.esc(String(f[1]))+"</dd>";
+      }).join("")+"</dl><h4>Ledger lines</h4>"+
+        (record.lines||[]).map(function(line){return "<p>"+JONE.esc(line.direction+" · "+line.account_code+" · "+formatMoney(line.amount,record.currency)+" · "+(line.folio_reference||line.description||""))+"</p>";}).join("")+
+        "<h4>Reversal history</h4>"+(record.reversals||[]).map(function(r){return "<p>"+JONE.esc(r.reference+" · "+r.business_date+" · "+r.status)+"</p>";}).join("")+
+        "<h4>Recorded audit metadata</h4><pre>"+JONE.esc(JSON.stringify(record.metadata||{},null,2))+"</pre>";
+      var detailNode=document.createElement("div"); detailNode.innerHTML=body;
+      JONE.ui.modal.open({title:"Ledger transaction · "+ref,body:detailNode,size:"modal-lg"});
+    }).catch(function(err){JONE.ui.toast((err&&err.message)||"Transaction details unavailable.","error");})
+      .then(function(){button.disabled=false;});
+  });
+
   function renderTransactions(payload){
     if(!tx) return;
     var rows=listRows(payload);
     tx.innerHTML=rows.length ? rows.map(function(row){
-      return "<tr><td>"+JONE.esc(row.business_date||"—")+"</td><td>"+JONE.esc(row.reference||row.source_reference||"—")+"</td><td>"+JONE.esc(String(row.type||"").toLowerCase().replace(/_/g," "))+"</td><td>"+JONE.esc(row.narrative||"—")+"</td><td>"+JONE.esc(row.status||"—")+"</td></tr>";
-    }).join("") : "<tr><td colspan=\"5\"><div class=\"empty-state\"><h3>No posted ledger transactions in this period</h3></div></td></tr>";
+      return "<tr><td>"+JONE.esc(row.business_date||"—")+"</td><td>"+JONE.esc(row.reference||row.source_reference||"—")+"</td><td>"+JONE.esc(String(row.type||"").toLowerCase().replace(/_/g," "))+"</td><td>"+JONE.esc(row.narrative||"—")+"</td><td>"+JONE.esc(row.status||"—")+"</td><td><button type=\"button\" class=\"btn btn-sm btn-outline\" data-ledger-view=\""+JONE.esc(row.reference)+"\">View</button></td></tr>";
+    }).join("") : "<tr><td colspan=\"6\"><div class=\"empty-state\"><h3>No posted ledger transactions in this period</h3></div></td></tr>";
   }
 
   /* Ledger data is authoritative for money measures. Booking and occupancy
@@ -825,7 +837,7 @@
     if(financeBasis) financeBasis.textContent="Loading posted immutable ledger financial measures…";
     if(ft) DATA.loading(ft,3);
     if(dt) DATA.loading(dt,3);
-    if(tx) DATA.loading(tx,5);
+    if(tx) DATA.loading(tx,6);
 
     // Each independent response renders as soon as it arrives. Starting and
     // consuming these requests independently avoids both a network and a UI
@@ -2012,7 +2024,7 @@
             "more has been applied to guest folios than the charges posted to them — typically advance payments on " +
             "cancelled, no-show or part-stayed bookings. The ledger is unedited. Clear it through the existing " +
             "approved route: refund the guest balance through Approvals, or post a balanced reclassification journal " +
-            "to Guest deposits held. Ask the accountant to run `python manage.py guest_receivable_check` for the folios behind it.";
+            "to Guest deposits held. Review the folio balances under Guest receivables and Posted transactions.";
         } else {
           receivableNote.hidden = true;
           receivableNote.textContent = "";
@@ -2327,8 +2339,15 @@
   /* The shared API layer owns Blob/object-URL handling: getBlob resolves to the
      response envelope whose `data` is the Blob, so passing the envelope to
      URL.createObjectURL threw and the download never happened (D14). */
+  function validExportDates(dates){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(dates.from||"") || !/^\d{4}-\d{2}-\d{2}$/.test(dates.to||"") || dates.from>dates.to){
+      JONE.ui.toast("Choose a valid From and To date (From must not exceed To).","warning"); return false;
+    }
+    return true;
+  }
   function downloadLedgerExport(kind){
     var dates=activeDates();
+    if(!validExportDates(dates)) return;
     var button=document.getElementById("export-"+kind);
     if(button) button.disabled=true;
     window.API.downloadReport(window.APP_CONFIG.API_ENDPOINTS.financeSummary,kind,{
@@ -2348,6 +2367,11 @@
   if(pdfBtn) pdfBtn.addEventListener("click",function(){ downloadLedgerExport("pdf"); });
   var exportBtn=document.getElementById("export-csv");
   if(exportBtn) exportBtn.addEventListener("click",function(){
+    if(!validExportDates(activeDates())) return;
+    if(latest.financial && (latest.financial.start_date!==activeDates().from || latest.financial.end_date!==activeDates().to)){
+      JONE.ui.toast("Wait for the selected period to load before exporting.","warning"); return;
+    }
+    if(!latest.financial){ JONE.ui.toast("Wait for the financial report to load before exporting.","error"); return; }
     function rowsToCsv(rows){
       return rows.map(function(row){
         return row.map(function(cell){
@@ -2476,6 +2500,8 @@
     });
     out.push(["Total recognized revenue",amt(rep,"recognized_revenue"),true]);
     out.push(["Operating expenses",amt(rep,"operating_expenses")]);
+    out.push(["Accrued payroll expenses",amt(rep,"payroll_expenses")]);
+    out.push(["Discounts (contra revenue)",amt(rep,"discounts")]);
     out.push(["Net operating result (after accrued payroll)",amt(rep,"gross_operating_result"),true]);
     return out;
   }
@@ -2519,21 +2545,11 @@
         }).join(""):empty(5,"No guest balances outstanding");
       },function(e){ fail(b,3,e); });
     },
-    coa:function(){
-      var tb=$("[data-tbody=x-coa]");
-      if(!tb) return;
-      tb.innerHTML=empty(2,"Loading…");
-      return get(EP.financeChartOfAccounts).then(function(d){
-        var list=(d.accounts||[]).filter(function(a){ return !hidden(a.code,a.label); });
-        tb.innerHTML=list.length?list.map(function(a){
-          return '<tr><td class="cell-nowrap">'+esc(a.code)+'</td><td class="cell-clamp">'+esc(a.label)+'</td></tr>';
-        }).join(""):empty(2,"No accounts found");
-      },function(e){ fail(tb,2,e); });
-    }
+
   };
 
   /* Sections load only when opened, and reload when the period changes. */
-  var map={ "profit-loss":["pnl",true], "payroll-summary":["payroll",true], "ar-aging":["ar",true], "chart-of-accounts":["coa",false] };
+  var map={ "profit-loss":["pnl",true], "payroll-summary":["payroll",true], "ar-aging":["ar",true] };
   var dirty={};
   Object.keys(map).forEach(function(id){
     var el=document.getElementById(id); if(!el) return;

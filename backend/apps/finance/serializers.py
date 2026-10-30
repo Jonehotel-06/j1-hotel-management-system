@@ -65,9 +65,16 @@ class FinancialLineSerializer(serializers.ModelSerializer):
 
 class FinancialTransactionDetailSerializer(FinancialTransactionSerializer):
     lines = FinancialLineSerializer(many=True, read_only=True)
+    reversal_of_reference = serializers.CharField(source="reversal_of.reference", read_only=True)
+    reversals = serializers.SerializerMethodField()
+
+    def get_reversals(self, obj):
+        return [{"reference": tx.reference, "status": tx.status,
+                 "business_date": tx.business_date.isoformat(), "occurred_at": tx.occurred_at.isoformat()}
+                for tx in obj.reversals.all()]
 
     class Meta(FinancialTransactionSerializer.Meta):
-        fields = FinancialTransactionSerializer.Meta.fields + ["metadata", "lines"]
+        fields = FinancialTransactionSerializer.Meta.fields + ["metadata", "lines", "reversal_of_reference", "reversals"]
 
 
 class CashSessionSerializer(serializers.ModelSerializer):

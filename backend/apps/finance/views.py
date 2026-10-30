@@ -210,8 +210,11 @@ class FinancialTransactionDetailView(APIView):
 
     def get(self, request, reference):
         financial_transaction = (
-            FinancialTransaction.objects.select_related("initiated_by", "approved_by")
-            .prefetch_related(Prefetch("lines", queryset=FinancialLine.objects.select_related("folio")))
+            FinancialTransaction.objects.select_related("initiated_by", "approved_by", "reversal_of")
+            .prefetch_related(
+                Prefetch("lines", queryset=FinancialLine.objects.select_related("folio")),
+                "reversals",
+            )
             .annotate(line_count=Count("lines"))
             .filter(reference=reference)
             .first()

@@ -216,3 +216,58 @@ class FinancialSummaryReportTests(BaseAPITestCase):
         self.assertEqual(pdf.status_code, 200, pdf.content)
         self.assertEqual(pdf["Content-Type"], "application/pdf")
         self.assertTrue(pdf.content.startswith(b"%PDF"))
+
+class Batch02LedgerRegressionTests(FinancialSummaryReportTests):
+    """Batch 02: signed revenue, paid-only disbursements and read-only details."""
+
+    def test_revenue_reversal_and_cash_disbursements_reconcile(self):
+        debit, credit = FinancialLine.Direction.DEBIT, FinancialLine.Direction.CREDIT
+        self._post(suffix="bar", transaction_type=FinancialTransaction.Type.POS_CHARGE, lines=[
+            self._line(accounting.ACCOUNTS_RECEIVABLE, debit, "60.00"),
+            self._line(accounting.FOOD_BEVERAGE_REVENUE, credit, "60.00"),
+        ])
+        original, _ = self._post(suffix="restaurant", transaction_type=FinancialTransaction.Type.POS_CHARGE, lines=[
+            self._line(accounting.ACCOUNTS_RECEIVABLE, debit, "10.00"),
+            self._line(accounting.FOOD_BEVERAGE_REVENUE, credit, "10.00"),
+        ])
+        reversal, _ = create_posted_transaction(
+            transaction_type=FinancialTransaction.Type.VOID, actor=self.manager,
+            source_key="financial-summary:restaurant-reversed", reversal_of=original,
+            business_date=self.today, lines=[
+                self._line(accounting.ACCOUNTS_RECEIVABLE, credit, "10.00"),
+                self._line(accounting.FOOD_BEVERAGE_REVENUE, debit, "10.00"),
+            ],
+        )
+        self._post(suffix="payable", transaction_type=FinancialTransaction.Type.EXPENSE, lines=[
+            self._line(accounting.OPERATING_EXPENSE, debit, "25.00"),
+            self._line(accounting.ACCOUNTS_PAYABLE, credit, "25.00"),
+        ])
+        self._post(suffix="paid-payable", transaction_type=FinancialTransaction.Type.EXPENSE, lines=[
+            self._line(accounting.ACCOUNTS_PAYABLE, debit, "25.00"),
+            self._line(accounting.BANK_CLEARING, credit, "25.00"),
+        ])
+        expense = FinancialTransaction.objects.get(source_key="financial-summary:operating-expense")
+        create_posted_transaction(
+            transaction_type=FinancialTransaction.Type.VOID, actor=self.manager,
+            source_key="financial-summary:expense-reversed", reversal_of=expense,
+            business_date=self.today, lines=[
+                self._line(accounting.CASH_ON_HAND, debit, "15.00"),
+                self._line(accounting.OPERATING_EXPENSE, credit, "15.00"),
+            ],
+        )
+        summary = financial_summary(start_date=self.today, end_date=self.today)
+        self.assertEqual(summary["recognized_revenue"]["amount"], "160.00")
+        self.assertEqual(summary["by_day"][0]["recognized_revenue"]["amount"], "160.00")
+        departments = {row["account_code"]: row["amount"] for row in summary["by_department"]}
+        self.assertEqual(departments[accounting.FOOD_BEVERAGE_REVENUE], "60.00")
+        self.assertEqual(summary["supplier_payments"]["total_cash_disbursements"], "55.00")
+        self.assertEqual(summary["operating_expenses"]["amount"], "25.00")
+        self.assertEqual(summary["gross_operating_result"], "135.00")
+        self.auth(self.manager)
+        url = f"/api/admin/finance/transactions/{original.reference}/"
+        detail = self.client.get(url)
+        self.assertEqual(detail.status_code, 200, detail.content)
+        self.assertEqual(detail.json()["data"]["reversals"][0]["reference"], reversal.reference)
+        self.assertEqual(self.client.patch(url, {"narrative": "overwrite"}, format="json").status_code, 405)
+        self.auth(self.receptionist)
+        self.assertEqual(self.client.get(url).status_code, 403)

@@ -14,7 +14,6 @@ from ..models import FinancialLine, FinancialTransaction, FolioPosting
 from . import accounting
 from .folio_service import get_or_create_main_folio_for_stay
 from .ledger_service import create_posted_transaction
-from .tax_policy import statutory_ledger_lines
 
 CENT = Decimal("0.01")
 MAX_CATCH_UP_NIGHTS = 366
@@ -124,29 +123,6 @@ def post_accommodation_charge_for_night(*, stay, service_date: date, actor=None)
                 "description": f"Service fee for accommodation {service_date.isoformat()}",
             }
         )
-    if tax <= Decimal("0.00"):
-        # New tax-free nights: the hotel's own statutory exposure (if any) is
-        # accrued on the night's customer-charged amount via a separate
-        # expense/liability pair — it is never added to the guest's balance.
-        # (Historical nights with tax > 0 already posted their collected tax to
-        # TAX_PAYABLE above, so no second accrual is made for them.)
-        lines.extend(
-            {
-                "account_code": line["account_code"],
-                "direction": (
-                    FinancialLine.Direction.DEBIT
-                    if line["direction"] == "DEBIT"
-                    else FinancialLine.Direction.CREDIT
-                ),
-                "amount": line["amount"],
-                "description": line["description"],
-            }
-            for line in statutory_ledger_lines(
-                net_amount=(net_accommodation + service_fee).quantize(CENT),
-                reference=f"accommodation {service_date.isoformat()}",
-            )
-        )
-
     source_key = f"accommodation:{stay.reference}:{service_date.isoformat()}"
     return create_posted_transaction(
         transaction_type=FinancialTransaction.Type.ACCOMMODATION_CHARGE,

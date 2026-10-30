@@ -17,7 +17,7 @@ from apps.finance.services import accounting
 from apps.finance.services.folio_service import get_or_create_main_folio_for_stay
 from apps.finance.services.ledger_service import create_posted_transaction
 from apps.finance.services.references import generate_finance_reference
-from apps.finance.services.tax_policy import customer_tax_amount, statutory_ledger_lines
+from apps.finance.services.tax_policy import customer_tax_amount
 from apps.stays.models import Stay
 
 from ..models import KitchenTicket, MenuCategory, MenuItem, MenuModifier, PosOrder, PosOrderEvent, PosOrderLine, PosTender
@@ -823,25 +823,6 @@ def _post_order_charge(*, order, actor):
                 "amount": order.tax_amount,
                 "description": f"POS tax {order.reference}",
             }
-        )
-    else:
-        # New customer transactions carry no billed tax. The hotel's own
-        # statutory exposure (if any) is accrued on the net sale through a
-        # separate expense/liability pair that never touches guest balances.
-        lines.extend(
-            {
-                "account_code": line["account_code"],
-                "direction": (
-                    FinancialLine.Direction.DEBIT
-                    if line["direction"] == "DEBIT"
-                    else FinancialLine.Direction.CREDIT
-                ),
-                "amount": line["amount"],
-                "description": line["description"],
-            }
-            for line in statutory_ledger_lines(
-                net_amount=order.subtotal, reference=order.reference
-            )
         )
     postings = []
     if folio:

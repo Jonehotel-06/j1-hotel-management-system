@@ -31,7 +31,7 @@ from apps.finance.models import FinancialLine, FinancialTransaction
 from apps.finance.services import accounting
 from apps.finance.services.accommodation_service import post_accommodation_charge_for_night
 from apps.finance.services.reporting_service import financial_summary
-from apps.finance.services.tax_policy import customer_tax_amount, statutory_policy
+from apps.finance.services.tax_policy import customer_tax_amount
 from apps.payments.models import Payment
 from apps.pos.models import PosOrder, PosTender
 from apps.pos.services.order_service import (
@@ -208,11 +208,11 @@ class AccommodationLedgerTaxTests(BaseAPITestCase):
         # visible to the accountant, invisible to the guest.
         self.assertEqual(
             _line_total(accounting.STATUTORY_TAX_PAYABLE, FinancialLine.Direction.CREDIT),
-            Decimal("1500.00"),
+            Decimal("0.00"),
         )
         self.assertEqual(
             _line_total(accounting.STATUTORY_TAX_ABSORBED, FinancialLine.Direction.DEBIT),
-            Decimal("1500.00"),
+            Decimal("0.00"),
         )
 
     def test_statutory_accrual_can_be_disabled_without_touching_history(self):
@@ -276,7 +276,7 @@ class AccommodationLedgerTaxTests(BaseAPITestCase):
             end_date=self.check_out + timedelta(days=1),
         )
         self.assertEqual(summary["tax_accrued"]["amount"], "1500.00")           # history
-        self.assertEqual(summary["statutory_tax_accrued"]["amount"], "1500.00")  # new, separate
+        self.assertNotIn("statutory_tax_accrued", summary)  # new accruals removed
         self.assertEqual(summary["guest_charges"]["amount"], "41500.00")
         self.assertEqual(summary["recognized_revenue"]["amount"], "40000.00")
 
@@ -346,7 +346,7 @@ class PosTaxRemovalTests(BaseAPITestCase):
         )
         statutory = [amount for code, _, amount in lines
                      if code == accounting.STATUTORY_TAX_PAYABLE]
-        self.assertEqual(statutory, [Decimal("330.00")])  # 7.5% of 4,400
+        self.assertEqual(statutory, [])  # no new hotel statutory accrual
         # The guest's charge is exactly the approved prices.
         tender = capture_direct_tender(
             order=delivered, method=PosTender.Method.CARD,
@@ -385,27 +385,14 @@ class SettingsContractTests(BaseAPITestCase):
         self.assertEqual(response.status_code, 200, response.json())
         self.assertEqual(response.json()["data"]["tax_rate_percent"], "0.00")
 
-    def test_statutory_policy_fields_are_configurable(self):
+    def test_statutory_policy_fields_are_not_exposed(self):
         response = self.client.patch("/api/admin/settings/", {
             "statutory_tax_enabled": True,
             "statutory_tax_rate_percent": "7.50",
-            "statutory_tax_basis": "EXCLUSIVE",
+            "statutory_tax_basis": "INCLUSIVE",
         }, format="json")
         self.assertEqual(response.status_code, 200, response.json())
-        data = response.json()["data"]
-        self.assertEqual(data["statutory_tax_rate_percent"], "7.50")
-        self.assertEqual(data["statutory_tax_basis"], "EXCLUSIVE")
-        policy = statutory_policy()
-        self.assertTrue(policy.enabled)
-        self.assertEqual(policy.amount_for(net_amount=Decimal("10000.00")),
-                         Decimal("750.00"))
-
-    def test_inclusive_basis_extracts_rather_than_appends(self):
-        hotel_settings(statutory_tax_enabled=True,
-                       statutory_tax_rate_percent=Decimal("7.50"),
-                       statutory_tax_basis="INCLUSIVE")
-        policy = statutory_policy()
-        # ₦10,750 gross with 7.5% contained → 750 extracted, guest still pays 10,750.
-        self.assertEqual(policy.amount_for(net_amount=Decimal("10750.00"),
-                                           gross_amount=Decimal("10750.00")),
-                         Decimal("750.00"))
+        for field in ("statutory_tax_enabled", "statutory_tax_rate_percent", "statutory_tax_basis"):
+            self.assertNotIn(field, response.json()["data"])
+        from apps.hotel.models import HotelSettings
+        self.assertNotEqual(HotelSettings.objects.get().statutory_tax_basis, "INCLUSIVE")

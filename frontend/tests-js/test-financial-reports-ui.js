@@ -125,7 +125,7 @@ function bootReportController() {
   };
 
   vm.runInContext(controllerSource(), ctx, { filename: "dashboard/reports-controller.js" });
-  return { ctx, requests, financeBody, bookingBody, financeBasis, rp };
+  return { ctx, requests, financeBody, bookingBody, financeBasis, rp, from, to, range, apply };
 }
 
 test("configuration exposes the ledger summary separately from legacy report projections", () => {
@@ -172,4 +172,21 @@ test("reports dashboard requests ledger finance and operational projections conc
   assert.match(booted.bookingBody.innerHTML, /confirmed/);
   assert.match(booted.rp["operational-summary"].textContent, /3 bookings/);
   assert.match(booted.rp["operational-summary"].textContent, /75% avg occupancy/);
+});
+
+
+test("batch 02: native From/To dates select custom period and submit ISO range", async () => {
+  const { requests, from, to, range, apply } = bootReportController();
+  assert.equal(from.disabled, false);
+  assert.equal(to.disabled, false);
+  from.value = "2026-10-01";
+  (from.listeners.change || []).forEach((handler) => handler());
+  assert.equal(range.value, "custom");
+  to.value = "2026-10-08";
+  (to.listeners.change || []).forEach((handler) => handler());
+  apply.click();
+  const finance = requests.filter((r) => /finance\/reports\/summary/.test(r.endpoint));
+  assert.equal(finance.at(-1).options.params.start, "2026-10-01");
+  assert.equal(finance.at(-1).options.params.end, "2026-10-08");
+  await settle();
 });

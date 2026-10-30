@@ -116,6 +116,16 @@ def settlement_measure_filters():
             direction=FinancialLine.Direction.CREDIT,
             account_code__in=TENDER_ASSET_ACCOUNTS,
         ),
+        "disbursement_reversals": Q(
+            transaction__reversal_of__type__in=DISBURSEMENT_TYPES,
+            direction=FinancialLine.Direction.DEBIT,
+            account_code__in=TENDER_ASSET_ACCOUNTS,
+        ),
+        "payroll_cash_reversals": Q(
+            transaction__reversal_of__type=FinancialTransaction.Type.PAYROLL_PAYMENT,
+            direction=FinancialLine.Direction.DEBIT,
+            account_code__in=TENDER_ASSET_ACCOUNTS,
+        ),
         # Obligations raised in the period.
         "supplier_invoices_recognized": Q(
             transaction__type=FinancialTransaction.Type.EXPENSE,
@@ -191,8 +201,8 @@ def supplier_payment_visibility(
     """
     supplier_payments_made = _amount(totals.get("supplier_payments_made"))
     operating_expenses_paid = _amount(totals.get("operating_expenses_paid"))
-    net_payroll_paid = _amount(totals.get("net_payroll_paid"))
-    total_disbursements = _amount(totals.get("total_disbursements"))
+    net_payroll_paid = _amount(totals.get("net_payroll_paid")) - _amount(totals.get("payroll_cash_reversals"))
+    total_disbursements = _amount(totals.get("total_disbursements")) - _amount(totals.get("disbursement_reversals"))
 
     # "Other" is a remainder, so no posting can be counted in both this measure and
     # a more specific one, and the parts always sum to the reported total.
@@ -251,8 +261,8 @@ def supplier_payment_visibility(
             ),
             "net_payroll_paid": "Salary payments out of a tender account, less reversals of those payments.",
             "other_cash_disbursements": (
-                "Every other credit to a tender account in the period, including refunds to guests and any "
-                "non-supplier, non-payroll payment. Derived as a remainder, so no posting can be counted in "
+                "Other posted expense/payroll tender credits net of their reversal debits (not guest refunds). "
+                "Derived as a remainder, so no posting can be counted in "
                 "both this measure and a more specific one."
             ),
             "outstanding_supplier_payables": (

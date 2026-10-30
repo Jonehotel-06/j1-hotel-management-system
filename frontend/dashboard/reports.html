@@ -193,8 +193,6 @@
   var FINANCE_MEASURES=[
     { label:"Guest charges", key:"guest_charges" },
     { label:"Recognized revenue", key:"recognized_revenue" },
-    { label:"Historical tax collected (pre-removal)", key:"tax_accrued" },
-    { label:"Statutory tax accrued (not billed to guests)", key:"statutory_tax_accrued" },
     { label:"Collections", key:"collections" },
     { label:"Refunds", key:"refunds" },
     { label:"Net collections", key:"net_collections" },
@@ -234,7 +232,7 @@
   }
 
   function activeDates(){
-    if(range && range.value==="custom" && fromEl.value && toEl.value) return { from:fromEl.value, to:toEl.value };
+    if(range && range.value==="custom") return { from:fromEl.value, to:toEl.value };
     return defaultDates();
   }
 
@@ -512,24 +510,32 @@
   });
   if(range) range.addEventListener("change",function(){
     var custom=range.value==="custom";
-    if(fromEl) fromEl.disabled=!custom;
-    if(toEl) toEl.disabled=!custom;
+
     if(!custom){
       if(fromEl) fromEl.value="";
       if(toEl) toEl.value="";
       load();
     }
   });
-  if(fromEl) fromEl.disabled=true;
-  if(toEl) toEl.disabled=true;
 
+
+  function selectCustomRange(){ if(range) range.value="custom"; if(fromEl.value&&toEl.value&&fromEl.value<=toEl.value) load(); }
+  if(fromEl) fromEl.addEventListener("change",selectCustomRange);
+  if(toEl) toEl.addEventListener("change",selectCustomRange);
   // The browser creates the CSV from the exact values already returned by the
   // APIs; it never recomputes financial amounts client-side.
   /* The shared API layer owns Blob/object-URL handling: getBlob resolves to the
      response envelope whose `data` is the Blob, so passing the envelope to
      URL.createObjectURL threw and the download never happened (D14). */
+  function validExportDates(dates){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(dates.from||"") || !/^\d{4}-\d{2}-\d{2}$/.test(dates.to||"") || dates.from>dates.to){
+      JONE.ui.toast("Choose a valid From and To date (From must not exceed To).","warning"); return false;
+    }
+    return true;
+  }
   function downloadLedgerExport(kind){
     var dates=activeDates();
+    if(!validExportDates(dates)) return;
     var button=document.getElementById("export-"+kind);
     if(button) button.disabled=true;
     window.API.downloadReport(window.APP_CONFIG.API_ENDPOINTS.financeSummary,kind,{
@@ -545,8 +551,9 @@
   }
   function exportOccupancy(kind){
     var dates=activeDates();
+    if(!validExportDates(dates)) return;
     window.API.downloadReport(window.APP_CONFIG.API_ENDPOINTS.reportsOccupancy,kind,{
-      params:{ start_date:dates.from, end_date:dates.to },filename:"jone-occupancy-"+dates.from+"-to-"+dates.to,label:"Occupancy report"
+      start:dates.from, end:dates.to, params:{ start_date:dates.from, end_date:dates.to },filename:"jone-occupancy-"+dates.from+"-to-"+dates.to,label:"Occupancy report"
     }).then(function(result){
       JONE.ui.toast("Occupancy " + (kind === "xlsx" ? "Excel" : "PDF") + " downloaded: " + result.filename, "success");
     },function(err){ JONE.ui.toast((err && err.message) || "The occupancy export could not be downloaded.", "error"); });
@@ -561,6 +568,11 @@
   if(pdfBtn) pdfBtn.addEventListener("click",function(){ downloadLedgerExport("pdf"); });
   var exportBtn=document.getElementById("export-csv");
   if(exportBtn) exportBtn.addEventListener("click",function(){
+    if(!validExportDates(activeDates())) return;
+    if(latest.financial && (latest.financial.start_date!==activeDates().from || latest.financial.end_date!==activeDates().to)){
+      JONE.ui.toast("Wait for the selected period to load before exporting.","warning"); return;
+    }
+    if(!latest.financial){ JONE.ui.toast("Wait for the financial report to load before exporting.","error"); return; }
     function rowsToCsv(rows){
       return rows.map(function(row){
         return row.map(function(cell){
