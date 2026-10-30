@@ -35,7 +35,7 @@
       { label: "Service Links", href: "service-qr.html", icon: "grid", view: "service-qr", capabilities: ["service_qr.manage"] },
       { label: "Housekeeping", href: "housekeeping.html", icon: "bed", view: "housekeeping", capabilities: ["housekeeping.task.manage", "housekeeping.task.assign"] },
       { label: "Maintenance", href: "maintenance.html", icon: "settings", view: "maintenance", capabilities: ["maintenance.work_order.manage", "maintenance.work_order.assign"] },
-      { label: "Inventory", href: "inventory.html", icon: "inbox", view: "inventory", capabilities: ["inventory.manage", "inventory.adjust.approve"] },
+      { label: "Inventory", href: "inventory.html", icon: "inbox", view: "inventory", capabilities: ["inventory.manage", "inventory.adjust.approve"], procurementPlacement: false },
       { label: "Procurement", href: "procurement.html", icon: "receipt", view: "procurement", capabilities: ["procurement.manage", "procurement.approve"] },
     ]},
     { group: "Finance", items: [
@@ -43,6 +43,7 @@
       { label: "Receipts", href: "receipts.html", icon: "receipt", view: "receipts", capabilities: ["payment.read"] },
       { label: "Accounting", href: "accounting.html", icon: "wallet", view: "accounting", capabilities: ["reports.financial.view"] },
       { label: "Reports", href: "reports.html", icon: "barChart", view: "reports", minRole: "general_manager" },
+      { label: "Inventory", href: "inventory.html", icon: "inbox", view: "inventory", capabilities: ["inventory.manage", "inventory.adjust.approve"], procurementPlacement: true },
       { label: "Payroll", href: "payroll.html", icon: "creditCard", view: "payroll", capabilities: ["payroll.view", "payroll.manage", "payroll.approve"] },
     ]},
     { group: "Content", items: [
@@ -139,7 +140,7 @@
     "receipts.html": { roles: FINANCE },
     "receipt-details.html": { roles: FINANCE },
     "accounting.html": { roles: ["admin", "general_manager", "accountant"] },
-    "payroll.html": { roles: ["admin", "general_manager", "accountant", "procurement_officer"] },
+    "payroll.html": { roles: ["admin", "general_manager", "accountant"] },
     "reports.html": { roles: MANAGEMENT },
     "approvals.html": { roles: ["admin", "general_manager", "accountant",
       "procurement_officer", "storekeeper", "receptionist"] },
@@ -154,7 +155,7 @@
     "service-qr.html": { roles: MANAGEMENT },
 
     /* Stores and procurement. */
-    "inventory.html": { roles: ["admin", "general_manager", "storekeeper"] },
+    "inventory.html": { roles: ["admin", "general_manager", "storekeeper", "procurement_officer"] },
     "procurement.html": { roles: ["admin", "general_manager", "storekeeper", "procurement_officer"] },
 
     /* People. */
@@ -205,6 +206,8 @@
   function navItemAllowed(it) {
     const auth = window.Auth;
     if (!auth) return false;
+    if (it.procurementPlacement !== undefined &&
+        (auth.state && auth.state.role === "procurement_officer") !== it.procurementPlacement) return false;
     /* The entry's own gate AND the target page's gate. A menu entry must never
        point a department at a page that will refuse it. */
     if (!canOpenPage(it.href)) return false;

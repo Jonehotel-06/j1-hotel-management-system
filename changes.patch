@@ -1,0 +1,295 @@
+diff --git a/backend/apps/accounts/capabilities.py b/backend/apps/accounts/capabilities.py
+index e1f18ec..716ef58 100644
+--- a/backend/apps/accounts/capabilities.py
++++ b/backend/apps/accounts/capabilities.py
+@@ -218,13 +218,13 @@ ROLE_CAPABILITY_CODES = {
+     }),
+     "SECURITY": frozenset({"guest_request.manage", "attendance.clock"}),
+     # Admin Manager/Procurement consolidates Procurement and non-approval HR
+-    # administration (staff records, shifts, attendance administration, payroll
+-    # preparation). Maker-checker approvals (procurement.approve, payroll.approve,
++    # administration (staff records, shifts, attendance administration) and
++    # inventory management. Maker-checker approvals (procurement.approve, payroll.approve,
+     # leave.approve, expense.approve) are intentionally excluded by default.
+     "PROCUREMENT_OFFICER": frozenset({
+         "procurement.manage", "staff.profile.manage", "staff.view", "staff.manage",
+         "shift.manage", "attendance.clock", "attendance.manage", "leave.request",
+-        "payroll.view", "payroll.manage",
++        "inventory.manage",
+     }),
+     "STOREKEEPER": frozenset({"inventory.manage", "procurement.manage", "attendance.clock", "leave.request"}),
+     "PORTER": frozenset({"guest_request.manage", "attendance.clock", "leave.request"}),
+@@ -334,6 +334,9 @@ def capability_codes_for_user(user: "User") -> frozenset[str]:
+                 role_codes.add(cap_code)
+             elif effect == UserCapabilityOverride.Effect.REVOKE:
+                 role_codes.discard(cap_code)
++        # Procurement must not gain payroll authority, even via legacy grants or overrides.
++        if user.role == User.Role.PROCUREMENT_OFFICER:
++            role_codes = {code for code in role_codes if not code.startswith("payroll.")}
+         codes = frozenset(role_codes)
+     user._jone_capability_codes = codes
+     return codes
+diff --git a/backend/apps/accounts/migrations/0031_procurement_inventory_access.py b/backend/apps/accounts/migrations/0031_procurement_inventory_access.py
+new file mode 100644
+index 0000000..784e017
+--- /dev/null
++++ b/backend/apps/accounts/migrations/0031_procurement_inventory_access.py
+@@ -0,0 +1,28 @@
++from django.db import migrations
++
++ACTION = "PROCUREMENT_INVENTORY_GRANT_0031"
++
++
++def forwards(apps, schema_editor):
++    Capability = apps.get_model("accounts", "Capability")
++    RoleCapability = apps.get_model("accounts", "RoleCapability")
++    AuditLog = apps.get_model("audit", "AuditLog")
++    db = schema_editor.connection.alias
++    cap = Capability.objects.using(db).get(code="inventory.manage")
++    grant, created = RoleCapability.objects.using(db).get_or_create(role="PROCUREMENT_OFFICER", capability=cap)
++    AuditLog.objects.using(db).create(action=ACTION, object_type="accounts.rolecapability", object_id=str(grant.pk), metadata={"created": created})
++
++
++def backwards(apps, schema_editor):
++    RoleCapability = apps.get_model("accounts", "RoleCapability")
++    AuditLog = apps.get_model("audit", "AuditLog")
++    db = schema_editor.connection.alias
++    marker = AuditLog.objects.using(db).filter(action=ACTION).order_by("-pk").first()
++    if marker and marker.metadata.get("created"):
++        RoleCapability.objects.using(db).filter(pk=marker.object_id, role="PROCUREMENT_OFFICER", capability__code="inventory.manage").delete()
++    AuditLog.objects.using(db).create(action=ACTION + "_REVERSED", object_type="accounts.rolecapability", object_id=marker.object_id if marker else "")
++
++
++class Migration(migrations.Migration):
++    dependencies = [("accounts", "0030_consolidate_approved_departments_and_roles"), ("audit", "0003_utf8mb4_auditlog_table")]
++    operations = [migrations.RunPython(forwards, backwards)]
+diff --git a/backend/apps/staff_operations/payroll_views.py b/backend/apps/staff_operations/payroll_views.py
+index 07aee80..29a6612 100644
+--- a/backend/apps/staff_operations/payroll_views.py
++++ b/backend/apps/staff_operations/payroll_views.py
+@@ -10,7 +10,7 @@ from drf_spectacular.utils import extend_schema
+ from rest_framework import status
+ from rest_framework.exceptions import NotFound, PermissionDenied
+ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+-from rest_framework.permissions import IsAuthenticated
++from rest_framework.permissions import BasePermission, IsAuthenticated
+ from rest_framework.views import APIView
+ 
+ from apps.accounts.capabilities import has_capability
+@@ -201,9 +201,16 @@ def _shortage(reference, *, detail=False):
+     return value
+ 
+ 
++class NotProcurementPayrollAccess(BasePermission):
++    """Inventory authority must not expose payroll shortage cases to procurement."""
++
++    def has_permission(self, request, view):
++        return request.user.role != User.Role.PROCUREMENT_OFFICER
++
++
+ @extend_schema(tags=["Admin · Payroll"], summary="List or record a department stock-shortage case")
+ class PayrollStockShortageListCreateView(APIView):
+-    permission_classes = [HasCapability]
++    permission_classes = [HasCapability, NotProcurementPayrollAccess]
+     required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve", "inventory.manage")
+     require_any_capability = True
+     pagination_class = StandardPagination
+@@ -253,7 +260,7 @@ class PayrollStockShortageListCreateView(APIView):
+ 
+ @extend_schema(tags=["Admin · Payroll"], summary="View a department stock-shortage case and its shares")
+ class PayrollStockShortageDetailView(APIView):
+-    permission_classes = [HasCapability]
++    permission_classes = [HasCapability, NotProcurementPayrollAccess]
+     required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve", "inventory.manage")
+     require_any_capability = True
+ 
+diff --git a/backend/tests/test_procurement_agent_workflow.py b/backend/tests/test_procurement_agent_workflow.py
+index 4c0b6a4..fcda00f 100644
+--- a/backend/tests/test_procurement_agent_workflow.py
++++ b/backend/tests/test_procurement_agent_workflow.py
+@@ -164,10 +164,10 @@ class ProcurementLookupTests(ProcurementWorkflowBase):
+         self.assertEqual(self.client.post(LOOKUP_ITEMS, {"sku": "X", "name": "X"}, format="json").status_code, 405)
+         self.assertEqual(self.client.post(LOOKUP_LOCATIONS, {"code": "X", "name": "X"}, format="json").status_code, 405)
+ 
+-    def test_inventory_directories_were_not_widened(self):
++    def test_procurement_officer_has_inventory_directories(self):
+         self.auth(self.officer)
+-        self.assertEqual(self.client.get("/api/admin/inventory/items/").status_code, 403)
+-        self.assertEqual(self.client.get("/api/admin/inventory/locations/").status_code, 403)
++        self.assertEqual(self.client.get("/api/admin/inventory/items/").status_code, 200)
++        self.assertEqual(self.client.get("/api/admin/inventory/locations/").status_code, 200)
+ 
+ 
+ class DraftValidationTests(ProcurementWorkflowBase):
+diff --git a/backend/tests/test_procurement_inventory_dashboard_access.py b/backend/tests/test_procurement_inventory_dashboard_access.py
+new file mode 100644
+index 0000000..3316364
+--- /dev/null
++++ b/backend/tests/test_procurement_inventory_dashboard_access.py
+@@ -0,0 +1,38 @@
++from apps.accounts.capabilities import capability_codes_for_user
++from apps.accounts.models import Capability, User, UserCapabilityOverride
++from tests.base import BaseAPITestCase
++from tests.factories import make_staff
++
++
++class ProcurementDashboardAccessTests(BaseAPITestCase):
++    def setUp(self):
++        super().setUp()
++        self.officer = make_staff("dashboard-proc@staff.dev", role=User.Role.PROCUREMENT_OFFICER)
++        self.accountant = make_staff("dashboard-acct@staff.dev", role=User.Role.ACCOUNTANT)
++        self.storekeeper = make_staff("dashboard-store@staff.dev", role=User.Role.STOREKEEPER)
++
++    def test_inventory_procurement_and_payroll_apis(self):
++        self.auth(self.officer)
++        for url in ("/api/admin/inventory/items/", "/api/admin/inventory/locations/", "/api/admin/inventory/purchase-orders/"):
++            self.assertEqual(self.client.get(url).status_code, 200, url)
++        for url in ("/api/admin/staff-operations/payroll/periods/", "/api/admin/staff-operations/payroll/compensation/", "/api/admin/staff-operations/payroll/stock-shortages/", "/api/admin/staff-operations/payroll/stock-shortages/no-such-ref/"):
++            self.assertEqual(self.client.get(url).status_code, 403, url)
++        self.assertEqual(self.client.post("/api/admin/staff-operations/payroll/periods/", {}, format="json").status_code, 403)
++        self.assertEqual(self.client.get("/api/admin/staff-operations/payroll/my-payslips/").status_code, 200)
++        self.auth(self.accountant)
++        self.assertEqual(self.client.get("/api/admin/staff-operations/payroll/periods/").status_code, 200)
++        self.auth(self.storekeeper)
++        self.assertEqual(self.client.get("/api/admin/staff-operations/payroll/stock-shortages/").status_code, 200)
++        self.assertEqual(self.client.get("/api/admin/staff-operations/payroll/periods/").status_code, 403)
++        self.unauth()
++        self.assertIn(self.client.get("/api/admin/inventory/items/").status_code, (401, 403))
++        self.assertIn(self.client.get("/api/admin/staff-operations/payroll/periods/").status_code, (401, 403))
++
++    def test_explicit_payroll_grants_cannot_bypass_role_deny(self):
++        for code in ("payroll.view", "payroll.manage", "payroll.approve"):
++            UserCapabilityOverride.objects.create(user=self.officer, capability=Capability.objects.get(code=code), effect="GRANT", reason="test")
++        officer = User.objects.get(pk=self.officer.pk)
++        self.assertFalse(any(code.startswith("payroll.") for code in capability_codes_for_user(officer)))
++        self.auth(officer)
++        self.assertEqual(self.client.get("/api/admin/staff-operations/payroll/periods/").status_code, 403)
++        self.assertEqual(self.client.post("/api/admin/staff-operations/payroll/periods/", {}, format="json").status_code, 403)
+diff --git a/frontend/dashboard/inventory.html b/frontend/dashboard/inventory.html
+index 79077c2..3ddaf8b 100644
+--- a/frontend/dashboard/inventory.html
++++ b/frontend/dashboard/inventory.html
+@@ -52,7 +52,7 @@
+ </main></div></div>
+ <script src="../js/runtime-config.js?v=1.1.23"></script><script src="../js/config.js?v=1.1.23"></script><script src="../js/utils.js?v=1.1.23"></script><script src="../js/icons.js?v=1.1.23"></script><script src="../js/api.js?v=1.1.23"></script><script src="../js/theme.js?v=1.1.23"></script><script src="../js/ui.js?v=1.1.23"></script><script src="../js/auth.js?v=1.1.23"></script><script src="../js/navigation.js?v=1.1.23"></script><script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script><script src="../js/operations.js?v=1.1.23"></script>
+ <script>
+-JONE.ui.initChrome();var __inventoryAllowed=JONE.dashboard.boot(["admin","general_manager","storekeeper"]);document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
++JONE.ui.initChrome();var __inventoryAllowed=JONE.dashboard.boot(["admin","general_manager","storekeeper","procurement_officer"]);document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
+ (function(){
+ if(!__inventoryAllowed)return;var DATA=JONE.dashboard.DATA,OPS=JONE.operations,state={tab:"stock",pages:{stock:1,counts:1,consumption:1,recipes:1,catalogItems:1,catalogLocations:1,ledger:1,profitability:1}},itemCache={},locationCache={},consumptionCache={};var balanceRows=document.querySelector("[data-inv-balance-rows]"),countRows=document.querySelector("[data-inv-count-rows]"),consumptionRows=document.querySelector("[data-inv-consumption-rows]"),recipeRows=document.querySelector("[data-inv-recipe-rows]"),itemRows=document.querySelector("[data-inv-item-rows]"),locationRows=document.querySelector("[data-inv-location-rows]"),ledgerRows=document.querySelector("[data-inv-ledger-rows]");var profitRows=document.querySelector("[data-inv-profit-rows]"),profitSummary=document.querySelector("[data-inv-profit-summary]"),profitState={sort:"sku",direction:"asc",optionsLoaded:false};
+ /* Approving a frozen count is the server's inventory.adjust.approve. The role
+diff --git a/frontend/dashboard/payroll.html b/frontend/dashboard/payroll.html
+index d143acb..c477141 100644
+--- a/frontend/dashboard/payroll.html
++++ b/frontend/dashboard/payroll.html
+@@ -72,7 +72,7 @@
+ </main></div></div>
+ <script src="../js/runtime-config.js?v=1.1.27"></script><script src="../js/config.js?v=1.1.27"></script><script src="../js/utils.js?v=1.1.27"></script><script src="../js/icons.js?v=1.1.27"></script><script src="../js/api.js?v=1.1.27"></script><script src="../js/theme.js?v=1.1.27"></script><script src="../js/ui.js?v=1.1.27"></script><script src="../js/auth.js?v=1.1.27"></script><script src="../js/navigation.js?v=1.1.27"></script><script src="../js/dashboard.js?v=1.1.27"></script><script src="../js/table-fit.js?v=1.1.27"></script><script src="../js/operations.js?v=1.1.27"></script>
+ <script>
+-JONE.ui.initChrome();var __payrollAllowed=JONE.dashboard.boot(["admin","general_manager","accountant","procurement_officer"]);document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
++JONE.ui.initChrome();var __payrollAllowed=JONE.dashboard.boot(["admin","general_manager","accountant"]);document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
+ (function(){"use strict";if(!__payrollAllowed)return;var OPS=JONE.operations,periodRows=document.querySelector("[data-period-rows]"),periodPager=document.querySelector("[data-period-pagination]"),compRows=document.querySelector("[data-comp-rows]"),compPager=document.querySelector("[data-comp-pagination]"),shortageRows=document.querySelector("[data-shortage-rows]"),shortagePager=document.querySelector("[data-shortage-pagination]"),latenessRows=document.querySelector("[data-lateness-rows]"),latenessPager=document.querySelector("[data-lateness-pagination]"),latenessPolicySummary=document.querySelector("[data-lateness-policy-summary]"),canView=false,canViewComp=false,canManage=false,canApprove=false,canViewShortages=false,isAdmin=false,me=(window.Auth.state&&window.Auth.state.user)||{},state={periodPage:1,compPage:1,shortagePage:1,latenessPage:1,periods:[],shortages:[],lateness:[],latenessPolicy:null};
+ function money(value,currency){return JONE.esc((currency||"NGN")+" "+(value==null?"0.00":value));}function today(){return JONE.hotelTodayISO?JONE.hotelTodayISO(0):new Date().toISOString().slice(0,10);}function renderPeriods(items){state.periods=items;if(!items.length){JONE.dashboard.DATA.empty(periodRows,"receipt","No payroll runs found","Prepare a payroll run or change the filters.",9);return;}periodRows.innerHTML=items.map(function(row){var buttons='<button class="btn btn-sm btn-outline" type="button" data-payroll-action="view" data-payroll-ref="'+JONE.esc(row.reference)+'">View</button>';var owner=String(row.created_by_email||"").toLowerCase()===String(me.email||"").toLowerCase();if(row.status==="DRAFT"&&owner&&canManage)buttons+='<button class="btn btn-sm btn-outline" type="button" data-payroll-action="submit" data-payroll-ref="'+JONE.esc(row.reference)+'">Submit</button>';if(row.status==="SUBMITTED"&&canApprove&&!owner)buttons+='<button class="btn btn-sm btn-accent" type="button" data-payroll-action="review" data-payroll-ref="'+JONE.esc(row.reference)+'">Approve</button>';if(row.status==="APPROVED"&&canManage)buttons+='<button class="btn btn-sm btn-outline" type="button" data-payroll-action="pay" data-payroll-ref="'+JONE.esc(row.reference)+'">Record full payment</button>';return '<tr><td><strong>'+JONE.esc(row.reference)+'</strong><br><small>'+JONE.esc(row.starts_on)+" – "+JONE.esc(row.ends_on)+(row.department?" · "+JONE.esc(row.department):"")+(row.replaces_reference?" · replaces "+JONE.esc(row.replaces_reference):"")+'</small></td><td>'+JONE.dashboard.statusPill(row.status)+'</td><td class="hide-sm">'+money(row.total_gross,row.currency)+'</td><td class="hide-sm">'+money(row.total_deductions,row.currency)+'</td><td>'+money(row.total_net,row.currency)+'</td><td class="hide-sm">'+money(row.salary_amount_paid,row.currency)+'</td><td>'+money(row.salary_balance,row.currency)+'</td><td class="hide-sm">'+JONE.esc(row.created_by_email||"—")+'</td><td><div class="row-actions">'+buttons+'</div></td></tr>';}).join("");}
+ function periodQuery(){var params={page:state.periodPage,page_size:JONE.dashboard.pageSize()},status=document.getElementById("period-status").value,department=document.getElementById("period-department").value.trim();if(status)params.status=status;if(department)params.department=department;return params;}
+diff --git a/frontend/js/dashboard.js b/frontend/js/dashboard.js
+index 05570ff..2e548ce 100644
+--- a/frontend/js/dashboard.js
++++ b/frontend/js/dashboard.js
+@@ -35,7 +35,7 @@
+       { label: "Service Links", href: "service-qr.html", icon: "grid", view: "service-qr", capabilities: ["service_qr.manage"] },
+       { label: "Housekeeping", href: "housekeeping.html", icon: "bed", view: "housekeeping", capabilities: ["housekeeping.task.manage", "housekeeping.task.assign"] },
+       { label: "Maintenance", href: "maintenance.html", icon: "settings", view: "maintenance", capabilities: ["maintenance.work_order.manage", "maintenance.work_order.assign"] },
+-      { label: "Inventory", href: "inventory.html", icon: "inbox", view: "inventory", capabilities: ["inventory.manage", "inventory.adjust.approve"] },
++      { label: "Inventory", href: "inventory.html", icon: "inbox", view: "inventory", capabilities: ["inventory.manage", "inventory.adjust.approve"], procurementPlacement: false },
+       { label: "Procurement", href: "procurement.html", icon: "receipt", view: "procurement", capabilities: ["procurement.manage", "procurement.approve"] },
+     ]},
+     { group: "Finance", items: [
+@@ -43,6 +43,7 @@
+       { label: "Receipts", href: "receipts.html", icon: "receipt", view: "receipts", capabilities: ["payment.read"] },
+       { label: "Accounting", href: "accounting.html", icon: "wallet", view: "accounting", capabilities: ["reports.financial.view"] },
+       { label: "Reports", href: "reports.html", icon: "barChart", view: "reports", minRole: "general_manager" },
++      { label: "Inventory", href: "inventory.html", icon: "inbox", view: "inventory", capabilities: ["inventory.manage", "inventory.adjust.approve"], procurementPlacement: true },
+       { label: "Payroll", href: "payroll.html", icon: "creditCard", view: "payroll", capabilities: ["payroll.view", "payroll.manage", "payroll.approve"] },
+     ]},
+     { group: "Content", items: [
+@@ -139,7 +140,7 @@
+     "receipts.html": { roles: FINANCE },
+     "receipt-details.html": { roles: FINANCE },
+     "accounting.html": { roles: ["admin", "general_manager", "accountant"] },
+-    "payroll.html": { roles: ["admin", "general_manager", "accountant", "procurement_officer"] },
++    "payroll.html": { roles: ["admin", "general_manager", "accountant"] },
+     "reports.html": { roles: MANAGEMENT },
+     "approvals.html": { roles: ["admin", "general_manager", "accountant",
+       "procurement_officer", "storekeeper", "receptionist"] },
+@@ -154,7 +155,7 @@
+     "service-qr.html": { roles: MANAGEMENT },
+ 
+     /* Stores and procurement. */
+-    "inventory.html": { roles: ["admin", "general_manager", "storekeeper"] },
++    "inventory.html": { roles: ["admin", "general_manager", "storekeeper", "procurement_officer"] },
+     "procurement.html": { roles: ["admin", "general_manager", "storekeeper", "procurement_officer"] },
+ 
+     /* People. */
+@@ -205,6 +206,8 @@
+   function navItemAllowed(it) {
+     const auth = window.Auth;
+     if (!auth) return false;
++    if (it.procurementPlacement !== undefined &&
++        (auth.state && auth.state.role === "procurement_officer") !== it.procurementPlacement) return false;
+     /* The entry's own gate AND the target page's gate. A menu entry must never
+        point a department at a page that will refuse it. */
+     if (!canOpenPage(it.href)) return false;
+diff --git a/frontend/tests-js/test-department-page-access.js b/frontend/tests-js/test-department-page-access.js
+index c223574..8a5dcc9 100644
+--- a/frontend/tests-js/test-department-page-access.js
++++ b/frontend/tests-js/test-department-page-access.js
+@@ -320,8 +320,8 @@ test("each department is admitted to its own screens and refused the others", ()
+       ["payments.html", "check-out.html", "bookings.html", "housekeeping.html", "settings.html"]],
+     storekeeper: [["inventory.html", "procurement.html", "barcode-labels.html", "approvals.html", "workforce.html"],
+       ["pos.html", "payments.html", "bookings.html", "settings.html"]],
+-    procurement_officer: [["procurement.html", "payroll.html", "approvals.html", "staff-profile.html", "workforce.html"],
+-      ["payments.html", "check-out.html", "pos.html", "inventory.html", "staff.html", "settings.html", "audit-logs.html"]],
++    procurement_officer: [["procurement.html", "inventory.html", "approvals.html", "staff-profile.html", "workforce.html"],
++      ["payments.html", "check-out.html", "pos.html", "payroll.html", "staff.html", "settings.html", "audit-logs.html"]],
+     accountant: [["payments.html", "receipts.html", "accounting.html", "payroll.html", "approvals.html", "workforce.html"],
+       ["check-out.html", "bookings.html", "guests.html", "pos.html", "housekeeping.html", "laundry.html", "settings.html", "audit-logs.html", "inventory.html"]],
+     security: [["service-requests.html", "laundry.html", "workforce.html"],
+diff --git a/frontend/tests-js/test-payroll-ui.js b/frontend/tests-js/test-payroll-ui.js
+index 2441dc5..f856028 100644
+--- a/frontend/tests-js/test-payroll-ui.js
++++ b/frontend/tests-js/test-payroll-ui.js
+@@ -52,7 +52,7 @@ test("employee salary-payment API helpers escape nested references and keep requ
+ 
+ test("payroll page uses simplified salary terms and controlled maker-checker/ledger actions", () => {
+   const page = fs.readFileSync(path.join(FRONTEND, "dashboard", "payroll.html"), "utf8");
+-  assert.match(page, /boot\(\["admin","general_manager","accountant","procurement_officer"\]\)/);
++  assert.match(page, /boot\(\["admin","general_manager","accountant"\]\)/);
+   assert.match(page, /loadCapabilities\(\)/);
+   assert.match(page, /cache:"no-store"/);
+   assert.match(page, /API\.create\("payrollPeriods"/);
+diff --git a/frontend/tests-js/test-procurement-dashboard-inventory.js b/frontend/tests-js/test-procurement-dashboard-inventory.js
+new file mode 100644
+index 0000000..6e8314b
+--- /dev/null
++++ b/frontend/tests-js/test-procurement-dashboard-inventory.js
+@@ -0,0 +1,20 @@
++"use strict";
++const test = require("node:test");
++const assert = require("node:assert/strict");
++const { makeContext, loadScript, disposeAll } = require("./harness");
++test.after(() => disposeAll());
++test("procurement sees inventory in payroll's old position; other menus retain their order", () => {
++  const ctx = makeContext();
++  ctx.window.API = { setTokenProvider() {}, getToken() { return null; } };
++  ctx.window.APP_CONFIG = { API_ENDPOINTS: {}, STORAGE: { AUTH: "jone.auth" } };
++  loadScript(ctx, "js/utils.js"); loadScript(ctx, "js/auth.js"); loadScript(ctx, "js/dashboard.js");
++  const auth = ctx.window.Auth, dash = ctx.window.JONE.dashboard;
++  function items(role) { auth.state.role = role; auth.state.user = {role}; auth.state.capabilitiesLoaded = false; return Array.from(dash.NAV.flatMap(g => g.items).filter(dash.navItemAllowed), i => i.href); }
++  const proc = items("procurement_officer");
++  assert.equal(proc.filter(x => x === "inventory.html").length, 1);
++  assert(proc.includes("procurement.html")); assert(!proc.includes("payroll.html"));
++  assert(proc.indexOf("procurement.html") < proc.indexOf("inventory.html"));
++  assert(dash.canOpenPage("inventory.html")); assert(!dash.canOpenPage("payroll.html"));
++  const store = items("storekeeper"); assert(store.indexOf("inventory.html") < store.indexOf("procurement.html"));
++  for (const role of ["admin", "general_manager", "accountant"]) assert(items(role).includes("payroll.html"), role);
++});

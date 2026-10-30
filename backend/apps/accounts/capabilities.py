@@ -218,13 +218,13 @@ ROLE_CAPABILITY_CODES = {
     }),
     "SECURITY": frozenset({"guest_request.manage", "attendance.clock"}),
     # Admin Manager/Procurement consolidates Procurement and non-approval HR
-    # administration (staff records, shifts, attendance administration, payroll
-    # preparation). Maker-checker approvals (procurement.approve, payroll.approve,
+    # administration (staff records, shifts, attendance administration) and
+    # inventory management. Maker-checker approvals (procurement.approve, payroll.approve,
     # leave.approve, expense.approve) are intentionally excluded by default.
     "PROCUREMENT_OFFICER": frozenset({
         "procurement.manage", "staff.profile.manage", "staff.view", "staff.manage",
         "shift.manage", "attendance.clock", "attendance.manage", "leave.request",
-        "payroll.view", "payroll.manage",
+        "inventory.manage",
     }),
     "STOREKEEPER": frozenset({"inventory.manage", "procurement.manage", "attendance.clock", "leave.request"}),
     "PORTER": frozenset({"guest_request.manage", "attendance.clock", "leave.request"}),
@@ -334,6 +334,9 @@ def capability_codes_for_user(user: "User") -> frozenset[str]:
                 role_codes.add(cap_code)
             elif effect == UserCapabilityOverride.Effect.REVOKE:
                 role_codes.discard(cap_code)
+        # Procurement must not gain payroll authority, even via legacy grants or overrides.
+        if user.role == User.Role.PROCUREMENT_OFFICER:
+            role_codes = {code for code in role_codes if not code.startswith("payroll.")}
         codes = frozenset(role_codes)
     user._jone_capability_codes = codes
     return codes

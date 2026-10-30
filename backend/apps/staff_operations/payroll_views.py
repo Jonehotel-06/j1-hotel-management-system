@@ -10,7 +10,7 @@ from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.views import APIView
 
 from apps.accounts.capabilities import has_capability
@@ -201,9 +201,16 @@ def _shortage(reference, *, detail=False):
     return value
 
 
+class NotProcurementPayrollAccess(BasePermission):
+    """Inventory authority must not expose payroll shortage cases to procurement."""
+
+    def has_permission(self, request, view):
+        return request.user.role != User.Role.PROCUREMENT_OFFICER
+
+
 @extend_schema(tags=["Admin · Payroll"], summary="List or record a department stock-shortage case")
 class PayrollStockShortageListCreateView(APIView):
-    permission_classes = [HasCapability]
+    permission_classes = [HasCapability, NotProcurementPayrollAccess]
     required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve", "inventory.manage")
     require_any_capability = True
     pagination_class = StandardPagination
@@ -253,7 +260,7 @@ class PayrollStockShortageListCreateView(APIView):
 
 @extend_schema(tags=["Admin · Payroll"], summary="View a department stock-shortage case and its shares")
 class PayrollStockShortageDetailView(APIView):
-    permission_classes = [HasCapability]
+    permission_classes = [HasCapability, NotProcurementPayrollAccess]
     required_capabilities = ("payroll.view", "payroll.manage", "payroll.approve", "inventory.manage")
     require_any_capability = True
 

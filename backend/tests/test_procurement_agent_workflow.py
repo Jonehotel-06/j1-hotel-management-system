@@ -164,10 +164,10 @@ class ProcurementLookupTests(ProcurementWorkflowBase):
         self.assertEqual(self.client.post(LOOKUP_ITEMS, {"sku": "X", "name": "X"}, format="json").status_code, 405)
         self.assertEqual(self.client.post(LOOKUP_LOCATIONS, {"code": "X", "name": "X"}, format="json").status_code, 405)
 
-    def test_inventory_directories_were_not_widened(self):
+    def test_procurement_officer_has_inventory_directories(self):
         self.auth(self.officer)
-        self.assertEqual(self.client.get("/api/admin/inventory/items/").status_code, 403)
-        self.assertEqual(self.client.get("/api/admin/inventory/locations/").status_code, 403)
+        self.assertEqual(self.client.get("/api/admin/inventory/items/").status_code, 200)
+        self.assertEqual(self.client.get("/api/admin/inventory/locations/").status_code, 200)
 
 
 class DraftValidationTests(ProcurementWorkflowBase):
