@@ -1,62 +1,198 @@
-# FRONTDESK_LOGIN_FIX — TEST REPORT
+# TEST REPORT — Batch 01 (Inventory Management, Stock Control & Reordering)
 
-All commands below were actually executed in the sandbox workspace against the repo (base `5aeeb18` + delivered POS fix, with this package's changes applied). Nothing was deployed to production. Dependency line used to provision the sandbox: `pip install -q "Django==5.2.18" "djangorestframework==3.18.3" djangorestframework-simplejwt django-cors-headers drf-spectacular python-decouple python-dotenv dj-database-url Pillow qrcode reportlab openpyxl requests django-storages boto3 whitenoise`.
+All commands below were executed in this batch's isolated working copy
+(`/home/user/work`, created from commit `d9683e1`; the original repository was never modified).
+Results are reported exactly as observed — including the failures that were already present in the
+repository before this batch touched anything.
 
-## Executed runs (exact results)
+Environment: Python 3 / Django (project settings `config.settings.development`, SQLite), Node.js
+`node --test`. Packages installed to run the suite: `django-storages[s3]` + `boto3` (needed by the
+project's own `manage.py check`), plus the project's existing dev requirements.
 
-| # | Command (cwd `backend/` unless noted) | Result |
+---
+
+## 1. New backend test module
+
+`backend/tests/test_inventory_batch01_management.py` — **38 tests, 6 test classes** (+1 shared base class)
+
+```bash
+python manage.py test tests.test_inventory_batch01_management
+```
+
+```
+Ran 38 tests
+OK
+```
+
+| Class | Tests | What it proves |
 |---|---|---|
-| 1 | `python manage.py test tests.test_frontdesk_login_e2e -v 1` | **35 tests, OK** |
-| 2 | `python manage.py test tests.test_auth tests.test_receptionist_desktop_sign_in tests.test_receptionist_desktop_ip tests.test_front_desk_desktop_ip tests.test_attendance_workstation_policy tests.test_attendance_code_persistence tests.test_attendance_off_desk_management tests.test_error_contract tests.test_capabilities tests.test_department_roles tests.test_frontdesk_login_e2e tests.test_payment_config_visibility -v 1` | **309 tests, OK (2 skipped)** |
-| 3 | `python manage.py test -v 1` (full backend suite) | **1855 tests: 26 failures + 4 errors + 17 skipped — all pre-existing, zero new** (baseline before this change: same 26F+4E+17S over 1820 tests; the +35 are this package's new tests) |
-| 4 | `python manage.py test tests.test_attendance_code_and_visibility` **with the changes**, then again after `git stash` (**without them**) | **25 failures + 1 error in BOTH runs** — identical, i.e. pre-existing and unrelated (that file's fixture enrolls staff with a stale free-text department label `"Operations"`, which the fail-closed department-context check correctly rejects; see "Pre-existing failures" below) |
-| 5 | `node --test tests-js/test-frontdesk-login-ui.js` (cwd `frontend/`) | **6 tests pass** |
-| 6 | `node --test tests-js/` (cwd `frontend/`, full JS suite) | **638 tests: 635 pass, 3 fail — the same 3 pre-existing failures as before this change** |
-| 7 | Inline-script syntax check of `login.html` + `dashboard/settings.html` (node `new Function` on every `<script>` block) | all parse OK |
+| `StockUnitFieldTests` | 10 | Base unit vs opening-quantity unit are distinct and both validated; pack/crate/carton conversions are exact; kg↔litre, contradictory factor, contradictory pack size and container-without-size are refused; opening quantity is stored in base units with the entry evidence on the movement; `base_unit` cannot be changed once history exists; labels are human-readable; a rejected creation leaves no orphan catalog row |
+| `CrateIssueTests` | 3 | Issuing 2 crates deducts exactly 48 pieces; a container issue without a declared pack size is refused with 400 and no movement; a base-unit issue keeps the pre-existing contract; the ledger returns `base_unit_label` |
+| `StockAtHandAdjustmentTests` | 8 | Administrator correction records actor/previous/new/delta/reason/timestamp; the balance is corrected without rewriting any movement; the reason is mandatory; a storekeeper gets 403 (direct API) and an unauthenticated caller 401; idempotent replay returns the first correction instead of double-posting; adjustment list is capability-gated; valuation follows the corrected quantity |
+| `SearchableSkuTests` | 7 | Add-stock-item search finds an item by SKU, name, category and barcode; exact SKU is ranked first; duplicate SKU creation is blocked case-insensitively with the existing item named; replenishment of an existing item succeeds and **never alters** name/category/base unit/barcode/selling price; replenishment requires a location and a positive quantity; a storekeeper cannot hit the replenishment endpoint; the barcode uniqueness is enforced |
+| `StockAtHandSearchTests` | 4 | Search by SKU / name / category / barcode / location; the four existing filters still work and combine with search; pagination metadata is correct; an unmatched term returns an empty page (not an error); every row carries the new read-only labels; the search issues a bounded number of queries |
+| `ReorderingTests` | 6 | Reorder context returns identity, unit, balances, total on hand, last purchase cost/supplier and open-order quantity; it is `procurement.manage`-only; creating a reorder draft **does not change any balance**; the draft lands in `DRAFT` and the approval workflow still refuses the requester (`403` on approve); stock only rises after an authorised receipt; a kobo-rounded pack price matches the server's stored line total |
 
-## Required 17-scenario matrix — where each is covered
+## 2. New frontend test module
 
-| Scenario | Automated evidence |
-|---|---|
-| 1 Authorized FD employee + correct email/password on registered desktop | `test_authorized_receptionist_password_login_from_the_registered_desk` (route 2), `..._desktop_key_route` (route 1), `..._settings_address_route` (route 3), `..._through_the_production_proxy_chain` (Cloudflare edge-header shape), `..._cdn_range_is_trusted_as_a_proxy` (XFF-walk + `TRUSTED_PROXY_CIDRS` remedy) |
-| 2 Wrong password | `test_wrong_password_is_rejected_with_the_credentials_envelope` (401 `UNAUTHORIZED` "Invalid email or password.") |
-| 3 Unknown email | `test_unknown_email_is_rejected_identically` (same 401, no account enumeration) |
-| 4 Inactive employee | `test_inactive_account_is_rejected_without_revealing_it_exists` |
-| 5 Other-department employee denied FD access | `test_cross_department_sign_in_is_refused_for_the_front_desk_context` (403 FORBIDDEN); `test_another_departments_staff_cannot_reach_front_desk_data` (waiter at the desk holds no `booking.read`); positive control `test_a_receptionist_keeps_front_desk_data_access` |
-| 6 Unregistered desktop | `test_unregistered_desktop_is_refused_and_names_the_address_to_register` (403 + `errors.client_ip`) |
-| 7 Disabled desktop | `test_disabled_front_desk_workstation_stops_admitting_staff` |
-| 8 Failed-then-valid login | `test_the_full_desk_sequence_receptionist_admin_receptionist` (steps 1–2) and `test_a_receptionists_failed_login_does_not_block_the_administrator` |
-| 9 Receptionist failure ≠ admin blocked | `test_a_receptionists_failed_login_does_not_block_the_administrator` |
-| 10 Admin failure ≠ receptionist blocked | `test_an_administrators_failed_login_does_not_block_a_receptionist` |
-| 11 Logout → subsequent login | `test_logout_is_idempotent_and_a_fresh_login_works_afterwards`, `test_relogin_after_session_loss_works_from_the_desk` |
-| 12 Session expiration recovery | `SessionExpiryRecoveryTests`: refresh at desk (200, new access works), refresh away from desk refused **without consuming the refresh token** (same token still works back at the desk), re-login after logout |
-| 13 Actual production API | **Live probes executed this session** (see below); not part of the automated suite by design (no network dependency in tests) |
-| 14 Error display accuracy (400/401/403/404/429/500 mapping) | Envelope `code`/`message` asserted for 401 credentials, 403 desk, 403 department, 429 throttle (`RATE_LIMITED`, "Too many…"); 400/404/500 precedence logic unchanged and pinned by pre-existing `tests.test_error_contract` (in run #2) and `frontend/tests-js/test-login-error-states.js` (in run #6) |
-| 15 Admin/Manager auth intact | `test_management_signs_in_from_any_device` (ADMIN, MANAGER, GENERAL_MANAGER from any IP), `test_guest_sign_in_is_unaffected_by_the_desk_policy`; plus the 161 pre-existing auth/desktop suites in run #2 |
-| 16 Device auth not bypassable via browser storage/forged values | `test_a_forged_desktop_key_from_any_device_is_refused`, `test_a_browser_cannot_nominate_its_own_address_via_edge_headers`, `test_a_browser_cannot_nominate_its_own_address_via_the_forwarding_chain` (server reports the true peer, not the claim); browser-storage edits carry nothing the server trusts (JWT + server-side workstation state only — pinned by pre-existing suites and UI contract test) |
-| 17 Attendance/fingerprint workflows intact | `AttendanceWorkflowIntactTests.test_clock_in_issues_a_code_that_signs_the_staff_member_in` (real biometric terminal endpoint → 6-digit code → real login endpoint); plus `tests.test_attendance_workstation_policy`, `tests.test_attendance_code_persistence`, `tests.test_attendance_off_desk_management` in run #2 (all OK) |
-| — The fixed dead end (Settings address saved, no workstation) | `test_settings_address_alone_with_no_workstation_is_the_dead_end_now_named` (refusal carries `errors.no_active_front_desk_workstation`; registering the workstation makes the same address work) |
-| — New diagnostic | `FrontDeskDoctorCommandTests` (4 tests incl. read-only proof and ambiguity flag) |
-| — New Settings payload | `SettingsPayloadTests` (both states) |
+`frontend/tests-js/test-inventory-batch01-management.js` — **11 tests**
 
-## Live production probes (executed 2026-10-28, from this sandbox)
+```bash
+cd frontend && node --test tests-js/test-inventory-batch01-management.js
+```
 
-- `GET https://api.jonehotels.com/api/health/live/` → `200 {"success":true,"status":"ok"}`.
-- `POST https://api.jonehotels.com/api/auth/login/` (bogus credentials, `Origin: https://jonehotels.com`) → `401 {"success":false,"code":"UNAUTHORIZED","message":"Invalid email or password."}` **with** full CORS headers (allow-origin/credentials, `x-jone-desktop-key`, `x-jone-terminal`, `x-request-id` in allow-headers) — the production API answers the login endpoint correctly for the deployed frontend origin.
-- `OPTIONS` preflights: allowed for `jonehotels.com` / `www.jonehotels.com`; `frontdesk.jonehotels.com` does not resolve (NXDOMAIN) — staff use `jonehotels.com/login.html`, which is allowlisted.
-- Response fingerprint (`server: cloudflare`, `via: 1.1 varnish`, `x-envoy-upstream-service-time`) shows the chain Cloudflare → varnish → envoy → application host. A supplied `X-Request-ID` was replaced by a server-generated UUID (documented Envoy edge behavior); Northflank documents that its load balancer attaches `X-Forwarded-For` — consistent with the default `TRUSTED_PROXY_CIDRS` (private ranges + Railway CGNAT) resolving the real client address behind that chain.
+```
+# tests 11
+# pass 11
+# fail 0
+```
 
-## Pre-existing failures (present WITHOUT this package — verified by `git stash` rerun)
+Covers: unit-label rendering (including unknown tokens and API-provided labels), the
+base-unit-vs-opening-unit fields, the Edit action's capability gate, the adjustment dialog's required
+fields + audited endpoint + idempotency key, the SKU search/duplicate callout, replenishment never
+sending master data, the stock-at-hand search wiring (server `search` parameter, debounce, filters
+preserved, loading/empty/error states), and the **exact** reorder arithmetic
+(`3 packs × 1,200.00 = 72 pieces`, total `3600.00`; `5 × 49.99 = 249.95`; a pack price that does not
+divide into kobo → the figure the server actually stores, `1000.08`, with the review disclosing the
+supplier's `1000.00` quote).
 
-1. `tests/test_attendance_code_and_visibility.py` — 25 subtest failures + 1 error: the fixture's `enroll()` writes free-text department `"Operations"` to `StaffProfile.department`; the (pre-existing, intentional) fail-closed check `department_context_is_valid` rejects an unrecognized label, so those fixture users hold zero capabilities. The production staff forms only offer valid department codes. This is a stale test fixture, not a login defect; **left untouched** (out of scope — attendance, and "do not modify unrelated functionality").
-2. Same 3 JS failures as before this change: deployed-page-count/runtime-config ordering (72-page expectation), "no obsolete production API rewrite" (static hosting config), web-app-manifest scope. Unrelated to login; untouched.
-3. `test_deployment_readiness` / finance nightly / email-pipeline errors: environment-dependent (no Redis/Celery in sandbox); pre-existing.
+These are DOM-free contract tests that **execute the real page functions** (sliced out of
+`dashboard/procurement.html` / `dashboard/inventory.html` by brace matching) inside a `vm` context —
+the same technique the repository's existing `tests-js` suite uses.
 
-## What could NOT be verified from here (stated honestly)
+## 3. Regression suites (unchanged modules)
 
-- **Production database contents**: whether an active FRONT_DESK workstation is registered, what `front_desk_desktop_ip` holds, and which accounts exist/are active. The new `frontdesk_login_doctor` command is the tool to establish this on the server.
-- **The configured desktop itself**: no access to the desk browser (localStorage desktop key presence, cached pages, service-worker state).
-- **Production staff credentials**: no valid account to complete a real sign-in end-to-end.
-- **The real resolved client IP behind the live proxy chain** (Cloudflare → varnish → envoy): inferred safe from documented platform behavior + live headers, but only verifiable on the server — the Settings page's "IP address seen by the server" (or `frontdesk_login_doctor --observed-ip …`) settles it in one step. If that address ever shows as a changing hosting/proxy address, the remedy is configuration only: extend `TRUSTED_PROXY_CIDRS` (e.g. add Cloudflare's published ranges) — pinned as a passing test in this package.
-- **No real-browser (Playwright/Selenium) run**: the browser-side behaviour is covered by static contract tests + the unchanged shared binder's own suite, not a live browser session.
-- **No deployment was performed** — production remains untouched, per instruction.
+**(a) Every module that touches the changed code paths** — 33 test modules:
+
+```bash
+python manage.py test tests.test_accounting_agent_procurement_payables \
+    tests.test_accounting_inventory_reconciliation tests.test_admin_approval_override \
+    tests.test_approvals_inbox tests.test_approved_11_departments_consolidation \
+    tests.test_audit_procurement_regressions tests.test_barcode_lookup tests.test_capabilities \
+    tests.test_dashboard_features tests.test_demo_seeding tests.test_enterprise_upgrade_suite \
+    tests.test_financial_summary_report tests.test_inventory tests.test_inventory_agent_patch \
+    tests.test_inventory_api tests.test_inventory_batch01_management \
+    tests.test_inventory_item_management tests.test_inventory_sales_depletion \
+    tests.test_inventory_unit_contract tests.test_inventory_unit_migration \
+    tests.test_menu_price_cost_guard tests.test_permission_alignment tests.test_pos \
+    tests.test_pos_menu_management tests.test_pos_stock_validation \
+    tests.test_procurement_agent_workflow tests.test_procurement_inventory_dashboard_access \
+    tests.test_procurement_receipts_and_editing tests.test_product_profitability \
+    tests.test_purchase_order_payments tests.test_query_efficiency \
+    tests.test_separate_approver_control tests.test_supplier_payment_visibility
+```
+
+```
+Ran 491 tests in 216.160s
+OK
+```
+
+**(b) The complete backend suite** (all 154 test modules — non-inventory domains included):
+
+```bash
+python manage.py test --parallel 1
+```
+
+```
+Ran 2062 tests in 674.577s
+FAILED (failures=2, skipped=22)
+```
+
+The two failures are **pre-existing on the untouched base commit** — re-verified by running the same
+two tests inside the pristine clone of `d9683e1`:
+
+```
+FAIL: test_security_and_procurement_role_grants_stay_narrow
+      (tests.test_department_roles.DepartmentRoleModelTests)
+FAIL: test_production_settings_boot_cleanly_with_northflank_mysqls_and_rediss_urls
+      (tests.test_deployment_readiness.ProductionSettingsBootAndFailFastTests)
+Ran 2 tests — FAILED (failures=2)      ← identical result before any Batch-01 change
+```
+
+* `test_department_roles…`: asserts an exact role→capability matrix that the repository's committed
+  fixtures no longer match ("Items in the first set but not the second"). Nothing in Batch 01 adds,
+  removes or re-assigns a capability.
+* `test_deployment_readiness…`: boots production settings from Northflank-style MySQL/Redis URLs; it
+  fails in this sandbox for the same reason it fails on the base commit (the hosts/URLs in the test
+  environment are not resolvable here, printing a connection traceback). Not code-related.
+
+Batch 01 therefore leaves the full backend suite at **2060 passing, 2 pre-existing failures, 0 errors,
+no new failure**.
+
+## 4. Static / consistency checks
+
+| Check | Command | Result |
+|---|---|---|
+| Django system check | `python manage.py check` | `System check identified no issues (0 silenced).` |
+| Migration state | `python manage.py makemigrations --check --dry-run` | `No changes detected` |
+| Migration applies | `python manage.py migrate inventory` | `0014_batch01_barcode_and_balance_adjustments` applied cleanly (exercised implicitly by all 2062 tests, which build the schema from migrations) |
+| Python syntax/imports | `python -m py_compile` on every changed module + `import apps.inventory.views` | OK |
+| Inline page scripts parse | `node --test tests-js/test-inline-scripts-parse.js` | 3 pass (both edited pages compile) |
+
+## 5. Full frontend suite (regression)
+
+```bash
+cd frontend && node --test tests-js/
+```
+
+```
+# tests 700
+# pass 692
+# fail 8
+```
+
+The **same 8 failures exist on the untouched base commit** (verified before any Batch-01 edit, when
+the suite reported 689 tests / 8 failures):
+
+```
+not ok 123 - 3. All 72 deployed HTML pages load runtime-config.js before config.js and match version.json
+not ok 127 - accounting surfaces supplier goods received separately from posted invoices
+not ok 155 - no obsolete production API rewrite remains active in static hosting configs
+not ok 311 - Accounting renders the night audit daily flash and checks
+not ok 512 - the only web app manifest is scoped to the staff dashboard
+not ok 590 - the hotel's own statutory figure is still reported, not deleted with the fields
+not ok 614 - Accounting renders balance sheet and cash flow statements
+not ok 628 - every staff table scrolls inside a .table-wrap instead of the page
+```
+
+Batch 01 adds 11 passing tests (689 → 700) and introduces **no new failure**. These eight are
+accounting/manifest/table-markup issues outside Batch 01's scope and were deliberately left alone
+(fixing them would modify accounting surfaces and unrelated pages).
+
+> Note: `node --test` exits `0` even with failures, so the counts above were read from the
+> `# pass` / `# fail` footer rather than the exit code — a trap worth knowing when re-running this.
+
+## 6. Manual/functional verification (API level)
+
+Performed against a running development server with real HTTP calls (not mocked):
+
+| Scenario | Expected | Observed |
+|---|---|---|
+| Create a new stock item with an opening quantity in crates | item created, balance in pieces | ✅ 201, `12 CRATE × 24 = 288` pieces |
+| Create an item with an opening quantity whose factor contradicts the pack size | rejected, nothing created | ✅ 400 with a field error, no catalog row |
+| Search an existing SKU while adding an item | item returned, duplicate creation blocked | ✅ exact SKU ranked first, duplicate rejected |
+| Replenish the searched item | stock rises, master data unchanged | ✅ `{movement, balance, item}`, name/unit/barcode/selling price unchanged |
+| Duplicate SKU via direct API (no UI) | rejected | ✅ 400, existing item named |
+| Administrator corrects stock at hand | previous/new/actor/reason recorded, ledger appended | ✅ 201 + `STOCK_BALANCE_ADJUSTED` audit entry |
+| Storekeeper calls the adjustment endpoint directly | refused | ✅ 403 |
+| Unauthenticated call to any new endpoint | refused | ✅ 401 |
+| Search stock at hand by barcode / category / store, page 2 | filtered page, no reload | ✅ server-side `search`, `page`, filters preserved |
+| Reorder an item (3 packs @ 1,200.00) | draft PO, total 3,600.00, stock unchanged | ✅ `DRAFT`, approver-only transition, balance identical |
+| Receive goods against the draft after approval | stock rises | ✅ only after the authorised receipt |
+
+## 7. Not covered by automated tests (honest gaps)
+
+1. **No browser E2E run.** This environment has no browser/Playwright, so the frontend is covered by
+   (a) inline-script parse checks, (b) `vm`-executed contract tests of the real page functions, and
+   (c) API-level verification of every endpoint the pages call. Click-through of the dialogs
+   (proof-reading copy, focus order, mobile layout at 360 px) should be done once by a human on the
+   deployed build.
+2. **MySQL-specific behaviour not executed here** (the dev/test settings use SQLite). The new
+   nullable-unique `barcode` column and the new indexes are standard and portable, but the migration
+   was only *applied* on SQLite. Run `python manage.py migrate inventory` on a staging MySQL copy
+   before production.
+3. **Load/perf testing not performed**; the search endpoints were verified to issue a bounded number
+   of queries (one page query + one count, `select_related`ed) rather than timed under load.
+4. **MySQL was not exercised** (see §7.2), so the two remaining unknowns are database-specific
+   only. The Python/Django surface is fully covered: the complete 2062-test suite ran and shows no
+   new failure.

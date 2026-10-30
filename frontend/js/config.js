@@ -338,6 +338,10 @@
     inventoryOpeningStock:        "/api/admin/inventory/opening-stock/",
     inventoryReturns:             "/api/admin/inventory/returns/",
     inventoryTransfers:           "/api/admin/inventory/transfers/",
+    /* Batch 01: administrator stock-at-hand corrections. The POST is a
+       per-balance action (`balances/<id>/adjust/`, via API.resourceAction);
+       this is the read-only audit list of those corrections. */
+    inventoryAdjustments:         "/api/admin/inventory/adjustments/",
     suppliers:                    "/api/admin/inventory/suppliers/",
     purchaseOrders:               "/api/admin/inventory/purchase-orders/",
     /* Procurement-scoped, read-only lookups for the purchase-order form: a

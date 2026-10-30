@@ -18,7 +18,7 @@ from apps.core.utils import hotel_today
 
 from ..models import (
     GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderPayment,
-    StockBalance, StockConsumptionRequest, StockConsumptionRequestEvent, StockCount, StockCountEvent,
+    StockBalance, StockBalanceAdjustment, StockConsumptionRequest, StockConsumptionRequestEvent, StockCount, StockCountEvent,
     StockCountLine, StockDepartment, StockItem, StockLocation, StockMovement, StockRecipe,
     StockRecipeLine, Supplier,
 )
@@ -819,6 +819,41 @@ UNIT_FAMILIES = {
 #: wrong quantity to the ledger.
 PACK_UNITS = {"pack", "case", "carton", "crate", "bag", "box", "sack", "roll", "bundle"}
 
+#: Human-readable label for every canonical/legacy unit token the hotel
+#: actually stocks. The ledger stores a TOKEN (``PIECE``, ``KG``, ``CRATE``);
+#: a screen must never show the raw token alone, because "12 PACK" and
+#: "12 PIECE" read identically to a hurried storekeeper. Unknown tokens fall
+#: back to the token itself (upper-cased) so nothing is ever blanked out.
+UNIT_LABELS = {
+    "pc": "Pieces", "unit": "Units", "dozen": "Dozen", "pair": "Pairs",
+    "bottle": "Bottles", "can": "Cans", "tin": "Tins", "sachet": "Sachets",
+    "plate": "Plates", "glass": "Glasses", "towel": "Towels", "sheet": "Sheets",
+    "pack": "Packs", "packet": "Packs", "case": "Cases", "carton": "Cartons",
+    "crate": "Crates", "bag": "Bags", "box": "Boxes", "sack": "Sacks",
+    "roll": "Rolls", "bundle": "Bundles",
+    "mg": "Milligrams (mg)", "g": "Grams (g)", "kg": "Kilograms (kg)", "t": "Tonnes (t)",
+    "ml": "Millilitres (ml)", "cl": "Centilitres (cl)", "dl": "Decilitres (dl)",
+    "l": "Litres (L)", "shot": "Shots",
+}
+
+#: The largest quantity the ledger column can hold (max_digits=14,
+#: decimal_places=4). Anything at or above this must be refused with a field
+#: error instead of surfacing as a database error.
+MAX_LEDGER_QUANTITY = Decimal("10000000000")
+
+
+def unit_label(unit) -> str:
+    """Display label for a stock unit token ("KG" → "Kilograms (kg)")."""
+    token = canonical_unit(unit)
+    if not token:
+        return ""
+    return UNIT_LABELS.get(token, token.upper())
+
+
+def is_container_unit(unit) -> bool:
+    """True for a supplier container (pack/carton/crate/bag/…) token."""
+    return canonical_unit(unit) in PACK_UNITS
+
 
 def canonical_unit(unit) -> str:
     """Map "Kg" / "kilograms" / "KG." onto one canonical token ("" when blank)."""
@@ -884,6 +919,219 @@ def convert_stock_quantity(quantity, *, from_unit=None, to_unit=None, conversion
             "an explicit conversion factor."
         )
     })
+
+
+def resolve_entered_quantity(
+    quantity, *, item, unit=None, conversion_factor=None, field="quantity",
+    allow_declared_pack_size=False,
+) -> tuple[Decimal, dict]:
+    """Turn a quantity typed in ``unit`` into the item's own base unit.
+
+    One shared implementation for every path that records stock from a typed
+    quantity (opening balance, replenishment, adjustments). It returns the
+    exact base-unit quantity plus the evidence a reader needs to reconcile it
+    later (what was typed, in which unit, and the factor used).
+
+    Nothing is ever guessed:
+
+    * the base unit is an identity and refuses a conversion factor;
+    * mass and volume convert inside their own family at their exact ratios,
+      and a factor that CONTRADICTS the exact ratio is refused (a "kg" line
+      with a factor of 100 is neither 100 g nor 1 kg, so it is not recorded);
+    * a supplier container (crate/carton/bag/…) converts with the item's
+      declared ``units_per_pack`` only when the caller says that is allowed —
+      otherwise the operator must state the container size, because one
+      item's pack size never proves which container was delivered;
+    * a stated factor that disagrees with the item's declared pack size is
+      refused: the same crate cannot hold 24 bottles and 12 bottles.
+    """
+    unit_token = canonical_unit(unit)
+    base_token = canonical_unit(getattr(item, "base_unit", ""))
+    factor = None
+    if conversion_factor is not None and str(conversion_factor).strip() != "":
+        factor = _quantity(conversion_factor, field="conversion_factor", positive=True)
+    if factor is not None and unit_token and unit_token == base_token:
+        raise ValidationError({
+            "conversion_factor": (
+                f"The quantity is already in the item's base unit ({unit_label(item.base_unit)}); "
+                "remove the conversion factor."
+            )
+        })
+    src_family, src_ratio = _family_member(unit_token)
+    dst_family, dst_ratio = _family_member(base_token)
+    declared_pack = getattr(item, "units_per_pack", None)
+    if factor is not None:
+        if src_family and src_family == dst_family:
+            exact = (src_ratio / dst_ratio).quantize(QTY, rounding=ROUND_HALF_UP)
+            if factor != exact:
+                raise ValidationError({
+                    "conversion_factor": (
+                        f"1 {unit_label(unit)} is exactly {exact.normalize()} "
+                        f"{unit_label(item.base_unit)}; a factor of {factor.normalize()} would record the wrong quantity. "
+                        "Remove the factor to use the exact conversion."
+                    )
+                })
+        if declared_pack and unit_token in PACK_UNITS and base_token not in PACK_UNITS:
+            declared = _quantity(declared_pack, field="units_per_pack", positive=True)
+            if factor != declared:
+                raise ValidationError({
+                    "conversion_factor": (
+                        f"{item.sku} records {declared.normalize()} {unit_label(item.base_unit)} per "
+                        f"{unit_label(unit).lower()}; a factor of {factor.normalize()} contradicts the item's own pack size."
+                    )
+                })
+    elif unit_token and unit_token in PACK_UNITS and base_token not in PACK_UNITS:
+        if not (allow_declared_pack_size and declared_pack):
+            raise ValidationError({
+                "unit": (
+                    f"Enter how many {unit_label(item.base_unit).lower()} one {unit_label(unit).lower()} holds "
+                    "for this item (the base units in one unit), or record the quantity in "
+                    f"{unit_label(item.base_unit).lower()}."
+                )
+            })
+    if factor is None and "shot" in {unit_token, base_token} and unit_token != base_token:
+        raise ValidationError({
+            "conversion_factor": "Enter the actual conversion for a shot; its size is not assumed."
+        })
+    base_quantity = convert_stock_quantity(
+        quantity, from_unit=unit, to_unit=getattr(item, "base_unit", ""),
+        conversion_factor=factor,
+        item=item if allow_declared_pack_size else None,
+    )
+    if base_quantity <= 0 or base_quantity >= MAX_LEDGER_QUANTITY:
+        raise ValidationError({
+            field: "The converted quantity must fit the stock ledger and be greater than zero."
+        })
+    evidence = {
+        "entered_quantity": str(quantity),
+        "entered_unit": unit or getattr(item, "base_unit", ""),
+        "base_unit": getattr(item, "base_unit", ""),
+        "conversion_factor": str(factor) if factor is not None else None,
+        "converted_quantity": str(base_quantity),
+    }
+    return base_quantity, evidence
+
+
+@transaction.atomic
+def replenish_stock_item(
+    *, item, location, quantity, actor, unit=None, conversion_factor=None,
+    unit_cost=None, supplier_reference="", notes="", idempotency_key="",
+) -> tuple[StockMovement, bool]:
+    """Add stock to an EXISTING item without touching its master data.
+
+    This is the replenishment counterpart of item creation: the SKU, name,
+    category, base unit, barcode and selling references belong to the existing
+    record and are never rewritten here. The ledger entry is an ordinary
+    ``RECEIPT`` movement, so receiving stock is additive, auditable and
+    idempotent — exactly like a goods receipt — and a reorder can never
+    increase stock on its own.
+    """
+    item = StockItem.objects.select_for_update().select_related("preferred_supplier").get(pk=item.pk)
+    location = StockLocation.objects.select_for_update().get(pk=location.pk)
+    if not item.is_active:
+        raise ValidationError({"item_id": "Inactive stock items cannot be replenished. Reactivate the item first."})
+    if not location.is_active:
+        raise ValidationError({"location_id": "Choose an active stock location."})
+    base_quantity, evidence = resolve_entered_quantity(
+        quantity, item=item, unit=unit, conversion_factor=conversion_factor,
+        allow_declared_pack_size=True,
+    )
+    cost = _cost(unit_cost) if unit_cost not in (None, "") else item.standard_cost
+    raw_key = str(idempotency_key or "").strip()
+    key = scoped_key(prefix="stock-replenish", scope=f"staff:{getattr(actor, 'pk', 'system')}", raw_key=raw_key)
+    if key is None:
+        key = f"stock-replenish:{item.pk}:{location.pk}:{timezone.now():%Y%m%d%H%M%S%f}"
+    movement, created = record_stock_movement(
+        item=item, location=location, movement_type=StockMovement.Type.RECEIPT,
+        quantity_delta=base_quantity, source_key=key, actor=actor, unit_cost=cost,
+        source_reference=(supplier_reference or "STOCK_REPLENISHMENT")[:120],
+        notes=notes or "Stock replenishment of an existing item", metadata=evidence,
+    )
+    return movement, created
+
+
+@transaction.atomic
+def adjust_stock_balance(
+    *, balance, new_quantity, reason, actor, notes="", idempotency_key="",
+) -> tuple[StockBalanceAdjustment, bool]:
+    """Correct stock at hand, with the correction recorded as evidence.
+
+    An administrator states the ACTUAL counted quantity; the service posts the
+    difference as an immutable ``ADJUSTMENT`` movement, so the projection moves
+    by the delta (history is never rewritten) and the previous quantity, the
+    new quantity, the administrator, the UTC timestamp and the reason are kept
+    in :class:`StockBalanceAdjustment`. The whole operation is one transaction:
+    a ledger entry without its reason — or a reason without its ledger entry —
+    cannot exist.
+    """
+    balance = StockBalance.objects.select_for_update().select_related("item", "location").get(pk=balance.pk)
+    item, location = balance.item, balance.location
+    # A retried request (lost reply, double submit) must return the correction
+    # it already made, not a confusing "nothing changed" refusal. The key is
+    # therefore resolved BEFORE the rules that the first, successful call has
+    # already changed the world to satisfy.
+    raw_key = str(idempotency_key or "").strip()
+    key = scoped_key(prefix="stock-adjust", scope=f"balance:{balance.pk}", raw_key=raw_key)
+    if key is not None:
+        replayed = (
+            StockBalanceAdjustment.objects.select_related("item", "location", "movement", "actor")
+            .filter(movement__source_key=key).first()
+        )
+        if replayed is not None:
+            return replayed, False
+    if not item.is_active:
+        raise ValidationError({"item_id": "Inactive stock items cannot be adjusted."})
+    if not location.is_active:
+        raise ValidationError({"location_id": "Inactive stock locations cannot be adjusted."})
+    try:
+        corrected = Decimal(str(new_quantity)).quantize(QTY, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValidationError({"quantity": "Enter a valid corrected quantity (up to four decimal places)."}) from exc
+    if corrected < Decimal("0.0000"):
+        raise ValidationError({"quantity": "The corrected quantity cannot be negative."})
+    if corrected >= MAX_LEDGER_QUANTITY:
+        raise ValidationError({"quantity": "The corrected quantity is too large to record."})
+    reason = str(reason or "").strip()
+    if len(reason) < 5:
+        raise ValidationError({"reason": "Give the reason for this correction (at least 5 characters)."})
+    previous = Decimal(balance.quantity_on_hand).quantize(QTY)
+    delta = (corrected - previous).quantize(QTY)
+    if delta == Decimal("0.0000"):
+        raise ValidationError({
+            "quantity": "The corrected quantity matches the current balance, so no adjustment was recorded."
+        })
+    if key is None:
+        key = f"stock-adjust:{balance.pk}:{timezone.now():%Y%m%d%H%M%S%f}"
+    evidence = {
+        "previous_quantity": str(previous),
+        "new_quantity": str(corrected),
+        "quantity_delta": str(delta),
+        "base_unit": item.base_unit,
+        "reason": reason,
+    }
+    movement, created = record_stock_movement(
+        item=item, location=location, movement_type=StockMovement.Type.ADJUSTMENT,
+        quantity_delta=delta, source_key=key, actor=actor,
+        # An upward correction of physically found stock is valued at the
+        # item's own standard cost; a downward one reduces value at the same
+        # basis, so the projection never invents a cost.
+        unit_cost=item.standard_cost,
+        source_reference="ADMIN_BALANCE_ADJUSTMENT",
+        notes=(reason or "")[:500], metadata=evidence,
+    )
+    if not created:
+        existing = StockBalanceAdjustment.objects.filter(movement=movement).first()
+        if existing is None:
+            raise ValidationError({
+                "idempotency_key": "This adjustment key was already used for a different correction."
+            })
+        return existing, False
+    adjustment = StockBalanceAdjustment.objects.create(
+        balance=balance, item=item, location=location, previous_quantity=previous,
+        new_quantity=corrected, quantity_delta=delta, base_unit=item.base_unit,
+        reason=reason, notes=notes or "", movement=movement, actor=actor,
+    )
+    return adjustment, True
 
 
 def _active_recipe_snapshots(menu_item_ids):

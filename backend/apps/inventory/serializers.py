@@ -7,9 +7,10 @@ from apps.pos.models import MenuItem
 
 from .models import (
     GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderPayment,
-    StockBalance, StockConsumptionRequest, StockCount, StockCountLine, StockDepartment, StockItem,
-    StockLocation, StockMovement, StockRecipe, StockRecipeLine, Supplier,
+    StockBalance, StockBalanceAdjustment, StockConsumptionRequest, StockCount, StockCountLine,
+    StockDepartment, StockItem, StockLocation, StockMovement, StockRecipe, StockRecipeLine, Supplier,
 )
+from .services.inventory_service import canonical_unit, is_container_unit, unit_label
 
 
 class EmptyAsNoneRelatedField(serializers.PrimaryKeyRelatedField):
@@ -78,10 +79,16 @@ class ProcurementItemLookupSerializer(serializers.ModelSerializer):
     class Meta:
         model = StockItem
         fields = [
-            "id", "sku", "name", "category", "item_type", "base_unit", "units_per_pack", "pack_price",
-            "standard_cost", "currency", "preferred_supplier", "preferred_supplier_name", "is_active",
+            "id", "sku", "name", "category", "barcode", "item_type", "base_unit", "base_unit_label",
+            "units_per_pack", "pack_price", "standard_cost", "currency", "reorder_level",
+            "preferred_supplier", "preferred_supplier_name", "is_active",
         ]
         read_only_fields = fields
+
+    base_unit_label = serializers.SerializerMethodField()
+
+    def get_base_unit_label(self, obj):
+        return unit_label(obj.base_unit)
 
 
 class SupplierSerializer(serializers.ModelSerializer):
@@ -102,6 +109,13 @@ class StockItemSerializer(serializers.ModelSerializer):
     # consumable / reusable asset). The label is additive so a screen never has
     # to reproduce the choice list.
     item_type_label = serializers.CharField(source="get_item_type_display", read_only=True)
+    # The unit the balance is counted in, spelled out for humans ("Kilograms
+    # (kg)"). Additive and read-only: the stored token is unchanged, and no
+    # screen has to keep its own copy of the label table.
+    base_unit_label = serializers.SerializerMethodField()
+    #: True when the item declares how many base units one pack/carton/crate
+    #: holds, i.e. when a container quantity can be converted exactly.
+    pack_conversion_available = serializers.SerializerMethodField()
     # Explicit direct-sale configuration: which POS menu item this stocked
     # product is sold as, how many base units one menu unit consumes, and which
     # store it is drawn from. Empty means "deduct only through a recipe".
@@ -128,7 +142,8 @@ class StockItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = StockItem
         fields = [
-            "id", "sku", "name", "category", "item_type", "item_type_label", "base_unit", "units_per_pack",
+            "id", "sku", "name", "category", "barcode", "item_type", "item_type_label", "base_unit",
+            "base_unit_label", "pack_conversion_available", "units_per_pack",
             "pack_price", "pack_cost", "reorder_level", "standard_cost", "currency",
             "preferred_supplier", "preferred_supplier_name", "is_active", "notes",
             "direct_sale_menu_item", "direct_sale_menu_item_name", "direct_sale_menu_item_sku",
@@ -136,9 +151,16 @@ class StockItemSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
         read_only_fields = [
-            "id", "pack_cost", "item_type_label", "direct_sale_menu_item_name", "direct_sale_menu_item_sku",
+            "id", "pack_cost", "item_type_label", "base_unit_label", "pack_conversion_available",
+            "direct_sale_menu_item_name", "direct_sale_menu_item_sku",
             "direct_sale_location_code", "direct_sale_configured", "created_at", "updated_at",
         ]
+
+    def get_base_unit_label(self, obj):
+        return unit_label(obj.base_unit)
+
+    def get_pack_conversion_available(self, obj):
+        return bool(obj.units_per_pack)
 
     def get_pack_cost(self, obj):
         if obj.units_per_pack and obj.standard_cost:
@@ -152,7 +174,55 @@ class StockItemSerializer(serializers.ModelSerializer):
     PACKAGING_UNITS = {"PACK", "PACKET", "BAG", "CRATE", "CARTON", "CASE", "SACK", "BOX"}
 
     def validate_base_unit(self, value):
-        return str(value or "").strip().upper()
+        token = str(value or "").strip().upper()
+        if not token:
+            raise serializers.ValidationError(
+                "Choose the unit this stock is counted in (Pieces, Bottles, Kilograms, Litres …)."
+            )
+        if len(token) > 30:
+            raise serializers.ValidationError("A unit name may be at most 30 characters.")
+        return token
+
+    def validate_sku(self, value):
+        """One SKU is one stock item, compared case-insensitively.
+
+        The database's unique index is case-sensitive on some backends, so
+        "WATER-1" and "water-1" could otherwise both exist and a SKU search
+        would return two different items for one code. The duplicate is
+        refused here, with the existing item named, so the operator is told to
+        replenish the item rather than create a twin.
+        """
+        sku = str(value or "").strip()
+        if not sku:
+            raise serializers.ValidationError("Enter a SKU for this stock item.")
+        clash = (
+            StockItem.objects.filter(sku__iexact=sku)
+            .exclude(pk=getattr(self.instance, "pk", None))
+            .only("sku", "name")
+            .first()
+        )
+        if clash is not None:
+            raise serializers.ValidationError(
+                f"SKU {clash.sku} already belongs to {clash.name}. Search that SKU and replenish the "
+                "existing item instead of creating a duplicate."
+            )
+        return sku
+
+    def validate_barcode(self, value):
+        barcode = str(value or "").strip()
+        if not barcode:
+            return None
+        clash = (
+            StockItem.objects.filter(barcode__iexact=barcode)
+            .exclude(pk=getattr(self.instance, "pk", None))
+            .only("sku", "name")
+            .first()
+        )
+        if clash is not None:
+            raise serializers.ValidationError(
+                f"Barcode {barcode} is already recorded on {clash.sku} · {clash.name}."
+            )
+        return barcode
 
     def validate(self, attrs):
         # Staff may record the actual pack price and the pieces it contains
@@ -174,8 +244,39 @@ class StockItemSerializer(serializers.ModelSerializer):
             })
         if pack_price and units_per_pack and not standard_cost:
             attrs["standard_cost"] = (pack_price / units_per_pack).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        self._validate_unit_history(attrs, base_unit=base_unit, units_per_pack=units_per_pack)
         self._validate_direct_sale(attrs)
         return attrs
+
+    def _validate_unit_history(self, attrs, *, base_unit, units_per_pack):
+        """Never let a unit change silently re-interpret posted quantities.
+
+        Every movement is stored in the item's base unit at the time it was
+        posted. Changing that unit (or the pack size that converts into it) on
+        an item that already has ledger history would restate every past
+        balance in a different unit without touching a single historical row —
+        "24" bottles would quietly become "24" crates. The change is refused
+        once history exists; an authorised correction is posted through a stock
+        adjustment (or a new item is created) instead.
+        """
+        instance = self.instance
+        if instance is None or not instance.pk:
+            return
+        if not (instance.movements.exists() or instance.balance_adjustments.exists()):
+            return
+        stored_unit = str(instance.base_unit or "").strip().upper()
+        if "base_unit" in attrs and base_unit != stored_unit:
+            # The pack size may still be corrected (it only affects FUTURE
+            # conversions), but the counted unit itself may not move: every
+            # stored movement was written in the old unit.
+            raise serializers.ValidationError({
+                "base_unit": (
+                    f"{instance.sku} already has stock movements counted in "
+                    f"{unit_label(instance.base_unit)}. Changing the base unit would silently re-interpret "
+                    "that history, so it is not allowed. Post an authorised stock adjustment, or create a "
+                    "new item for the new unit."
+                )
+            })
 
     def _validate_direct_sale(self, attrs):
         """A direct-sale configuration must be complete, and unique per menu item.
@@ -226,18 +327,28 @@ class StockBalanceSerializer(serializers.ModelSerializer):
     item_type = serializers.CharField(source="item.item_type", read_only=True)
     item_type_label = serializers.CharField(source="item.get_item_type_display", read_only=True)
     base_unit = serializers.CharField(source="item.base_unit", read_only=True)
+    base_unit_label = serializers.SerializerMethodField()
+    item_category = serializers.CharField(source="item.category", read_only=True)
+    item_barcode = serializers.CharField(source="item.barcode", read_only=True, allow_null=True)
+    units_per_pack = serializers.DecimalField(source="item.units_per_pack", max_digits=10, decimal_places=2, read_only=True, allow_null=True)
     reorder_level = serializers.DecimalField(source="item.reorder_level", max_digits=14, decimal_places=4, read_only=True)
     location_code = serializers.CharField(source="location.code", read_only=True)
+    location_name = serializers.CharField(source="location.name", read_only=True)
     needs_reorder = serializers.SerializerMethodField()
     stock_state = serializers.SerializerMethodField()
 
     class Meta:
         model = StockBalance
         fields = [
-            "id", "item", "item_sku", "item_name", "item_type", "item_type_label", "base_unit", "reorder_level",
-            "location", "location_code", "quantity_on_hand", "needs_reorder", "stock_state", "last_movement_at", "updated_at",
+            "id", "item", "item_sku", "item_name", "item_type", "item_type_label", "item_category",
+            "item_barcode", "base_unit", "base_unit_label", "units_per_pack", "reorder_level",
+            "location", "location_code", "location_name", "quantity_on_hand", "needs_reorder", "stock_state",
+            "last_movement_at", "updated_at",
         ]
         read_only_fields = fields
+
+    def get_base_unit_label(self, obj):
+        return unit_label(obj.item.base_unit)
 
     def get_needs_reorder(self, obj):
         return obj.quantity_on_hand <= obj.item.reorder_level
@@ -256,15 +367,20 @@ class StockMovementSerializer(serializers.ModelSerializer):
     location_code = serializers.CharField(source="location.code", read_only=True)
     actor_email = serializers.EmailField(source="actor.email", read_only=True, allow_null=True)
     department_label = serializers.SerializerMethodField()
+    base_unit_label = serializers.SerializerMethodField()
 
     class Meta:
         model = StockMovement
         fields = [
-            "reference", "item_sku", "item_name", "item_type", "base_unit", "location_code", "type",
-            "quantity_delta", "unit_cost", "currency", "occurred_at", "source_reference", "notes",
+            "reference", "item_sku", "item_name", "item_type", "base_unit", "base_unit_label", "location_code",
+            "type", "quantity_delta", "unit_cost", "currency", "occurred_at", "source_reference", "notes",
             "department", "department_label", "recipient", "actor_email", "metadata",
         ]
         read_only_fields = fields
+
+    def get_base_unit_label(self, obj):
+        # The movement stores the quantity in the ITEM's base unit.
+        return unit_label(obj.item.base_unit)
 
     def get_department_label(self, obj):
         if not obj.department:
@@ -301,6 +417,14 @@ class IssueStockSerializer(serializers.Serializer):
     source_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
     #: Why the stock is leaving the store. Recorded on the movement's notes.
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    #: The unit the quantity was COUNTED in. Blank keeps the existing contract
+    #: (the quantity is already in the item's base unit). A container unit
+    #: (crate/carton/bag/…) is converted with the item's declared pack size, or
+    #: with an explicit factor when the item records none.
+    unit = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    conversion_factor = serializers.DecimalField(
+        max_digits=14, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True
+    )
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
 
 
@@ -347,16 +471,21 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
     # they let the UI render "4 BOTTLE" and an exact outstanding quantity instead
     # of dividing floats in the browser. No stored value is changed.
     base_unit = serializers.CharField(source="item.base_unit", read_only=True)
+    base_unit_label = serializers.SerializerMethodField()
     units_per_pack = serializers.DecimalField(source="item.units_per_pack", max_digits=10, decimal_places=2, read_only=True, allow_null=True)
     quantity_outstanding = serializers.SerializerMethodField()
 
     class Meta:
         model = PurchaseOrderLine
         fields = [
-            "id", "item", "item_sku", "item_name", "base_unit", "units_per_pack", "quantity_ordered", "quantity_received",
-            "quantity_outstanding", "unit_cost", "notes",
+            "id", "item", "item_sku", "item_name", "base_unit", "base_unit_label", "units_per_pack",
+            "quantity_ordered", "quantity_received", "quantity_outstanding", "unit_cost", "notes",
         ]
         read_only_fields = fields
+
+    def get_base_unit_label(self, obj):
+        # The ordered quantity is expressed in the ITEM's base unit.
+        return unit_label(obj.item.base_unit)
 
     def get_quantity_outstanding(self, obj):
         outstanding = (obj.quantity_ordered or Decimal("0.0000")) - (obj.quantity_received or Decimal("0.0000"))
@@ -715,6 +844,7 @@ class ProductProfitabilityRowSerializer(serializers.Serializer):
     category = serializers.CharField(read_only=True)
     department = serializers.CharField(read_only=True)
     base_unit = serializers.CharField(read_only=True)
+    base_unit_label = serializers.CharField(read_only=True)
     currency = serializers.CharField(read_only=True)
     location_id = serializers.IntegerField(read_only=True)
     location_code = serializers.CharField(read_only=True)
@@ -748,3 +878,98 @@ class ProductProfitabilitySummarySerializer(serializers.Serializer):
     total_expected_sales_revenue = serializers.DecimalField(max_digits=24, decimal_places=2, read_only=True)
     total_expected_gross_profit = serializers.DecimalField(max_digits=24, decimal_places=2, read_only=True)
     overall_expected_gross_margin_percent = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True, allow_null=True)
+
+
+class StockBalanceAdjustSerializer(serializers.Serializer):
+    """Administrator correction of stock at hand.
+
+    The corrected quantity is the PHYSICAL count in the item's own base unit —
+    the unit the balance column is displayed in — so there is nothing to
+    convert and nothing to guess. The reason is mandatory: a balance may never
+    move without a stated, recorded cause.
+    """
+
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0000"))
+    reason = serializers.CharField(min_length=5, max_length=500)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
+
+    def validate_reason(self, value):
+        reason = str(value or "").strip()
+        if len(reason) < 5:
+            raise serializers.ValidationError("Give the reason for this correction (at least 5 characters).")
+        return reason
+
+
+class StockReplenishSerializer(serializers.Serializer):
+    """Add stock to an existing item — master data is deliberately absent.
+
+    Nothing here can rename, recategorise, re-unit or re-barcode the item: a
+    replenishment only states how much arrived, in which unit (optionally
+    converted), where it was put, what it cost and its paper reference.
+    """
+
+    location_id = serializers.IntegerField(min_value=1)
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
+    unit = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    conversion_factor = serializers.DecimalField(
+        max_digits=14, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True
+    )
+    unit_cost = serializers.DecimalField(
+        max_digits=12, decimal_places=2, min_value=Decimal("0.00"), required=False, allow_null=True
+    )
+    supplier_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
+
+
+class StockBalanceAdjustmentSerializer(serializers.ModelSerializer):
+    """Read-only audit row for one stock-at-hand correction."""
+
+    item_sku = serializers.CharField(source="item.sku", read_only=True)
+    item_name = serializers.CharField(source="item.name", read_only=True)
+    location_code = serializers.CharField(source="location.code", read_only=True)
+    location_name = serializers.CharField(source="location.name", read_only=True)
+    base_unit_label = serializers.SerializerMethodField()
+    actor_email = serializers.EmailField(source="actor.email", read_only=True, allow_null=True)
+    movement_reference = serializers.CharField(source="movement.reference", read_only=True)
+    occurrence = serializers.DateTimeField(source="movement.occurred_at", read_only=True)
+
+    class Meta:
+        model = StockBalanceAdjustment
+        fields = [
+            "id", "balance", "item", "item_sku", "item_name", "location", "location_code", "location_name",
+            "previous_quantity", "new_quantity", "quantity_delta", "base_unit", "base_unit_label",
+            "reason", "notes", "actor", "actor_email", "movement_reference", "occurrence", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_base_unit_label(self, obj):
+        return unit_label(obj.base_unit)
+
+
+class ReorderBalanceSerializer(serializers.Serializer):
+    """One store's balance for the reorder dialog (read-only)."""
+
+    location_id = serializers.IntegerField(read_only=True)
+    location_code = serializers.CharField(read_only=True)
+    location_name = serializers.CharField(read_only=True)
+    quantity_on_hand = serializers.DecimalField(max_digits=14, decimal_places=4, read_only=True)
+    reorder_level = serializers.DecimalField(max_digits=14, decimal_places=4, read_only=True)
+    needs_reorder = serializers.BooleanField(read_only=True)
+
+
+class ReorderContextSerializer(serializers.Serializer):
+    """Everything the reorder modal must show WITHOUT the operator re-typing it.
+
+    Item identity and unit, purchasing references, the current balances and the
+    last actual purchase cost — all read-only, assembled server-side so the
+    dialog cannot show a stale or an invented figure.
+    """
+
+    item = ProcurementItemLookupSerializer(read_only=True)
+    balances = ReorderBalanceSerializer(many=True, read_only=True)
+    total_on_hand = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
+    default_location_id = serializers.IntegerField(read_only=True, allow_null=True)
+    last_receipt = serializers.DictField(read_only=True, allow_null=True)
+    open_purchase_order_quantity = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)

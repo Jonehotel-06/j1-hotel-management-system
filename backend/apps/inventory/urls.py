@@ -8,8 +8,11 @@ urlpatterns = [
     path("locations/<int:pk>/", views.StockLocationDetailView.as_view(), name="location-detail"),
     path("items/", views.StockItemListCreateView.as_view(), name="items"),
     path("items/<int:pk>/", views.StockItemDetailView.as_view(), name="item-detail"),
+    path("items/<int:pk>/replenish/", views.StockItemReplenishView.as_view(), name="item-replenish"),
     path("menu-items/", views.InventoryMenuItemDirectoryView.as_view(), name="menu-item-directory"),
     path("balances/", views.StockBalanceListView.as_view(), name="balances"),
+    path("balances/<int:pk>/adjust/", views.StockBalanceAdjustView.as_view(), name="balance-adjust"),
+    path("adjustments/", views.StockBalanceAdjustmentListView.as_view(), name="adjustments"),
     path("profitability/", views.ProductProfitabilityView.as_view(), name="profitability"),
     path("profitability/filters/", views.ProductProfitabilityFiltersView.as_view(), name="profitability-filters"),
     path("movements/", views.StockMovementListView.as_view(), name="movements"),
@@ -32,6 +35,7 @@ urlpatterns = [
     # Procurement-scoped, read-only lookups for the purchase-order form.
     path("procurement/locations/", views.ProcurementLocationLookupView.as_view(), name="procurement-locations"),
     path("procurement/items/", views.ProcurementItemLookupView.as_view(), name="procurement-items"),
+    path("procurement/items/<int:pk>/reorder-context/", views.ProcurementItemReorderContextView.as_view(), name="procurement-item-reorder-context"),
     # Read-only Accounting hand-off (submitted onwards; drafts never listed).
     path("accounting/purchase-orders/", views.PurchaseOrderAccountingListView.as_view(), name="accounting-purchase-orders"),
     path("accounting/purchase-orders/<str:reference>/", views.PurchaseOrderAccountingDetailView.as_view(), name="accounting-purchase-order-detail"),

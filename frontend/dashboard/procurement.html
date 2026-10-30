@@ -41,7 +41,7 @@
       nav.setAttribute("data-nav-snapshot","1");
     })();
     </script><div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,.2);"><span data-icon="logOut" data-size="16"></span> Sign out</button></div></aside><div class="dash-main"><header class="dash-topbar"><div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title" data-dash-title><h1>Procurement</h1><p>Supplier records, controlled purchase orders, approvals, and receipts.</p></div></div><div class="dash-topbar-right"><div class="dash-topbar-actions" data-topbar-actions></div><button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false"><span class="icon-moon" data-icon="moon" data-size="18"></span><span class="icon-sun" data-icon="sun" data-size="18"></span></button></div></header><main class="dash-content"><div class="op-tabs" role="tablist" aria-label="Procurement views"><button class="btn btn-sm is-active" type="button" role="tab" aria-selected="true" data-proc-tab="orders">Purchase orders</button><button class="btn btn-sm btn-outline" type="button" role="tab" aria-selected="false" data-proc-tab="suppliers">Suppliers</button></div>
-<section class="panel" data-proc-panel="orders"><div class="panel-head"><h2>Purchase orders</h2><div class="panel-actions"><button class="btn btn-sm" type="button" data-proc-new-order><span data-icon="plus" data-size="15"></span> New purchase order</button></div></div><div class="filter-bar"><div class="field"><label class="field-label" for="proc-order-status">Status</label><select class="select" id="proc-order-status"><option value="">All statuses</option><option value="DRAFT">Draft</option><option value="SUBMITTED">Awaiting approval</option><option value="APPROVED">Approved</option><option value="ORDERED">Ordered</option><option value="PARTIALLY_RECEIVED">Partially received</option><option value="RECEIVED">Received</option><option value="PAID">Paid</option><option value="CANCELLED">Cancelled</option></select></div><div class="field"><button class="btn btn-sm btn-outline" type="button" data-proc-order-apply>Apply</button></div></div><div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Purchase orders"><table class="table"><thead><tr><th>Purchase order</th><th>Supplier</th><th>Deliver to</th><th>Status</th><th class="hide-sm">Expected</th><th class="hide-sm">Lines</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-proc-order-rows></tbody></table></div><div class="pagination" data-proc-order-pagination></div></div></section>
+<section class="panel" data-proc-panel="orders"><div class="panel-head"><h2>Purchase orders</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-proc-reorder title="Reorder an item already in stock without re-typing its details">Reorder stock item</button><button class="btn btn-sm" type="button" data-proc-new-order><span data-icon="plus" data-size="15"></span> New purchase order</button></div></div><div class="filter-bar"><div class="field"><label class="field-label" for="proc-order-status">Status</label><select class="select" id="proc-order-status"><option value="">All statuses</option><option value="DRAFT">Draft</option><option value="SUBMITTED">Awaiting approval</option><option value="APPROVED">Approved</option><option value="ORDERED">Ordered</option><option value="PARTIALLY_RECEIVED">Partially received</option><option value="RECEIVED">Received</option><option value="PAID">Paid</option><option value="CANCELLED">Cancelled</option></select></div><div class="field"><button class="btn btn-sm btn-outline" type="button" data-proc-order-apply>Apply</button></div></div><div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Purchase orders"><table class="table"><thead><tr><th>Purchase order</th><th>Supplier</th><th>Deliver to</th><th>Status</th><th class="hide-sm">Expected</th><th class="hide-sm">Lines</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-proc-order-rows></tbody></table></div><div class="pagination" data-proc-order-pagination></div></div></section>
 <section class="panel" data-proc-panel="suppliers" hidden><div class="panel-head"><h2>Suppliers</h2><div class="panel-actions"><button class="btn btn-sm" type="button" data-proc-new-supplier><span data-icon="plus" data-size="15"></span> Add supplier</button></div></div><div class="filter-bar"><div class="field"><label class="field-label" for="proc-supplier-status">Status</label><select class="select" id="proc-supplier-status"><option value="">All statuses</option><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option></select></div><div class="field"><label class="field-label" for="proc-supplier-search">Search</label><input class="input" id="proc-supplier-search" type="search" placeholder="Name, email, or phone"></div><div class="field"><button class="btn btn-sm btn-outline" type="button" data-proc-supplier-apply>Apply</button></div></div><div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Suppliers"><table class="table"><thead><tr><th>Supplier</th><th>Contact</th><th>Terms</th><th>Status</th><th class="hide-sm">Reference</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-proc-supplier-rows></tbody></table></div><div class="pagination" data-proc-supplier-pagination></div></div></section>
 </main></div></div>
 <script src="../js/runtime-config.js?v=1.1.23"></script><script src="../js/config.js?v=1.1.23"></script><script src="../js/utils.js?v=1.1.23"></script><script src="../js/icons.js?v=1.1.23"></script><script src="../js/api.js?v=1.1.23"></script><script src="../js/theme.js?v=1.1.23"></script><script src="../js/ui.js?v=1.1.23"></script><script src="../js/auth.js?v=1.1.23"></script><script src="../js/navigation.js?v=1.1.23"></script><script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script><script src="../js/operations.js?v=1.1.23"></script>
@@ -388,14 +388,14 @@ async function editSupplier(id){
 /* ---------------------------------------------------------------------------
    Supplier pickers and the purchase-order form (create + edit share it)
 --------------------------------------------------------------------------- */
-function supplierPicker(initial){
+function supplierPicker(initial,onSelect){
   return OPS.searchPicker({name:"supplier_id",label:"Supplier",required:true,resource:"suppliers",params:{status:"ACTIVE"},
-    placeholder:"Search active supplier",initial:initial||null,
+    placeholder:"Search active supplier",initial:initial||null,onSelect:onSelect||null,
     display:function(row){return row.name+(row.reference?" · "+row.reference:"");}});
 }
-function locationPicker(initial){
+function locationPicker(initial,onSelect){
   return OPS.searchPicker({name:"delivery_location_id",label:"Delivery location",required:true,resource:resourceOr("procurementLocations","inventoryLocations"),
-    params:{active:"true"},placeholder:"Search location code or name",initial:initial||null,
+    params:{active:"true"},placeholder:"Search location code or name",initial:initial||null,onSelect:onSelect||null,
     display:function(row){return (row.code||"")+" · "+(row.name||"");}});
 }
 function itemDisplay(row){
@@ -504,6 +504,199 @@ async function newOrder(){
       ?"This draft was already saved as "+created.reference+". No duplicate was created."
       :"Draft "+created.reference+" created. Next: open it and submit it for approval.","success");
     showOrderInList(created.reference,created.status);
+  }
+}
+
+/* ===========================================================================
+   Batch 01, Task 5 — the REORDER dialog.
+
+   Reordering something the hotel already stocks must not mean re-typing its
+   name, SKU, category, unit and price. Staff select the stock item; the server
+   supplies its identity, unit, current balance, preferred supplier and the last
+   actual purchase cost (GET procurement/items/<id>/reorder-context/). The
+   dialog then asks only for what genuinely changes: how many, in which purchase
+   unit, at what price, from which supplier, for which store, expected when, and
+   any note.
+
+   The submission creates an ordinary purchase-order DRAFT through the existing
+   endpoint, so the procurement approval workflow is unchanged and NO stock
+   moves. Stock only increases when an authorised goods receipt is recorded.
+   =========================================================================== */
+function reorderUnitLabel(unit){var token=String(unit==null?"":unit).trim().toUpperCase();var labels={PIECE:"Pieces",PC:"Pieces",PCS:"Pieces",UNIT:"Units",BOTTLE:"Bottles",CAN:"Cans",SACHET:"Sachets",PACK:"Packs",PACKET:"Packs",BAG:"Bags",CRATE:"Crates",CARTON:"Cartons",CASE:"Cases",BOX:"Boxes",SACK:"Sacks",KG:"Kilograms (kg)",G:"Grams (g)",L:"Litres (L)",LITRE:"Litres (L)",ML:"Millilitres (ml)"};return labels[token]||token;}
+/* The purchase unit the operator is pricing in: the item's own base unit, or
+   one whole pack/carton/bag when the item declares how many pieces it holds. */
+function reorderPurchaseUnits(record){
+  var options=[{value:"BASE",label:"One "+reorderUnitLabel(baseUnitOf(record)).toLowerCase()+" (the stock unit)"}];
+  if(packSizeOf(record))options.push({value:"PACK",label:"One pack/bag (holds "+JONE.trimQuantityValue(String(record.units_per_pack))+" "+reorderUnitLabel(baseUnitOf(record)).toLowerCase()+")"});
+  return options;
+}
+/* Base units one selected purchase unit contains. */
+function reorderUnitsPerPurchaseUnit(purchaseUnit,record){
+  var per=packSizeOf(record);
+  return String(purchaseUnit||"BASE").toUpperCase()==="PACK"?(per>0?per:0):1;
+}
+/* Ordered quantity in the item's base unit — what the server stores. Returns
+   null when the entry cannot be converted exactly (e.g. PACK without a pack
+   size), so the dialog can refuse instead of guessing. */
+function reorderBaseQuantity(values,record){
+  var quantity=Number((values||{}).reorder_quantity||0),per=reorderUnitsPerPurchaseUnit((values||{}).purchase_unit,record);
+  if(!(quantity>0)||!(per>0))return null;
+  return trimmed(quantity*per,4);
+}
+/* Price per ONE base unit, from the price of the selected purchase unit. */
+function reorderBaseUnitCost(values,record){
+  var price=Number((values||{}).unit_purchase_price||0),per=reorderUnitsPerPurchaseUnit((values||{}).purchase_unit,record);
+  if(!(price>=0)||!(per>0))return null;
+  return trimmed(price/per,2);
+}
+/* The order total exactly as the server will compute it: base quantity × base
+   unit cost, summed and rounded half-up to kobo (see orderTotalText). */
+function reorderTotalText(values,record){
+  var line=reorderLinePayload(values,record);
+  if(!line)return null;
+  return orderTotalText([line]);
+}
+function reorderLinePayload(values,record){
+  var quantity=reorderBaseQuantity(values,record),cost=reorderBaseUnitCost(values,record);
+  if(quantity===null||cost===null)return null;
+  if(!(Number(quantity)>0))return null;
+  return {item_id:Number(record&&record.id),quantity_ordered:quantity,unit_cost:cost,notes:""};
+}
+/* What the supplier would quote for the typed quantity, in the purchase unit. */
+function reorderQuotedTotalText(values){
+  var quantity=Number((values||{}).reorder_quantity||0),price=Number((values||{}).unit_purchase_price||0);
+  if(!(quantity>0)||!(price>=0))return null;
+  return orderTotalText([{quantity_ordered:trimmed(quantity,4),unit_cost:trimmed(price,2)}]);
+}
+/* What the review step tells the operator before anything is saved. */
+function reorderReviewText(values,record,context,names){
+  names=names||{};
+  var quoted=reorderQuotedTotalText(values);
+  var line=reorderLinePayload(values,record);
+  var total=line?orderTotalText([line]):null;
+  var unit=String(values.purchase_unit||"BASE").toUpperCase()==="PACK"?"pack/bag":"base unit";
+  var per=reorderUnitsPerPurchaseUnit(values.purchase_unit,record);
+  return [
+    (record.sku||"")+" · "+(record.name||""),
+    "Quantity: "+JONE.trimQuantityValue(String(values.reorder_quantity||0))+" "+unit+(per>1?" = "+line.quantity_ordered+" "+reorderUnitLabel(baseUnitOf(record)).toLowerCase():""),
+    "Price: "+money(values.unit_purchase_price||0)+" per "+unit,
+    "Order total: "+(total==null?"—":money(total))+(quoted&&total&&quoted!==total?" (the supplier quote for the same quantity is "+money(quoted)+"; the per-base-unit cost is stored to 2 decimals, so the recorded line total is the one above)":""),
+    "Supplier: "+(names.supplier||"—"),
+    "Deliver to: "+(names.location||"—"),
+    "Expected: "+(values.expected_on?date(values.expected_on):"not stated"),
+    "This creates a DRAFT purchase order for approval. No stock is added now; stock increases only when the goods are received."
+  ].join(" | ");
+}
+
+/* The preselected delivery store, displayed exactly like a searched result. */
+function reorderLocationInitial(context){
+  var wanted=String((context&&context.default_location_id)||"");
+  var row=((context&&context.balances)||[]).filter(function(balance){return String(balance.location_id)===wanted;})[0];
+  return row?{id:row.location_id,code:row.location_code,name:row.location_name}:null;
+}
+
+async function reorderContext(itemId){
+  try{
+    var response=await window.API.inventoryReorderContext(itemId);
+    return (response&&response.data)||null;
+  }catch(err){
+    var message=(err&&err.message)||"The item's purchasing details could not be loaded.";
+    JONE.ui.toast(message,"error");
+    return null;
+  }
+}
+
+/* Step 1 (only when no item was passed in): choose the item to reorder. */
+async function pickReorderItem(){
+  var picked=null;
+  var picker=OPS.searchPicker({name:"item_id",label:"Stock item (search SKU, name, barcode or category)",required:true,
+    resource:resourceOr("procurementItems","inventoryItems"),params:{active:"true"},placeholder:"Search a stock item to reorder",
+    display:itemDisplay,onSelect:function(row){picked=row;}});
+  var result=await JONE.dashboard.formModal({title:"Reorder a stock item",submitText:"Continue",fields:[picker],
+    onSubmit:async function(values){
+      if(!values.item_id)throw new Error("Select the stock item you want to reorder.");
+      picked=picked||itemRecords[String(values.item_id)]||null;
+      if(!picked)picked={id:Number(values.item_id)};
+      return {message:"continue"};
+    }});
+  if(!result||!picked)return null;
+  return picked;
+}
+
+async function reorderItem(itemId){
+  var selected=itemId?{id:Number(itemId)}:await pickReorderItem();
+  if(!selected||!selected.id)return;
+  var context=await reorderContext(selected.id);
+  if(!context||!context.item)return;
+  var record=context.item;
+  rememberItem(record);
+  var balances=context.balances||[];
+  var onHand=balances.length?balances.map(function(row){return row.location_code+": "+JONE.trimQuantityValue(String(row.quantity_on_hand))+" "+reorderUnitLabel(baseUnitOf(record)).toLowerCase();}).join(" · "):"no balance recorded yet";
+  var preferred=record.preferred_supplier?{id:record.preferred_supplier,name:record.preferred_supplier_name||("Supplier #"+record.preferred_supplier)}:null;
+  var supplierName=preferred?preferred.name:"",defaultBalance=null;
+  balances.forEach(function(row){if(String(row.location_id)===String(context.default_location_id))defaultBalance=row;});
+  var locationName=defaultBalance?(defaultBalance.location_code+" · "+defaultBalance.location_name):"";
+  var values={};
+  var draftKey=OPS.newIdempotencyKey("purchase-order");
+  var handle=dialogHandle();
+  var lastPurchase=context.last_receipt?("Last purchased at "+money(context.last_receipt.unit_cost)+" per "+reorderUnitLabel(baseUnitOf(record)).toLowerCase()+(context.last_receipt.supplier_name?" from "+context.last_receipt.supplier_name:"")+" on "+date(context.last_receipt.received_on)):"No goods receipt has been costed for this item yet.";
+  var result=await JONE.dashboard.formModal({title:"Reorder "+(record.sku||"stock item"),submitText:"Review reorder",wide:true,
+    onRender:handle.onRender,
+    fields:[
+      {name:"reorder_context",type:"custom",render:function(mount){
+        mount.innerHTML='<div class="proc-reorder-context"><p><strong>'+JONE.esc(record.sku||"")+' · '+JONE.esc(record.name||"")+'</strong></p>'+
+          '<p class="caption">'+JONE.esc(record.category||"No category")+' · stocked in '+JONE.esc(reorderUnitLabel(baseUnitOf(record)))+' · reorder level '+JONE.esc(JONE.trimQuantityValue(String(record.reorder_level||0)))+'</p>'+
+          '<p class="caption">On hand — '+JONE.esc(onHand)+'</p>'+
+          '<p class="caption">Standard cost '+JONE.esc(money(record.standard_cost||0))+' per '+JONE.esc(reorderUnitLabel(baseUnitOf(record)).toLowerCase())+' · '+JONE.esc(lastPurchase)+'</p>'+
+          '<p class="caption">Already on order: '+JONE.esc(JONE.trimQuantityValue(String(context.open_purchase_order_quantity||0)))+' '+JONE.esc(reorderUnitLabel(baseUnitOf(record)).toLowerCase())+'</p></div>';
+      },getValue:function(){return{};}},
+      {name:"reorder_quantity",label:"Reorder quantity",type:"number",min:"0.0001",step:"any",required:true,
+        help:"How many of the selected purchase unit to order; the server stores the exact base-unit quantity."},
+      {name:"purchase_unit",label:"Purchase unit",type:"select",required:true,options:reorderPurchaseUnits(record)},
+      {name:"unit_purchase_price",label:"Unit purchase price (NGN, per purchase unit)",type:"number",min:"0",step:"0.01",required:true,
+        help:"The price of ONE selected purchase unit. The per-base-unit cost is derived exactly."},
+      {name:"order_total_preview",label:"Order total",type:"custom",render:function(mount,form){
+        var output=document.createElement("p");output.className="caption";output.setAttribute("data-proc-reorder-total","");output.setAttribute("aria-live","polite");
+        mount.appendChild(output);
+        var inputs=function(){var out={};Array.prototype.forEach.call((form||mount).querySelectorAll("input,select"),function(control){if(control.name)out[control.name]=control.value;});return out;};
+        var refresh=function(){var current=inputs(),line=reorderLinePayload(current,record);
+          if(!line){output.textContent="Enter a quantity and a price to see the order total.";return;}
+          var total=orderTotalText([line]);
+          output.textContent="Order total as it will be recorded: "+money(total)+" ("+line.quantity_ordered+" "+reorderUnitLabel(baseUnitOf(record)).toLowerCase()+" at "+money(line.unit_cost)+" each).";
+        };
+        (form||mount).addEventListener("input",function(){setTimeout(refresh,0);});
+        (form||mount).addEventListener("change",function(){setTimeout(refresh,0);});
+        refresh();
+      },getValue:function(){return{};}},
+      supplierPicker(preferred,function(row){supplierName=row?row.name:"";}),
+      locationPicker(context.default_location_id?reorderLocationInitial(context):null,function(row){locationName=row?((row.code||"")+" · "+(row.name||"")):"";}),
+      {name:"expected_on",label:"Expected delivery date",type:"date"},
+      {name:"notes",label:"Notes (optional)",type:"textarea",rows:2}
+    ],
+    onSubmit:async function(entered){
+      var line=reorderLinePayload(entered,record);
+      if(!line)throw new Error("Enter a reorder quantity and a unit price.");
+      values=entered;
+      // Review BEFORE anything is saved: the operator sees the exact figure and
+      // may go back and adjust the dialog (its entries are kept) or confirm.
+      var review=await JONE.ui.confirm({title:"Create this reorder draft?",message:reorderReviewText(entered,record,context,{supplier:supplierName,location:locationName}),confirmText:"Create draft",cancelText:"Back to edit"});
+      if(!review)throw new Error("Nothing was saved. Adjust the reorder and submit again, or close the dialog.");
+      var payload={supplier_id:entered.supplier_id,delivery_location_id:entered.delivery_location_id,
+        expected_on:entered.expected_on||null,notes:entered.notes||"",idempotency_key:draftKey,lines:[line]};
+      payload=OPS.omitEmpty(payload);
+      payload.lines=[line];
+      payload.idempotency_key=draftKey;
+      var restore=busyLabel(handle,"Creating draft…");
+      var created=null;
+      try{
+        created=confirmedOrder(await saveOrder(function(){return window.API.create("purchaseOrders",payload);},[{record:record,quantity_ordered:entered.reorder_quantity,unit_cost:entered.unit_purchase_price}],
+          "Your entries are kept: press “Review reorder” again. It safely repeats the same request, so no duplicate draft is created."));
+      }finally{restore();}
+      return {message:created.replayed?"Reorder "+created.reference+" was already saved; no duplicate was created.":"Reorder draft "+created.reference+" created ("+money(reorderTotalText(entered,record))+" before tax). Submit it for approval to order the goods.",created:created};
+    }});
+  if(result&&result.created){
+    JONE.ui.toast(result.message,"success");
+    showOrderInList(result.created.reference,result.created.status);
   }
 }
 
@@ -866,6 +1059,10 @@ function activate(tab){
 
 document.querySelectorAll("[data-proc-tab]").forEach(function(button){button.addEventListener("click",function(){activate(button.getAttribute("data-proc-tab"));});});
 document.querySelector("[data-proc-new-order]").addEventListener("click",newOrder);
+/* Batch 01: the reorder dialog is offered to every procurement-capable role, and the
+   inventory screen’s per-row "Reorder" link arrives here as procurement.html?reorder=<item id>. */
+document.querySelectorAll("[data-proc-reorder]").forEach(function(button){button.addEventListener("click",function(){reorderItem(null);});});
+(function(){try{var wanted=new URLSearchParams(window.location.search).get("reorder");if(wanted&&/^\d+$/.test(String(wanted))){setTimeout(function(){reorderItem(wanted);},0);}}catch(_){/* a bad link must never break the page */}})();
 document.querySelector("[data-proc-order-apply]").addEventListener("click",function(){loadOrders(1);});
 document.getElementById("proc-order-status").addEventListener("change",function(){loadOrders(1);});
 document.querySelector("[data-proc-new-supplier]").addEventListener("click",newSupplier);

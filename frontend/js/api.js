@@ -779,6 +779,16 @@ const API = (() => {
     if (!base) throw notConfigured(name);
     return patch(`${base}/${encodeURIComponent(id)}/`, payload, opts);
   }
+  /* Batch 01 reorder dialog: everything the screen needs about ONE stock item
+     (identity, purchasing references, per-store balances, last actual purchase
+     cost, quantity already on order). One bounded read — the browser never
+     copies master data or guesses a price. */
+  async function inventoryReorderContext(itemId, opts = {}) {
+    const base = resourceEp("procurementItems") || resourceEp("inventoryItems");
+    if (!base) throw notConfigured("procurementItems");
+    return get(`${base}/${encodeURIComponent(itemId)}/reorder-context/`, opts);
+  }
+
   async function remove(name, id, opts = {}) {
     const base = resourceEp(name);
     if (!base) throw notConfigured(name);
@@ -1118,7 +1128,7 @@ const API = (() => {
     // Notifications
     getNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead, getNotification,
     // Staff resources + actions
-    list, getOne, getStaffBookingReceipt, create, update, remove, resourceAction,
+    list, getOne, getStaffBookingReceipt, create, update, remove, resourceAction, inventoryReorderContext,
     rescheduleBooking, getOccupancyCalendar, listMissedBookings, listLateArrivals,
     listGuestDiscounts, createGuestDiscount, updateGuestDiscount, deactivateGuestDiscount,
     confirmBooking, staffCancelBooking, checkInBooking, checkOutBooking, bookingFolioClearance,

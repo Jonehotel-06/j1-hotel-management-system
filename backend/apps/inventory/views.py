@@ -3,7 +3,7 @@ import secrets
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
-from django.db.models import Count, F, Q
+from django.db.models import Case, Count, F, IntegerField, Q, Sum, Value, When
 from django.utils.dateparse import parse_date
 
 from apps.core.utils import hotel_date_bounds
@@ -18,14 +18,18 @@ from apps.core.pagination import StandardPagination
 from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
 
-from .models import GoodsReceipt, PurchaseOrder, StockBalance, StockConsumptionRequest, StockCount, StockItem, StockLocation, StockMovement, StockRecipe, Supplier
+from .models import (
+    GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, StockBalance, StockBalanceAdjustment,
+    StockConsumptionRequest, StockCount, StockItem, StockLocation, StockMovement, StockRecipe, Supplier,
+)
 from .serializers import (
     GoodsReceiptCreateSerializer, GoodsReceiptSerializer, IssueStockSerializer, OpeningStockSerializer,
     ProcurementItemLookupSerializer, ProcurementLocationLookupSerializer,
     PurchaseOrderAccountingSerializer, PurchaseOrderCreateSerializer, PurchaseOrderDecisionSerializer,
     PurchaseOrderDetailSerializer, PurchaseOrderListSerializer,
     PurchaseOrderPaymentInputSerializer, PurchaseOrderUpdateSerializer, ReturnStockSerializer,
-    StockBalanceSerializer, StockConsumptionRequestSerializer,
+    StockBalanceAdjustmentSerializer, StockBalanceAdjustSerializer, StockBalanceSerializer,
+    StockConsumptionRequestSerializer, StockReplenishSerializer, ReorderContextSerializer,
     StockCountCreateSerializer, StockCountSerializer, StockCountSubmitSerializer, StockItemSerializer,
     InventoryMenuItemDirectorySerializer,
     ProductProfitabilityRowSerializer, ProductProfitabilitySummarySerializer,
@@ -36,12 +40,13 @@ from .services.valuation_service import (
     SORT_KEYS, product_profitability_projection, projection_filter_choices, projection_summary, sort_projection,
 )
 from .services.inventory_service import (
-    approve_purchase_order, approve_stock_count, attach_purchase_order_receipt, cancel_purchase_order, create_purchase_order,
-    canonical_unit, convert_stock_quantity, create_stock_recipe, issue_stock, mark_purchase_order_ordered, reject_purchase_order,
-    process_pending_pos_consumption, process_pos_stock_consumption, receive_goods, record_opening_stock,
-    record_purchase_order_payment, record_stock_return, retire_stock_recipe,
-    reverse_pos_stock_consumption, scoped_key, start_stock_count,
-    submit_purchase_order, submit_stock_count, transfer_stock, update_purchase_order,
+    adjust_stock_balance, approve_purchase_order, approve_stock_count, attach_purchase_order_receipt,
+    cancel_purchase_order, canonical_unit, convert_stock_quantity, create_purchase_order, create_stock_recipe,
+    issue_stock, mark_purchase_order_ordered, process_pending_pos_consumption, process_pos_stock_consumption,
+    receive_goods, record_opening_stock, record_purchase_order_payment, record_stock_return,
+    reject_purchase_order, replenish_stock_item, resolve_entered_quantity, retire_stock_recipe,
+    reverse_pos_stock_consumption, scoped_key, start_stock_count, submit_purchase_order, submit_stock_count,
+    transfer_stock, unit_label, update_purchase_order,
 )
 
 
@@ -113,14 +118,46 @@ class StockLocationDetailView(APIView):
 @extend_schema(tags=["Admin · Inventory"], summary="List or create stock catalog items")
 class StockItemListCreateView(APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
+
+    #: Whitelisted orderings for the SKU search. A storekeeper searching a SKU
+    #: expects an exact match first, then the closest name — never the whole
+    #: catalog sorted by category.
+    ORDERINGS = {
+        "sku": ("sku", "name", "pk"),
+        "-sku": ("-sku", "name", "pk"),
+        "name": ("name", "pk"),
+        "-name": ("-name", "pk"),
+        "category": ("category", "name", "pk"),
+        "-updated": ("-updated_at", "pk"),
+    }
+
     def get(self, request):
         queryset=StockItem.objects.select_related("preferred_supplier").order_by("category", "name", "pk")
         if request.query_params.get("active") == "true": queryset=queryset.filter(is_active=True)
         if category:=request.query_params.get("category"): queryset=queryset.filter(category=category)
-        if search:=request.query_params.get("search"): queryset=queryset.filter(Q(sku__icontains=search)|Q(name__icontains=search))
+        # SKU search: the SKU, the item name, the category and the printed
+        # barcode all identify the same record, so one search box may match any
+        # of them. An exact (case-insensitive) SKU match is ordered first
+        # because the add-item screen uses this endpoint to detect that a SKU
+        # already exists before a duplicate is created.
+        search = (request.query_params.get("search") or "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(sku__icontains=search) | Q(name__icontains=search)
+                | Q(category__icontains=search) | Q(barcode__iexact=search)
+            )
+        ordering = self.ORDERINGS.get(request.query_params.get("ordering") or "")
+        if ordering: queryset = queryset.order_by(*ordering)
+        elif search:
+            queryset = queryset.annotate(
+                sku_match=Case(When(sku__iexact=search, then=Value(0)), default=Value(1), output_field=IntegerField())
+            ).order_by("sku_match", "name", "pk")
         return _page(self, request, queryset, StockItemSerializer)
-    @transaction.atomic
+
     def post(self, request):
+        # Binding and validating first keeps every 400 cheap and complete: the
+        # caller never sees "created, then rejected because the opening
+        # quantity could not be converted".
         serializer = StockItemSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         opening_qty = request.data.get("opening_quantity")
@@ -129,7 +166,12 @@ class StockItemListCreateView(APIView):
         opening_factor = request.data.get("opening_conversion_factor")
         supplied = any(value not in (None, "") for value in (opening_qty, opening_loc, opening_unit, opening_factor))
         opening = None
+        location = None
         if supplied:
+            if opening_qty in (None, ""):
+                raise ValidationError({"opening_quantity": "Enter the opening quantity, or clear the opening-stock fields."})
+            if opening_loc in (None, ""):
+                raise ValidationError({"opening_location_id": "Choose the location the opening quantity sits in."})
             raw = {"item_id": 1, "location_id": opening_loc, "quantity": opening_qty,
                    "unit": opening_unit or "", "conversion_factor": opening_factor or None}
             opening_serializer = OpeningStockSerializer(data=raw)
@@ -141,16 +183,19 @@ class StockItemListCreateView(APIView):
             location = StockLocation.objects.filter(pk=opening["location_id"], is_active=True).first()
             if location is None:
                 raise ValidationError({"opening_location_id": "Choose an active stock location."})
+        # ONE transaction for the item AND its opening movement: a rejected
+        # opening quantity must leave NO catalog row behind, otherwise the
+        # retry hits a duplicate SKU that the operator never meant to create.
         try:
             with transaction.atomic():
                 item = serializer.save()
+                if opening is not None:
+                    quantity, evidence = _opening_in_base_units(item, opening)
+                    record_opening_stock(item=item, location=location, quantity=quantity, actor=request.user,
+                        source_key=f"item-opening:{item.pk}:{location.pk}", unit_cost=item.standard_cost,
+                        notes="Initial opening stock on item creation", metadata=evidence)
         except IntegrityError as exc:
             raise ValidationError({"detail": "Another record was saved with the same code or the same direct-sale POS menu item. Reload and try again."}) from exc
-        if opening is not None:
-            quantity, evidence = _opening_in_base_units(item, opening)
-            record_opening_stock(item=item, location=location, quantity=quantity, actor=request.user,
-                source_key=f"item-opening:{item.pk}:{location.pk}", unit_cost=item.standard_cost,
-                notes="Initial opening stock on item creation", metadata=evidence)
         log_action(actor=request.user, action="STOCK_ITEM_CREATED", instance=item, request=request)
         return success_response(StockItemSerializer(item).data, message="Stock item created.", status=status.HTTP_201_CREATED)
 
@@ -196,14 +241,165 @@ class StockItemDetailView(APIView):
 
 @extend_schema(tags=["Admin · Inventory"], summary="List current locked stock-balance projections")
 class StockBalanceListView(APIView):
+    """Stock at hand, searchable by every identifier a storekeeper actually has.
+
+    One ``search`` term matches the item's SKU, name, category, printed barcode
+    and the location's code or name, so a single box answers "where is this
+    thing". Filtering happens in SQL against indexed columns and the item and
+    location are joined in the same query (``select_related``), so a page of
+    balances costs ONE query plus the count — never one query per row.
+    """
+
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
+
+    #: Whitelisted sort keys. An arbitrary ``?ordering=`` is never passed to
+    #: the ORM; anything unknown keeps the default (SKU, then location).
+    ORDERINGS = {
+        "sku": ("item__sku", "location__code", "pk"),
+        "-sku": ("-item__sku", "location__code", "pk"),
+        "name": ("item__name", "location__code", "pk"),
+        "-name": ("-item__name", "location__code", "pk"),
+        "location": ("location__code", "item__sku", "pk"),
+        "quantity": ("quantity_on_hand", "item__sku", "pk"),
+        "-quantity": ("-quantity_on_hand", "item__sku", "pk"),
+        "last_movement": ("last_movement_at", "pk"),
+        "-last_movement": ("-last_movement_at", "pk"),
+    }
+
     def get(self, request):
         queryset=StockBalance.objects.select_related("item", "location").order_by("item__sku", "location__code")
         if item_id:=request.query_params.get("item_id"): queryset=queryset.filter(item_id=item_id)
         if location_id:=request.query_params.get("location_id"): queryset=queryset.filter(location_id=location_id)
         if request.query_params.get("reorder") == "true": queryset=queryset.filter(quantity_on_hand__lte=F("item__reorder_level"))
         if item_type:=request.query_params.get("item_type"): queryset=queryset.filter(item__item_type=item_type)
+        if category:=(request.query_params.get("category") or "").strip():
+            queryset=queryset.filter(item__category__iexact=category)
+        if active:=request.query_params.get("active"):
+            queryset=queryset.filter(item__is_active=(active == "true"))
+        search=(request.query_params.get("search") or "").strip()
+        if search:
+            queryset=queryset.filter(
+                Q(item__sku__icontains=search) | Q(item__name__icontains=search)
+                | Q(item__category__icontains=search) | Q(item__barcode__icontains=search)
+                | Q(location__code__icontains=search) | Q(location__name__icontains=search)
+            )
+        ordering=self.ORDERINGS.get(request.query_params.get("ordering") or "")
+        if ordering: queryset=queryset.order_by(*ordering)
         return _page(self, request, queryset, StockBalanceSerializer)
+
+
+@extend_schema(tags=["Admin · Inventory"], summary="Correct one stock balance (administrator only)")
+class StockBalanceAdjustView(APIView):
+    """Administrator-only correction of stock at hand.
+
+    Gated on ``inventory.adjust.approve`` — the capability that already owns
+    stock-adjustment authority — so a storekeeper who may record movements
+    still cannot silently restate a balance. The correction is posted as an
+    immutable ADJUSTMENT movement plus append-only adjustment evidence (who,
+    previous, new, when, why); the balance projection is never overwritten in
+    place and history is never recalculated.
+    """
+
+    permission_classes = [HasCapability]; required_capability = "inventory.adjust.approve"
+
+    def post(self, request, pk):
+        balance = StockBalance.objects.select_related("item", "location").filter(pk=pk).first()
+        if balance is None: raise NotFound("Stock balance not found.")
+        serializer = StockBalanceAdjustSerializer(data=request.data); serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        adjustment, created = adjust_stock_balance(
+            balance=balance, new_quantity=data["quantity"], reason=data["reason"], actor=request.user,
+            notes=data.get("notes", ""), idempotency_key=data.get("idempotency_key", ""),
+        )
+        if created:
+            log_action(
+                actor=request.user, action="STOCK_BALANCE_ADJUSTED", instance=balance, request=request,
+                summary=f"{balance.item.sku} @ {balance.location.code} corrected",
+                changes={
+                    "previous_quantity": str(adjustment.previous_quantity),
+                    "new_quantity": str(adjustment.new_quantity),
+                    "quantity_delta": str(adjustment.quantity_delta),
+                },
+                metadata={
+                    "balance_id": balance.pk, "item_sku": balance.item.sku,
+                    "location_code": balance.location.code, "base_unit": adjustment.base_unit,
+                    "reason": adjustment.reason, "movement": adjustment.movement.reference,
+                },
+            )
+        balance.refresh_from_db()
+        return success_response(
+            {
+                "adjustment": StockBalanceAdjustmentSerializer(adjustment).data,
+                "balance": StockBalanceSerializer(balance).data,
+            },
+            message="Stock balance corrected." if created else "This correction was already recorded.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+@extend_schema(tags=["Admin · Inventory"], summary="List stock-balance corrections (audit trail)")
+class StockBalanceAdjustmentListView(APIView):
+    permission_classes = [HasCapability]; required_capability = "inventory.manage"
+
+    def get(self, request):
+        queryset = (StockBalanceAdjustment.objects
+                    .select_related("item", "location", "actor", "movement")
+                    .order_by("-created_at", "-pk"))
+        if item_id := request.query_params.get("item_id"): queryset = queryset.filter(item_id=item_id)
+        if location_id := request.query_params.get("location_id"): queryset = queryset.filter(location_id=location_id)
+        if balance_id := request.query_params.get("balance_id"): queryset = queryset.filter(balance_id=balance_id)
+        return _page(self, request, queryset, StockBalanceAdjustmentSerializer)
+
+
+@extend_schema(tags=["Admin · Inventory"], summary="Replenish an existing stock item without changing its master data")
+class StockItemReplenishView(APIView):
+    """Add stock to an existing item — the 'replenish' half of Add Stock Item.
+
+    Selecting an existing SKU must never create a second catalog row and must
+    never rewrite that row's name, category, unit, barcode or selling
+    references. This endpoint therefore accepts ONLY a quantity (in a chosen
+    unit), a location, an optional unit cost and free-text references: the
+    master record is untouched, and the stock increase is an auditable RECEIPT
+    movement rather than a redefinition of the item.
+    """
+
+    permission_classes = [HasCapability]; required_capability = "inventory.manage"
+
+    def post(self, request, pk):
+        item = StockItem.objects.select_related("preferred_supplier").filter(pk=pk).first()
+        if item is None: raise NotFound("Stock item not found.")
+        serializer = StockReplenishSerializer(data=request.data); serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        location = StockLocation.objects.filter(pk=data["location_id"]).first()
+        if location is None: raise NotFound("Stock location not found.")
+        movement, created = replenish_stock_item(
+            item=item, location=location, quantity=data["quantity"], actor=request.user,
+            unit=data.get("unit") or "", conversion_factor=data.get("conversion_factor"),
+            unit_cost=data.get("unit_cost"), supplier_reference=data.get("supplier_reference", ""),
+            notes=data.get("notes", ""), idempotency_key=data.get("idempotency_key", ""),
+        )
+        if created:
+            log_action(
+                actor=request.user, action="STOCK_REPLENISHED", instance=item, request=request,
+                summary=f"{item.sku} replenished at {location.code}",
+                metadata={
+                    "movement": movement.reference, "location_code": location.code,
+                    "quantity_delta": str(movement.quantity_delta),
+                    "entered_quantity": movement.metadata.get("entered_quantity"),
+                    "entered_unit": movement.metadata.get("entered_unit"),
+                    "base_unit": item.base_unit, "unit_cost": str(movement.unit_cost or ""),
+                },
+            )
+        balance = StockBalance.objects.select_related("item", "location").filter(item=item, location=location).first()
+        return success_response(
+            {
+                "movement": StockMovementSerializer(StockMovement.objects.select_related("item", "location", "actor").get(pk=movement.pk)).data,
+                "balance": StockBalanceSerializer(balance).data if balance else None,
+                "item": StockItemSerializer(item).data,
+            },
+            message="Stock replenished." if created else "This replenishment was already recorded.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="List immutable stock movement ledger")
@@ -390,7 +586,23 @@ class StockIssueView(APIView):
         if location is None: raise NotFound("Stock location not found.")
         key=scoped_key(prefix="stock-issue", scope=f"staff:{request.user.pk}", raw_key=data.get("idempotency_key"))
         if not key: raise ValidationError({"idempotency_key": "An idempotency key is required for stock issue."})
-        movement, created=issue_stock(item=item, location=location, quantity=data["quantity"], actor=request.user, source_key=key,
+        # A crate leaving the store is the common case ("give the bar 3 crates"),
+        # so an issue may be stated in a container unit. It is converted to the
+        # item's own base unit exactly once, here, using the item's declared pack
+        # size (or the operator's explicit factor); the ledger always stores the
+        # base-unit quantity, and omitting the unit keeps the old contract.
+        quantity = data["quantity"]
+        issued_unit = str(data.get("unit") or "").strip()
+        if issued_unit:
+            quantity, _evidence = resolve_entered_quantity(
+                data["quantity"], item=item, unit=issued_unit,
+                conversion_factor=data.get("conversion_factor"), allow_declared_pack_size=True,
+            )
+        elif data.get("conversion_factor") is not None:
+            raise ValidationError({
+                "unit": "Choose the unit the issued quantity is counted in before giving a conversion factor."
+            })
+        movement, created=issue_stock(item=item, location=location, quantity=quantity, actor=request.user, source_key=key,
                                       movement_type=data["type"], source_reference=data.get("source_reference", ""), notes=data.get("notes", ""),
                                       department=data.get("department", ""), recipient=data.get("recipient", ""))
         if created:
@@ -413,24 +625,25 @@ class StockIssueView(APIView):
 
 @extend_schema(tags=["Admin · Inventory"], summary="Record a source-keyed opening stock balance")
 def _opening_in_base_units(item, data):
+    """Convert a typed opening quantity into the item's own base unit.
+
+    The base unit is what every balance, issue, receipt and report is measured
+    in; the unit the quantity was COUNTED in is evidence only. The conversion
+    rules live in one shared service helper, so opening stock, replenishment
+    and every other typed quantity can never disagree about what "1 CRATE"
+    means. No implicit pack-size lookup happens here: one item's saved pack
+    size does not prove which container was actually counted, so the operator
+    states the container size themselves.
+    """
     unit = data.get("unit") or item.base_unit
     factor = data.get("conversion_factor")
-    if factor is not None and canonical_unit(unit) == canonical_unit(item.base_unit):
-        raise ValidationError({"conversion_factor": "Do not enter a conversion factor when recording in the base unit."})
-    if factor is None and "shot" in {canonical_unit(unit), canonical_unit(item.base_unit)} and canonical_unit(unit) != canonical_unit(item.base_unit):
-        raise ValidationError({"conversion_factor": "Enter the actual conversion for a shot; its size is not assumed."})
-    # No implicit pack-size lookup: one item's saved pack size does not identify
-    # whether it describes a carton, crate, bag or another container.
     try:
-        quantity = convert_stock_quantity(data["quantity"], from_unit=unit, to_unit=item.base_unit,
-                                          conversion_factor=factor)
+        return resolve_entered_quantity(
+            data["quantity"], item=item, unit=unit, conversion_factor=factor,
+            allow_declared_pack_size=False,
+        )
     except InvalidOperation as exc:
         raise ValidationError({"quantity": "The converted quantity is too large to record."}) from exc
-    if quantity <= 0 or quantity >= Decimal("10000000000"):
-        raise ValidationError({"quantity": "Converted quantity must fit the stock ledger and be greater than zero."})
-    return quantity, {"entered_quantity": str(data["quantity"]), "entered_unit": unit,
-                      "base_unit": item.base_unit,
-                      "conversion_factor": str(factor) if factor is not None else None}
 
 
 class StockOpeningView(APIView):
@@ -581,6 +794,82 @@ class ProcurementItemLookupView(APIView):
         if search := (request.query_params.get("search") or "").strip():
             queryset = queryset.filter(Q(sku__icontains=search) | Q(name__icontains=search))
         return _page(self, request, queryset, ProcurementItemLookupSerializer)
+
+
+@extend_schema(tags=["Admin · Procurement"], summary="Read-only context for reordering one item")
+class ProcurementItemReorderContextView(APIView):
+    """Everything the reorder dialog needs about ONE item, in one bounded read.
+
+    Task: staff must not re-type a name, SKU, category, unit or price to
+    reorder something they already stock. The dialog therefore selects an item
+    and receives its identity, purchasing references, per-store balances, the
+    most recent actual purchase cost and what is already on order — from the
+    server, so nothing is copied or guessed in the browser.
+
+    Read-only and non-mutating: creating the resulting purchase-order draft
+    uses the existing ``purchase-orders/`` endpoint, so the procurement
+    approval workflow is untouched and NO stock changes here.
+    """
+
+    permission_classes = [HasCapability]; required_capability = "procurement.manage"
+
+    #: Orders whose lines still represent stock that has not arrived yet. Only
+    #: these are counted as "on order"; a received or cancelled order is not
+    #: outstanding demand.
+    OPEN_STATUSES = (
+        PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.SUBMITTED, PurchaseOrder.Status.APPROVED,
+        PurchaseOrder.Status.ORDERED, PurchaseOrder.Status.PARTIALLY_RECEIVED,
+    )
+
+    def get(self, request, pk):
+        item = StockItem.objects.select_related("preferred_supplier").filter(pk=pk).first()
+        if item is None: raise NotFound("Stock item not found.")
+        balances = list(
+            StockBalance.objects.filter(item=item).select_related("location").order_by("location__name", "location__pk")
+        )
+        rows = [
+            {
+                "location_id": row.location_id, "location_code": row.location.code,
+                "location_name": row.location.name, "quantity_on_hand": row.quantity_on_hand,
+                "reorder_level": item.reorder_level,
+                "needs_reorder": row.quantity_on_hand <= item.reorder_level,
+            }
+            for row in balances
+        ]
+        total_on_hand = sum((Decimal(row.quantity_on_hand) for row in balances), Decimal("0.0000"))
+        # The dialog's default delivery store: the store already holding this
+        # item, else the first store holding anything (both are real rows).
+        default_location = None
+        if balances:
+            default_location = sorted(balances, key=lambda row: (-Decimal(row.quantity_on_hand), row.location.name))[0].location_id
+        last_line = (
+            GoodsReceiptLine.objects.filter(item=item)
+            .select_related("goods_receipt__supplier")
+            .order_by("-goods_receipt__received_on", "-pk")
+            .first()
+        )
+        last_receipt = None
+        if last_line is not None:
+            last_receipt = {
+                "quantity_received": str(last_line.quantity_received),
+                "unit_cost": str(last_line.unit_cost),
+                "received_on": last_line.goods_receipt.received_on.isoformat(),
+                "supplier_name": (last_line.goods_receipt.supplier.name if last_line.goods_receipt.supplier_id else ""),
+            }
+        outstanding = (
+            PurchaseOrderLine.objects.filter(item=item, purchase_order__status__in=self.OPEN_STATUSES)
+            .annotate(remaining=F("quantity_ordered") - F("quantity_received"))
+            .aggregate(total=Sum("remaining"))["total"]
+        ) or Decimal("0.0000")
+        payload = {
+            "item": item,
+            "balances": rows,
+            "total_on_hand": total_on_hand,
+            "default_location_id": default_location,
+            "last_receipt": last_receipt,
+            "open_purchase_order_quantity": outstanding,
+        }
+        return success_response(ReorderContextSerializer(payload).data)
 
 
 @extend_schema(tags=["Admin · Procurement"], summary="List or create purchase orders")

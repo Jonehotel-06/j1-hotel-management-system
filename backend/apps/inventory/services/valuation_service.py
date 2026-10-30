@@ -54,6 +54,7 @@ from django.db.models import DecimalField, F, Q, Sum
 from apps.pos.models import MenuCategory, MenuItem
 
 from ..models import GoodsReceiptLine, StockBalance, StockItem, StockMovement, StockRecipe
+from .inventory_service import unit_label
 
 #: Quantisation used for the money/percentage columns returned by this projection.
 MONEY_QUANTUM = Decimal("0.01")
@@ -341,6 +342,9 @@ def product_profitability_projection(*, search="", location_id=None, department=
             "category": item.category,
             "department": department_label,
             "base_unit": item.base_unit,
+            # Display label ("Kilograms (kg)") so the screen never shows the raw
+            # token alone; additive, the stored token is unchanged.
+            "base_unit_label": unit_label(item.base_unit),
             "currency": item.currency,
             "location_id": balance.location_id,
             "location_code": balance.location.code,

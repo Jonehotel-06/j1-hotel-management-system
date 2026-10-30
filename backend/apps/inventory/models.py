@@ -106,6 +106,13 @@ class StockItem(TimeStampedModel):
     sku = models.CharField(max_length=80, unique=True, db_index=True)
     name = models.CharField(max_length=255)
     category = models.CharField(max_length=120, blank=True, default="", db_index=True)
+    #: Optional scanner/printed barcode for this stocked item (EAN/UPC or a
+    #: Code 128 payload). NULL means "no barcode assigned", and NULLs are
+    #: distinct in every supported backend, so any number of items may leave it
+    #: unset. It exists so the store can search stock on hand by the number
+    #: printed on the carton as well as by SKU, without ever letting two items
+    #: claim the same barcode (which would make a scan ambiguous).
+    barcode = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
     #: How the hotel uses the item (see ``ItemType``). Defaults to CONSUMABLE so
     #: every pre-existing row keeps its current, non-POS behaviour until an
     #: authorised user classifies it.
@@ -167,6 +174,14 @@ class StockItem(TimeStampedModel):
 
     def __str__(self):
         return f"{self.sku} · {self.name}"
+
+    def save(self, *args, **kwargs):
+        # A blank barcode is "no barcode", never an empty string: an empty
+        # string would collide with every other blank barcode on the unique
+        # index and make the second item impossible to save.
+        if self.barcode is not None:
+            self.barcode = str(self.barcode).strip() or None
+        return super().save(*args, **kwargs)
 
     @property
     def is_direct_sale_configured(self) -> bool:
@@ -621,3 +636,51 @@ class StockCountEvent(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("Stock-count events are append-only and cannot be deleted.")
+
+
+class StockBalanceAdjustment(models.Model):
+    """Append-only evidence of one authorised correction of stock at hand.
+
+    The immutable :class:`StockMovement` (type ``ADJUSTMENT``) remains the
+    ledger entry that changes the projection. This row is the human-readable
+    audit record beside it: WHO corrected the balance, the previous and the
+    new quantity in the item's own base unit, WHEN, and WHY. It is written in
+    the same transaction as the movement, so a correction can never exist in
+    the ledger without its reason — or the other way round.
+    """
+
+    balance = models.ForeignKey(StockBalance, on_delete=models.PROTECT, related_name="adjustments")
+    item = models.ForeignKey(StockItem, on_delete=models.PROTECT, related_name="balance_adjustments")
+    location = models.ForeignKey(StockLocation, on_delete=models.PROTECT, related_name="balance_adjustments")
+    #: Quantity on hand in the item's base unit BEFORE and AFTER the correction,
+    #: copied from the locked projection at the moment of the change so a later
+    #: recalculation can never rewrite what was recorded.
+    previous_quantity = models.DecimalField(max_digits=14, decimal_places=4)
+    new_quantity = models.DecimalField(max_digits=14, decimal_places=4)
+    quantity_delta = models.DecimalField(max_digits=14, decimal_places=4)
+    #: The item's base unit at the time of the correction (never reinterpreted
+    #: later if the item is reclassified).
+    base_unit = models.CharField(max_length=30, default="", blank=True)
+    reason = models.CharField(max_length=500)
+    notes = models.TextField(blank=True, default="")
+    movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="balance_adjustment")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="stock_balance_adjustments")
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        indexes = [
+            models.Index(fields=["item", "location", "created_at"]),
+            models.Index(fields=["actor", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.item.sku} @ {self.location.code}: {self.previous_quantity} → {self.new_quantity}"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Stock balance adjustments are append-only and cannot be updated.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Stock balance adjustments are append-only and cannot be deleted.")

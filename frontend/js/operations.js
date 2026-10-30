@@ -82,6 +82,7 @@
       clear.addEventListener("click", function () {
         selected = null;
         paintSelection();
+        if (typeof options.onSelect === "function") options.onSelect(null);
         if (input) { input.value = ""; input.focus(); }
         if (results) results.innerHTML = '<p class="caption">Search to select a record.</p>';
       });
@@ -164,6 +165,10 @@
           paintSelection();
           results.innerHTML = "";
           input.value = "";
+          // `onSelect(row)` lets a caller react to the chosen record (e.g. the
+          // replenishment dialog shows that item's unit and balance). Optional:
+          // every existing picker keeps working unchanged.
+          if (typeof options.onSelect === "function") options.onSelect(row);
         });
         wrap.appendChild(input);
         wrap.appendChild(chosen);
