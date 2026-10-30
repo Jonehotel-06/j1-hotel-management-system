@@ -14,6 +14,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.views import APIView
 
 from apps.audit.services import log_action
+from apps.core.approval_audit import ApprovalCategory, approval_decision_metadata
 from apps.core.pagination import StandardPagination
 from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
@@ -567,11 +568,18 @@ class StockCountSubmitView(APIView):
 class StockCountApproveView(APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.adjust.approve"
     def post(self, request, reference):
-        stock_count = StockCount.objects.filter(reference=reference).first()
-        if stock_count is None: raise NotFound("Stock count not found.")
-        stock_count = approve_stock_count(stock_count=stock_count, actor=request.user)
+        before = StockCount.objects.select_related("initiated_by", "submitted_by").filter(reference=reference).first()
+        if before is None: raise NotFound("Stock count not found.")
+        previous_status = before.status
+        stock_count = approve_stock_count(stock_count=before, actor=request.user)
         stock_count = StockCount.objects.select_related("location", "initiated_by", "submitted_by", "approved_by").prefetch_related("lines__item", "lines__adjustment_movement").get(pk=stock_count.pk)
-        log_action(actor=request.user, action="STOCK_COUNT_APPROVED_AND_POSTED", instance=stock_count, request=request, metadata={"reference": stock_count.reference})
+        metadata = {"reference": stock_count.reference}
+        metadata.update(approval_decision_metadata(
+            category=ApprovalCategory.STOCK_COUNT, reference=stock_count.reference,
+            initiated_by=stock_count.submitted_by or stock_count.initiated_by, decided_by=request.user,
+            previous_status=previous_status, new_status=stock_count.status,
+        ))
+        log_action(actor=request.user, action="STOCK_COUNT_APPROVED_AND_POSTED", instance=stock_count, request=request, metadata=metadata)
         return success_response(StockCountSerializer(stock_count).data, message="Approved stock-count adjustments posted.")
 
 
@@ -958,9 +966,16 @@ class PurchaseOrderRejectView(APIView):
 
     def post(self, request, reference):
         serializer = PurchaseOrderDecisionSerializer(data=request.data); serializer.is_valid(raise_exception=True)
-        po = reject_purchase_order(purchase_order=_po_or_404(reference), actor=request.user, reason=serializer.validated_data["reason"])
-        log_action(actor=request.user, action="PURCHASE_ORDER_REJECTED", instance=po, request=request,
-                   metadata={"reference": po.reference, "reason": serializer.validated_data["reason"], "to_status": po.status})
+        before = _po_or_404(reference)
+        po = reject_purchase_order(purchase_order=before, actor=request.user, reason=serializer.validated_data["reason"])
+        metadata = {"reference": po.reference, "reason": serializer.validated_data["reason"], "to_status": po.status}
+        metadata.update(approval_decision_metadata(
+            category=ApprovalCategory.PURCHASE_ORDER, reference=po.reference,
+            initiated_by=before.requested_by, decided_by=request.user,
+            previous_status=before.status, new_status=po.status,
+            note=serializer.validated_data["reason"],
+        ))
+        log_action(actor=request.user, action="PURCHASE_ORDER_REJECTED", instance=po, request=request, metadata=metadata)
         return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data,
                                 message="Purchase order rejected and returned to draft.")
 
@@ -986,19 +1001,23 @@ class PurchaseOrderApproveView(APIView):
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def post(self, request, reference):
+        before = _po_or_404(reference)
         po = approve_purchase_order(
-            purchase_order=_po_or_404(reference), actor=request.user,
+            purchase_order=before, actor=request.user,
             receipt_file=request.FILES.get("approval_receipt"),
             payment_reference=(request.data.get("payment_reference") or "").strip()[:160],
         )
-        log_action(
-            actor=request.user, action="PURCHASE_ORDER_APPROVED", instance=po, request=request,
-            metadata={
-                "reference": po.reference,
-                "payment_reference": po.payment_reference,
-                "has_receipt": bool(po.approval_receipt),
-            },
-        )
+        metadata = {
+            "reference": po.reference,
+            "payment_reference": po.payment_reference,
+            "has_receipt": bool(po.approval_receipt),
+        }
+        metadata.update(approval_decision_metadata(
+            category=ApprovalCategory.PURCHASE_ORDER, reference=po.reference,
+            initiated_by=before.requested_by, decided_by=request.user,
+            previous_status=before.status, new_status=po.status,
+        ))
+        log_action(actor=request.user, action="PURCHASE_ORDER_APPROVED", instance=po, request=request, metadata=metadata)
         return success_response(PurchaseOrderDetailSerializer(_po_or_404(po.reference, detail=True)).data, message="Purchase order approved.")
 
 

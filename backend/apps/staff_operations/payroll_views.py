@@ -16,6 +16,7 @@ from rest_framework.views import APIView
 from apps.accounts.capabilities import has_capability
 from apps.accounts.models import User
 from apps.audit.services import log_action
+from apps.core.approval_audit import ApprovalCategory, approval_decision_metadata
 from apps.core.pagination import StandardPagination
 from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
@@ -510,12 +511,20 @@ class PayrollReviewView(APIView):
         serializer = PayrollReviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        before = _period(reference)
         period = review_payroll_period(
-            period=_period(reference), reviewer=request.user, approved=data["approved"], review_note=data["review_note"]
+            period=before, reviewer=request.user, approved=data["approved"], review_note=data["review_note"]
         )
+        metadata = {"reference": period.reference, "review_note": data["review_note"]}
+        metadata.update(approval_decision_metadata(
+            category=ApprovalCategory.PAYROLL, reference=period.reference,
+            initiated_by=before.created_by, decided_by=request.user,
+            previous_status=before.status, new_status=period.status,
+            note=period.review_note,
+        ))
         log_action(
             actor=request.user, action="PAYROLL_RUN_APPROVED" if data["approved"] else "PAYROLL_RUN_REJECTED",
-            instance=period, request=request, metadata={"reference": period.reference, "review_note": data["review_note"]},
+            instance=period, request=request, metadata=metadata,
         )
         message = "Payroll approved and accrued to the immutable ledger." if data["approved"] else "Payroll run rejected. Create a replacement run to correct it."
         return _private_response(success_response(PayrollPeriodDetailSerializer(_period(reference, detail=True)).data, message=message))

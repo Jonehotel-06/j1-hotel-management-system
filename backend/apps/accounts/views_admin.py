@@ -1,5 +1,12 @@
 # apps/accounts/views_admin.py
-"""Administrator-only user & staff account management (ADMIN role)."""
+"""Staff account management: administrator writes, manager-tier reads.
+
+The staff account collection (list/retrieve) answers the Administrator fully
+and the manager tier (Manager, General Manager) read-only — see
+``apps.core.permissions.IsAdminOrManagerRead``. Account creation, updates,
+role changes and activation stay administrator-only, as do the permission
+matrix, per-user capability overrides and audit logs.
+"""
 import logging
 
 from django.db.models import Count, Q
@@ -13,7 +20,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from apps.audit.services import log_action
 from apps.bookings.services.booking_service import UNCOUNTED_BOOKING_STATUSES
 from apps.core.pagination import StandardPagination
-from apps.core.permissions import CanViewStaffProfile, HasCapability, IsAdminRole
+from apps.core.permissions import CanViewStaffProfile, HasCapability, IsAdminOrManagerRead, IsAdminRole
 from apps.core.responses import success_response
 
 from .desktop_policy import clear_desktop_key, issue_desktop_key
@@ -185,7 +192,10 @@ class WorkstationDesktopKeyView(APIView):
 
 
 class AdminUserQuerysetMixin:
-    permission_classes = [IsAdminRole]
+    # Batch 07: the manager tier (Manager, General Manager) may READ the staff
+    # account collection for the staff management interface; every write on
+    # these views is still administrator-only via IsAdminOrManagerRead.
+    permission_classes = [IsAdminOrManagerRead]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):

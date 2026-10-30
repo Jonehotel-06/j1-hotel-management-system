@@ -198,6 +198,41 @@ class IsAdminRole(BasePermission):
         return _active(request.user) and request.user.role == "ADMIN"
 
 
+class IsAdminOrManagerRead(BasePermission):
+    """Administrator full access; the manager tier reads the staff directory.
+
+    Batch 07: the General Manager sidebar links to the staff management
+    interface (``staff.html``), and the frontend normalises a ``MANAGER``
+    account to the general manager for every page gate — so the read half of
+    the staff account collection must answer the whole manager tier or the
+    sidebar would promise a screen the API refuses. The manager tier
+    (``MANAGER``, ``GENERAL_MANAGER``) holds the persisted ``account.view``
+    grant (\"View permitted staff account information\") and
+    cross-department oversight, so a read-only roster is exactly the authority
+    the capability matrix already describes.
+
+    Writes (create/update/activate/deactivate accounts, role changes) stay
+    administrator-only: the manager tier does not hold ``account.manage`` and
+    this class never grants it. Every other role is refused for every method.
+    """
+
+    message = "Administrator access is required."
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not _active(user):
+            return False
+        if user.role == "ADMIN":
+            return True
+        if (
+            request.method in SAFE_METHODS
+            and user.role in ("MANAGER", "GENERAL_MANAGER")
+            and has_capability(user, "account.view")
+        ):
+            return True
+        return False
+
+
 class IsStaffReadOnlyManagerWrite(BasePermission):
     """Read-only records for the desk, writes for managers.
 

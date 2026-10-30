@@ -54,9 +54,18 @@ class GeneralManagerParityTests(BaseAPITestCase):
                 self.assertEqual(self.client.get(url).status_code, 200)
 
     def test_the_general_manager_is_not_an_administrator(self):
-        for url in ("/api/admin/users/", "/api/admin/audit-logs/"):
-            with self.subTest(url=url):
-                self.assertEqual(self.client.get(url).status_code, 403)
+        # Batch 07: the General Manager READS the staff account collection
+        # for the staff management interface, but audit logs and every
+        # account write stay administrator-only.
+        self.assertEqual(self.client.get("/api/admin/users/").status_code, 200)
+        self.assertEqual(self.client.get("/api/admin/audit-logs/").status_code, 403)
+        self.assertEqual(self.client.post("/api/admin/users/", {}, format="json").status_code, 403)
+        self.assertEqual(
+            self.client.patch(
+                f"/api/admin/users/{self.gm.pk}/", {"phone": "08030000000"}, format="json"
+            ).status_code,
+            403,
+        )
 
     def test_legacy_configuration_writes_follow_the_manager_set(self):
         factory = RequestFactory()

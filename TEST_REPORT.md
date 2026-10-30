@@ -1,126 +1,107 @@
-# Executed tests — Batch 05
+# Batch 07 — TEST REPORT
 
-Date: 2026-10-30. Source baseline: `0d76219b72b65018ae160b8e20ac586683e0b49c`.
-All results below were actually executed in the isolated working copy. No production data was used.
+Every result below was executed; nothing is claimed without a run.
+Environment: backend Django `manage.py test` with
+`DJANGO_SETTINGS_MODULE=config.settings.development` (SQLite test DB);
+frontend `node --test` (Node v20).
 
-## Final results
-| Check | Executed result |
+## 1. New Batch 07 backend tests — 15/15 PASS
+
+`python manage.py test tests.test_batch07_staff_approvals` → `Ran 15 tests … OK`
+
+| Test | Covers |
 |---|---|
-| Backend relevant/API/regression suite | **239 total: 229 passed, 10 skipped, 0 failures/errors**; 91.410 s test runtime |
-| Batch 05 test module separately | 29 total: 24 passed, 5 in-memory-SQLite concurrency skips |
-| Dedicated file-backed SQLite concurrency runner | **5 passed, 0 skipped**; 1.460 s test runtime |
-| Targeted new/POS/portal frontend tests | **67 passed**, no failures/skips |
-| Full frontend test suite | **700 passed, 10 failed** (710 total) |
-| Untouched baseline full frontend suite | **693 passed, same 10 failed** (703 total) |
-| Frontend repository validator | **ALL OK**: 73 HTML files, 33 standalone JavaScript files |
-| Django system check | No issues, 0 silenced |
-| makemigrations --check --dry-run | No changes detected |
-| Python compile/import checks | compileall passed; Django startup/import checks passed |
-| Migration execution/preservation | New schema applied by test DB creation; reverse/forward test passed, active/retired recipes, lines and availability preserved |
-| git diff --check | Passed |
-| Original source clone diff | Empty; source clone untouched |
+| `test_manager_holds_exactly_the_five_defined_approval_capabilities` | Persisted MANAGER grants + resolution for all five; GM/Admin keep them; waiter holds none |
+| `test_manager_approves_leave_request` | Leave approve via API; leave data preserved; uniform audit evidence |
+| `test_manager_approves_stock_count_variance_without_silent_adjustment` | Variance approve via API; balance unchanged pre-approval, adjusted post; evidence |
+| `test_manager_approves_purchase_order` | PO approve via API; supplier workflow intact; evidence |
+| `test_manager_approves_payroll_run_without_changing_amounts` | Payroll approve via API; totals identical pre/post; evidence |
+| `test_manager_approves_expense_without_paying_it` | Expense approve via API; status APPROVED, no payment transaction; evidence |
+| `test_manager_sees_all_five_queues_in_the_approvals_inbox` | Inbox lists all five queues; admin-only queues excluded |
+| `test_manager_cannot_approve_own_request` | Maker-checker: self-approval → 403, status stays PENDING |
+| `test_duplicate_approvals_do_not_reapply_effects` | Re-approval posts no second stock adjustment |
+| `test_rejection_and_return_for_correction_workflows_preserved` | Leave reject; PO reject → DRAFT with reason + evidence |
+| `test_unauthorized_staff_are_refused_on_all_five_approval_endpoints` | Waiter + receptionist → 403 on all five decision endpoints |
+| `test_general_manager_reads_but_cannot_write_staff_accounts` | GM: roster/detail 200; create/update 403 |
+| `test_manager_tier_reads_but_cannot_write_staff_accounts` | Manager: roster 200; update 403 |
+| `test_admin_staff_management_privileges_unchanged` | Admin create/update/read all work |
+| `test_department_staff_cannot_open_the_staff_account_collection` | Waiter/receptionist/housekeeper/accountant/clerk → 403 on list + detail |
 
-The broader frontend suite is **not all green**. The exact same ten failing test names were
-reproduced in a second untouched baseline copy; no unrelated repairs were made. These were:
-- 3. All 72 deployed HTML pages load runtime-config.js before config.js and match version.json
-- accounting surfaces supplier goods received separately from posted invoices
-- no obsolete production API rewrite remains active in static hosting configs
-- Accounting renders the night audit daily flash and checks
-- the only web app manifest is scoped to the staff dashboard
-- batch 02: export options retain both ISO dates for Excel and PDF
-- the hotel's own statutory figure is still reported, not deleted with the fields
-- Accounting renders balance sheet and cash flow statements
-- every staff table scrolls inside a .table-wrap instead of the page
-- accounting From/To fields are never disabled and a chosen date selects the custom range
+## 2. Backend regression suites — all PASS
 
-## Backend command (from backend/)
-```sh
-python manage.py test \
-  tests.test_batch05_food \
-  tests.test_pos tests.test_pos_api tests.test_pos_department_api \
-  tests.test_pos_menu_management tests.test_pos_restaurant_tables \
-  tests.test_pos_room_service_availability tests.test_pos_stock_validation \
-  tests.test_pos_tender_balance tests.test_pos_unopened_returns \
-  tests.test_service_request_pos_handoff tests.test_guest_portal_room_orders \
-  tests.test_portal_access tests.test_inventory tests.test_inventory_item_management \
-  --noinput
-```
+* Approvals/permissions core — 92/92 PASS:
+  `test_approvals_inbox test_capabilities test_role_permissions_matrix
+  test_permission_alignment test_separate_approver_control
+  test_admin_approval_override test_staff`
+* Touched-workflow suites — 57/57 PASS:
+  `test_staff_operations test_staff_operations_api test_payroll_api
+  test_expense_api test_expenses test_inventory test_inventory_api
+  test_audit_actions test_purchase_order_payments
+  test_procurement_inventory_dashboard_access`
+* Post-refinement re-run — 20/20 PASS:
+  `test_batch07_staff_approvals test_expense_api test_expenses`
 
-Five skips are the new concurrency cases when the standard Django test database is shared-memory
-SQLite. Those five were separately executed successfully by the file-backed runner below.
-The other five skips are existing guest-portal MySQL-specific concurrency/isolation cases.
-The legacy portal shared-memory concurrency probe also emits expected/handled database-table-locked
-and HTTP 500 diagnostics during its race; the runner still exits successfully. This does not establish
-production MySQL behavior. Staticfiles-not-collected warnings occurred in the test environment.
+## 3. Full backend suite — 2115/2118 (3 pre-existing failures)
 
-## Portion concurrency command (from backend/)
-```sh
-python tools/test_batch05_concurrency.py
-```
-Uses a temporary file-backed SQLite database, real threads, independent connections, a start
-barrier, IMMEDIATE transactions and WAL. It does not modify the application's database.
-Executed cases:
-1. Competing orders cannot both reserve more than the free prepared balance.
-2. Concurrent duplicate submission reserves once.
-3. Concurrent duplicate replenishment adds once.
-4. Concurrent duplicate cancellation releases once.
-5. Concurrent wastage cannot make the free balance negative.
+`python manage.py test tests` in three serial chunks:
+chunk 00: 666 tests, 2 failures · chunk 01: 689 tests, OK ·
+chunk 02: 763 tests, 1 failure.
+(`--parallel` could not be used: the runner itself crashed with
+`TypeError: cannot pickle 'traceback' object` — a test-runner
+infrastructure issue, not a test result.)
 
-For MySQL validation, do NOT use that SQLite-specific helper. Configure the normal MySQL test
-settings and run:
-```sh
-python manage.py test tests.test_batch05_food.PreparedFoodConcurrencyTests \
-  tests.test_guest_portal_room_orders.ConcurrentPortalOrderTests --noinput
-```
-This MySQL command is an integration instruction, **not an executed pass**.
+Each of the 3 failures was re-run standalone on the **pristine baseline**
+(isolated clone without Batch 07 changes) and fails identically there:
 
-## Frontend and checks (from repository root)
-```sh
-node --test frontend/tests-js/test-batch05-food.js \
-  frontend/tests-js/test-pos*.js frontend/tests-js/test-portal*.js
-node --test frontend/tests-js/test-*.js
-python frontend/validate.py
-python backend/manage.py check
-python backend/manage.py makemigrations --check --dry-run
-python -m compileall -q backend/apps/pos backend/apps/portal/views_catalog.py \
-  backend/tests/test_batch05_food.py backend/tests/test_guest_portal_room_orders.py \
-  backend/tests/test_pos.py backend/tools/test_batch05_concurrency.py
-node --check frontend/js/kitchen-food.js
-node --check frontend/js/portal-catalog.js
-node --check frontend/js/config.js
-git diff --check
-```
-Node syntax checks were also run explicitly; frontend/validate.py checks script references,
-inline JavaScript, HTML structure and local assets using the repository's existing validator.
-The untouched frontend baseline was run with the same node test command in a separate baseline copy.
+| Failure | Baseline result | Relation to Batch 07 |
+|---|---|---|
+| `test_department_roles…test_security_and_procurement_role_grants_stay_narrow` | FAILS on baseline | None: asserts PROCUREMENT_OFFICER resolution incl. `payroll.*`, which `capability_codes_for_user` strips, and omits `inventory.manage` from migration 0031 |
+| `test_deployment_readiness…test_production_settings_boot_cleanly_with_northflank_mysqls_and_rediss_urls` | FAILS on baseline | None: requires production MySQL/Redis infrastructure |
+| `test_portal_stay_lifecycle…test_menu_shows_only_active_items…` | FAILS on baseline | None: guest portal catalogue, untouched by this batch |
 
-## Batch-specific coverage
-- Recipe-free food through draft, acceptance, delivery and guest Room Service catalogue/order.
-- Existing enabled COMPONENTS recipe, 250 g → 0.2500 KG conversion, ingredient deduction once.
-- Retired recipe preserved; no raw ingredient deduction; explicit NO_STOCK provenance retained.
-- Ready/Not Available controls, staff/time audit, old menu switch audit and API permissions.
-- Unavailable new drafts rejected; stale draft submission refused without deleting lines.
-- Existing accepted order can still be fulfilled after food is marked unavailable.
-- Optional per-item portions, duplicate-line aggregation, competing drafts, depleted portions.
-- Reservation on acceptance (not draft creation), replay protection and delivery without rededuction.
-- Draft cancellation and accepted cancellation; guest cancellation releases portions once.
-- Controlled wastage, over-wastage rejection, reserved-food protection and replenishment retries.
-- Disabling tracking cannot discard balances or orphan active reservations.
-- Raw-stock validation failure rolls back the portion reservation and all new audit writes.
-- Returned cooked food does not restore free portions or raw ingredients; return retries are safe;
-  existing financial credits and sealed-product return regressions remain covered.
-- Mixed recipe/simple guest baskets, POS/guest quantity projections and backend guest limits.
-- Constant-query food listing as menu size grows; bulk allocations avoid per-item allocation reads.
-- Frontend no-recipe controls, read-only presentation, bounded quantities, central configured URL,
-  uncertain-network key reuse, error retention, unlimited guest badge and modifier-preserving refresh.
-- Schema roundtrip preserves active/retired recipes and recipe lines, original availability and defaults.
+## 4. Migration checks — PASS
 
-Two pre-existing recipe-mandatory assertions were intentionally updated: simple-food delivery now
-records deliberate SKIPPED raw consumption instead of an inventory configuration failure; an explicit
-NO_STOCK food recipe may now be ordered in guest Room Service. They are included in the package.
+* `manage.py check` → no issues. `manage.py makemigrations --check --dry-run`
+  → "No changes detected" (data-only migration; no schema change).
+* `accounts.0032_manager_approval_permissions` on a scratch database:
+  * forward ensures all five MANAGER grants + writes audit marker;
+  * reverse restores the exact pre-migration grant set + writes reverse marker;
+  * re-apply is idempotent;
+  * a deliberately deleted `payroll.approve` MANAGER grant is recreated by 0032.
+  (`MIGRATION-0032-OK`, `GRANT-REPAIR-OK`.)
 
-## Not executed / limits
-No MySQL server tests, live production calls, external payment integration, physical scanners/printers,
-real-browser accessibility audit, visual mobile/desktop viewport checks or manual user acceptance test
-was executed. No claim of those passing is made. The existing responsive layout was reused rather
-than redesigned. The full repository backend suite beyond the named relevant modules was not run.
+## 5. Frontend tests
+
+* `node --test tests-js/test-department-page-access.js` → **24/24 PASS**
+  (23 baseline tests updated where Batch 07 intentionally changed behavior +
+  1 new `batch 07` sidebar/registry test).
+* Full `node --test tests-js/` → **701 pass / 10 fail of 711**; the pristine
+  baseline gives **700 pass / 10 fail of 710** — the same 10 failures
+  (accounting UI, manifest scope, deploy config, export options, table-wrap),
+  all unrelated to staff/approvals. No regressions; the +1 test is the new
+  Batch 07 test, passing.
+* `python3 frontend/validate.py` → **ALL OK** (73 HTML files incl. modified
+  `staff.html`, 33 standalone JS files incl. modified `dashboard.js` with
+  syntax checks).
+
+## 6. Requirement coverage (§TESTING)
+
+| Requirement | Evidence |
+|---|---|
+| Sidebar visibility | 24/24 dept-access tests incl. new Batch 07 sidebar test |
+| General Manager staff access | `test_general_manager_reads_but_cannot_write_staff_accounts` + GM sidebar test |
+| Manager access to all five approval categories | 5 API approval tests + capability test + inbox test |
+| Unauthorized staff access | 403 tests (approvals + staff collection) |
+| Direct API permission checks | All approval/staff tests exercise the HTTP endpoints |
+| Approval and rejection | Approve + reject tests incl. PO return-to-draft |
+| Duplicate approval prevention | Re-approval idempotency test |
+| Audit history | Uniform-evidence assertions on all six decision log actions |
+| Existing administrator privileges | Admin create/update/read test; admin-only queues/matrix/logs unchanged |
+| Existing General Manager privileges | GM keeps all five approvals (capability test); GM inbox queues resolved by capability |
+
+## 7. Known limitations
+
+* The 3 backend + 10 frontend pre-existing failures (listed above) exist on the
+  pristine tree and were left untouched as out-of-batch scope.
+* Stock-count variances remain approve-and-post only (no reject transition) —
+  the workflow's own pre-existing design, preserved deliberately.

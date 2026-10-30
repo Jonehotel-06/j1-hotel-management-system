@@ -1,53 +1,39 @@
-# Dependencies and module boundaries
+# Batch 07 — DEPENDENCIES
 
-## Runtime
-No new package, service, queue, websocket, cache server or external API is introduced.
-Use the existing backend/requirements.txt and existing static frontend deployment.
-Implementation uses Django transactions, row locks, database constraints, Django REST Framework,
-standard Python libraries, the central frontend API/config layer, existing modal/pagination/
-capability components, and the existing production queue.
+## New dependencies introduced
 
-Test environment: Python 3.13, Django 5.2.18, Django REST Framework 3.18.3,
-Node.js 20.20.2, SQLite. The supplied requirements already permit these package versions.
-MySQL driver/server were not installed or tested. No requirements or lockfile was changed.
+**None.** No package, library, service, migration dependency beyond the existing
+`accounts → 0031` + `audit` chain, and no new environment variable was added.
 
-## Exact inventory-owned dependency (no inventory files modified)
-Existing `apps.inventory.services.inventory_service` contracts:
-- `pos_stock_rules`: resolves only explicitly configured active recipes/direct-sale links.
-- `pos_stock_summaries`: existing raw inventory availability and open-order demand.
-- `request_pos_stock_consumption`: creates the existing source-keyed delivery hand-off.
-- `consume_stock_for_delivered_order`: existing delivery-time ingredient deduction/idempotency.
-- `restock_returned_pos_items`: unchanged path for explicit direct-sale product returns.
-- Existing recipe create/retire APIs and quantity conversion services remain the only recipe lifecycle.
+## Existing infrastructure reused (no changes to these modules)
 
-Existing `StockConsumptionRequest.payload.recipe_snapshot` accepts snapshots keyed by string menu ID,
-with `tracking_mode=NO_STOCK` and empty components. The POS integration uses that existing contract
-ONLY for newly created recipe-free prepared-food hand-offs. It does not manufacture recipe database
-records, mutate posted stock movements, rewrite previous hand-offs, or infer recipes from names/SKUs.
-An active NO_STOCK recipe already has its own snapshot and is not replaced.
+| Infrastructure | Reused for |
+|---|---|
+| `apps.accounts.capabilities` (`has_capability`, `ROLE_CAPABILITY_CODES`, persisted `RoleCapability`) | Manager/GM approval authorization |
+| `apps.core.permissions.HasCapability` | All five decision endpoints (unchanged gates) |
+| `apps.core.approvals.require_independent_approver` | Maker-checker separation (untouched) |
+| `apps.audit.services.log_action` + `AuditLog` | Uniform decision evidence (metadata extended only) |
+| Per-workflow services (`review_leave`, `approve_stock_count`, `approve_purchase_order`, `review_payroll_period`, `review_expense`) | Approval logic (untouched — Batch 07 calls them as-is) |
+| `frontend/js/auth.js` role normalization (`manager` → `general_manager`) | Manager page visibility (pre-existing) |
+| `PAGE_ACCESS` registry + `canOpenPage` + `navItemAllowed` | Sidebar/page gating (registry values updated, mechanism untouched) |
 
-Prepared balances/allocations/audit events are POS-owned and never raw StockBalance rows.
-Returned cooked-food lines bypass inventory restocking; existing financial return records/credits/
-refund permissions remain unchanged. Historical consumption snapshots distinguish direct-sale returns.
+## Cross-batch notes (documented, not changed)
 
-If another batch changes the above payload schema, mapping resolution, deduction event or return
-contract, reconcile that integration with the inventory owner. No independent inventory schema,
-valuation, procurement, raw-stock balance or accounting algorithm is included in this package.
-
-## Ordering and portal dependency
-POS create/submit/transition remain the single authoritative workflow for staff and guest orders.
-The guest service-request cancellation flow already delegates to POS transitions, so it receives
-portion release without modifying the guest-services module. Existing stay/folio eligibility,
-portal authentication, service routing, pricing, payment/ledger posting and bar stock rules stay intact.
-The only portal backend change is its menu availability projection.
-
-## Migration
-POS 0009 depends on POS 0008 and the existing swappable user model. No inventory migration dependency
-is added, because no inventory data migration or schema change is performed. Deploy the backend
-schema before enabling the frontend controls. All application instances must use the new submission
-checks before portion tracking is enabled.
-
-## Production validation dependency
-Run the five threaded prepared-food tests plus existing portal concurrency/isolation tests against
-a disposable MySQL test database with the deployed isolation policy. The supplied SQLite runner is
-for deterministic local concurrency checks and is not a substitute for production row-lock testing.
+* **Leave balances/validation, payroll calculations, inventory postings,
+  procurement/supplier workflows, expense posting rules, attendance** — owned
+  by other batches; Batch 07 modified none of their logic. Verification tests
+  assert their behavior is preserved (amounts unchanged, no silent
+  adjustments, validations enforced).
+* **Stock-count rejection:** the stock-count workflow has no reject/return
+  transition by design (approve-and-post only). Batch 07 did not invent one;
+  Task 5 requires only review-and-approve for this category.
+* **Retired `MANAGER` title:** new `MANAGER` assignments remain refused by
+  `assert_assignable_role` (approved-11-departments consolidation). Batch 07
+  grants the five approval capabilities to the `MANAGER` role itself, so any
+  account holding that title — past, restored, or reactivated — carries exactly
+  the defined approval authority. No hierarchy was created or altered.
+* **Frontend capability bootstrap:** approval buttons that are capability-gated
+  (`payroll.approve`, `expense.approve`, `procurement.approve`,
+  `inventory.adjust.approve`) render from `Auth.loadCapabilities()`; where a
+  role fallback exists it names `["admin", "general_manager"]`, which covers
+  `MANAGER` accounts via normalization. No fallback list was widened.

@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from apps.accounts.capabilities import has_capability
 from apps.accounts.models import User
 from apps.audit.services import log_action
+from apps.core.approval_audit import ApprovalCategory, approval_decision_metadata
 from apps.core.pagination import StandardPagination
 from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
@@ -641,10 +642,17 @@ class LeaveReviewView(APIView):
     permission_classes = [HasCapability]; required_capability = "leave.approve"
     def post(self, request, reference):
         serializer = LeaveReviewSerializer(data=request.data); serializer.is_valid(raise_exception=True)
-        leave_request = review_leave(leave_request=_leave_or_404(request, reference), reviewer=request.user,
+        before = _leave_or_404(request, reference)
+        leave_request = review_leave(leave_request=before, reviewer=request.user,
                                       approved=serializer.validated_data["approved"], review_note=serializer.validated_data.get("review_note", ""))
-        log_action(actor=request.user, action="LEAVE_REVIEWED", instance=leave_request, request=request,
-                   metadata={"reference": leave_request.reference, "status": leave_request.status})
+        metadata = {"reference": leave_request.reference, "status": leave_request.status}
+        metadata.update(approval_decision_metadata(
+            category=ApprovalCategory.LEAVE, reference=leave_request.reference,
+            initiated_by=before.staff, decided_by=request.user,
+            previous_status=before.status, new_status=leave_request.status,
+            note=leave_request.review_note,
+        ))
+        log_action(actor=request.user, action="LEAVE_REVIEWED", instance=leave_request, request=request, metadata=metadata)
         return success_response(LeaveRequestDetailSerializer(_leave_or_404(request, leave_request.reference, detail=True)).data,
                                 message="Leave request approved." if leave_request.status == LeaveRequest.Status.APPROVED else "Leave request rejected.")
 

@@ -59,11 +59,12 @@
       { label: "Notifications", href: "notifications.html", icon: "bell", view: "notifications" },
     ]},
     { group: "Administration", items: [
-      { label: "Staff", href: "staff.html", icon: "users", view: "staff", capabilities: ["staff.profile.manage", "staff.view"] },
-      /* Employment profiles are an HR/management surface. They used to have
-         no menu entry at all, so the departments the page admits had no way in
-         while everybody else was shown the admin-only staff directory. */
-      { label: "Staff Profiles", href: "staff-profile.html", icon: "users", view: "staff-profile" },
+      { label: "Staffs", href: "staff.html", icon: "users", view: "staff", capabilities: ["staff.profile.manage", "staff.view"] },
+      /* Batch 07: the Staff Profiles page is no longer a sidebar entry. The
+         page itself is unchanged and stays routable — the registry below
+         still admits its departments, and staff.html links to it (10-Tab
+         Profile, disciplinary "Manage") — it is simply reached from the
+         staff directory instead of the sidebar. */
       { label: "Workstations", href: "terminals.html", icon: "grid", view: "terminals", capabilities: ["terminal.manage"] },
       { label: "Audit Logs", href: "audit-logs.html", icon: "fileText", view: "audit-logs", role: "admin" },
       { label: "Settings", href: "settings.html", icon: "settings", view: "settings", role: "admin" },
@@ -162,7 +163,7 @@
     "workforce.html": { roles: ["admin", "general_manager", "accountant",
       "procurement_officer", "chef", "kitchen_assistant", "waiter", "porter",
       "receptionist", "housekeeping", "storekeeper", "security"] },
-    "staff.html": { roles: ADMIN_ONLY },
+    "staff.html": { roles: ["admin", "general_manager"] },
     "staff-profile.html": { roles: ["admin", "general_manager", "procurement_officer"] },
 
     /* Content, communication and administration. */

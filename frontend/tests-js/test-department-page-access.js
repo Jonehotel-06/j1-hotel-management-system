@@ -328,8 +328,8 @@ test("each department is admitted to its own screens and refused the others", ()
       ["bookings.html", "check-out.html", "guests.html", "payments.html", "pos.html", "settings.html"]],
     porter: [["laundry.html", "service-requests.html", "workforce.html"],
       ["payments.html", "check-out.html", "pos.html", "inventory.html", "settings.html"]],
-    general_manager: [["index.html", "bookings.html", "check-out.html", "payments.html", "accounting.html", "reports.html", "approvals.html", "staff-profile.html", "terminals.html", "service-qr.html", "workforce.html", "laundry.html", "pos.html", "inventory.html"],
-      ["settings.html", "audit-logs.html", "audit-log-details.html", "reviews.html", "staff.html"]],
+    general_manager: [["index.html", "bookings.html", "check-out.html", "payments.html", "accounting.html", "reports.html", "approvals.html", "staff.html", "staff-profile.html", "terminals.html", "service-qr.html", "workforce.html", "laundry.html", "pos.html", "inventory.html"],
+      ["settings.html", "audit-logs.html", "audit-log-details.html", "reviews.html"]],
     admin: [["index.html", "settings.html", "audit-logs.html", "audit-log-details.html", "reviews.html", "staff.html", "payroll.html", "everything-else-listed-below"],
       []],
     guest: [[], ["index.html", "bookings.html", "check-out.html", "payments.html", "pos.html", "workforce.html", "profile.html", "notifications.html"]],
@@ -538,14 +538,43 @@ test("the staff-profile and workforce cross-links are gated", () => {
   assert.match(profile, /canOpenPage\("workforce\.html"\)/, "and resolved through the registry");
 
   /* Admin Manager/Procurement (consolidated HR/Procurement role) and General
-     Manager have access to employment profiles while the owner-only staff.html
-     remains Admin-only. */
+     Manager have access to employment profiles. Batch 07: staff.html (the
+     "Staffs" directory) admits the administrator and the general manager,
+     while staff-profile.html stays routable but is no longer a sidebar entry. */
   assert.equal(PAGE_ACCESS["staff-profile.html"].roles.includes("procurement_officer"), true);
   const nav = JONE.dashboard.NAV.flatMap((g) => g.items.map((i) => i.href));
-  assert.ok(nav.includes("staff-profile.html"), "Staff Profiles is a sidebar entry");
-  assert.ok(nav.includes("staff.html"), "and the admin staff directory keeps its own entry");
+  assert.equal(nav.includes("staff-profile.html"), false, "Staff Profiles is not a sidebar entry (Batch 07)");
+  assert.ok(nav.includes("staff.html"), "and the staff directory keeps its own entry");
   assert.equal(asRole("procurement_officer").canOpenPage("staff-profile.html"), true);
-  assert.equal(asRole("procurement_officer").canOpenPage("staff.html"), false, "which non-admin staff are not promised");
+  assert.equal(asRole("procurement_officer").canOpenPage("staff.html"), false, "which non-manager staff are not promised");
+  assert.equal(asRole("general_manager").canOpenPage("staff.html"), true, "which the general manager is promised");
+});
+
+test("batch 07: Staffs sidebar entry and staff-profile routing", () => {
+  /* Exactly one staff directory entry, labelled "Staffs", pointing at the
+     existing staff management interface — no duplicate page. */
+  const staffEntries = JONE.dashboard.NAV.flatMap((g) => g.items).filter((i) => i.href === "staff.html");
+  assert.equal(staffEntries.length, 1, "the sidebar links the staff directory exactly once");
+  assert.equal(staffEntries[0].label, "Staffs");
+  /* The removed sidebar entry must not linger anywhere in the menu. */
+  const hrefs = JONE.dashboard.NAV.flatMap((g) => g.items.map((i) => i.href));
+  assert.equal(hrefs.includes("staff-profile.html"), false);
+  /* The registries: staff.html admits admin + general manager, and the
+     staff-profile page keeps its own audience (routable, not listed). */
+  assert.deepEqual([...PAGE_ACCESS["staff.html"].roles].sort(), ["admin", "general_manager"]);
+  assert.deepEqual([...PAGE_ACCESS["staff-profile.html"].roles].sort(),
+    ["admin", "general_manager", "procurement_officer"]);
+  /* The general manager is actually shown the entry: the page gate and the
+     menu entry resolve together through navItemAllowed. */
+  asRole("general_manager");
+  assert.equal(JONE.dashboard.navItemAllowed(staffEntries[0]), true,
+    "the general manager must be shown the Staffs sidebar entry");
+  /* Departments outside the audience are not promised the directory. */
+  for (const role of ["receptionist", "waiter", "chef", "housekeeping", "storekeeper",
+                      "security", "porter", "accountant", "procurement_officer"]) {
+    asRole(role);
+    assert.equal(JONE.dashboard.canOpenPage("staff.html"), false, `${role} must not open staff.html`);
+  }
 });
 
 test("the Reception Biometric Terminal is front desk + management only", () => {

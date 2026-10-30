@@ -185,11 +185,18 @@
 <script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script><script src="../js/operations.js?v=1.1.23"></script>
 <script>
   JONE.ui.initChrome();
-  JONE.dashboard.boot("admin");
+  var __staffAllowed = JONE.dashboard.boot(["admin", "general_manager"]);
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
 
 (function(){
   "use strict";
+  if (!__staffAllowed) return;
+  /* Batch 07: the General Manager opens this page read-only for account
+     management — the roster, profile cards, departments and disciplinary
+     lists load, while account creation, edits, activation and the
+     administrator-only permission matrix stay behind this flag AND the
+     server-side IsAdminOrManagerRead gate. */
+  var isStaffAdmin = !!(window.Auth && window.Auth.hasRole && window.Auth.hasRole("admin"));
   var OPS = JONE.operations;
   var rows = document.querySelector("[data-rows]");
   var q = document.getElementById("q");
@@ -201,14 +208,18 @@
        email_verified, profile_image_url, date_joined, last_login, is_staff }
      Detail (GET /{id}/) adds the nested `profile` object.
 
-     Role enforcement is ADMIN-only on the backend (IsAdminRole) — this page is
-     booted with boot("admin"), and every write below is re-checked server-side,
-     so a tampered localStorage role changes nothing but what is visible. */
+     Role enforcement on the backend is administrator-full / manager-tier-read
+     (IsAdminOrManagerRead): the General Manager may list and view accounts,
+     while every write below is administrator-only server-side. This page is
+     booted for ["admin", "general_manager"], hides the write controls from
+     non-administrators, and re-checks every write server-side, so a tampered
+     localStorage role changes nothing but what is visible. */
   function esc(x){ return JONE.esc(x == null || x === "" ? "—" : String(x)); }
 
   function render(list){
     if(!list.length){
-      JONE.dashboard.DATA.empty(rows, "users", "No staff found", "Create an operational staff account.", 5);
+      JONE.dashboard.DATA.empty(rows, "users", "No staff found",
+        isStaffAdmin ? "Create an operational staff account." : "No staff accounts match this view.", 5);
       return;
     }
     rows.innerHTML = list.map(function(u){
@@ -227,6 +238,15 @@
           '<span data-icon="' + icon + '" data-size="13"></span>' +
           '<span class="btn-label">' + JONE.esc(label) + "</span></button>";
       }
+      /* Account writes (edit / activate / deactivate) are administrator-only;
+         the General Manager keeps the read-only 10-Tab Profile link and the
+         profile card. The server re-checks every write regardless. */
+      var writeActions = isStaffAdmin
+        ? action("data-edit", "edit", "Edit") +
+          (u.is_active
+            ? action("data-deactivate", "lock", "Deactivate")
+            : action("data-activate", "check", "Activate"))
+        : "";
       return '<tr>' +
         '<td data-label="Staff"><div class="staff-cell">' + pic +
           '<span class="staff-cell-text"><strong title="' + JONE.esc(name) + '">' + esc(name) + (u.employee_code ? ' <small class="muted">(' + JONE.esc(u.employee_code) + ')</small>' : '') + "</strong>" +
@@ -239,10 +259,7 @@
           '<button class="btn btn-sm btn-outline" data-profile="' + id + '"' +
             ' aria-label="View profile for ' + JONE.esc(name) + '" title="Profile">' +
             '<span data-icon="user" data-size="13"></span><span class="btn-label">Card</span></button>' +
-          action("data-edit", "edit", "Edit") +
-          (u.is_active
-            ? action("data-deactivate", "lock", "Deactivate")
-            : action("data-activate", "check", "Activate")) +
+          writeActions +
         "</div></td>" +
       "</tr>";
     }).join("");
@@ -288,9 +305,20 @@
      It is still an account, so it stays reachable through one clearly-labelled
      button that opens the same edit form; an owner who wants their own details
      manages them from the profile page. */
+  /* Administrator-only controls are removed from the page for the General
+     Manager: account creation, the owner-account shortcut (it opens the
+     account edit form), and the permission matrix tab (its API is
+     administrator-only). Reads keep working for both roles. */
+  if (!isStaffAdmin) {
+    var newStaffBtn = document.querySelector("[data-new]");
+    if (newStaffBtn) newStaffBtn.hidden = true;
+    var permTabBtn = document.getElementById("btn-tab-permissions");
+    if (permTabBtn) permTabBtn.hidden = true;
+  }
+
   async function loadOwnerAccount(){
     var btn = document.querySelector("[data-owner-account]");
-    if (!btn) return;
+    if (!btn || !isStaffAdmin) { if (btn) btn.hidden = true; return; }
     try {
       var res = await window.API.list("users", { role: "ADMIN", page_size: 5 });
       var owner = (window.API.normalizeList(res.data, res.pagination).items || [])[0];
@@ -315,7 +343,7 @@
     var p = e.target.closest && e.target.closest("[data-profile]");
     if (p) {
       JONE.dashboard.staffProfileModal(p.getAttribute("data-profile"), {
-        canManage: true,
+        canManage: isStaffAdmin,
         onChanged: load,
       });
       return;

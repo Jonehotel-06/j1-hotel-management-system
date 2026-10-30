@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 
 from apps.accounts.capabilities import has_capability
 from apps.audit.services import log_action
+from apps.core.approval_audit import ApprovalCategory, approval_decision_metadata
 from apps.core.pagination import StandardPagination
 from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
@@ -455,20 +456,28 @@ class ExpenseReviewView(APIView):
     def post(self, request, reference):
         serializer = ExpenseReviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        expense = _expense_queryset().filter(reference=reference).first()
-        if expense is None:
+        before = _expense_queryset().filter(reference=reference).first()
+        if before is None:
             raise NotFound("Expense not found.")
         expense = review_expense(
-            expense=expense,
+            expense=before,
             reviewer=request.user,
             **serializer.validated_data,
         )
+        metadata = {"reference": expense.reference, "status": expense.status}
+        approval_note = getattr(getattr(expense, "approval_request", None), "review_note", "")
+        metadata.update(approval_decision_metadata(
+            category=ApprovalCategory.EXPENSE, reference=expense.reference,
+            initiated_by=before.requested_by, decided_by=request.user,
+            previous_status=before.status, new_status=expense.status,
+            note=approval_note or serializer.validated_data.get("review_note", ""),
+        ))
         log_action(
             actor=request.user,
             action="EXPENSE_REVIEWED",
             instance=expense,
             request=request,
-            metadata={"reference": expense.reference, "status": expense.status},
+            metadata=metadata,
         )
         return success_response(
             ExpenseDetailSerializer(_expense_or_404(request, expense.reference, detail=True)).data,

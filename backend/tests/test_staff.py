@@ -57,8 +57,17 @@ class RoleGateTests(StaffBase):
     def test_users_admin_requires_admin(self):
         self.auth(self.receptionist)
         self.assertEqual(self.client.get("/api/admin/users/").status_code, 403)
+        # Batch 07: the manager tier READS the staff account collection for
+        # the staff management interface; account writes stay admin-only.
         self.auth(self.manager)
-        self.assertEqual(self.client.get("/api/admin/users/").status_code, 403)
+        self.assertEqual(self.client.get("/api/admin/users/").status_code, 200)
+        self.assertEqual(self.client.post("/api/admin/users/", {}, format="json").status_code, 403)
+        self.assertEqual(
+            self.client.patch(
+                f"/api/admin/users/{self.receptionist.pk}/", {"phone": "08030000000"}, format="json"
+            ).status_code,
+            403,
+        )
         self.auth(self.admin)
         self.assertEqual(self.client.get("/api/admin/users/").status_code, 200)
 
