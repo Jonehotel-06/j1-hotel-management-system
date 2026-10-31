@@ -340,7 +340,15 @@ class AdminBookingCheckOutView(_BookingActionView):
             booking_outstanding_balance,
         )
 
+        # BATCH 01 (task 7). `outstanding_balance` is clamped at zero, so a
+        # guest who overpaid used to leave looking settled. The credit the
+        # hotel owes back is now reported next to it.
+        from apps.finance.services.guest_receivables_service import booking_balance_detail
+
         folio_charge_balance = booking_folio_charge_balance(booking=booking)
+        detail = booking_balance_detail(
+            booking=booking, folio_charge_balance=folio_charge_balance
+        )
         return success_response(
             {
                 "booking_reference": booking.booking_reference,
@@ -354,6 +362,8 @@ class AdminBookingCheckOutView(_BookingActionView):
                         booking=booking, folio_charge_balance=folio_charge_balance
                     )
                 ),
+                "credit_balance": detail["credit_balance"],
+                "signed_balance": detail["signed_balance"],
                 "currency": booking.currency,
             },
             message="Guest checked out.",

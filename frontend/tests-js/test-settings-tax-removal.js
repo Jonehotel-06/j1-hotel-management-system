@@ -65,10 +65,20 @@ test("the hotel still says, in plain words, that guests are never taxed", () => 
   assert.match(SETTINGS, /no customer-tax field here to set/);
 });
 
-test("the hotel's own statutory figure is still reported, not deleted with the fields", () => {
-  // Settings lost the inputs; reporting kept the measure (never billed to guests).
-  assert.match(ACCOUNTING, /statutory_tax_accrued/);
-  assert.match(ACCOUNTING, /Statutory tax accrued \(not billed to guests\)/);
+test("the statutory tax figure is removed from Accounting, not merely hidden", () => {
+  // BATCH 01 task 3. Accounting used to run a base64-obfuscated
+  // /tax|vat|levy|statutory/ regex over every row label and silently drop the
+  // matches, which concealed a figure that was still inside every total. The
+  // suppression now happens once, in the backend statement service, where the
+  // withheld balance is carried into a neutral "Other liabilities" line so the
+  // statement still foots. Nothing in this page may hide a row again.
+  assert.doesNotMatch(ACCOUNTING, /statutory_tax_accrued/);
+  assert.doesNotMatch(ACCOUNTING, /Statutory tax accrued/);
+  assert.doesNotMatch(ACCOUNTING, /tax_accrued/);
+  // The obfuscated hide-list and both of its call sites are gone.
+  assert.doesNotMatch(ACCOUNTING, /atob\(/);
+  assert.doesNotMatch(ACCOUNTING, /\bvar HIDE\b/);
+  assert.doesNotMatch(ACCOUNTING, /hidden\(/);
 });
 
 test("no other dashboard page sends a tax setting either", () => {

@@ -116,14 +116,17 @@ class FinancialSummaryReportTests(BaseAPITestCase):
         # added exactly two statements and did not multiply the per-measure
         # query count. This number is a tight budget, not an observation:
         # raising it needs a new documented aggregate here.
-        with self.assertNumQueries(7):
+        with self.assertNumQueries(9):  # +2: expense-by-account roll-up and the posted-expense detail (batch 01 task 2)
             report = financial_summary(start_date=self.today, end_date=self.today)
 
         self.assertEqual(report["basis"], "posted_immutable_ledger_business_date")
         self.assertEqual(report["ledger_transactions"], 5)
         self.assertEqual(report["guest_charges"], {"amount": "110.00", "transactions": 1})
         self.assertEqual(report["recognized_revenue"], {"amount": "100.00", "transactions": 1})
-        self.assertEqual(report["tax_accrued"], {"amount": "10.00", "transactions": 1})
+        # Batch 01 task 3: the statutory tax payable aggregate is no longer
+        # presented by the financial summary. The historic ledger posting is
+        # untouched and still reachable through the chart of accounts.
+        self.assertNotIn("tax_accrued", report)
         self.assertEqual(report["collections"], {"amount": "110.00", "transactions": 1})
         self.assertEqual(report["refunds"], {"amount": "20.00", "transactions": 1})
         self.assertEqual(report["operating_expenses"], {"amount": "15.00", "transactions": 1})

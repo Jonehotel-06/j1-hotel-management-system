@@ -275,7 +275,7 @@ class AccommodationLedgerTaxTests(BaseAPITestCase):
             start_date=self.check_in - timedelta(days=1),
             end_date=self.check_out + timedelta(days=1),
         )
-        self.assertEqual(summary["tax_accrued"]["amount"], "1500.00")           # history
+        self.assertNotIn("tax_accrued", summary)   # batch 01 task 3: withdrawn from presentation
         self.assertNotIn("statutory_tax_accrued", summary)  # new accruals removed
         self.assertEqual(summary["guest_charges"]["amount"], "41500.00")
         self.assertEqual(summary["recognized_revenue"]["amount"], "40000.00")

@@ -290,6 +290,20 @@ class SupplierPaymentVisibilityTests(BaseAPITestCase):
         own ledger aggregate; only the opening payable balance and the approval
         counts make their own (indexed) statements. This pins that budget so a
         future measure cannot quietly add an N+1.
+
+        BATCH 01 raised the budget from 7 to 9. The summary grew from roughly
+        a dozen measures to twenty-two and each addition is still a conditional
+        aggregate inside an existing statement; the two extra statements are
+        both fixed-cost and both unavoidable:
+
+        * one grouped read of ``PosOrder.reference`` -> ``mode``, which is how
+          task 1 tells restaurant and bar sales apart from room service
+          instead of guessing from the revenue account;
+        * one grouped read of the expense breakdown by account and department,
+          which backs the task 2 total.
+
+        Neither scales with the number of measures, rows or days, which is the
+        property this test exists to protect.
         """
         from django.test.utils import CaptureQueriesContext
         from django.db import connection
@@ -298,7 +312,7 @@ class SupplierPaymentVisibilityTests(BaseAPITestCase):
         with CaptureQueriesContext(connection) as captured:
             financial_summary(start_date=today, end_date=today, currency="NGN")
         count = len(captured.captured_queries)
-        self.assertLessEqual(count, 7, f"financial_summary issued {count} statements, budget is 7")
+        self.assertLessEqual(count, 9, f"financial_summary issued {count} statements, budget is 9")
 
     def test_every_reported_measure_documents_its_own_definition(self):
         definitions = self.summary()["supplier_payments"]["definitions"]

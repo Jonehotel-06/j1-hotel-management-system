@@ -500,11 +500,24 @@ const API = (() => {
         new APIError(0, `"${kind}" is not a supported export format.`, { code: "UNSUPPORTED_EXPORT_FORMAT" })
       );
     }
+    /* `params` MUST be merged last. Spreading `...opts` after it let a caller's
+       own `opts.params` replace the merged object wholesale, which silently
+       dropped `start`, `end` and `export` from the query string: the server
+       then answered with the ordinary JSON report instead of a file, the blob
+       guard in requestOnce rejected it, and every Excel/PDF button in
+       Accounting and Reports failed with "The server did not return a
+       downloadable file". Pull `params` out of `opts` so it can never be
+       re-applied after the merge. */
+    const { params: callerParams, ...rest } = opts;
+    const query = { ...(callerParams || {}) };
+    if (start !== undefined && start !== null && start !== "") query.start = start;
+    if (end !== undefined && end !== null && end !== "") query.end = end;
+    query.export = extension;
     return downloadFile(path, {
+      ...rest,
       filename: filename || `report-${start}_${end}.${extension}`,
       mimeType: MIME_BY_EXTENSION[extension],
-      params: { ...(opts.params || {}), start, end, export: extension },
-      ...opts
+      params: query
     });
   }
 

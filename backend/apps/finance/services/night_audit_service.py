@@ -158,75 +158,103 @@ def daily_reconciliation(*, business_date=None) -> dict:
     }
 
 
-BUCKETS = (
-    ("current", "Current (0–30 days)", 0, 30),
-    ("days_31_60", "31–60 days", 31, 60),
-    ("days_61_90", "61–90 days", 61, 90),
-    ("over_90", "Over 90 days", 91, None),
-)
+# Aging buckets now live with the receivable calculation itself, in
+# ``guest_receivables_service.AGING_BUCKETS`` (batch 01, task 7).
 
 
-def accounts_receivable_aging(*, as_of=None, limit=100) -> dict:
-    """Outstanding guest balances from bookings, aged from check-in.
+def accounts_receivable_aging(*, as_of=None, limit=100, currency: str = "NGN") -> dict:
+    """Aged guest receivables, taken from the guest-receivable control account.
 
-    A booking's receivable is its authoritative ``amount_due``; cancelled
-    bookings never owed the hotel money and are excluded.
+    Batch 01, task 7. The previous implementation added ``Booking.amount_due``
+    (a contract balance covering nights that have not happened yet) to a
+    partial folio-charge map, clamped the result at zero, loaded every
+    non-cancelled booking into Python, ignored ``as_of`` for the folio half,
+    counted drafts and voided transactions, and labelled every currency as
+    naira. It could not agree with the balance sheet and it silently deleted
+    guest credit balances.
+
+    This now reports the posted ledger: the same evidence the balance sheet
+    uses, with a reconciliation block proving the two agree. The response keys
+    the dashboard already consumes (``as_of``, ``currency``,
+    ``total_outstanding``, ``buckets``, ``items``, ``items_truncated``,
+    ``definitions``) are preserved; everything else is additive.
     """
-    from apps.bookings.models import Booking
-    from .folio_service import booking_folio_charge_map
+    from .guest_receivables_service import AGING_BUCKETS, guest_receivables
 
     as_of = as_of or hotel_today()
-    outstanding = (
-        Booking.objects.exclude(status=Booking.Status.CANCELLED)
-        .filter(check_in__lte=as_of)
-        .select_related("guest")
-        .order_by("check_in", "pk")
-    )
-    buckets = {key: {"label": label, "total": ZERO, "count": 0} for key, label, _low, _high in BUCKETS}
-    items = []
-    total = ZERO
-    # Fetch the bounded booking cohort once; one aggregate covers every folio,
-    # including multiple room-level folios belonging to the same booking.
-    bookings = list(outstanding)
-    extras = booking_folio_charge_map(booking_ids=[b.pk for b in bookings])
-    for booking in bookings:
-        due = max(_dec(booking.amount_due) + _dec(extras.get(booking.pk)), ZERO)
-        if due <= ZERO:
-            continue
-        age_days = max((as_of - (booking.check_in or booking.created_at.date())).days, 0)
-        bucket_key = next(
-            key for key, _label, low, high in BUCKETS if age_days >= low and (high is None or age_days <= high)
-        )
-        buckets[bucket_key]["total"] += due
-        buckets[bucket_key]["count"] += 1
-        total += due
-        items.append({
-            "booking_reference": booking.booking_reference,
-            "guest": booking.guest.full_name if booking.guest_id else "",
-            "check_in": booking.check_in.isoformat() if booking.check_in else None,
-            "check_out": booking.check_out.isoformat() if booking.check_out else None,
-            "status": booking.status,
-            "payment_status": booking.payment_status,
-            "total_amount": money(booking.total_amount),
-            "amount_paid": money(booking.amount_paid),
-            "balance_due": money(due),
-            "folio_charges_net": money(extras.get(booking.pk, ZERO)),
-            "age_days": age_days,
-            "bucket": bucket_key,
-        })
-    items.sort(key=lambda row: (-Decimal(row["balance_due"]), row["age_days"]))
+    report = guest_receivables(as_of=as_of, currency=currency, limit=limit)
+    labels = {
+        "current": "Current (not yet due)",
+        "days_1_30": "1–30 days",
+        "days_31_60": "31–60 days",
+        "days_61_90": "61–90 days",
+        "days_over_90": "Over 90 days",
+    }
+    items = [
+        {
+            "booking_reference": row["booking_reference"],
+            "guest": row["guest_name"],
+            "folio_reference": row["folio_reference"],
+            "stay_reference": row["stay_reference"],
+            "rooms": row["rooms"],
+            "check_in": row["check_in"],
+            "check_out": row["check_out"],
+            "status": row["booking_status"],
+            "folio_status": row["folio_status"],
+            "currency": row["currency"],
+            "accommodation_charges": row["accommodation_charges"],
+            "food_beverage_charges": row["food_beverage_charges"],
+            "other_charges": row["other_charges"],
+            "total_charges": row["total_charges"],
+            "payments_allocated": row["payments_allocated"],
+            "discounts": row["discounts"],
+            "refunds": row["refunds"],
+            "balance_due": row["outstanding"],
+            "credit_balance": row["credit_balance"],
+            "age_days": row["age_days"],
+            "bucket": row["age_bucket"],
+        }
+        for row in report["items"]
+    ]
     return {
-        "as_of": as_of.isoformat(),
-        "currency": "NGN",
-        "total_outstanding": money(total),
+        "as_of": report["as_of"],
+        "currency": report["currency"],
+        "total_outstanding": report["total_outstanding"],
+        "gross_receivables": report["gross_receivables"],
+        "guest_credit_balances": report["guest_credit_balances"],
+        "unassigned_receivables": report["unassigned_receivables"],
+        "unapplied_guest_deposits": report["unapplied_guest_deposits"],
+        "net_receivable": report["net_receivable"],
+        "folios_owing": report["folios_owing"],
+        "folios_in_credit": report["folios_in_credit"],
+        "stay_value_not_yet_charged": report["stay_value_not_yet_charged"],
+        "bookings_not_yet_charged": report["bookings_not_yet_charged"],
+        "total_stay_exposure": report["total_stay_exposure"],
         "buckets": [
-            {"key": key, "label": data["label"], "total": money(data["total"]), "count": data["count"]}
-            for key, data in buckets.items()
+            {
+                "key": key,
+                "label": labels.get(key, key),
+                "total": report["buckets"][key],
+                "count": report["bucket_counts"][key],
+            }
+            for key, _low, _high in AGING_BUCKETS
         ],
-        "items": items[:limit],
-        "items_truncated": len(items) > limit,
+        "items": items,
+        "by_booking": report["by_booking"],
+        "items_truncated": report["items_truncated"],
+        "reconciliation": report["reconciliation"],
+        "other_currency_balances": report["other_currency_balances"],
         "definitions": {
-            "balance_due": "Booking total minus payments plus posted net non-accommodation folio charges across all room folios; no future bookings.",
-            "age_basis": "Days since check-in; future check-ins age as current.",
+            "balance_due": (
+                "Debit balance of the guest's folio on ASSET.GUEST_RECEIVABLE at the as-of date, from "
+                "posted transactions only. Charges actually raised, less payments actually applied; "
+                "nights not yet posted are not a receivable."
+            ),
+            "credit_balance": (
+                "Credit balance on the same folio — an advance or overpayment the hotel holds. Reported, "
+                "never clamped to zero and never netted against another guest."
+            ),
+            "age_basis": "Days since arrival (or folio opening when there is no booking); future arrivals age as current.",
+            **report["definitions"],
         },
     }

@@ -97,8 +97,10 @@
   </div>
   <div class="panel-body">
     <section class="kpi-grid is-loading" data-finance-kpis aria-busy="true" aria-label="Ledger financial summary">
-      <div class="kpi"><div class="kpi-label">Recognized revenue</div><div class="kpi-value" data-rp="recognized-revenue">--</div><div class="kpi-sub" data-rp="recognized-revenue-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Restaurants and Bar Collections</div><div class="kpi-value" data-rp="restaurant-bar-collections">--</div><div class="kpi-sub" data-rp="restaurant-bar-collections-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Total revenue earned</div><div class="kpi-value" data-rp="recognized-revenue">--</div><div class="kpi-sub" data-rp="recognized-revenue-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Collections</div><div class="kpi-value" data-rp="collections">--</div><div class="kpi-sub" data-rp="collections-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Total expenses</div><div class="kpi-value" data-rp="total-expenses">--</div><div class="kpi-sub" data-rp="total-expenses-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Operating expenses</div><div class="kpi-value" data-rp="operating-expenses">--</div><div class="kpi-sub" data-rp="operating-expenses-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Refunds</div><div class="kpi-value" data-rp="refunds">--</div><div class="kpi-sub" data-rp="refunds-sub">&nbsp;</div></div>
     </section>
@@ -113,7 +115,7 @@
         </table></div></div>
       </section>
       <section class="panel" style="border:1px solid var(--color-border);">
-                <div class="panel-head"><h2>Bookings &amp; occupancy</h2><div class="panel-actions"><span class="caption" data-rp="operational-summary">Loading operational summary\u2026</span><button class="btn btn-sm btn-outline" id="export-occ-xlsx" type="button">Occupancy Excel</button><button class="btn btn-sm btn-outline" id="export-occ-pdf" type="button">Occupancy PDF</button></div></div>
+                <div class="panel-head"><h2>Bookings &amp; occupancy</h2><div class="panel-actions"><span class="caption" data-rp="operational-summary">Loading operational summary\u2026</span><button class="btn btn-sm btn-outline" id="export-occ-xlsx" type="button">Occupancy Excel</button><button class="btn btn-sm btn-outline" id="export-occ-pdf" type="button">Occupancy PDF</button><button class="btn btn-sm btn-outline" id="export-bkg-xlsx" type="button">Bookings Excel</button><button class="btn btn-sm btn-outline" id="export-bkg-pdf" type="button">Bookings PDF</button></div></div>
         <div class="panel-body no-pad"><div class="table-wrap"><table class="table">
           <thead><tr><th>Status</th><th>Count</th></tr></thead>
           <tbody data-tbody="report-bookings"></tbody>
@@ -192,18 +194,27 @@
 
   var FINANCE_MEASURES=[
     { label:"Guest charges", key:"guest_charges" },
-    { label:"Recognized revenue", key:"recognized_revenue" },
+    { label:"Total revenue earned", key:"recognized_revenue" },
+    { label:"Accommodation earned (rooms)", key:"accommodation_revenue" },
+    { label:"Restaurants and bar revenue earned", key:"restaurant_bar_revenue" },
+    { label:"Restaurants and Bar Collections", key:"restaurant_bar_collections" },
+    { label:"Room service revenue earned", key:"room_service_revenue" },
+    { label:"Other operating income", key:"other_operating_revenue" },
     { label:"Collections", key:"collections" },
+    { label:"Booking payments received (cash)", key:"booking_payments_received" },
     { label:"Refunds", key:"refunds" },
     { label:"Net collections", key:"net_collections" },
     { label:"Discounts", key:"discounts" },
+    { label:"Total expenses", key:"total_expenses" },
     { label:"Operating expenses", key:"operating_expenses" },
+    { label:"Payroll expenses", key:"payroll_expenses" },
     { label:"Inventory acquisitions", key:"inventory_acquisitions" },
     { label:"Cash paid-out", key:"cash_paid_out" },
     { label:"Payroll payments", key:"payroll_payments" },
     { label:"Payroll payment reversals", key:"payroll_payment_reversals" },
     { label:"Net salary paid", key:"net_payroll_payments" },
-    { label:"Gross operating result", key:"gross_operating_result" }
+    { label:"Gross operating result", key:"gross_operating_result" },
+    { label:"Net result", key:"net_result" }
   ];
 
   function setKpi(name,val){
@@ -326,8 +337,10 @@
     setFinanceKpisLoading(false);
     var currency=reportCurrency(latest.financial);
     var kpis=[
+      { name:"restaurant-bar-collections", key:"restaurant_bar_collections" },
       { name:"recognized-revenue", key:"recognized_revenue" },
       { name:"collections", key:"collections" },
+      { name:"total-expenses", key:"total_expenses" },
       { name:"operating-expenses", key:"operating_expenses" },
       { name:"refunds", key:"refunds" }
     ];
@@ -549,19 +562,37 @@
       JONE.ui.toast((err&&err.message)||"Export failed.","error");
     }).then(function(){ if(button) button.disabled=false; });
   }
-  function exportOccupancy(kind){
+  /* BATCH 01 TASK 8. One exporter for the operational reports. Bookings had
+     no export at all on the server, so it is wired here now that
+     /reports/bookings/ answers ?export=xlsx|pdf with a real file instead of a
+     JSON envelope under an .xlsx name.
+     /reports/revenue/ gained the same server-side branch but is deliberately
+     NOT given a button: this page reports money from the ledger summary, and
+     a second "revenue" export fed by the payments projection is exactly the
+     collections-vs-income conflation task 1 and task 4 set out to remove. */
+  function exportOperational(endpoint,slug,label,kind){
     var dates=activeDates();
     if(!validExportDates(dates)) return;
-    window.API.downloadReport(window.APP_CONFIG.API_ENDPOINTS.reportsOccupancy,kind,{
-      start:dates.from, end:dates.to, params:{ start_date:dates.from, end_date:dates.to },filename:"jone-occupancy-"+dates.from+"-to-"+dates.to,label:"Occupancy report"
+    window.API.downloadReport(endpoint,kind,{
+      start:dates.from, end:dates.to, params:{ start_date:dates.from, end_date:dates.to },filename:"jone-"+slug+"-"+dates.from+"-to-"+dates.to,label:label
     }).then(function(result){
-      JONE.ui.toast("Occupancy " + (kind === "xlsx" ? "Excel" : "PDF") + " downloaded: " + result.filename, "success");
-    },function(err){ JONE.ui.toast((err && err.message) || "The occupancy export could not be downloaded.", "error"); });
+      JONE.ui.toast(label + " " + (kind === "xlsx" ? "Excel" : "PDF") + " downloaded: " + result.filename, "success");
+    },function(err){ JONE.ui.toast((err && err.message) || ("The " + label.toLowerCase() + " export could not be downloaded."), "error"); });
+  }
+  function exportOccupancy(kind){
+    exportOperational(window.APP_CONFIG.API_ENDPOINTS.reportsOccupancy,"occupancy","Occupancy report",kind);
+  }
+  function exportBookings(kind){
+    exportOperational(window.APP_CONFIG.API_ENDPOINTS.reportsBookings,"bookings","Bookings report",kind);
   }
   var occXlsxBtn=document.getElementById("export-occ-xlsx");
   if(occXlsxBtn) occXlsxBtn.addEventListener("click",function(){ exportOccupancy("xlsx"); });
   var occPdfBtn=document.getElementById("export-occ-pdf");
   if(occPdfBtn) occPdfBtn.addEventListener("click",function(){ exportOccupancy("pdf"); });
+  var bkgXlsxBtn=document.getElementById("export-bkg-xlsx");
+  if(bkgXlsxBtn) bkgXlsxBtn.addEventListener("click",function(){ exportBookings("xlsx"); });
+  var bkgPdfBtn=document.getElementById("export-bkg-pdf");
+  if(bkgPdfBtn) bkgPdfBtn.addEventListener("click",function(){ exportBookings("pdf"); });
   var xlsxBtn=document.getElementById("export-xlsx");
   if(xlsxBtn) xlsxBtn.addEventListener("click",function(){ downloadLedgerExport("xlsx"); });
   var pdfBtn=document.getElementById("export-pdf");

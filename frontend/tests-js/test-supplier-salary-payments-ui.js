@@ -32,13 +32,29 @@ test("Accounting records supplier payments with an optional receipt", () => {
   assert.match(ACCOUNTING, />Paid "/);
 });
 
-test("Accounting renders balance sheet and cash flow statements", () => {
+test("Accounting renders the balance sheet without a cash flow or equity section", () => {
+  // BATCH 01 tasks 5 and 6. The Financial statements tab keeps the balance
+  // sheet and loses the cash-flow statement entirely: section, table, caption
+  // and the API call that fed it. The equity section is replaced by net
+  // assets, which is identical to total equity, so the statement stays true.
   assert.match(ACCOUNTING, /id="bs-load"/);
   assert.match(ACCOUNTING, /data-tbody="bs-sheet"/);
-  assert.match(ACCOUNTING, /data-tbody="cf-flow"/);
   assert.match(ACCOUNTING, /API_ENDPOINTS\.financeBalanceSheet/);
-  assert.match(ACCOUNTING, /API_ENDPOINTS\.financeCashFlow/);
-  assert.match(ACCOUNTING, /Opening balance offset/);
+
+  assert.doesNotMatch(ACCOUNTING, /data-tbody="cf-flow"/);
+  assert.doesNotMatch(ACCOUNTING, /API_ENDPOINTS\.financeCashFlow/);
+  assert.doesNotMatch(ACCOUNTING, /data-cf=/);
+  // No heading, caption or printed section renders the statement any more.
+  // (The source still *explains* the removal in comments, which is wanted.)
+  assert.doesNotMatch(ACCOUNTING, /<h[23][^>]*>Cash flow/);
+  assert.doesNotMatch(ACCOUNTING, /'<h2>Cash flow<\/h2>'/);
+  assert.doesNotMatch(ACCOUNTING, /Balance sheet and cash flow/);
+
+  assert.doesNotMatch(ACCOUNTING, /sheet\.equity/);
+  assert.doesNotMatch(ACCOUNTING, /total_liabilities_and_equity/);
+  assert.doesNotMatch(ACCOUNTING, /Opening balance offset/);
+  assert.match(ACCOUNTING, /sheet\.net_assets/);
+  assert.match(ACCOUNTING, /Net assets \(total assets − total liabilities\)/);
 });
 
 test("Payroll salary payment form accepts an optional receipt link or file", () => {

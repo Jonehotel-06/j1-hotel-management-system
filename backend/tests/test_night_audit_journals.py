@@ -86,11 +86,21 @@ class NightAuditTests(BaseAPITestCase):
         response = self.client.get("/api/admin/finance/reports/ar-aging/")
         self.assertEqual(response.status_code, 200, response.content)
         data = response.json()["data"]
-        self.assertEqual(data["total_outstanding"], "8000.00")
-        over90 = [b for b in data["buckets"] if b["key"] == "over_90"][0]
-        self.assertEqual(over90["total"], "8000.00")
-        self.assertEqual(over90["count"], 1)
-        self.assertEqual(data["items"][0]["booking_reference"], old.booking_reference)
+        # Batch 01 task 7. Neither booking has a posted accommodation charge,
+        # so NOTHING has been charged to a guest ledger yet and the guest
+        # receivable is genuinely nil — the old report published the booking's
+        # contract projection as if it were a posted receivable, which could
+        # never agree with the balance sheet.
+        self.assertEqual(data["total_outstanding"], "0.00")
+        self.assertEqual(data["net_receivable"], "0.00")
+        self.assertTrue(data["reconciliation"]["reconciles"])
+        # The money is not lost: it is reported as contracted stay value the
+        # ledger has not charged yet, and the partly paid booking's ₦8,000 is
+        # separated from the fully paid one.
+        self.assertEqual(data["stay_value_not_yet_charged"], "8000.00")
+        self.assertEqual(data["bookings_not_yet_charged"], 1)
+        self.assertEqual(data["total_stay_exposure"], "8000.00")
+        self.assertEqual(paid.amount_due, Decimal("0.00"))
 
 
 class ManualJournalTests(BaseAPITestCase):
@@ -276,6 +286,29 @@ class NightAuditInHouseTests(BaseAPITestCase):
                            "effect": FolioPosting.Effect.DEBIT, "amount": amount}],
             )
         report = accounts_receivable_aging(as_of=self.today)
-        row = next(item for item in report["items"] if item["booking_reference"] == booking.booking_reference)
-        self.assertEqual(row["balance_due"], "8000.00")
-        self.assertEqual(row["folio_charges_net"], "3000.00")
+        # Batch 01 task 7: one row per folio, rolled up once per booking. The
+        # two room folios are each counted exactly once in both views.
+        folio_rows = [item for item in report["items"]
+                      if item["booking_reference"] == booking.booking_reference]
+        self.assertEqual(len(folio_rows), 2)
+        self.assertEqual(sorted(row["balance_due"] for row in folio_rows), ["1000.00", "2000.00"])
+        roll_up = next(item for item in report["by_booking"]
+                       if item["booking_reference"] == booking.booking_reference)
+        self.assertEqual(roll_up["folios"], 2)
+        self.assertEqual(roll_up["outstanding"], "3000.00")
+        # ₦3,000 of this booking is posted to the guest ledger; the ₦5,000 of
+        # room nights the night audit has not charged yet is reported in the
+        # separate exposure figure, so the operational total still reaches
+        # ₦8,000 for this booking without double counting either half.
+        from apps.finance.services.guest_receivables_service import unposted_stay_balance
+
+        self.assertEqual(
+            Decimal(report["total_stay_exposure"]) - Decimal(report["total_outstanding"]),
+            Decimal(report["stay_value_not_yet_charged"]),
+        )
+        self.assertGreaterEqual(Decimal(unposted_stay_balance(
+            as_of=self.today, currency="NGN")["amount"]), Decimal("5000.00"))
+        # Every figure still ties back to the guest-receivable control account.
+        self.assertTrue(report["reconciliation"]["reconciles"])
+        self.assertEqual(
+            report["reconciliation"]["control_account_balance"], report["net_receivable"])

@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Case, DecimalField, F, Sum, Value, When
+from django.db.models import Case, DecimalField, F, Q, Sum, Value, When
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -46,23 +46,44 @@ def get_or_create_main_folio_for_stay(*, stay, actor=None) -> tuple[Folio, bool]
 
 
 def folio_balance_queryset(queryset=None):
-    """Annotate a folio queryset with a database-computed signed balance.
+    """Annotate a folio queryset with database-computed balances.
 
     ``DEBIT`` statement items increase what the guest owes; ``CREDIT`` items
     reduce it. This intentionally avoids a mutable cached balance column.
+
+    BATCH 01 (task 7). Two things changed here.
+
+    Only POSTED transactions count. Previously every posting was summed
+    whatever the state of the transaction behind it, so a DRAFT charge that
+    had not been approved, or a VOIDED one that had already been reversed by
+    a balancing entry, still moved the guest's balance. A voided transaction
+    was in fact counted twice: once as the original posting and once as the
+    reversal.
+
+    ``charges_total`` and ``credits_total`` are exposed next to the net
+    figure. The net balance alone cannot distinguish a quiet folio from one
+    carrying a large charge and an equally large credit, and the hotel needs
+    to see both sides before it writes anything off.
     """
     queryset = queryset if queryset is not None else Folio.objects.all()
     money_field = DecimalField(max_digits=14, decimal_places=2)
+    posted = Q(postings__transaction__status=FinancialTransaction.Status.POSTED)
+
+    def _sum(condition):
+        return Coalesce(
+            Sum(Case(When(condition, then=F("postings__amount")), output_field=money_field)),
+            Value(Decimal("0.00")),
+            output_field=money_field,
+        )
+
+    charges = _sum(posted & Q(postings__effect=FolioPosting.Effect.DEBIT))
+    credits = _sum(posted & Q(postings__effect=FolioPosting.Effect.CREDIT))
     return queryset.annotate(
+        charges_total=charges,
+        credits_total=credits,
+    ).annotate(
         balance=Coalesce(
-            Sum(
-                Case(
-                    When(postings__effect=FolioPosting.Effect.DEBIT, then=F("postings__amount")),
-                    When(postings__effect=FolioPosting.Effect.CREDIT, then=-F("postings__amount")),
-                    default=Value(Decimal("0.00")),
-                    output_field=money_field,
-                )
-            ),
+            F("charges_total") - F("credits_total"),
             Value(Decimal("0.00")),
             output_field=money_field,
         )
@@ -144,6 +165,15 @@ def booking_folio_charge_map(*, booking_ids):
         # guest's unrelated purchases and service charges.
         .exclude(settles=FolioPosting.Settles.ACCOMMODATION)
         .filter(transaction__status=FinancialTransaction.Status.POSTED)
+        # BATCH 01 (task 7). A VOIDED folio has been cancelled outright; its
+        # postings are not a debt and must not be added to the booking.
+        .exclude(folio__status=Folio.Status.VOIDED)
+        # BATCH 01 (task 7). Only money in the booking's own currency may be
+        # added to the booking's own balance. A foreign-currency posting used
+        # to be summed as though the two were interchangeable; it is now left
+        # out of this figure and reported separately by the receivables
+        # service, which keeps each currency apart.
+        .filter(currency=F("folio__booking__currency"))
         .values("folio__booking_id")
         .annotate(
             balance=Coalesce(
@@ -173,7 +203,14 @@ def booking_folio_charge_balance(*, booking) -> Decimal:
 def booking_outstanding_balance(*, booking, folio_charge_balance: Decimal | None = None) -> Decimal:
     """What the guest still owes: stay balance + posted folio charges.
 
-    Never negative — an overpayment or a credit balance is not a debt.
+    Never negative — an overpayment or a credit balance is not a debt. This
+    clamp is correct for the desk, which uses the figure to decide how much
+    to collect, and it is deliberately unchanged.
+
+    It is the wrong figure for a report, because the clamp silently discards
+    a credit the hotel owes back. Reporting callers should use
+    ``guest_receivables_service.booking_balance_detail``, which returns this
+    same number alongside the credit it suppressed.
     """
     stay_balance = Decimal(booking.amount_due or Decimal("0.00"))
     if folio_charge_balance is None:

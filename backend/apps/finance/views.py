@@ -648,7 +648,7 @@ class NightAuditView(APIView):
         return success_response(daily_reconciliation(business_date=business_date))
 
 
-@extend_schema(tags=["Admin · Finance"], summary="Accounts-receivable aging from outstanding booking balances")
+@extend_schema(tags=["Admin · Finance"], summary="Aged guest receivables from the posted guest-receivable control account")
 class AccountsReceivableAgingView(APIView):
     permission_classes = [HasCapability]
     required_capabilities = ("reports.financial.view", "expense.approve")
@@ -656,7 +656,10 @@ class AccountsReceivableAgingView(APIView):
 
     def get(self, request):
         as_of = _parse_query_date(request.query_params.get("as_of"), "as_of")
-        return success_response(accounts_receivable_aging(as_of=as_of))
+        currency = str(request.query_params.get("currency") or "NGN").upper()
+        if len(currency) != 3 or not currency.isalpha():
+            raise ValidationError({"currency": "Use a three-letter ISO currency code."})
+        return success_response(accounts_receivable_aging(as_of=as_of, currency=currency))
 
 
 @extend_schema(tags=["Admin · Finance"], summary="Balance sheet as of a date, from the posted ledger")

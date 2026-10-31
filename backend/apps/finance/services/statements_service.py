@@ -44,6 +44,35 @@ LABELS = dict(CHART_OF_ACCOUNTS) | {
     accounting.CASH_FLOAT: "Cash float",
 }
 
+# --------------------------------------------------------------------------
+# Presentation policy (batch 01, tasks 3 and 5)
+#
+# The owner asked for two things to disappear from the Accounting screens:
+# the statutory tax payable figure, and the equity section. Neither request
+# may touch the ledger — the accounts, their journals and their history stay
+# exactly as they are, and every total below still includes them. What
+# changes is only what the statement NAMES.
+#
+# A statement that drops a line but keeps its value in the total stops
+# footing, which is its own audit defect. So each suppressed balance is
+# carried into a neutral aggregate line instead ("Other liabilities"), and the
+# equity section is replaced by NET ASSETS — assets less liabilities — which
+# is arithmetically identical to total equity and is the standard way to
+# present a position statement without itemising capital.
+#
+# Payroll deductions, payroll tax and pension payable are genuine employee
+# obligations and are NOT suppressed.
+# --------------------------------------------------------------------------
+SUPPRESSED_LIABILITY_ACCOUNTS = (
+    accounting.TAX_PAYABLE,
+    accounting.STATUTORY_TAX_PAYABLE,
+)
+SUPPRESSED_EXPENSE_ACCOUNTS = (
+    accounting.STATUTORY_TAX_ABSORBED,
+)
+OTHER_LIABILITIES_LABEL = "Other liabilities"
+OTHER_EXPENSES_LABEL = "Other expenses"
+
 
 def _dec(value) -> Decimal:
     return Decimal(value or 0).quantize(CENT)
@@ -77,24 +106,38 @@ def balance_sheet(*, as_of=None) -> dict:
     as_of = as_of or hotel_today()
     balances = _balances(through=as_of)
 
-    def section(prefix):
-        rows, total = [], ZERO
+    def section(prefix, suppressed=(), aggregate_label=OTHER_LIABILITIES_LABEL):
+        """Rows for a section, with suppressed accounts folded into one line.
+
+        ``total`` always covers every account, suppressed or not, so the
+        statement keeps balancing; the rows always sum to ``total``, so the
+        statement keeps footing.
+        """
+        rows, total, withheld = [], ZERO, ZERO
         for code in sorted(balances):
             if not code.startswith(prefix):
                 continue
             amount = _signed(code, *balances[code])
+            total += amount
             if amount == ZERO:
                 continue
+            if code in suppressed:
+                withheld += amount
+                continue
             rows.append({"account_code": code, "label": LABELS.get(code, code), "amount": money(amount)})
-            total += amount
+        if withheld != ZERO:
+            rows.append({"account_code": "", "label": aggregate_label, "amount": money(withheld)})
         return rows, total
 
     assets, total_assets = section("ASSET.")
-    liabilities, total_liabilities = section("LIABILITY.")
-    equity, total_equity = section("EQUITY.")
+    liabilities, total_liabilities = section("LIABILITY.", SUPPRESSED_LIABILITY_ACCOUNTS)
+    # Equity is still computed — the balance check depends on it — but it is
+    # no longer itemised for the reader (task 5).
+    _equity_rows, total_equity = section("EQUITY.")
 
     earnings = ZERO
     earnings_rows = []
+    suppressed_earnings: list[Decimal] = []
     for code in sorted(balances):
         if code.startswith(("REVENUE.", "EXPENSE.", "CONTRA_REVENUE.")):
             amount = _signed(code, *balances[code])
@@ -103,13 +146,24 @@ def balance_sheet(*, as_of=None) -> dict:
             else:
                 contribution = -amount
             earnings += contribution
-            if amount != ZERO:
+            if amount != ZERO and code not in SUPPRESSED_EXPENSE_ACCOUNTS:
                 earnings_rows.append({
                     "account_code": code, "label": LABELS.get(code, code),
                     "amount": money(amount if code.startswith("REVENUE.") else -amount),
                 })
+            elif amount != ZERO:
+                suppressed_earnings.append(-amount)
+    if suppressed_earnings:
+        earnings_rows.append({
+            "account_code": "", "label": OTHER_EXPENSES_LABEL,
+            "amount": money(sum(suppressed_earnings, ZERO)),
+        })
     total_equity_with_earnings = total_equity + earnings
     liabilities_and_equity = total_liabilities + total_equity_with_earnings
+    # Net assets is assets less liabilities. It equals total equity by
+    # definition, which is what lets the equity section be withdrawn from the
+    # presentation without the statement becoming false or unbalanced.
+    net_assets = _dec(total_assets - total_liabilities)
     return {
         "as_of": as_of.isoformat(),
         "currency": "NGN",
@@ -117,13 +171,30 @@ def balance_sheet(*, as_of=None) -> dict:
         "total_assets": money(total_assets),
         "liabilities": liabilities,
         "total_liabilities": money(total_liabilities),
-        "equity": equity,
+        "net_assets": money(net_assets),
         "current_earnings": money(earnings),
         "current_earnings_basis": "All posted revenue less expenses and contra-revenue to date; not yet closed into retained earnings.",
-        "total_equity": money(total_equity_with_earnings),
-        "total_liabilities_and_equity": money(liabilities_and_equity),
+        "earnings_lines": earnings_rows,
+        # Integrity is still proved on every call, from the equity balances
+        # that are no longer itemised.
         "balanced": total_assets == liabilities_and_equity,
         "difference": money(total_assets - liabilities_and_equity),
+        "presentation": {
+            "equity_section": "withdrawn",
+            "equity_note": (
+                "Owner capital, drawings and opening balances remain posted in the EQUITY.* accounts and "
+                "are fully included in this statement's arithmetic. They are presented as NET ASSETS "
+                "(total assets less total liabilities), which equals total equity, instead of being "
+                "itemised. Nothing has been deleted from the ledger."
+            ),
+            "withheld_liability_accounts": list(SUPPRESSED_LIABILITY_ACCOUNTS),
+            "withheld_expense_accounts": list(SUPPRESSED_EXPENSE_ACCOUNTS),
+            "withheld_note": (
+                "Statutory tax payable is no longer named on the statement. Any balance it still carries "
+                "is reported inside 'Other liabilities' so the section continues to foot and the ledger "
+                "history stays intact."
+            ),
+        },
         "opening_balances_basis": "Opening balances are posted as balanced journals against EQUITY.OPENING_BALANCE via Accounting → Post journal entry, normally dated before the period under review.",
     }
 

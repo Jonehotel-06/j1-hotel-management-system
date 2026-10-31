@@ -103,9 +103,10 @@
          this screen. Amounts come from the posted ledger summary, unchanged. -->
     <h2 class="section-title" data-finance-heading>Financial overview</h2>
     <section class="kpi-grid" data-finance-kpis aria-busy="true" aria-label="Financial overview">
-      <div class="kpi"><div class="kpi-label">Recognized revenue</div><div class="kpi-value" data-rp="recognized-revenue">--</div><div class="kpi-sub" data-rp="recognized-revenue-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Restaurants and Bar Collections</div><div class="kpi-value" data-rp="restaurant-bar-collections">--</div><div class="kpi-sub" data-rp="restaurant-bar-collections-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Total revenue earned</div><div class="kpi-value" data-rp="recognized-revenue">--</div><div class="kpi-sub" data-rp="recognized-revenue-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Total Collections</div><div class="kpi-value" data-rp="collections">--</div><div class="kpi-sub" data-rp="collections-sub">&nbsp;</div></div>
-      <div class="kpi"><div class="kpi-label">Operating expenses</div><div class="kpi-value" data-rp="operating-expenses">--</div><div class="kpi-sub" data-rp="operating-expenses-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Total expenses</div><div class="kpi-value" data-rp="total-expenses">--</div><div class="kpi-sub" data-rp="total-expenses-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Net operating result</div><div class="kpi-value" data-rp="operating-result">--</div><div class="kpi-sub">Recognized revenue − discounts − operating expenses − accrued payroll</div></div>
       <div class="kpi"><div class="kpi-label">Outstanding supplier payables</div><div class="kpi-value" data-rp="outstanding-payables">--</div><div class="kpi-sub" data-rp="outstanding-payables-sub">&nbsp;</div></div>
       <div class="kpi"><div class="kpi-label">Total cash disbursed</div><div class="kpi-value" data-rp="cash-disbursed">--</div><div class="kpi-sub" data-rp="cash-disbursed-sub">&nbsp;</div></div>
@@ -255,7 +256,7 @@
 <!-- FINANCIAL STATEMENTS -->
 <details class="panel finance-section" data-acc-section="statements">
   <summary class="panel-head"><h2>Financial statements</h2>
-    <span class="caption">Balance sheet and cash flow from the same posted ledger</span>
+    <span class="caption">Statement of financial position from the posted ledger</span>
     <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
   </summary>
   <div class="panel-body">
@@ -265,10 +266,16 @@
       <button class="btn btn-sm" type="button" id="bs-load">Load statements</button>
       <span class="caption" data-bs="recon"></span>
     </div>
-    <details class="finance-help"><summary>About these statements</summary><p class="caption">Both statements come from the same posted ledger as the figures above. Opening balances are posted as journal entries dated before go-live.</p></details>
-    <div class="panel-grid">
-      <div><h3 class="section-title">Balance sheet <span class="caption" data-bs="asof"></span></h3><div class="table-wrap"><table class="table"><thead><tr><th class="cell-clamp">Account</th><th class="num cell-nowrap">Amount</th></tr></thead><tbody data-tbody="bs-sheet"></tbody></table></div><p class="caption" data-bs="receivable-note" hidden></p></div>
-      <div><h3 class="section-title">Cash flow <span class="caption" data-cf="period"></span></h3><div class="table-wrap"><table class="table"><thead><tr><th class="cell-clamp">Measure</th><th class="num cell-nowrap">Amount</th></tr></thead><tbody data-tbody="cf-flow"></tbody></table></div><p class="caption" data-cf="note"></p></div>
+    <details class="finance-help"><summary>About these statements</summary><p class="caption">This statement comes from the same posted ledger as the figures above. Opening balances are posted as journal entries dated before go-live. Capital and opening-balance accounts stay in the ledger but are presented as a single net-assets figure rather than an equity section.</p></details>
+    <!-- BATCH 01 TASK 6: the Cash flow statement, its heading, its table and
+         its API call were removed from this tab. Cash transactions themselves
+         are untouched and the cash-flow endpoint still exists for any other
+         consumer; this screen simply no longer requests or renders it. -->
+    <div>
+      <h3 class="section-title">Balance sheet <span class="caption" data-bs="asof"></span></h3>
+      <div class="table-wrap"><table class="table"><thead><tr><th class="cell-clamp">Account</th><th class="num cell-nowrap">Amount</th></tr></thead><tbody data-tbody="bs-sheet"></tbody></table></div>
+      <p class="caption" data-bs="receivable-note" hidden></p>
+      <p class="caption" data-bs="presentation-note"></p>
     </div>
   </div>
 </details>
@@ -323,7 +330,7 @@
 <!-- PROFIT & LOSS -->
 <details class="panel finance-section" data-acc-section="pnl" id="profit-loss">
   <summary class="panel-head"><h2>Profit &amp; loss</h2>
-    <span class="caption">Income statement for the selected period, from the posted ledger</span>
+    <span class="caption">Income, expenses and the collections behind them — from the posted ledger</span>
     <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
   </summary>
   <div class="panel-body no-pad">
@@ -331,7 +338,7 @@
       <thead><tr><th class="cell-clamp">Line</th><th class="num cell-nowrap">Amount</th></tr></thead>
       <tbody data-tbody="x-pnl"></tbody>
     </table></div>
-    <p class="caption" style="padding:0.75rem 1rem 1rem;margin:0;">Net operating result is recognized revenue less operating expenses and accrued payroll, as defined by the ledger.</p>
+    <p class="caption" style="padding:0.75rem 1rem 1rem;margin:0;">Income is revenue <strong>earned</strong> in the period. Expenses are every posted cost: operating, procurement, kitchen and other departmental, payroll and pension. Booking payments, deposits and other collections are listed below the result line because they are money <strong>received</strong>, not revenue earned — counting them as income would charge the same room twice.</p>
   </div>
 </details>
 
@@ -352,20 +359,27 @@
 
 <!-- RECEIVABLES AGING -->
 <details class="panel finance-section" data-acc-section="ar-aging" id="ar-aging">
-  <summary class="panel-head"><h2>Receivables aging</h2>
-    <span class="caption">Guest balances still owed, as of the end of the selected period</span>
+  <summary class="panel-head"><h2>Guest receivables</h2>
+    <span class="caption">What each guest owes, from the guest-receivable control account</span>
     <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
   </summary>
   <div class="panel-body no-pad">
+    <section class="kpi-grid" style="padding:1rem;" aria-label="Guest receivable position">
+      <div class="kpi"><div class="kpi-label">Guests owing</div><div class="kpi-value" data-ar="gross">--</div><div class="kpi-sub" data-ar="gross-sub">&nbsp;</div></div>
+      <div class="kpi"><div class="kpi-label">Guest credit balances</div><div class="kpi-value" data-ar="credits">--</div><div class="kpi-sub">Advances and overpayments the hotel is holding</div></div>
+      <div class="kpi"><div class="kpi-label">Unapplied guest deposits</div><div class="kpi-value" data-ar="deposits">--</div><div class="kpi-sub">Money received, not yet applied to a folio</div></div>
+      <div class="kpi"><div class="kpi-label">Stay value not yet charged</div><div class="kpi-value" data-ar="unposted">--</div><div class="kpi-sub">Booked nights the ledger has not charged yet</div></div>
+    </section>
+    <p class="caption" style="padding:0 1rem;margin:0 0 0.75rem;" data-ar="recon"></p>
     <div class="table-wrap"><table class="table">
-      <thead><tr><th class="cell-clamp">Age bucket</th><th class="num cell-nowrap">Bookings</th><th class="num cell-nowrap">Balance due</th></tr></thead>
+      <thead><tr><th class="cell-clamp">Age bucket</th><th class="num cell-nowrap">Folios</th><th class="num cell-nowrap">Balance due</th></tr></thead>
       <tbody data-tbody="x-ar-buckets"></tbody>
     </table></div>
     <div class="table-wrap"><table class="table">
-      <thead><tr><th class="cell-nowrap">Booking</th><th class="cell-clamp">Guest</th><th class="cell-nowrap">Check-in</th><th class="num cell-nowrap">Age (days)</th><th class="num cell-nowrap">Balance due</th></tr></thead>
+      <thead><tr><th class="cell-nowrap">Booking</th><th class="cell-clamp">Guest</th><th class="cell-nowrap">Rooms</th><th class="cell-nowrap">Folio</th><th class="num cell-nowrap">Charges</th><th class="num cell-nowrap">Payments</th><th class="num cell-nowrap">Discounts</th><th class="num cell-nowrap">Refunds</th><th class="num cell-nowrap">Age (days)</th><th class="num cell-nowrap">Outstanding</th><th class="num cell-nowrap">Credit</th></tr></thead>
       <tbody data-tbody="x-ar-items"></tbody>
     </table></div>
-    <p class="caption" style="padding:0.75rem 1rem 1rem;margin:0;">In-house folios with a balance are listed under Night audit &amp; operations.</p>
+    <p class="caption" style="padding:0.75rem 1rem 1rem;margin:0;">One row per folio, so a multi-room or multi-folio booking shows each account separately. Outstanding is what the guest owes; Credit is an advance the hotel holds for them. The two are never netted against each other, and a credit is never shown as zero. In-house folios are also listed under Night audit &amp; operations.</p>
   </div>
 </details>
 
@@ -499,18 +513,27 @@
 
   var FINANCE_MEASURES=[
     { label:"Guest charges", key:"guest_charges" },
-    { label:"Recognized revenue", key:"recognized_revenue" },
+    { label:"Total revenue earned", key:"recognized_revenue" },
+    { label:"Accommodation earned (rooms)", key:"accommodation_revenue" },
+    { label:"Restaurants and bar revenue earned", key:"restaurant_bar_revenue" },
+    { label:"Restaurants and Bar Collections", key:"restaurant_bar_collections" },
+    { label:"Room service revenue earned", key:"room_service_revenue" },
+    { label:"Other operating income", key:"other_operating_revenue" },
     { label:"Collections", key:"collections" },
+    { label:"Booking payments received (cash)", key:"booking_payments_received" },
     { label:"Refunds", key:"refunds" },
     { label:"Net collections", key:"net_collections" },
     { label:"Discounts", key:"discounts" },
+    { label:"Total expenses", key:"total_expenses" },
     { label:"Operating expenses", key:"operating_expenses" },
+    { label:"Payroll expenses", key:"payroll_expenses" },
     { label:"Inventory acquisitions", key:"inventory_acquisitions" },
     { label:"Cash paid-out", key:"cash_paid_out" },
     { label:"Payroll payments", key:"payroll_payments" },
     { label:"Payroll payment reversals", key:"payroll_payment_reversals" },
     { label:"Net salary paid", key:"net_payroll_payments" },
     { label:"Gross operating result", key:"gross_operating_result" },
+    { label:"Net result", key:"net_result" },
     { label:"Actual payments made", key:"actual_payments_made" },
     /* Supplier-payment stages, read from the nested supplier_payments block so the
        table distinguishes goods received, invoice recognized, payment approved and
@@ -672,9 +695,10 @@
        Refunds, net collections, discounts, reversals, payroll and the
        supplier stages stay in Detailed financial measures / Supplier accounts. */
     var kpis=[
+      { name:"restaurant-bar-collections", key:"restaurant_bar_collections" },
       { name:"recognized-revenue", key:"recognized_revenue" },
       { name:"collections", key:"collections" },
-      { name:"operating-expenses", key:"operating_expenses" },
+      { name:"total-expenses", key:"total_expenses" },
       { name:"operating-result", key:"gross_operating_result" }
     ];
     kpis.forEach(function(item){
@@ -1975,8 +1999,14 @@
   }
 
   /* ---------------- Financial statements ---------------- */
+  /* BATCH 01 TASK 3. This used to run a base64-obfuscated /tax|vat|levy|statutory/
+     regex over every row label and drop the match. That HID a figure instead of
+     removing it, and it was impossible to audit from the source. The suppression
+     now happens once, in the backend statement service, where the withheld
+     balance is carried into a neutral "Other liabilities" line so the statement
+     still foots. The browser simply renders what the ledger sends. */
   function bsRow(label, amount, strong) {
-    if (!strong && Number(amount) === 0 && new RegExp(atob("XGIodGF4fHZhdHxsZXZ5fHN0YXR1dG9yeSlcYg=="), "i").test(String(label))) return "";
+    if (!strong && (amount === null || amount === undefined)) return "";
     return "<tr" + (strong ? ' style="font-weight:700;"' : "") + "><td>" + JONE.esc(label) + "</td><td class=\"num\">" + JONE.esc(moneyCell(amount)) + "</td></tr>";
   }
   async function loadStatements() {
@@ -1985,9 +2015,10 @@
     var dates = activeDates();
     try {
       var bsParams = asOf ? { as_of: asOf } : {};
+      /* BATCH 01 TASK 6: the cash-flow request is gone. This tab makes one
+         call now, for the balance sheet. */
       var bs = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.financeBalanceSheet, { params: bsParams });
-      var cf = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.financeCashFlow, { params: { start: dates.from, end: dates.to } });
-      var sheet = bs.data || {}, flow = cf.data || {};
+      var sheet = bs.data || {};
       var body = document.querySelector("[data-tbody=bs-sheet]");
       if (body) {
         var html = "<tr><td colspan=\"2\" style=\"font-weight:700;\">Assets</td></tr>";
@@ -2003,11 +2034,14 @@
         html += "<tr><td colspan=\"2\" style=\"font-weight:700;\">Liabilities</td></tr>";
         (sheet.liabilities || []).forEach(function (r) { html += bsRow(r.label || r.account_code, r.amount); });
         html += bsRow("Total liabilities", sheet.total_liabilities, true);
-        html += "<tr><td colspan=\"2\" style=\"font-weight:700;\">Equity</td></tr>";
-        (sheet.equity || []).forEach(function (r) { html += bsRow(r.label || r.account_code, r.amount); });
+        /* BATCH 01 TASK 5: the Equity section is not presented. Owner capital,
+           drawings and opening balances remain posted in the ledger and remain
+           inside this statement's arithmetic — they are shown as NET ASSETS
+           (total assets less total liabilities), which is identical to total
+           equity, so the statement stays true and still balances. */
+        html += "<tr><td colspan=\"2\" style=\"font-weight:700;\">Net position</td></tr>";
         html += bsRow("Current earnings (revenue − expenses, not yet closed)", sheet.current_earnings);
-        html += bsRow("Total equity", sheet.total_equity, true);
-        html += bsRow("Total liabilities & equity", sheet.total_liabilities_and_equity, true);
+        html += bsRow("Net assets (total assets − total liabilities)", sheet.net_assets, true);
         body.innerHTML = html;
       }
       /* A guest receivable that is credit-normal is not a hidden problem and it
@@ -2033,22 +2067,11 @@
       var asofEl = document.querySelector("[data-bs=asof]"); if (asofEl) asofEl.textContent = sheet.as_of ? ("as of " + sheet.as_of) : "";
       var recon = document.querySelector("[data-bs=recon]");
       if (recon) recon.textContent = sheet.balanced ? "The balance sheet balances against the ledger." : ("WARNING: imbalance of " + moneyCell(sheet.difference) + " — investigate before relying on this statement.");
-      var cfBody = document.querySelector("[data-tbody=cf-flow]");
-      if (cfBody) {
-        cfBody.innerHTML = [
-          bsRow("Operating activities", flow.operating_activities),
-          bsRow("Investing activities", flow.investing_activities),
-          bsRow("Financing activities", flow.financing_activities),
-          bsRow("Internal drawer float & other", flow.internal_float_and_other),
-          bsRow("Net cash change (classified)", flow.net_cash_change_classified, true),
-          bsRow("Opening cash", flow.opening_cash),
-          bsRow("Closing cash", flow.closing_cash),
-          bsRow("Net change per cash balances", flow.net_cash_change_per_balances, true)
-        ].join("");
+      var presentationNote = document.querySelector("[data-bs=presentation-note]");
+      if (presentationNote) {
+        presentationNote.textContent = ((sheet.presentation || {}).equity_note || "") + " " +
+          ((sheet.presentation || {}).withheld_note || "");
       }
-      var period = document.querySelector("[data-cf=period]"); if (period) period.textContent = (flow.start_date || "") + " → " + (flow.end_date || "");
-      var note = document.querySelector("[data-cf=note]");
-      if (note) note.textContent = (flow.reconciles ? "Cash flow reconciles to the change in cash balances." : "Does not reconcile — difference " + moneyCell(flow.difference) + ".") + " " + (flow.investing_note || "");
     } catch (err) {
       JONE.ui.toast((err && err.message) || "The financial statements could not be loaded.", "error");
     }
@@ -2453,9 +2476,14 @@
   var EP=window.APP_CONFIG.API_ENDPOINTS||{};
   var esc=JONE.esc;
   function $(s){ return document.querySelector(s); }
-  /* Accounts/rows matching this encoded pattern are never shown on this page. */
-  var HIDE=new RegExp("\\b("+atob("dGF4fHZhdHxsZXZ5fHN0YXR1dG9yeQ==")+")\\b","i");
-  function hidden(code,label){ return HIDE.test(String(code||"")+" "+String(label||"")); }
+  /* BATCH 01 TASK 3. A base64-obfuscated /tax|vat|levy|statutory/ regex used to
+     drop any matching row from the P&L and the printed balance sheet. That was
+     concealment, not removal: the amount stayed in every total while vanishing
+     from the page, and nobody reading this file could tell which accounts were
+     affected. The statutory-tax presentation is now withdrawn once, in the
+     backend statement service, where the balance is carried into a neutral
+     "Other liabilities" line so the statement still foots. Nothing is hidden
+     here any more. */
 
   function money(v){
     if(v==null||v==="") return "--";
@@ -2493,16 +2521,31 @@
   }
 
   /* Shared P&L lines (screen and print): [label, amount, strong]. */
+  /* BATCH 01 TASK 4. Income, expenses and money received are three different
+     things and the statement now says so:
+       INCOME       — revenue EARNED in the period, split by where it was
+                      earned (rooms, restaurants and bar, room service, other).
+       EXPENSES     — every posted EXPENSE.* account: operating, procurement,
+                      kitchen and other departmental costs, payroll, pension.
+       COLLECTIONS  — money received, listed BELOW the result line. Booking
+                      payments are here, never in income: a payment settles a
+                      charge the income section has already recognised, so
+                      adding it would count the room twice.
+     The server computes every figure; this function only lays them out. */
   function plLines(rep){
-    var out=[["Revenue",null,true]];
-    (rep.by_department||[]).forEach(function(d){
-      if(!hidden(d.account_code,d.label)) out.push([d.label||d.account_code||"Revenue",d.amount]);
-    });
-    out.push(["Total recognized revenue",amt(rep,"recognized_revenue"),true]);
-    out.push(["Operating expenses",amt(rep,"operating_expenses")]);
-    out.push(["Accrued payroll expenses",amt(rep,"payroll_expenses")]);
-    out.push(["Discounts (contra revenue)",amt(rep,"discounts")]);
-    out.push(["Net operating result (after accrued payroll)",amt(rep,"gross_operating_result"),true]);
+    var pnl=rep.profit_and_loss||{};
+    var out=[["Income — revenue earned in the period",null,true]];
+    (pnl.income||[]).forEach(function(l){ out.push([l.label,l.amount]); });
+    out.push(["Total income",pnl.total_income!=null?pnl.total_income:amt(rep,"recognized_revenue"),true]);
+    (pnl.deductions||[]).forEach(function(l){ out.push([l.label,l.amount]); });
+    if(pnl.net_income!=null) out.push(["Net income after discounts",pnl.net_income,true]);
+    out.push(["Expenses — posted costs for the period",null,true]);
+    (pnl.expenses||[]).forEach(function(l){ out.push([l.label,l.amount]); });
+    out.push(["Total expenses",pnl.total_expenses!=null?pnl.total_expenses:amt(rep,"total_expenses"),true]);
+    out.push(["Net result (income − discounts − total expenses)",
+              pnl.net_result!=null?pnl.net_result:amt(rep,"net_result"),true]);
+    out.push(["Money received in the period — collections, not income",null,true]);
+    (pnl.collections_memorandum||[]).forEach(function(l){ out.push([l.label,l.amount]); });
     return out;
   }
   function plRows(rep){
@@ -2535,14 +2578,41 @@
       if(!b||!it) return;
       b.innerHTML=empty(3,"Loading…"); it.innerHTML="";
       return get(EP.financeArAging,{as_of:p.to}).then(function(d){
+        function tile(name,value){ var el=document.querySelector('[data-ar="'+name+'"]'); if(el) el.textContent=value; }
+        tile("gross",money(d.total_outstanding));
+        tile("gross-sub",(d.folios_owing||0)+" folio"+((d.folios_owing===1)?"":"s"));
+        tile("credits",money(d.guest_credit_balances));
+        tile("deposits",money(d.unapplied_guest_deposits));
+        tile("unposted",money(d.stay_value_not_yet_charged));
+        /* The identity that makes this report trustworthy is published, not
+           assumed: the guest balances below must add up to the control
+           account on the balance sheet. */
+        var rc=d.reconciliation||{};
+        tile("recon",rc.reconciles
+          ? ("Guest balances reconcile to "+(rc.control_account||"the control account")+": "+
+             money(d.total_outstanding)+" owing less "+money(d.guest_credit_balances)+" in credit"+
+             ((Number(d.unassigned_receivables)!==0)?(" plus "+money(d.unassigned_receivables)+" not attached to a folio"):"")+
+             " = "+money(d.net_receivable)+".")
+          : ("WARNING: guest balances differ from the control account by "+money(rc.difference)+
+             " — investigate before relying on this report."));
         var bk=d.buckets||[];
         b.innerHTML=(bk.length?bk.map(function(x){
           return '<tr><td>'+esc(x.label||x.key)+'</td><td class="num">'+esc(x.count||0)+'</td><td class="num">'+esc(money(x.total))+'</td></tr>';
         }).join("")+'<tr style="font-weight:700;"><td>Total outstanding</td><td></td><td class="num">'+esc(money(d.total_outstanding))+'</td></tr>':empty(3,"No guest balances outstanding"));
         var items=d.items||[];
         it.innerHTML=items.length?items.map(function(x){
-          return '<tr><td class="cell-nowrap">'+esc(x.booking_reference||"—")+'</td><td class="cell-clamp">'+esc(x.guest||"—")+'</td><td class="cell-nowrap">'+esc(x.check_in||"—")+'</td><td class="num">'+esc(x.age_days==null?"—":x.age_days)+'</td><td class="num">'+esc(money(x.balance_due))+'</td></tr>';
-        }).join(""):empty(5,"No guest balances outstanding");
+          return '<tr><td class="cell-nowrap">'+esc(x.booking_reference||"—")+'</td>'+
+            '<td class="cell-clamp">'+esc(x.guest||"—")+'</td>'+
+            '<td class="cell-nowrap">'+esc((x.rooms&&x.rooms.length)?x.rooms.join(", "):"—")+'</td>'+
+            '<td class="cell-nowrap">'+esc(x.folio_reference||"—")+'</td>'+
+            '<td class="num">'+esc(money(x.total_charges))+'</td>'+
+            '<td class="num">'+esc(money(x.payments_allocated))+'</td>'+
+            '<td class="num">'+esc(money(x.discounts))+'</td>'+
+            '<td class="num">'+esc(money(x.refunds))+'</td>'+
+            '<td class="num">'+esc(x.age_days==null?"—":x.age_days)+'</td>'+
+            '<td class="num">'+esc(money(x.balance_due))+'</td>'+
+            '<td class="num">'+esc(money(x.credit_balance))+'</td></tr>';
+        }).join(""):empty(11,"No guest balances outstanding");
       },function(e){ fail(b,3,e); });
     },
 
@@ -2606,30 +2676,50 @@
       h+='<h2>Profit &amp; loss</h2>'+tbl(["Line","Amount"],plLines(rep).map(function(l){
         return tr([l[0],l[1]==null?"":money(l[1])],1,l[2]);
       }),1);
+      /* BATCH 01 TASK 2: the detail Total Expenses reconciles to. */
+      var xb=rep.expense_breakdown||{};
+      h+='<h2>Total expenses</h2>'+tbl(["Ledger account","Amount"],(xb.by_account||[]).map(function(a){
+        return tr([a.label||a.account_code,money(a.amount)],1);
+      }).concat([tr(["Total expenses",money(amt(rep,"total_expenses"))],1,true)]),1);
+      if((xb.by_department||[]).length){
+        h+='<h2>Expenses by department</h2>'+tbl(["Department","Expenses","Amount"],(xb.by_department||[]).map(function(d){
+          return tr([d.label,d.expenses||0,money(d.amount)],2);
+        }),2);
+      }
     } else h+=unavailable("Key figures and profit & loss",s);
-    if(R.cash.ok){
-      var f=R.cash.d;
-      h+='<h2>Cash flow</h2>'+tbl(["Measure","Amount"],[
-        ["Operating activities","operating_activities"],["Investing activities","investing_activities"],["Financing activities","financing_activities"],
-        ["Opening cash","opening_cash"],["Closing cash","closing_cash"]
-      ].map(function(x){ return tr([x[0],money(f[x[1]])],1); }),1);
-    } else h+=unavailable("Cash flow",R.cash);
+    /* BATCH 01 TASK 6: the Cash flow statement is no longer part of this pack
+       and is no longer requested. Cash transactions are untouched. */
     if(R.bs.ok){
       var b=R.bs.d, rows=[];
       function grp(title,list,total,tl){
         rows.push('<tr><td colspan="2" style="font-weight:700;">'+esc(title)+'</td></tr>');
-        (list||[]).forEach(function(a){ if(!(hidden(a.account_code,a.label)&&Number(a.amount)===0)) rows.push(tr([a.label||a.account_code,money(a.amount)],1)); });
+        (list||[]).forEach(function(a){ rows.push(tr([a.label||a.account_code,money(a.amount)],1)); });
         rows.push(tr([tl,money(total)],1,true));
       }
       grp("Assets",b.assets,b.total_assets,"Total assets");
       grp("Liabilities",b.liabilities,b.total_liabilities,"Total liabilities");
-      grp("Equity",b.equity,b.total_equity,"Total equity");
+      /* BATCH 01 TASK 5: no Equity section. Capital, drawings and opening
+         balances stay in the ledger and stay inside these totals; the reader
+         sees net assets, which equals total equity. */
+      rows.push('<tr><td colspan="2" style="font-weight:700;">Net position</td></tr>');
+      rows.push(tr(["Current earnings (revenue − expenses, not yet closed)",money(b.current_earnings)],1));
+      rows.push(tr(["Net assets (total assets − total liabilities)",money(b.net_assets)],1,true));
       h+='<h2>Balance sheet as at '+esc(b.as_of||to)+'</h2>'+tbl(["Account","Amount"],rows,1);
     } else h+=unavailable("Balance sheet",R.bs);
     if(R.ar.ok){
-      h+='<h2>Receivables aging as at '+esc(R.ar.d.as_of||to)+'</h2>'+tbl(["Age bucket","Bookings","Balance due"],(R.ar.d.buckets||[]).map(function(x){
+      var ar=R.ar.d;
+      h+='<h2>Guest receivables as at '+esc(ar.as_of||to)+'</h2>'+tbl(["Age bucket","Folios","Balance due"],(ar.buckets||[]).map(function(x){
         return tr([x.label||x.key,x.count||0,money(x.total)],1);
-      }).concat([tr(["Total outstanding","",money(R.ar.d.total_outstanding)],1,true)]),1);
+      }).concat([
+        tr(["Total outstanding (guests owing)","",money(ar.total_outstanding)],1,true),
+        tr(["Guest credit balances (advances held)","",money(ar.guest_credit_balances)],1),
+        tr(["Unapplied guest deposits","",money(ar.unapplied_guest_deposits)],1),
+        tr(["Guest receivable control account","",money(ar.net_receivable)],1,true),
+        tr(["Stay value not yet charged to a folio","",money(ar.stay_value_not_yet_charged)],1)
+      ]),1);
+      h+='<p>'+(ar.reconciliation&&ar.reconciliation.reconciles
+        ?"Guest balances reconcile to the "+esc(ar.reconciliation.control_account||"")+" control account."
+        :"WARNING: guest balances do not reconcile to the control account — investigate before relying on this report.")+'</p>';
     } else h+=unavailable("Receivables aging",R.ar);
     if(single){
       if(R.na.ok){
@@ -2668,14 +2758,13 @@
     var single=from===to;
     Promise.all([
       settle(get(EP.financeSummary,q)),
-      settle(get(EP.financeCashFlow,{start:from,end:to})),
       settle(get(EP.financeBalanceSheet,{as_of:to})),
       settle(get(EP.financeArAging,{as_of:to})),
       single?settle(get(EP.financeNightAudit,{date:from})):Promise.resolve({ok:false}),
       settle(get(EP.financeExpenses,{start:from,end:to})),
       settle(get(EP.financeTransactions,q))
     ]).then(function(r){
-      var R={summary:r[0],cash:r[1],bs:r[2],ar:r[3],na:r[4],exp:r[5],tx:r[6]};
+      var R={summary:r[0],bs:r[1],ar:r[2],na:r[3],exp:r[4],tx:r[5]};
       if(!R.summary.ok&&!R.bs.ok&&!R.tx.ok){ throw (R.summary.e||new Error("The report could not be loaded.")); }
       sheet.innerHTML=buildSheet(from,to,R);
       function done(){ document.body.classList.remove("acc-printing"); window.removeEventListener("afterprint",done); }

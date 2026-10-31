@@ -128,7 +128,18 @@ class StatementTests(BaseAPITestCase):
         # so the sheet honestly shows the negative receivable it created.
         self.assertEqual(assets[accounting.ACCOUNTS_RECEIVABLE], "-40000.00")
         self.assertEqual(data["total_assets"], "100000.00")
-        self.assertEqual(data["total_liabilities_and_equity"], "100000.00")
+        # Batch 01 task 5: the equity section is withdrawn from the
+        # presentation and replaced by net assets, which is identical to total
+        # equity. The ledger still holds every EQUITY.* posting and the
+        # statement still proves it balances.
+        self.assertNotIn("equity", data)
+        self.assertNotIn("total_equity", data)
+        self.assertNotIn("total_liabilities_and_equity", data)
+        self.assertEqual(
+            Decimal(data["net_assets"]),
+            Decimal(data["total_assets"]) - Decimal(data["total_liabilities"]),
+        )
+        self.assertEqual(data["presentation"]["equity_section"], "withdrawn")
 
     def test_cash_flow_classifies_and_reconciles(self):
         start = (self.today - timedelta(days=40)).isoformat()

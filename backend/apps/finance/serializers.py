@@ -16,12 +16,17 @@ class FolioSerializer(serializers.ModelSerializer):
     booking_reference = serializers.CharField(source="booking.booking_reference", read_only=True)
     stay_reference = serializers.CharField(source="stay.reference", read_only=True)
     balance = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    # BATCH 01 (task 7). The net balance cannot tell a quiet folio apart from
+    # one holding a large charge against an equally large credit. Both sides
+    # are reported so nothing is written off on the strength of a net zero.
+    charges_total = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    credits_total = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
 
     class Meta:
         model = Folio
         fields = [
             "id", "reference", "kind", "status", "currency", "guest_name", "booking_reference", "stay_reference",
-            "balance", "opened_at", "closed_at", "notes",
+            "balance", "charges_total", "credits_total", "opened_at", "closed_at", "notes",
         ]
         read_only_fields = fields
 

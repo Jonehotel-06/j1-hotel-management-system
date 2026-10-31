@@ -132,13 +132,13 @@ class AccommodationReconciliationTests(BaseAPITestCase):
         start, end = self.check_in, self.check_out
         before = financial_summary(start_date=start, end_date=end)
         self.assertEqual(before["recognized_revenue"]["amount"], "0.00")
-        self.assertEqual(before["tax_accrued"]["amount"], "0.00")
+        self.assertNotIn("tax_accrued", before)  # batch 01 task 3
 
         call_command("reconcile_accommodation", "--post", "--actor", self.manager.email, stdout=StringIO())
 
         after = financial_summary(start_date=start, end_date=end)
         self.assertEqual(after["recognized_revenue"]["amount"], "30000.00")
-        self.assertEqual(after["tax_accrued"]["amount"], "2250.00")
+        self.assertNotIn("tax_accrued", after)  # batch 01 task 3
         rooms = [row for row in after["by_department"] if row["label"] == "Rooms and hotel bookings"]
         self.assertEqual(len(rooms), 1)
         self.assertEqual(rooms[0]["amount"], "30000.00")
