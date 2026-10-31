@@ -1,39 +1,11 @@
-# Batch 07 — DEPENDENCIES
+# Dependencies and deployment
 
-## New dependencies introduced
+No new production dependency. Uses the repository's Django, Django REST Framework and existing vanilla-JS API client. Existing capability catalog/seed must be deployed; no new capability is seeded. Managers need `housekeeping.task.assign`; workers need `housekeeping.task.manage` and valid role/department state. `frontend/tests/batch08_mobile.py` is an optional test-only Playwright/Chromium component test (Playwright and Chromium system libraries are not production dependencies).
 
-**None.** No package, library, service, migration dependency beyond the existing
-`accounts → 0031` + `audit` chain, and no new environment variable was added.
+1. Review the limitations in CHANGES.md, especially `PROTECT`, room moves, missing pre-checks and the concurrent arrival handoff. Validate the integration with front desk, management and database administrators before rollout.
+2. Take a database backup and stage the update on the exact source revision or reconcile carefully with later changes. Copy the repository-relative files from this package onto an isolated integration branch, preserving paths. Do not overwrite unrelated files from other revisions without review.
+3. Install existing backend requirements, then from `backend/` run `python manage.py migrate` and `python manage.py check`. The new migration is `housekeeping.0002_reusableitem_assetinspection_assetinspectionline_and_more`; it adds six tables, indexes and constraints. Migration was exercised on a fresh SQLite test database, not production MySQL nor an existing production data copy.
+4. Deploy the matching frontend page and script. Verify the existing `APP_CONFIG.API_ENDPOINTS.housekeepingTasks` and authentication/capability configuration, including static asset cache invalidation. Configure real reusable inventory and explicit consumable classifications; no hotel data is preloaded.
+5. Verify with real roles, multiple rooms/occupants, cancellation/reassignment, operational handoff, backup/restore and representative MySQL concurrent requests. Existing booking, financial, payroll and housekeeping-status workflows are not changed by code here. If a later independently authorized charge is justified, use the existing financial process, not this workflow.
 
-## Existing infrastructure reused (no changes to these modules)
-
-| Infrastructure | Reused for |
-|---|---|
-| `apps.accounts.capabilities` (`has_capability`, `ROLE_CAPABILITY_CODES`, persisted `RoleCapability`) | Manager/GM approval authorization |
-| `apps.core.permissions.HasCapability` | All five decision endpoints (unchanged gates) |
-| `apps.core.approvals.require_independent_approver` | Maker-checker separation (untouched) |
-| `apps.audit.services.log_action` + `AuditLog` | Uniform decision evidence (metadata extended only) |
-| Per-workflow services (`review_leave`, `approve_stock_count`, `approve_purchase_order`, `review_payroll_period`, `review_expense`) | Approval logic (untouched — Batch 07 calls them as-is) |
-| `frontend/js/auth.js` role normalization (`manager` → `general_manager`) | Manager page visibility (pre-existing) |
-| `PAGE_ACCESS` registry + `canOpenPage` + `navItemAllowed` | Sidebar/page gating (registry values updated, mechanism untouched) |
-
-## Cross-batch notes (documented, not changed)
-
-* **Leave balances/validation, payroll calculations, inventory postings,
-  procurement/supplier workflows, expense posting rules, attendance** — owned
-  by other batches; Batch 07 modified none of their logic. Verification tests
-  assert their behavior is preserved (amounts unchanged, no silent
-  adjustments, validations enforced).
-* **Stock-count rejection:** the stock-count workflow has no reject/return
-  transition by design (approve-and-post only). Batch 07 did not invent one;
-  Task 5 requires only review-and-approve for this category.
-* **Retired `MANAGER` title:** new `MANAGER` assignments remain refused by
-  `assert_assignable_role` (approved-11-departments consolidation). Batch 07
-  grants the five approval capabilities to the `MANAGER` role itself, so any
-  account holding that title — past, restored, or reactivated — carries exactly
-  the defined approval authority. No hierarchy was created or altered.
-* **Frontend capability bootstrap:** approval buttons that are capability-gated
-  (`payroll.approve`, `expense.approve`, `procurement.approve`,
-  `inventory.adjust.approve`) render from `Auth.loadCapabilities()`; where a
-  role fallback exists it names `["admin", "general_manager"]`, which covers
-  `MANAGER` accounts via normalization. No fallback list was widened.
+Rollback: restore the prior application files only after planning retention and access to any new evidence. Reversing the migration drops audit data and may fail where it is referenced; do not reverse it without an approved backup and retention decision.

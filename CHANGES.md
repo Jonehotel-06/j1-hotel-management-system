@@ -1,113 +1,24 @@
-# Batch 07 — CHANGES
+# Batch 08 changes
 
-## Task 1 — Remove Staff Profile from sidebar
+Base: `Jonehotel-06/j1-hotel-management-system`, commit `c17a84f` (clone, isolated worktree). No files were written to the remote/original repository.
 
-* `frontend/js/dashboard.js`
-  * Removed the `{ label: "Staff Profiles", href: "staff-profile.html", … }`
-    entry from the `NAV` "Administration" group (with an explanatory comment).
-  * `PAGE_ACCESS["staff-profile.html"]` unchanged:
-    `["admin", "general_manager", "procurement_officer"]` — the page, its route
-    and its server authorization are preserved; it stays reachable from the
-    staff directory ("10-Tab Profile", disciplinary "Manage") and direct links.
+## Implemented
+- A separate item catalog explicitly classifies items as REUSABLE or CONSUMABLE. Only reusable items can be configured and selected for asset checklists. Normalized-name uniqueness and database uniqueness for type/item and room/item prevent duplicates. Managers are responsible for choosing the correct category; semantic detection of toiletries is not possible.
+- Type-level expected quantities with room-level overrides; a room override of zero removes an item from that room. Existing checklists retain their own snapshot when configuration changes.
+- Pre-arrival and post-checkout drafts and completed evidence, scoped to a physical `BookingRoom`. Completed evidence stores room number, type and booking-reference snapshots, checklist names, quantities, condition, remarks, evidence references, staff and times. Post-checkout stores the matching `StayRoom` and copies the before inspection into the checklist.
+- One inspection per assignment and phase, transaction/row locking and optimistic draft revision; completion requires all items and is immutable through the API and normal model save/delete methods. Counts, damage, replacement/replenishment, expected-count variance and pre/post shortfall are flagged. A draft can be resumed; it is not itself immutable evidence.
+- Paginated pending queue and discrepancy report; manager review events are append-only and include status, explanation, actor and time. A discrepancy is not an accusation. No charge, wage deduction, accounting entry, inventory movement or room-status change is created.
+- Mobile-oriented addition to the existing housekeeping page; existing task logic and room readiness controls are retained.
 
-## Task 2 — Staffs in the General Manager sidebar
+## Files
+Modified repository-relative files: `backend/apps/housekeeping/models.py`, `backend/apps/housekeeping/urls.py`, `frontend/dashboard/housekeeping.html`.
+New repository-relative files: `backend/apps/housekeeping/asset_views.py`, `backend/apps/housekeeping/migrations/0002_reusableitem_assetinspection_assetinspectionline_and_more.py`, `backend/tests/test_batch08_room_assets.py`, `frontend/js/room-assets.js`, `frontend/tests/batch08_mobile.py`.
 
-* `frontend/js/dashboard.js`
-  * Renamed the admin directory entry `"Staff"` → `"Staffs"` (same
-    `staff.html` target — no duplicate page created).
-  * `PAGE_ACCESS["staff.html"]`: `[admin]` → `["admin", "general_manager"]`.
-    The entry keeps its capability narrowing (`staff.profile.manage`,
-    `staff.view`), which both roles hold.
-* `frontend/dashboard/staff.html`
-  * Boot gate: `boot("admin")` → `boot(["admin", "general_manager"])` with the
-    standard `__staffAllowed` guard (matches the registry exactly, per the
-    drift test).
-  * Non-administrators get a read-only console: the "New staff member" button,
-    row Edit/Activate/Deactivate buttons, the owner-account shortcut and the
-    Permission Matrix tab are hidden; roster, profile cards, departments and
-    disciplinary lists load normally. Every write is still re-checked
-    server-side.
-* `backend/apps/core/permissions.py`
-  * New `IsAdminOrManagerRead`: ADMIN = all methods; MANAGER / GENERAL_MANAGER
-    holding `account.view` = safe methods only; every other role refused.
-    MANAGER is included because the frontend normalises a Manager account to
-    the General Manager for every page gate — excluding it would promise a
-    screen the API refuses.
-* `backend/apps/accounts/views_admin.py`
-  * `AdminUserQuerysetMixin.permission_classes`: `[IsAdminRole]` →
-    `[IsAdminOrManagerRead]` (affects only the list/create + detail views).
-    Account creation, role changes and activation stay administrator-only.
-  * Module docstring updated to describe the read/write split.
-
-## Task 3 — Manager approval permissions (five categories)
-
-* `backend/apps/accounts/migrations/0032_manager_approval_permissions.py` (new)
-  * Idempotently ensures `RoleCapability` grants for role `MANAGER` ×
-    `leave.approve`, `inventory.adjust.approve`, `procurement.approve`,
-    `payroll.approve`, `expense.approve`. Writes an audit marker; the reverse
-    removes only grants this run created.
-  * Grants nothing else, revokes nothing, touches no other role.
-* No endpoint gate needed widening: all five decision endpoints were already
-  capability-gated (`HasCapability`) and the Manager holds the five
-  capabilities, so `MANAGER` accounts pass the backend checks. Verified by
-  direct API tests for each category (approve + reject paths).
-* No unrestricted administration was granted: the Manager holds neither
-  `account.manage`, `settings.manage` nor `audit.view`; admin-only queues and
-  the permission matrix stay closed.
-
-## Task 4 — Approval audit trail
-
-* `backend/apps/core/approval_audit.py` (new)
-  * `ApprovalCategory` codes (`leave`, `stock_count`, `purchase_order`,
-    `payroll`, `expense`), `actor_ref()` and `approval_decision_metadata()`,
-    which build the uniform evidence block: `approval_category`, `reference`,
-    `initiated_by {id,email}`, `decided_by {id,email}`, `previous_status`,
-    `new_status`, `decided_at`, `note`.
-* Decision views merge this block into the `log_action` metadata they already
-  write (existing keys preserved; initiators read from already-selected
-  relations — no new queries):
-  * `backend/apps/staff_operations/views.py` — `LeaveReviewView`
-    (`LEAVE_REVIEWED`)
-  * `backend/apps/inventory/views.py` — `StockCountApproveView`
-    (`STOCK_COUNT_APPROVED_AND_POSTED`), `PurchaseOrderApproveView`
-    (`PURCHASE_ORDER_APPROVED`), `PurchaseOrderRejectView`
-    (`PURCHASE_ORDER_REJECTED`)
-  * `backend/apps/staff_operations/payroll_views.py` — `PayrollReviewView`
-    (`PAYROLL_RUN_APPROVED` / `PAYROLL_RUN_REJECTED`)
-  * `backend/apps/finance/views.py` — `ExpenseReviewView` (`EXPENSE_REVIEWED`)
-* No workflow logic, status machine, validation, or history model was changed.
-  Duplicate-approval idempotency, maker-checker separation and rejection
-  workflows are preserved and covered by tests.
-
-## Task 5 — Category-specific rules (verified, not redesigned)
-
-* Leave: Manager approves/rejects via `leave.approve`; request data and shift
-  validation preserved (test asserts type/dates untouched).
-* Stock variances: approval posts the `ADJUSTMENT` movements; submission alone
-  never adjusts (test asserts balance unchanged pre-approval).
-* Purchase orders: Manager approves submitted orders; supplier lines and
-  receive workflow untouched.
-* Payroll: approval accrues to the ledger without changing totals (test asserts
-  gross/deductions/net identical pre/post approval).
-* Expenses: approval sets `APPROVED` only; payment/posting stays a separate
-  step (test asserts no financial transaction on approval).
-
-## Task 6 — Permission matrix
-
-* `PERMISSION_MATRIX.md` (this package) documents the actual resulting matrix.
-
-## Tests changed / added
-
-* `backend/tests/test_batch07_staff_approvals.py` (new, 15 tests) — Manager
-  approval of all five categories via API, uniform audit evidence, inbox
-  queues, maker-checker refusal, duplicate-approval idempotency, rejections,
-  GM/manager-tier staff-directory read-only access, admin privileges intact,
-  department-staff 403s.
-* `backend/tests/test_permission_alignment.py` — GM boundary updated:
-  `GET /api/admin/users/` now 200; audit logs and account writes still 403.
-* `backend/tests/test_staff.py` — manager-tier boundary updated: roster read
-  200; account writes still 403.
-* `frontend/tests-js/test-department-page-access.js` — GM expectations updated
-  (`staff.html` allowed); staff-profile cross-link test updated (page routable,
-  no longer a sidebar entry); new `batch 07` test (single "Staffs" entry,
-  registries, GM visibility, other departments refused).
+## Important limitations / integration decisions
+- No booking logic was changed: an assignment must already exist before arrival. Booking check-in does not enforce that verification was completed. A checked-out room without a completed pre-check is shown for escalation but cannot be completed as a comparative post-check; no fabricated baseline is generated. No automatic initial backfill or fixture data is supplied.
+- Only one pre/post pair per `BookingRoom` is supported. Room moves, reassignments after opening a draft, repeated occupancy on one assignment, ambiguous or mismatched stay-room records, and inspection after a subsequent guest has occupied the room are deliberately refused and require a separate management process. A changed assignment invalidates the draft; there is no draft cancellation or correction endpoint. Completed evidence can be contextualized by review events but not corrected by another inspection for the same phase.
+- Post-checkout verifies that a later occupancy is not already recorded, but cannot guarantee exclusion of a concurrent new arrival: other booking workflows do not take a shared room-level inspection lock. Coordinate front desk and housekeeping; production-grade concurrency guarantees require an agreed cross-module locking/handoff integration and tests on the production database. No other module was altered here.
+- `PROTECT` on referenced assignments/occupancies/booking/room/users preserves evidence but can block existing deletion or reassignment flows that delete referenced records. Validate cancellation, reassignment and retention procedures in staging before deployment. Do not bypass protection by deleting audit data.
+- Evidence is a free-text reference, not a file upload or immutable copy of an external file. Store actual evidence in an access-controlled retention system. Drafts and configuration changes are not individually audited; completed inspections and review events are append-only through the supplied API/model methods, not database-trigger immutable against privileged raw SQL or queryset bulk updates. Apply database access controls and backups.
+- Catalog/configuration lists are unpaginated; large installations should evaluate size and performance. No dedicated search/filter on discrepancy status. There is no API to remove a room override and inherit the type value again; zero explicitly excludes the item. Category is chosen at creation and not editable through this API.
+- Operational verification and historical reconciliation require staging acceptance, real-device accessibility testing and a MySQL concurrency/upgrade test before production rollout.

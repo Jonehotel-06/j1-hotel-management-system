@@ -111,3 +111,113 @@ class HousekeepingTaskEvent(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("Housekeeping-task events are append-only and cannot be deleted.")
+
+
+class ReusableItem(models.Model):
+    """Explicit classification keeps consumables out of asset checklists."""
+    name = models.CharField(max_length=120)
+    normalized_name = models.CharField(max_length=120, unique=True, editable=False)
+    category = models.CharField(max_length=12, choices=[('REUSABLE', 'Reusable asset'), ('CONSUMABLE', 'Consumable')], default='REUSABLE')
+
+    def save(self, *args, **kwargs):
+        self.name = ' '.join(self.name.split())
+        if not self.name:
+            raise ValidationError('Item name is required.')
+        self.normalized_name = self.name.casefold()
+        super().save(*args, **kwargs)
+
+
+class TypeAsset(models.Model):
+    room_type = models.ForeignKey('rooms.RoomType', on_delete=models.PROTECT)
+    item = models.ForeignKey(ReusableItem, on_delete=models.PROTECT)
+    quantity = models.PositiveIntegerField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['room_type', 'item'], name='hk_type_asset_unique')]
+
+
+class RoomAsset(models.Model):
+    # A zero quantity explicitly removes a type-level item from this room.
+    room = models.ForeignKey('rooms.Room', on_delete=models.PROTECT)
+    item = models.ForeignKey(ReusableItem, on_delete=models.PROTECT)
+    quantity = models.PositiveIntegerField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['room', 'item'], name='hk_room_asset_unique')]
+
+
+class AssetInspection(models.Model):
+    assignment = models.ForeignKey('bookings.BookingRoom', on_delete=models.PROTECT, related_name='asset_inspections')
+    room = models.ForeignKey('rooms.Room', on_delete=models.PROTECT)
+    booking = models.ForeignKey('bookings.Booking', on_delete=models.PROTECT)
+    stay_room = models.ForeignKey('stays.StayRoom', null=True, blank=True, on_delete=models.PROTECT)
+    room_number_snapshot = models.CharField(max_length=100)
+    room_type_snapshot = models.CharField(max_length=120)
+    booking_reference_snapshot = models.CharField(max_length=40)
+    phase = models.CharField(max_length=4, choices=[('PRE', 'Pre check-in'), ('POST', 'Post checkout')])
+    # Snapshots include names and quantities; subsequent catalog edits never alter evidence.
+    checklist = models.JSONField(default=list)
+    draft = models.JSONField(default=dict)
+    revision = models.PositiveIntegerField(default=0)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='asset_inspections_created')
+    created_at = models.DateTimeField(default=timezone.now)
+    completed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT, related_name='asset_inspections_completed')
+    completed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['assignment', 'phase'], name='hk_asset_inspection_once')]
+        indexes = [models.Index(fields=['phase', 'completed_at'])]
+
+    def save(self, *args, **kwargs):
+        if self.pk and AssetInspection.objects.filter(pk=self.pk, completed_at__isnull=False).exists():
+            raise ValidationError('Completed inspections are immutable.')
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Inspections cannot be deleted.')
+
+
+class AssetInspectionLine(models.Model):
+    inspection = models.ForeignKey(AssetInspection, on_delete=models.PROTECT, related_name='lines')
+    item_id_snapshot = models.PositiveIntegerField()
+    item_name = models.CharField(max_length=120)
+    expected = models.PositiveIntegerField()
+    before = models.PositiveIntegerField(null=True)
+    actual = models.PositiveIntegerField()
+    condition = models.CharField(max_length=12, choices=[('GOOD', 'Good'), ('DAMAGED', 'Damaged')])
+    replaced = models.BooleanField(default=False)
+    remarks = models.TextField(blank=True, default='')
+    evidence = models.TextField(blank=True, default='', help_text='Evidence reference, not an uploaded file.')
+    missing = models.PositiveIntegerField(default=0)
+    discrepancy = models.BooleanField(default=False, db_index=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['inspection', 'item_id_snapshot'], name='hk_asset_line_unique')]
+
+    def save(self, *args, **kwargs):
+        if self.pk or (self.inspection_id and AssetInspection.objects.filter(pk=self.inspection_id, completed_at__isnull=False).exists()):
+            raise ValidationError('Inspection evidence is immutable.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Inspection evidence cannot be deleted.')
+
+
+class AssetReviewEvent(models.Model):
+    line = models.ForeignKey(AssetInspectionLine, on_delete=models.PROTECT, related_name='reviews')
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    status = models.CharField(max_length=20, choices=[('INVESTIGATING', 'Investigating'), ('RESOLVED', 'Resolved')])
+    explanation = models.TextField()
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['created_at', 'pk']
+        indexes = [models.Index(fields=['line', 'created_at'])]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Review events are append-only.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Review events cannot be deleted.')
