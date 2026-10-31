@@ -74,7 +74,7 @@ class LatenessDeductionTests(BaseAPITestCase):
     def _enable_policy(self):
         self.auth(self.admin)
         response = self.client.patch(POLICY_URL, {
-            "is_enabled": True, "grace_minutes": 15, "deduction_percent": "2.50",
+            "is_enabled": True, "grace_minutes": 15, "rate_per_minute": "2.50",
         }, format="json")
         self.assertEqual(response.status_code, 200, response.content)
         return response
@@ -108,7 +108,7 @@ class LatenessDeductionTests(BaseAPITestCase):
         self.auth(self.manager)
         self.assertEqual(self.client.get(POLICY_URL).status_code, 200)
         denied = self.client.patch(POLICY_URL, {
-            "is_enabled": True, "grace_minutes": 10, "deduction_percent": "5.00",
+            "is_enabled": True, "grace_minutes": 10, "rate_per_minute": "5.00",
         }, format="json")
         self.assertEqual(denied.status_code, 403, denied.content)
         self.assertFalse(get_lateness_policy().is_enabled)
@@ -116,13 +116,13 @@ class LatenessDeductionTests(BaseAPITestCase):
         # An enabled policy needs a real percentage.
         self.auth(self.admin)
         invalid = self.client.patch(POLICY_URL, {
-            "is_enabled": True, "grace_minutes": 10, "deduction_percent": "0.00",
+            "is_enabled": True, "grace_minutes": 10, "rate_per_minute": "0.00",
         }, format="json")
         self.assertEqual(invalid.status_code, 400, invalid.content)
 
         response = self._enable_policy()
         self.assertEqual(response.json()["data"]["grace_minutes"], 15)
-        self.assertEqual(response.json()["data"]["deduction_percent"], "2.50")
+        self.assertEqual(response.json()["data"]["rate_per_minute"], "2.50")
 
         # Employees have no access to the payroll lateness workspace.
         self.auth(self.employee)
@@ -130,32 +130,52 @@ class LatenessDeductionTests(BaseAPITestCase):
         self.assertEqual(self.client.get(DEDUCTIONS_URL).status_code, 403)
 
     # -- calculation -----------------------------------------------------
-    def test_grace_period_boundary_and_daily_pay_basis(self):
+    def test_grace_period_boundary_and_per_minute_rate(self):
         self._enable_policy()
         # Exactly at the end of grace: no deduction.
         on_time = self._attendance(self.employee, clock_minute=15)
         self.assertIsNone(create_lateness_deduction_for_attendance(attendance_record=on_time))
 
         # One minute beyond grace: 2.5% of one day's pay.
-        # (62,000 + 31,000 + 31,000) / days-in-month; October-style month used
-        # by the test clock has 31 days in the current test year context, but
-        # assert from the snapshot instead of assuming the month length.
         late = self._attendance(self.employee, start_hour=10, clock_hour=10, clock_minute=16)
         deduction = create_lateness_deduction_for_attendance(attendance_record=late)
         self.assertIsNotNone(deduction)
-        days = deduction.days_in_month
-        self.assertEqual(deduction.monthly_pay_basis, Decimal("124000.00"))
-        self.assertEqual(deduction.daily_pay, (Decimal("124000.00") / days).quantize(Decimal("0.01")))
-        self.assertEqual(
-            deduction.amount,
-            (deduction.daily_pay * Decimal("2.50") / 100).quantize(Decimal("0.01")),
-        )
+        self.assertEqual(deduction.rate_per_minute, Decimal("2.50"))
+        self.assertEqual(deduction.amount, Decimal("2.50"))  # (16 - 15) × 2.50
         self.assertEqual(deduction.late_minutes, 16)
         self.assertEqual(deduction.grace_minutes, 15)
         # Idempotent: the same attendance record never produces a second row.
         again = create_lateness_deduction_for_attendance(attendance_record=late)
         self.assertEqual(again.pk, deduction.pk)
         self.assertEqual(StaffLatenessDeduction.objects.count(), 1)
+
+    def test_per_minute_examples_and_overnight_shift(self):
+        from datetime import timedelta
+        from apps.staff_operations.models import LatenessDeductionPolicy
+        self._enable_policy()
+        policy = LatenessDeductionPolicy.get_policy()
+        policy.grace_minutes = 0
+        policy.save()
+        for minutes, rate, expected in [(5, "1.00", "5.00"), (10, "1.00", "10.00"), (20, "1.00", "20.00"), (30, "2.00", "60.00")]:
+            with self.subTest(minutes=minutes):
+                policy.rate_per_minute = Decimal(rate)
+                policy.save()
+                employee = make_staff(f"minutes.{minutes}@staff.dev", role=User.Role.HOUSEKEEPER)
+                record = self._attendance(employee, clock_minute=minutes)
+                deduction = create_lateness_deduction_for_attendance(attendance_record=record)
+                self.assertEqual(deduction.amount, Decimal(expected))
+        employee = make_staff("overnight.minutes@staff.dev", role=User.Role.HOUSEKEEPER)
+        record = self._attendance(employee, clock_minute=10)
+        start = self._aware(23)
+        record.shift.planned_start_at = start
+        record.shift.planned_end_at = start + timedelta(hours=8)
+        record.shift.save()
+        record.clock_in_at = start + timedelta(minutes=90)
+        record.clock_out_at = start + timedelta(hours=8)
+        record.save()
+        deduction = create_lateness_deduction_for_attendance(attendance_record=record)
+        self.assertEqual(deduction.amount, Decimal("180.00"))
+        self.assertEqual(deduction.late_minutes, 90)
 
     def test_disabled_policy_deducts_nothing(self):
         late = self._attendance(self.employee, clock_minute=45)
@@ -235,7 +255,7 @@ class LatenessDeductionTests(BaseAPITestCase):
         self._prepare_employee(other, basic="31000.00")
         record = self._attendance(other, clock_minute=30)
         deduction = create_lateness_deduction_for_attendance(attendance_record=record)
-        self.assertEqual(deduction.amount, Decimal("25.00") if deduction.days_in_month == 31 else deduction.amount)
+        self.assertEqual(deduction.amount, Decimal("37.50"))
         self.assertGreater(deduction.amount, Decimal("0.00"))
 
         self.auth(self.manager)

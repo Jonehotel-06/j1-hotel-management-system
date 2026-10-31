@@ -119,6 +119,8 @@ def create_compensation(
     housing_allowance = _decimal(housing_allowance, "housing_allowance")
     transport_allowance = _decimal(transport_allowance, "transport_allowance")
     overtime_rate = _decimal(overtime_rate, "overtime_rate")
+    if staff.is_superuser or staff.role == User.Role.ADMIN:
+        raise ValidationError({"staff_id": "Super Admin is not a payroll employee."})
     if not StaffProfile.objects.filter(user=staff).exists():
         from .staff_operations_service import ensure_staff_profile
         ensure_staff_profile(staff=staff)
@@ -163,7 +165,7 @@ def _department_staff_profiles(department, *, for_update=False):
                 StaffProfile.EmploymentStatus.ON_LEAVE,
             ],
         )
-        .exclude(user__role=User.Role.GUEST)
+        .exclude(user__role__in=[User.Role.GUEST, User.Role.ADMIN]).exclude(user__is_superuser=True)
         .filter(dept_match)
         .order_by("employee_code", "user_id")
     )
@@ -171,8 +173,9 @@ def _department_staff_profiles(department, *, for_update=False):
 
 @transaction.atomic
 def create_stock_shortage_case(
-    *, actor, department_id, item_summary="", total_amount=None, stock_count_reference="",
+    *, actor, department_id=None, department_ids=None, item_summary="", total_amount=None, stock_count_reference="",
     incident_date, effective_date, evidence_reference="", notes="",
+    discovered_at=None, responsibility_type="DEPARTMENT", staff_ids=None, stock_count_line_id=None,
 ):
     """Record a proposed department-wide missing-stock recovery case.
 
@@ -182,14 +185,36 @@ def create_stock_shortage_case(
     """
     if not (has_capability(actor, "payroll.manage") or has_capability(actor, "inventory.manage")):
         raise PermissionDenied("This user cannot record stock-shortage cases.")
-    department = Department.objects.select_for_update().filter(pk=department_id, is_active=True).first()
-    if department is None:
-        raise ValidationError({"department_id": "Select an active department."})
+    ids = list(department_ids or ([department_id] if department_id else []))
+    if not ids or len(ids) != len(set(ids)):
+        raise ValidationError({"department_ids": "Select distinct responsible departments."})
+    departments = list(Department.objects.select_for_update().filter(pk__in=ids, is_active=True).order_by("pk"))
+    if len(departments) != len(ids):
+        raise ValidationError({"department_ids": "Select existing active departments."})
+    if department_id and department_id not in ids:
+        raise ValidationError({"department_id": "Primary department must be selected."})
+    department = next((d for d in departments if d.pk == department_id), departments[0])
     if incident_date > hotel_today():
         raise ValidationError({"incident_date": "The incident date cannot be in the future."})
     if effective_date < incident_date:
         raise ValidationError({"effective_date": "The payroll effective date cannot precede the incident date."})
 
+    from .payroll_shortage_service import validate_discovery, eligible_staff
+    discovered_at = validate_discovery(discovered_at)
+    if timezone.localdate(discovered_at) != incident_date:
+        raise ValidationError({"incident_date": "Date must match hotel-local discovery time."})
+    if responsibility_type not in {"STAFF", "DEPARTMENT"}:
+        raise ValidationError({"responsibility_type": "Select staff or department responsibility."})
+    eligible = [row for dept in departments for row in eligible_staff(discovered_at, dept)]
+    selected = list(staff_ids or [])
+    if len(selected) != len(set(selected)) or (responsibility_type == "STAFF" and not selected):
+        raise ValidationError({"staff_ids": "Select distinct eligible staff."})
+    if any(pk not in {row["staff_id"] for row in eligible} for pk in selected):
+        raise ValidationError({"staff_ids": "Selected staff were not verified on duty in this department."})
+    if responsibility_type == "STAFF":
+        eligible = [row for row in eligible if row["staff_id"] in selected]
+    if not stock_count_reference or not stock_count_line_id:
+        raise ValidationError({"stock_count_reference": "Select a posted missing-stock item; manual estimated valuations are not permitted."})
     item_summary = str(item_summary or "").strip()[:500]
     evidence_reference = str(evidence_reference or "").strip()[:160]
     shortage_lines = []
@@ -208,26 +233,29 @@ def create_stock_shortage_case(
             raise ValidationError({"stock_count_reference": "Stock count not found."})
         if stock_count.status != StockCount.Status.POSTED:
             raise ValidationError({"stock_count_reference": "Only a posted stock count can support a shortage case."})
-        if PayrollStockShortageCase.objects.filter(stock_count=stock_count).exclude(
-            status=PayrollStockShortageCase.Status.REJECTED,
-        ).exists():
-            raise ValidationError({"stock_count_reference": "This stock count already has a stock-shortage case."})
+        from ..payroll_models import PayrollStockShortageClaim
+        # Lock the parent count before checking/reserving lines. This serializes
+        # competing recoveries on MySQL; the unique claim is the DB backstop.
+        if PayrollStockShortageClaim.objects.filter(stock_count_line_id=stock_count_line_id).exists():
+            raise ValidationError({"stock_count_line_id": "This missing-stock line already has an active recovery case."})
+        # Legacy whole-count cases without line evidence reserve the whole count.
+        if PayrollStockShortageCase.objects.filter(stock_count=stock_count, discovered_at__isnull=True).exclude(status="REJECTED").exists():
+            raise ValidationError({"stock_count_reference": "A legacy whole-count recovery exists; review it before recovering individual lines."})
         currencies = set()
         computed_total = ZERO
-        for line in stock_count.lines.all():
+        for line in stock_count.lines.filter(pk=stock_count_line_id):
             variance = Decimal(line.variance or ZERO)
             if variance >= ZERO:
                 continue
             missing_quantity = (-variance).quantize(Decimal("0.0001"))
-            unit_cost = Decimal(line.item.standard_cost or ZERO).quantize(CENT)
-            if unit_cost <= ZERO:
-                raise ValidationError({
-                    "stock_count_reference": f"Stock item {line.item.sku} has no standard cost; set its cost before using the count as the value source."
-                })
+            from .payroll_shortage_service import purchase_basis
+            unit_cost, cost_evidence = purchase_basis(line, discovered_at)
             currencies.add(str(line.item.currency or "NGN").upper())
             line_value = (missing_quantity * unit_cost).quantize(CENT, rounding=ROUND_HALF_UP)
             computed_total += line_value
             shortage_lines.append({
+                "stock_count_line_id": line.pk, "item_id": line.item_id,
+                "cost_basis": cost_evidence,
                 "item_sku": line.item.sku,
                 "item_name": line.item.name,
                 "missing_quantity": str(missing_quantity),
@@ -265,6 +293,9 @@ def create_stock_shortage_case(
         stock_count=stock_count,
         item_summary=item_summary,
         shortage_lines=shortage_lines,
+        discovered_at=discovered_at, responsibility_type=responsibility_type,
+        responsibility={"eligible_staff": eligible, "selected_staff_ids": selected,
+                        "departments": [{"id": d.pk, "name": d.name, "code": d.code} for d in departments]},
         incident_date=incident_date,
         effective_date=effective_date,
         total_amount=_decimal(total_amount, "total_amount"),
@@ -274,11 +305,17 @@ def create_stock_shortage_case(
         created_by=actor,
     )
     case.save()
+    case.responsible_departments.set(departments)
+    try:
+        with transaction.atomic():
+            PayrollStockShortageClaim.objects.create(case=case, stock_count_line_id=stock_count_line_id)
+    except IntegrityError as exc:
+        raise ValidationError({"stock_count_line_id": "This stock line is already reserved for recovery."}) from exc
     return case
 
 
 @transaction.atomic
-def decide_stock_shortage_case(*, case, actor, approved: bool, decision_note=""):
+def decide_stock_shortage_case(*, case, actor, approved: bool, decision_note="", allocations=None):
     """Approve/reject a shortage case; ADMIN is the only deciding role."""
     if not getattr(actor, "is_active", False) or getattr(actor, "role", None) != User.Role.ADMIN:
         raise PermissionDenied("Only an Admin can approve department-wide stock-shortage deductions.")
@@ -294,24 +331,30 @@ def decide_stock_shortage_case(*, case, actor, approved: bool, decision_note="")
     if len(note) < 5:
         raise ValidationError({"decision_note": "Record why the Admin approved or rejected this case."})
 
+    proposed_allocations = allocations
     allocations = []
     if approved:
-        profiles = _department_staff_profiles(case.department, for_update=True)
-        if not profiles:
-            raise ValidationError("No active staff profiles are currently assigned to this department.")
-        total_cents = int((Decimal(case.total_amount) * Decimal("100")).to_integral_value(rounding=ROUND_DOWN))
-        if total_cents < len(profiles):
-            raise ValidationError("The total is too small to allocate at least NGN 0.01 to every staff member in the department.")
-        base_cents, remainder = divmod(total_cents, len(profiles))
-        for index, profile in enumerate(profiles):
-            cents = base_cents + (1 if index < remainder else 0)
+        from .payroll_shortage_service import eligible_staff
+        if not case.discovered_at:
+            raise ValidationError("Legacy case has no discovery time; reject and record a new investigated case.")
+        departments = list(case.responsible_departments.all()) or [case.department]
+        current_evidence = [row for dept in departments for row in eligible_staff(case.discovered_at, dept)]
+        eligible = {row["staff_id"] for row in current_evidence}
+        evidence_by_staff = {row["staff_id"]: row for row in current_evidence}
+        recorded = {row["staff_id"] for row in case.responsibility.get("eligible_staff", [])}
+        proposed = proposed_allocations or []
+        ids = [row["staff_id"] for row in proposed]
+        if not ids or len(ids) != len(set(ids)) or not set(ids).issubset(eligible & recorded):
+            raise ValidationError({"allocations": "Explicit distinct allocations to attendance-verified responsible staff are required."})
+        amounts = [_decimal(row["amount"], "allocations") for row in proposed]
+        if any(amount <= ZERO for amount in amounts) or sum(amounts, ZERO) != case.total_amount:
+            raise ValidationError({"allocations": "Positive allocations must sum exactly to the case total."})
+        for row, amount in zip(proposed, amounts):
+            profile = StaffProfile.objects.select_related("user").get(user_id=row["staff_id"])
             allocations.append(PayrollStockShortageAllocation(
-                case=case,
-                staff=profile.user,
-                employee_code=profile.employee_code,
-                employee_name=profile.user.full_name[:201],
-                department=(profile.department or case.department_name)[:120],
-                amount=(Decimal(cents) / Decimal("100")).quantize(CENT),
+                case=case, staff=profile.user, employee_code=profile.employee_code,
+                employee_name=profile.user.full_name[:201], department=evidence_by_staff[profile.user_id]["department"],
+                amount=amount,
             ))
 
     case.status = target_status
@@ -319,6 +362,9 @@ def decide_stock_shortage_case(*, case, actor, approved: bool, decision_note="")
     case.decided_at = timezone.now()
     case.decision_note = note[:1000]
     case.save(update_fields=["status", "decided_by", "decided_at", "decision_note", "updated_at"])
+    if not approved:
+        from ..payroll_models import PayrollStockShortageClaim
+        PayrollStockShortageClaim.objects.filter(case=case).delete()
     if allocations:
         PayrollStockShortageAllocation.objects.bulk_create(allocations)
     return case
@@ -333,7 +379,7 @@ def get_lateness_policy() -> LatenessDeductionPolicy:
 
 
 @transaction.atomic
-def update_lateness_policy(*, actor, is_enabled, grace_minutes, deduction_percent):
+def update_lateness_policy(*, actor, is_enabled, grace_minutes, rate_per_minute):
     """Only an ADMIN-role account may configure the automatic lateness rule."""
     if not getattr(actor, "is_active", False) or getattr(actor, "role", None) != User.Role.ADMIN:
         raise PermissionDenied("Only an Admin can configure the automatic lateness deduction policy.")
@@ -343,30 +389,16 @@ def update_lateness_policy(*, actor, is_enabled, grace_minutes, deduction_percen
         raise ValidationError({"grace_minutes": "Grace minutes must be a whole number."}) from exc
     if grace < 0 or grace > 1440:
         raise ValidationError({"grace_minutes": "Grace minutes must be between 0 and 1440."})
-    percent = _decimal(deduction_percent, "deduction_percent")
-    if percent > Decimal("100.00"):
-        raise ValidationError({"deduction_percent": "The deduction percentage cannot exceed 100."})
-    if is_enabled and percent <= ZERO:
-        raise ValidationError({"deduction_percent": "Set a percentage above zero before enabling the policy."})
+    rate = _decimal(rate_per_minute, "rate_per_minute")
+    if rate < ZERO or (is_enabled and rate <= ZERO):
+        raise ValidationError({"rate_per_minute": "Set a positive per-minute rate before enabling."})
     policy = LatenessDeductionPolicy.objects.select_for_update().get_or_create(pk=1)[0]
     policy.is_enabled = bool(is_enabled)
     policy.grace_minutes = grace
-    policy.deduction_percent = percent
+    policy.rate_per_minute = rate
     policy.updated_by = actor
-    policy.save(update_fields=["is_enabled", "grace_minutes", "deduction_percent", "updated_by", "updated_at"])
+    policy.save(update_fields=["is_enabled", "grace_minutes", "rate_per_minute", "updated_by", "updated_at"])
     return policy
-
-
-def _lateness_amounts(*, compensation, business_date, deduction_percent):
-    """Percentage of one day's pay for the month containing ``business_date``."""
-    basis = (
-        Decimal(compensation.basic_salary) + Decimal(compensation.housing_allowance)
-        + Decimal(compensation.transport_allowance)
-    ).quantize(CENT)
-    days = calendar.monthrange(business_date.year, business_date.month)[1]
-    daily = (basis / Decimal(days)).quantize(CENT, rounding=ROUND_HALF_UP) if days else ZERO
-    amount = (daily * Decimal(deduction_percent) / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
-    return basis, days, daily, amount
 
 
 def _compensation_for_date(*, staff_id, business_date):
@@ -389,13 +421,13 @@ def create_lateness_deduction_for_attendance(*, attendance_record, compensation=
         .select_related("staff", "shift")
         .filter(pk=attendance_record.pk).first()
     )
-    if record is None or record.shift_id is None or record.shift.planned_start_at is None:
+    if record is None or record.shift_id is None or record.shift.planned_start_at is None or record.shift.status == "CANCELLED" or record.status == "EXCEPTION" or record.staff.is_superuser or record.staff.role == User.Role.ADMIN:
         return None
     existing = StaffLatenessDeduction.objects.filter(attendance_record=record).first()
     if existing:
         return existing
     policy = policy or get_lateness_policy()
-    if not policy.is_enabled or Decimal(policy.deduction_percent) <= ZERO:
+    if not policy.is_enabled or Decimal(policy.rate_per_minute) <= ZERO:
         return None
     late_minutes = int((record.clock_in_at - record.shift.planned_start_at).total_seconds() // 60)
     if late_minutes <= int(policy.grace_minutes):
@@ -403,14 +435,9 @@ def create_lateness_deduction_for_attendance(*, attendance_record, compensation=
     compensation = compensation or _compensation_for_date(
         staff_id=record.staff_id, business_date=record.business_date,
     )
-    basis, days, daily, amount = ZERO, 0, ZERO, ZERO
-    currency = "NGN"
-    if compensation is not None:
-        basis, days, daily, amount = _lateness_amounts(
-            compensation=compensation, business_date=record.business_date,
-            deduction_percent=policy.deduction_percent,
-        )
-        currency = str(compensation.currency or "NGN").upper()
+    basis, days, daily = ZERO, 0, ZERO
+    amount = (Decimal(late_minutes - policy.grace_minutes) * policy.rate_per_minute).quantize(CENT, rounding=ROUND_HALF_UP)
+    currency = str(compensation.currency or "NGN").upper() if compensation else "NGN"
     return StaffLatenessDeduction.objects.create(
         staff=record.staff,
         attendance_record=record,
@@ -420,7 +447,8 @@ def create_lateness_deduction_for_attendance(*, attendance_record, compensation=
         clock_in_at=record.clock_in_at,
         late_minutes=late_minutes,
         grace_minutes=int(policy.grace_minutes),
-        deduction_percent=Decimal(policy.deduction_percent),
+        deduction_percent=ZERO,
+        rate_per_minute=policy.rate_per_minute,
         monthly_pay_basis=basis,
         days_in_month=days,
         daily_pay=daily,
@@ -450,24 +478,6 @@ def sync_lateness_deductions(*, staff_id, compensation, starts_on, ends_on):
         )
         if deduction is None:
             continue
-        if (
-            deduction.status == StaffLatenessDeduction.Status.ACTIVE
-            and deduction.applied_payroll_line_id is None
-            and Decimal(deduction.amount) <= ZERO
-            and compensation is not None
-        ):
-            basis, days, daily, amount = _lateness_amounts(
-                compensation=compensation, business_date=deduction.business_date,
-                deduction_percent=deduction.deduction_percent,
-            )
-            deduction.monthly_pay_basis = basis
-            deduction.days_in_month = days
-            deduction.daily_pay = daily
-            deduction.amount = amount
-            deduction.currency = str(compensation.currency or "NGN").upper()
-            deduction.save(update_fields=[
-                "monthly_pay_basis", "days_in_month", "daily_pay", "amount", "currency", "updated_at",
-            ])
 
 
 @transaction.atomic
@@ -588,7 +598,7 @@ def create_payroll_period(
             user__is_active=True,
             employment_status__in=[StaffProfile.EmploymentStatus.ACTIVE, StaffProfile.EmploymentStatus.ON_LEAVE],
         )
-        .exclude(user__role=User.Role.GUEST)
+        .exclude(user__role__in=[User.Role.GUEST, User.Role.ADMIN]).exclude(user__is_superuser=True)
         .order_by("user__last_name", "user__first_name", "user_id")
     )
     if department:

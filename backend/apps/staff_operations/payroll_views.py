@@ -1,5 +1,5 @@
 """Private payroll and payslip endpoints, separated from ordinary staff views."""
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from html import escape
 from io import BytesIO
 
@@ -142,7 +142,12 @@ class StaffCompensationListCreateView(APIView):
     pagination_class = StandardPagination
 
     def get(self, request):
-        queryset = StaffCompensation.objects.select_related("staff", "created_by", "staff__staff_profile").order_by(
+        if request.query_params.get("options") == "staff":
+            profiles = StaffProfile.objects.select_related("user").filter(user__is_active=True, user__is_superuser=False).exclude(user__role__in=[User.Role.GUEST, User.Role.ADMIN])
+            if term := request.query_params.get("search"):
+                profiles = profiles.filter(Q(user__first_name__icontains=term) | Q(user__last_name__icontains=term) | Q(employee_code__icontains=term))
+            return _private_response(success_response([{"id": p.user_id, "staff_id": p.user_id, "full_name": p.user.full_name, "employee_code": p.employee_code, "department": p.department} for p in profiles.order_by("user_id")[:100]]))
+        queryset = StaffCompensation.objects.exclude(staff__is_superuser=True).exclude(staff__role=User.Role.ADMIN).select_related("staff", "created_by", "staff__staff_profile").order_by(
             "staff__last_name", "staff__first_name", "-effective_from", "-pk"
         )
         if staff_id := request.query_params.get("staff_id"):
@@ -217,16 +222,64 @@ class PayrollStockShortageListCreateView(APIView):
     pagination_class = StandardPagination
 
     def get(self, request):
+        if request.query_params.get("options") == "stock":
+            from apps.inventory.models import StockCountLine
+            from .services.payroll_shortage_service import purchase_basis
+            from django.utils import timezone
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            rows = StockCountLine.objects.select_related("item", "stock_count__location").filter(
+                stock_count__status="POSTED", variance__lt=0,
+            ).filter(payroll_recovery_claim__isnull=True).exclude(
+                stock_count_id__in=PayrollStockShortageCase.objects.filter(
+                    discovered_at__isnull=True, stock_count__isnull=False,
+                ).exclude(status="REJECTED").values("stock_count_id"),
+            ).order_by("item__name", "pk")
+            if search := request.query_params.get("search"):
+                rows = rows.filter(Q(item__name__icontains=search) | Q(item__sku__icontains=search))
+            result = []
+            from rest_framework import serializers
+            page = serializers.IntegerField(min_value=1).run_validation(request.query_params.get("page", 1))
+            page_size = serializers.IntegerField(min_value=1, max_value=100).run_validation(request.query_params.get("page_size", 25))
+            from .services.payroll_shortage_service import validate_discovery
+            at = serializers.DateTimeField().run_validation(request.query_params.get("discovered_at"))
+            validate_discovery(at)
+            total = rows.count()
+            for line in rows[(page-1)*page_size:page*page_size]:
+                row = {"id": line.pk, "item_id": line.item_id, "name": line.item.name,
+                       "stock_count_reference": line.stock_count.reference,
+                       "quantity": str(-line.variance), "currency": line.item.currency, "location": line.stock_count.location.name}
+                try:
+                    cost, evidence = purchase_basis(line, at)
+                    row.update(unit_cost=str(cost), amount=str((-line.variance * cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)), cost_basis=evidence)
+                except DjangoValidationError as exc:
+                    row["error"] = "; ".join(exc.messages)
+                result.append(row)
+            response = success_response(result)
+            response.data["pagination"] = {"page": page, "page_size": page_size, "count": total, "has_next": page*page_size < total}
+            return _private_response(response)
+        if request.query_params.get("options") == "staff":
+            from .models import Department
+            from .services.payroll_shortage_service import eligible_staff, validate_discovery
+            from rest_framework import serializers
+            at = serializers.DateTimeField().run_validation(request.query_params.get("discovered_at"))
+            validate_discovery(at)
+            raw_ids = request.query_params.get("department_ids", request.query_params.get("department_id", ""))
+            ids = serializers.ListField(child=serializers.IntegerField(min_value=1), allow_empty=False).run_validation(raw_ids.split(",") if raw_ids else [])
+            departments = list(Department.objects.filter(pk__in=ids, is_active=True).order_by("pk"))
+            if len(ids) != len(set(ids)) or len(departments) != len(ids):
+                raise serializers.ValidationError({"department_ids": "Select distinct active departments."})
+            return _private_response(success_response([row for dept in departments for row in eligible_staff(at, dept)]))
         queryset = _shortage_queryset().order_by("-incident_date", "-created_at", "-pk")
         if status_filter := request.query_params.get("status"):
             queryset = queryset.filter(status=status_filter.upper())
         if department_id := request.query_params.get("department_id"):
-            queryset = queryset.filter(department_id=department_id)
+            queryset = queryset.filter(Q(department_id=department_id) | Q(responsible_departments__id=department_id)).distinct()
         if search := request.query_params.get("search"):
             queryset = queryset.filter(
                 Q(reference__icontains=search) | Q(item_summary__icontains=search)
                 | Q(department_name__icontains=search) | Q(department_code__icontains=search)
-            )
+                | Q(responsible_departments__name__icontains=search) | Q(responsible_departments__code__icontains=search)
+            ).distinct()
         return _page(self, request, queryset, PayrollStockShortageSerializer)
 
     def post(self, request):
@@ -235,7 +288,7 @@ class PayrollStockShortageListCreateView(APIView):
         data = serializer.validated_data
         case = create_stock_shortage_case(
             actor=request.user,
-            department_id=data["department_id"],
+            department_id=data.get("department_id"), department_ids=data.get("department_ids"),
             item_summary=data["item_summary"],
             total_amount=data.get("total_amount"),
             stock_count_reference=data["stock_count_reference"],
@@ -243,6 +296,8 @@ class PayrollStockShortageListCreateView(APIView):
             effective_date=data["effective_date"],
             evidence_reference=data["evidence_reference"],
             notes=data["notes"],
+            discovered_at=data["discovered_at"], responsibility_type=data["responsibility_type"],
+            staff_ids=data["staff_ids"], stock_count_line_id=data["stock_count_line_id"],
         )
         log_action(
             actor=request.user, action="PAYROLL_STOCK_SHORTAGE_CASE_CREATED", instance=case, request=request,
@@ -283,7 +338,7 @@ class PayrollStockShortageDecisionView(APIView):
         data = serializer.validated_data
         case = decide_stock_shortage_case(
             case=_shortage(reference), actor=request.user,
-            approved=data["approved"], decision_note=data["decision_note"],
+            approved=data["approved"], decision_note=data["decision_note"], allocations=data["allocations"],
         )
         log_action(
             actor=request.user,
@@ -336,7 +391,7 @@ class LatenessPolicyView(APIView):
             actor=request.user,
             is_enabled=data["is_enabled"],
             grace_minutes=data["grace_minutes"],
-            deduction_percent=data["deduction_percent"],
+            rate_per_minute=data["rate_per_minute"],
         )
         log_action(
             actor=request.user, action="PAYROLL_LATENESS_POLICY_UPDATED", instance=policy, request=request,
@@ -359,7 +414,7 @@ class StaffLatenessDeductionListView(APIView):
     pagination_class = StandardPagination
 
     def get(self, request):
-        queryset = _lateness_queryset().order_by("-business_date", "-created_at", "-pk")
+        queryset = _lateness_queryset().exclude(staff__is_superuser=True).exclude(staff__role=User.Role.ADMIN).order_by("-business_date", "-created_at", "-pk")
         if status_filter := request.query_params.get("status"):
             queryset = queryset.filter(status=status_filter.upper())
         if staff_id := request.query_params.get("staff_id"):
@@ -691,9 +746,9 @@ class MyPayslipListView(APIView):
 
     def get(self, request):
         queryset = (
-            _payroll_line_queryset()
+            _payroll_line_queryset().exclude(staff__role=User.Role.ADMIN)
             .filter(
-                staff=request.user,
+                staff=request.user, staff__is_superuser=False,
                 period__status__in=(
                     PayrollPeriod.Status.APPROVED,
                     PayrollPeriod.Status.PARTIALLY_PAID,
@@ -714,13 +769,13 @@ class PayrollPayslipView(APIView):
     def get(self, request, reference):
         line = (
             PayrollLine.objects.select_related("period", "staff", "compensation")
-            .filter(period__reference=reference, staff=request.user)
+            .exclude(staff__role=User.Role.ADMIN).filter(period__reference=reference, staff=request.user, staff__is_superuser=False)
             .first()
         )
         if line is None and has_capability(request.user, "payroll.view"):
             line = (
                 PayrollLine.objects.select_related("period", "staff", "compensation")
-                .filter(period__reference=reference, staff_id=request.query_params.get("staff_id"))
+                .exclude(staff__role=User.Role.ADMIN).filter(period__reference=reference, staff_id=request.query_params.get("staff_id"), staff__is_superuser=False)
                 .first()
             )
         if line is None:

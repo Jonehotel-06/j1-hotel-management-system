@@ -1,6 +1,7 @@
 """Sensitive payroll serializers; no salary fields enter ordinary staff profile APIs."""
 from decimal import Decimal
 
+from django.db.models import Q
 from rest_framework import serializers
 
 from .payroll_models import (
@@ -66,7 +67,7 @@ class LatenessPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = LatenessDeductionPolicy
         fields = [
-            "id", "is_enabled", "grace_minutes", "deduction_percent", "updated_by_email",
+            "id", "is_enabled", "grace_minutes", "rate_per_minute", "deduction_percent", "updated_by_email",
             "created_at", "updated_at",
         ]
         read_only_fields = fields
@@ -75,15 +76,11 @@ class LatenessPolicySerializer(serializers.ModelSerializer):
 class LatenessPolicyUpdateSerializer(serializers.Serializer):
     is_enabled = serializers.BooleanField()
     grace_minutes = serializers.IntegerField(min_value=0, max_value=1440)
-    deduction_percent = serializers.DecimalField(
-        max_digits=5, decimal_places=2, min_value=Decimal("0.00"), max_value=Decimal("100.00"),
-    )
+    rate_per_minute = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0.00"))
 
     def validate(self, attrs):
-        if attrs.get("is_enabled") and Decimal(attrs.get("deduction_percent", Decimal("0"))) <= 0:
-            raise serializers.ValidationError({
-                "deduction_percent": "Set a percentage above zero before enabling the policy.",
-            })
+        if attrs["is_enabled"] and attrs["rate_per_minute"] <= 0:
+            raise serializers.ValidationError({"rate_per_minute": "An enabled policy needs a positive rate."})
         return attrs
 
 
@@ -117,7 +114,7 @@ class StaffLatenessDeductionSerializer(serializers.ModelSerializer):
         fields = [
             "id", "reference", "staff_id", "staff_email", "staff_name", "employee_code", "department",
             "attendance_reference", "shift_reference", "business_date", "scheduled_start_at", "clock_in_at",
-            "late_minutes", "grace_minutes", "deduction_percent", "monthly_pay_basis", "days_in_month",
+            "late_minutes", "grace_minutes", "rate_per_minute", "deduction_percent", "monthly_pay_basis", "days_in_month",
             "daily_pay", "amount", "currency", "status", "applied_period_reference", "applied_period_status",
             "revocation_reason", "revocation_evidence_reference", "revocation_requested_by_email",
             "revocation_requested_at", "decided_by_email", "decided_at", "decision_note",
@@ -137,10 +134,15 @@ class LatenessRevocationDecisionSerializer(serializers.Serializer):
 
 
 class PayrollStockShortageCreateSerializer(serializers.Serializer):
-    department_id = serializers.IntegerField(min_value=1)
+    department_id = serializers.IntegerField(min_value=1, required=False)
+    department_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False)
     item_summary = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
     total_amount = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0.01"), required=False, allow_null=True)
     stock_count_reference = serializers.CharField(required=False, allow_blank=True, max_length=64, default="")
+    discovered_at = serializers.DateTimeField()
+    stock_count_line_id = serializers.IntegerField(min_value=1)
+    responsibility_type = serializers.ChoiceField(choices=["STAFF", "DEPARTMENT"])
+    staff_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), default=list)
     incident_date = serializers.DateField()
     effective_date = serializers.DateField()
     evidence_reference = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
@@ -158,7 +160,13 @@ class PayrollStockShortageCreateSerializer(serializers.Serializer):
         return attrs
 
 
+class ShortageAllocationInputSerializer(serializers.Serializer):
+    staff_id = serializers.IntegerField(min_value=1)
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=Decimal("0.01"))
+
+
 class PayrollStockShortageDecisionSerializer(serializers.Serializer):
+    allocations = ShortageAllocationInputSerializer(many=True, required=False, default=list)
     approved = serializers.BooleanField()
     decision_note = serializers.CharField(min_length=5, max_length=1000, allow_blank=False)
 
@@ -177,6 +185,7 @@ class PayrollStockShortageAllocationSerializer(serializers.ModelSerializer):
 
 
 class PayrollStockShortageSerializer(serializers.ModelSerializer):
+    department_ids = serializers.PrimaryKeyRelatedField(source="responsible_departments", many=True, read_only=True)
     department_id = serializers.IntegerField(source="department.pk", read_only=True)
     stock_count_reference = serializers.CharField(source="stock_count.reference", read_only=True, allow_null=True)
     created_by_email = serializers.EmailField(source="created_by.email", read_only=True, allow_null=True)
@@ -188,8 +197,8 @@ class PayrollStockShortageSerializer(serializers.ModelSerializer):
     class Meta:
         model = PayrollStockShortageCase
         fields = [
-            "id", "reference", "department_id", "department_code", "department_name", "stock_count_reference",
-            "item_summary", "shortage_lines", "incident_date", "effective_date", "total_amount", "currency",
+            "id", "reference", "department_id", "department_ids", "department_code", "department_name", "stock_count_reference",
+            "item_summary", "shortage_lines", "discovered_at", "responsibility_type", "responsibility", "incident_date", "effective_date", "total_amount", "currency",
             "evidence_reference", "notes", "status", "created_by_email", "decided_by_email", "decided_at",
             "decision_note", "staff_count", "applied_count", "share_amount", "created_at", "updated_at",
         ]
@@ -336,7 +345,14 @@ class PayrollPeriodListSerializer(serializers.ModelSerializer):
     approved_by_email = serializers.EmailField(source="approved_by.email", read_only=True, allow_null=True)
     paid_by_email = serializers.EmailField(source="paid_by.email", read_only=True, allow_null=True)
     replaces_reference = serializers.CharField(source="replaces.reference", read_only=True, allow_null=True)
-    line_count = serializers.IntegerField(read_only=True)
+    line_count = serializers.SerializerMethodField()
+    excluded_employee_count = serializers.SerializerMethodField()
+
+    def get_line_count(self, obj):
+        return obj.lines.filter(staff__is_superuser=False).exclude(staff__role="ADMIN").count()
+
+    def get_excluded_employee_count(self, obj):
+        return obj.lines.filter(Q(staff__is_superuser=True) | Q(staff__role="ADMIN")).count()
     salary_amount_paid = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
     salary_balance = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
 
@@ -344,7 +360,7 @@ class PayrollPeriodListSerializer(serializers.ModelSerializer):
         model = PayrollPeriod
         fields = [
             "id", "reference", "starts_on", "ends_on", "department", "currency",
-            "status", "replaces_reference", "line_count", "total_gross", "total_deductions", "total_net",
+            "status", "replaces_reference", "line_count", "excluded_employee_count", "total_gross", "total_deductions", "total_net",
             "salary_amount_paid", "salary_balance", "created_by_email", "submitted_at",
             "reviewed_by_email", "reviewed_at", "review_note", "approved_by_email", "approved_at", "paid_by_email",
             "paid_at", "payment_method", "external_reference", "created_at", "updated_at",
@@ -353,7 +369,10 @@ class PayrollPeriodListSerializer(serializers.ModelSerializer):
 
 
 class PayrollPeriodDetailSerializer(PayrollPeriodListSerializer):
-    lines = PayrollLineSerializer(many=True, read_only=True)
+    lines = serializers.SerializerMethodField()
+
+    def get_lines(self, obj):
+        return PayrollLineSerializer(obj.lines.filter(staff__is_superuser=False).exclude(staff__role="ADMIN"), many=True, context=self.context).data
     events = PayrollEventSerializer(many=True, read_only=True)
     accrual_financial_reference = serializers.CharField(source="accrual_transaction.reference", read_only=True, allow_null=True)
     payment_financial_reference = serializers.CharField(source="payment_transaction.reference", read_only=True, allow_null=True)

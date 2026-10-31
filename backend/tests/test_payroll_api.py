@@ -1,6 +1,7 @@
 """End-to-end payroll privacy, maker-checker, correction and ledger tests."""
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
+from django.utils import timezone
 
 from django.core.exceptions import ValidationError
 
@@ -481,6 +482,241 @@ class PayrollApiTests(BaseAPITestCase):
         self.assertEqual(Decimal(line["deductions_total"]), Decimal("0.00"))
         self.assertEqual(Decimal(line["net_pay"]), Decimal("130000.00"))
 
+    def _shortage_evidence(self, department, total, staff=()):
+        from apps.staff_operations.models import ShiftAssignment, AttendanceRecord
+        from apps.inventory.models import StockMovement, StockBalance
+        at = timezone.now() - timedelta(minutes=1)
+        location = StockLocation.objects.create(code="TEST-SHORTAGE", name="Test shortage store")
+        item = StockItem.objects.create(sku="TEST-SHORTAGE", name="Receipt valued item", standard_cost="99999.00")
+        StockMovement.objects.create(reference="TEST-RECEIPT", source_key="test-receipt", item=item, location=location,
+            balance=StockBalance.objects.get_or_create(item=item, location=location)[0], type=StockMovement.Type.RECEIPT, quantity_delta=1, unit_cost=total, occurred_at=at-timedelta(hours=1))
+        count = StockCount.objects.create(reference="TEST-COUNT", location=location, status="POSTED", initiated_by=self.creator)
+        line = StockCountLine.objects.create(stock_count=count, item=item, expected_quantity=1, counted_quantity=0, variance=-1)
+        for user in staff:
+            shift = ShiftAssignment.objects.create(reference=f"TEST-SHIFT-{user.pk}", staff=user, department=department.name,
+                planned_start_at=at-timedelta(hours=1), planned_end_at=at+timedelta(hours=1))
+            AttendanceRecord.objects.create(reference=f"TEST-ATT-{user.pk}", staff=user, shift=shift,
+                clock_in_at=at-timedelta(minutes=50), last_event_at=at-timedelta(minutes=50))
+        return {"stock_count_reference": count.reference, "stock_count_line_id": line.pk,
+                "discovered_at": at.isoformat(), "incident_date": timezone.localdate(at).isoformat(),
+                "responsibility_type": "DEPARTMENT"}
+
+    def test_shortage_receipt_weighting_base_units_and_missing_cost_fail_closed(self):
+        from apps.inventory.models import StockMovement
+        from apps.staff_operations.services.payroll_shortage_service import purchase_basis
+        department = Department.objects.create(code="TEST-WEIGHT", name="Weighted")
+        evidence = self._shortage_evidence(department, "1200.00")
+        line = StockCountLine.objects.select_related("stock_count", "item").get(pk=evidence["stock_count_line_id"])
+        first = StockMovement.objects.get(source_key="test-receipt")
+        at = timezone.now() - timedelta(seconds=10)
+        StockMovement.objects.create(reference="SECOND-RECEIPT", source_key="second", balance=first.balance,
+            item=line.item, location=first.location, type="RECEIPT", quantity_delta="3.0000", unit_cost="1600.00", occurred_at=at)
+        cost, basis = purchase_basis(line, timezone.now())
+        self.assertEqual(cost, Decimal("1500.00"))  # (1×1200 + 3×1600) / 4 base units
+        self.assertEqual(len(basis["movements"]), 2)
+        self.assertEqual((Decimal("0.5") * cost).quantize(Decimal("0.01")), Decimal("750.00"))
+        old_cost, _ = purchase_basis(line, first.occurred_at)
+        self.assertEqual(old_cost, Decimal("1200.00"))
+        with self.assertRaises(ValidationError):
+            purchase_basis(line, first.occurred_at-timedelta(seconds=1))
+        StockMovement.objects.create(reference="INVALID-RECEIPT", source_key="invalid", balance=first.balance,
+            item=line.item, location=first.location, type="RECEIPT", quantity_delta=1, unit_cost=None, occurred_at=at)
+        with self.assertRaises(ValidationError):
+            purchase_basis(line, timezone.now())
+
+    def test_shortage_staff_selection_eligibility_duplicates_and_backend_value(self):
+        department = Department.objects.create(code="TEST-STAFF", name="Test staff")
+        evidence = self._shortage_evidence(department, "1200.00", (self.employee,))
+        payload = {**evidence, "department_id": department.pk, "effective_date": self.today.isoformat(),
+                   "responsibility_type": "STAFF", "staff_ids": [self.employee.pk]}
+        self.auth(self.creator)
+        url = "/api/admin/staff-operations/payroll/stock-shortages/"
+        absent = make_staff("absent.shortage@staff.dev", role=User.Role.HOUSEKEEPER)
+        for override in ({"staff_ids": [absent.pk]}, {"staff_ids": [self.employee.pk, self.employee.pk]},
+                         {"total_amount": "0.01"}, {"stock_count_line_id": 999999},
+                         {"discovered_at": (timezone.now()+timedelta(days=1)).isoformat()},
+                         {"discovered_at": "2026-10-31T25:99:00"}):
+            with self.subTest(override=override):
+                result = self.client.post(url, {**payload, **override}, format="json")
+                self.assertEqual(result.status_code, 400, result.content)
+        result = self.client.post(url, payload, format="json")
+        self.assertEqual(result.status_code, 201, result.content)
+        data = result.json()["data"]
+        self.assertEqual(Decimal(data["total_amount"]), Decimal("1200.00"))
+        self.assertEqual(data["shortage_lines"][0]["item_id"], StockCountLine.objects.get(pk=evidence["stock_count_line_id"]).item_id)
+        admin = make_staff("explicit.shortage.admin@staff.dev", role=User.Role.ADMIN)
+        self.auth(admin)
+        denied = self.client.post(url+data["reference"]+"/decision/", {"approved": True, "decision_note": "No allocation evidence."}, format="json")
+        self.assertEqual(denied.status_code, 400, denied.content)
+
+    def test_payroll_superadmin_not_an_employee_but_permissions_unchanged(self):
+        owner = make_staff("superadmin.payroll@staff.dev", role=User.Role.ADMIN)
+        owner.is_superuser = True
+        owner.save(update_fields=["is_superuser"])
+        ensure_staff_profile(staff=owner)
+        self.auth(self.creator)
+        url = "/api/admin/staff-operations/payroll/compensation/"
+        options = self.client.get(url, {"options": "staff", "search": "superadmin"})
+        self.assertEqual(options.json()["data"], [])
+        denied = self.client.post(url, {"staff_id": owner.pk, "effective_from": self.today.isoformat(), "basic_salary": "10000.00"}, format="json")
+        self.assertEqual(denied.status_code, 400, denied.content)
+        owner.refresh_from_db()
+        self.assertTrue(owner.is_superuser)
+        self.assertEqual(owner.role, User.Role.ADMIN)
+
+    def test_independent_line_claims_and_rejection_release_without_erasing_evidence(self):
+        from apps.inventory.models import StockBalance, StockMovement
+        from apps.staff_operations.payroll_models import PayrollStockShortageClaim
+        from django.db import transaction, IntegrityError
+        department = Department.objects.create(code="LINE-RECOVERY", name="Line recovery")
+        evidence = self._shortage_evidence(department, "1200.00")
+        count = StockCount.objects.get(reference=evidence["stock_count_reference"])
+        item = StockItem.objects.create(sku="SECOND-LINE", name="Second missing item")
+        line = StockCountLine.objects.create(stock_count=count, item=item, expected_quantity=3, counted_quantity=0, variance=-3)
+        StockMovement.objects.create(reference="SECOND-LINE-RECEIPT", source_key="second-line-receipt", item=item,
+            location=count.location, balance=StockBalance.objects.create(item=item, location=count.location),
+            type="RECEIPT", quantity_delta=10, unit_cost="1200.00", occurred_at=timezone.now()-timedelta(hours=2))
+        payload = {**evidence, "department_id": department.pk, "effective_date": self.today.isoformat()}
+        url = "/api/admin/staff-operations/payroll/stock-shortages/"
+        self.auth(self.creator)
+        first = self.client.post(url, payload, format="json")
+        self.assertEqual(first.status_code, 201, first.content)
+        duplicate = self.client.post(url, payload, format="json")
+        self.assertEqual(duplicate.status_code, 400, duplicate.content)
+        second = self.client.post(url, {**payload, "stock_count_line_id": line.pk}, format="json")
+        self.assertEqual(second.status_code, 201, second.content)
+        self.assertEqual(Decimal(second.json()["data"]["total_amount"]), Decimal("3600.00"))
+        # Database backstop remains effective even if a caller bypasses the service.
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            PayrollStockShortageClaim.objects.create(case_id=second.json()["data"]["id"], stock_count_line_id=evidence["stock_count_line_id"])
+        admin = make_staff("line.review@staff.dev", role=User.Role.ADMIN)
+        self.auth(admin)
+        rejected = self.client.post(url+first.json()["data"]["reference"]+"/decision/", {"approved": False, "decision_note": "Re-investigate responsibility evidence."}, format="json")
+        self.assertEqual(rejected.status_code, 200, rejected.content)
+        self.assertTrue(PayrollStockShortageCase.objects.filter(pk=first.json()["data"]["id"], status="REJECTED").exists())
+        self.assertFalse(PayrollStockShortageClaim.objects.filter(stock_count_line_id=evidence["stock_count_line_id"]).exists())
+        self.auth(self.creator)
+        retry = self.client.post(url, payload, format="json")
+        self.assertEqual(retry.status_code, 201, retry.content)
+        self.assertEqual(PayrollStockShortageClaim.objects.count(), 2)
+
+    def test_multi_department_staff_evidence_and_explicit_allocation(self):
+        from apps.staff_operations.models import ShiftAssignment, AttendanceRecord
+        first_dept = Department.objects.create(code="MULTI-A", name="Multi A")
+        second_dept = Department.objects.create(code="MULTI-B", slug="multi-b", name="Multi B")
+        evidence = self._shortage_evidence(first_dept, "1200.00", (self.employee,))
+        at = timezone.now()-timedelta(minutes=1)
+        colleague = make_staff("multi.dept@staff.dev", role=User.Role.HOUSEKEEPER)
+        ensure_staff_profile(staff=colleague)
+        shift = ShiftAssignment.objects.create(reference="MULTI-B-SHIFT", staff=colleague, department=second_dept.name,
+            planned_start_at=at-timedelta(hours=1), planned_end_at=at+timedelta(hours=1))
+        AttendanceRecord.objects.create(reference="MULTI-B-ATT", staff=colleague, shift=shift, clock_in_at=at-timedelta(minutes=30), last_event_at=at)
+        payload = {**evidence, "department_ids": [first_dept.pk, second_dept.pk], "effective_date": self.today.isoformat()}
+        url = "/api/admin/staff-operations/payroll/stock-shortages/"
+        self.auth(self.creator)
+        for ids in ([], [first_dept.pk, first_dept.pk], [999999]):
+            result = self.client.post(url, {**payload, "department_ids": ids}, format="json")
+            self.assertEqual(result.status_code, 400, result.content)
+        staff = self.client.get(url, {"options": "staff", "discovered_at": evidence["discovered_at"], "department_ids": f"{first_dept.pk},{second_dept.pk}"})
+        self.assertEqual({row["staff_id"] for row in staff.json()["data"]}, {self.employee.pk, colleague.pk})
+        created = self.client.post(url, payload, format="json")
+        self.assertEqual(created.status_code, 201, created.content)
+        case = PayrollStockShortageCase.objects.get(pk=created.json()["data"]["id"])
+        self.assertEqual(case.responsible_departments.count(), 2)
+        admin = make_staff("multi.dept.review@staff.dev", role=User.Role.ADMIN)
+        self.auth(admin)
+        approved = self.client.post(url+case.reference+"/decision/", {"approved": True, "decision_note": "Explicit liability approved based on individual evidence.",
+            "allocations": [{"staff_id": self.employee.pk, "amount": "300.00"}, {"staff_id": colleague.pk, "amount": "900.00"}]}, format="json")
+        self.assertEqual(approved.status_code, 200, approved.content)
+        self.assertEqual(set(case.allocations.values_list("department", flat=True)), {first_dept.name, second_dept.name})
+        self.assertEqual(sum(case.allocations.values_list("amount", flat=True)), Decimal("1200.00"))
+
+    def test_stock_name_search_pagination_and_claim_visibility(self):
+        department = Department.objects.create(code="SEARCH-TEST", name="Search")
+        evidence = self._shortage_evidence(department, "1200.00")
+        count = StockCount.objects.get(reference=evidence["stock_count_reference"])
+        StockCountLine.objects.bulk_create([StockCountLine(stock_count=count,
+            item=StockItem.objects.create(sku=f"PAGE-{i:03}", name=f"Search item {i:03}"),
+            expected_quantity=1, counted_quantity=0, variance=-1) for i in range(105)])
+        self.auth(self.creator)
+        url = "/api/admin/staff-operations/payroll/stock-shortages/"
+        params = {"options": "stock", "discovered_at": evidence["discovered_at"], "page_size": 25, "search": "Search item"}
+        first = self.client.get(url, params)
+        self.assertEqual(first.status_code, 200, first.content)
+        self.assertEqual(first.json()["pagination"]["count"], 105)
+        self.assertTrue(first.json()["pagination"]["has_next"])
+        fifth = self.client.get(url, {**params, "page": 5})
+        self.assertEqual(len(fifth.json()["data"]), 5)
+        found = self.client.get(url, {**params, "search": "Search item 104"})
+        self.assertEqual(found.json()["data"][0]["name"], "Search item 104")
+        self.assertIn("error", found.json()["data"][0])  # no invented receipt costs
+        invalid = self.client.get(url, {**params, "page_size": 999})
+        self.assertEqual(invalid.status_code, 400)
+        payload = {**evidence, "department_id": department.pk, "effective_date": self.today.isoformat()}
+        created = self.client.post(url, payload, format="json")
+        self.assertEqual(created.status_code, 201, created.content)
+        available = self.client.get(url, {**params, "search": "Receipt valued item"})
+        self.assertEqual(available.json()["data"], [])
+
+    def test_owner_role_is_not_payroll_employee_and_manager_access_is_retained(self):
+        owner = make_staff("owner.role@staff.dev", role=User.Role.ADMIN)
+        ensure_staff_profile(staff=owner)
+        manager = make_staff("general.manager.payroll@staff.dev", role=User.Role.GENERAL_MANAGER)
+        ensure_staff_profile(staff=manager)
+        accountant = make_staff("accountant.payroll@staff.dev", role=User.Role.ACCOUNTANT)
+        ensure_staff_profile(staff=accountant)
+        self.auth(self.creator)
+        url = "/api/admin/staff-operations/payroll/compensation/"
+        options = self.client.get(url, {"options": "staff"}).json()["data"]
+        ids = {row["staff_id"] for row in options}
+        self.assertNotIn(owner.pk, ids)
+        self.assertTrue({manager.pk, accountant.pk}.issubset(ids))
+        self.auth(owner)
+        policy = self.client.get("/api/admin/staff-operations/payroll/lateness-policy/")
+        self.assertEqual(policy.status_code, 200, policy.content)
+        owner.refresh_from_db()
+        self.assertEqual(owner.role, User.Role.ADMIN)
+
+    def test_historical_superadmin_payroll_presentation_keeps_financial_records(self):
+        from apps.staff_operations.models import PayrollLine
+        self.auth(self.creator)
+        created = self.client.post("/api/admin/staff-operations/payroll/periods/", self._payload("history-filter"), format="json")
+        self.assertEqual(created.status_code, 201, created.content)
+        period = PayrollPeriod.objects.get(reference=created.json()["data"]["reference"])
+        original_total = period.total_net
+        line_count = period.lines.count()
+        # Turn the existing employee into a superuser to model a historical
+        # payroll entry created before the account was excluded from payroll.
+        self.employee.is_superuser = True
+        self.employee.save(update_fields=["is_superuser"])
+        response = self.client.get(f"/api/admin/staff-operations/payroll/periods/{period.reference}/")
+        data = response.json()["data"]
+        self.assertNotIn(self.employee.pk, [row["staff_id"] for row in data["lines"]])
+        self.assertEqual(data["excluded_employee_count"], 1)
+        self.assertEqual(data["line_count"], line_count-1)
+        self.assertEqual(Decimal(data["total_net"]), original_total)
+        self.assertTrue(PayrollLine.objects.filter(period=period, staff=self.employee).exists())
+        period.refresh_from_db()
+        self.assertEqual(period.total_net, original_total)
+
+    def test_migration_preserves_legacy_whole_count_reservations(self):
+        from django.apps import apps
+        from django.db import connection
+        from importlib import import_module
+        from apps.staff_operations.payroll_models import PayrollStockShortageClaim
+        department = Department.objects.create(code="LEGACY-RESERVE", name="Legacy reserve")
+        evidence = self._shortage_evidence(department, "1200.00")
+        count = StockCount.objects.get(reference=evidence["stock_count_reference"])
+        extra_item = StockItem.objects.create(sku="LEGACY-SECOND", name="Legacy second item")
+        extra = StockCountLine.objects.create(stock_count=count, item=extra_item, expected_quantity=2, counted_quantity=0, variance=-2)
+        case = PayrollStockShortageCase.objects.create(department=department, stock_count=count,
+            item_summary="Legacy whole count", incident_date=self.today, effective_date=self.today,
+            total_amount="1200.00", evidence_reference=count.reference)
+        migration = import_module("apps.staff_operations.migrations.0017_payrollstockshortagecase_responsible_departments_and_more")
+        migration.preserve_recovery_reservations(apps, connection.schema_editor())
+        self.assertEqual(set(PayrollStockShortageClaim.objects.filter(case=case).values_list("stock_count_line_id", flat=True)), {extra.pk, evidence["stock_count_line_id"]})
+        self.assertEqual(list(case.responsible_departments.values_list("pk", flat=True)), [department.pk])
+
     def _shortage_case(self, *, total="100.01", staff=()):
         department = Department.objects.create(code="HK-SHORTAGE", name="Housekeeping Shortage")
         for user in staff:
@@ -503,7 +739,8 @@ class PayrollApiTests(BaseAPITestCase):
             "department_id": department.pk, "item_summary": "Five bottles of wine missing from the store",
             "total_amount": total, "incident_date": self.today.isoformat(),
             "effective_date": self.today.isoformat(), "evidence_reference": "STORE-COUNT-EVIDENCE-001",
-            "notes": "Individual responsibility has not been established.",
+            "notes": "Explicit investigated allocations require approval.",
+            **self._shortage_evidence(department, total, staff),
         }, format="json")
         self.assertEqual(created.status_code, 201, created.content)
         return department, created.json()["data"]
@@ -530,7 +767,7 @@ class PayrollApiTests(BaseAPITestCase):
         self.auth(admin)
         approved = self.client.post(
             f"/api/admin/staff-operations/payroll/stock-shortages/{case.reference}/decision/",
-            {"approved": True, "decision_note": "Admin accepted collective responsibility after store review."},
+            {"approved": True, "decision_note": "Admin approved explicit allocations after evidence review.", "allocations": [{"staff_id": self.employee.pk, "amount": "50.00"}, {"staff_id": colleague.pk, "amount": "50.01"}]},
             format="json",
         )
         self.assertEqual(approved.status_code, 200, approved.content)
@@ -574,8 +811,13 @@ class PayrollApiTests(BaseAPITestCase):
             stock_count=count, item=item, expected_quantity=Decimal("10.0000"),
             counted_quantity=Decimal("8.0000"), variance=Decimal("-2.0000"),
         )
+        from apps.inventory.models import StockMovement, StockBalance
+        at = timezone.now() - timedelta(minutes=1)
+        StockMovement.objects.create(reference="WINE-RECEIPT", source_key="wine-receipt", item=item, location=location,
+            balance=StockBalance.objects.get_or_create(item=item, location=location)[0], type="RECEIPT", quantity_delta=10, unit_cost="1500.00", occurred_at=at-timedelta(hours=1))
         self.auth(self.creator)
         created = self.client.post("/api/admin/staff-operations/payroll/stock-shortages/", {
+            "discovered_at": at.isoformat(), "stock_count_line_id": count.lines.get().pk, "responsibility_type": "DEPARTMENT",
             "department_id": department.pk, "stock_count_reference": count.reference,
             "incident_date": self.today.isoformat(), "effective_date": self.today.isoformat(),
             "notes": "Posted count variance requires Admin review.",

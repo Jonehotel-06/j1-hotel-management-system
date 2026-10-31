@@ -428,13 +428,10 @@ class PayrollLine(models.Model):
 
 
 class PayrollStockShortageCase(TimeStampedModel):
-    """A missing-stock loss proposed for department-wide payroll recovery.
+    """Immutable receipt-valued loss and attendance-verified responsibility proposal.
 
-    Recording a case never deducts pay.  Only an account whose role is
-    ADMIN may approve or reject it; approval snapshots every active or
-    on-leave employee in the department at that moment and splits the loss
-    equally (with deterministic cent remainders).  The resulting allocations
-    are consumed once by the next eligible payroll run.
+    Approval creates only explicitly authorized allocations; department membership
+    never implies liability. Historical cases retain their original snapshots.
     """
 
     class Status(models.TextChoices):
@@ -454,6 +451,10 @@ class PayrollStockShortageCase(TimeStampedModel):
     )
     item_summary = models.CharField(max_length=500)
     shortage_lines = models.JSONField(default=list, blank=True)
+    discovered_at = models.DateTimeField(null=True, blank=True)
+    responsible_departments = models.ManyToManyField("staff_operations.Department", related_name="responsible_shortage_cases", blank=True)
+    responsibility_type = models.CharField(max_length=12, default="DEPARTMENT", choices=[("STAFF", "Staff"), ("DEPARTMENT", "Department")])
+    responsibility = models.JSONField(default=dict, blank=True)
     incident_date = models.DateField(db_index=True)
     effective_date = models.DateField(db_index=True)
     total_amount = models.DecimalField(max_digits=14, decimal_places=2, validators=[MinValueValidator(Decimal("0.01"))])
@@ -499,6 +500,16 @@ class PayrollStockShortageCase(TimeStampedModel):
 
     def __str__(self):
         return f"{self.reference} · {self.department_name or self.department_code} · {self.total_amount} {self.currency}"
+
+
+class PayrollStockShortageClaim(models.Model):
+    """Unique live recovery reservation; case evidence survives released claims.
+
+    A portable OneToOne constraint works on MySQL as well as SQLite. Rejection
+    releases only this reservation, never the immutable case or its evidence.
+    """
+    stock_count_line = models.OneToOneField("inventory.StockCountLine", on_delete=models.PROTECT, related_name="payroll_recovery_claim")
+    case = models.ForeignKey(PayrollStockShortageCase, on_delete=models.PROTECT, related_name="recovery_claims")
 
 
 class PayrollStockShortageAllocation(models.Model):
@@ -548,7 +559,7 @@ class LatenessDeductionPolicy(TimeStampedModel):
     """Admin-configured automatic lateness deduction rule (singleton).
 
     Disabled by default: an Admin must explicitly enable it and set the grace
-    period and percentage before any automatic deduction can be generated.
+    period and per-minute rate before any automatic deduction can be generated.
     Each generated deduction snapshots these values, so later policy edits do
     not rewrite deductions that already exist.
     """
@@ -558,6 +569,7 @@ class LatenessDeductionPolicy(TimeStampedModel):
         default=0, validators=[MinValueValidator(0)],
         help_text="Clock-in minutes after the scheduled shift start that are free.",
     )
+    rate_per_minute = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
     deduction_percent = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal("0.00"),
         validators=[MinValueValidator(Decimal("0.00")), MaxValueValidator(Decimal("100.00"))],
@@ -583,7 +595,7 @@ class LatenessDeductionPolicy(TimeStampedModel):
 
     def __str__(self):
         state = "enabled" if self.is_enabled else "disabled"
-        return f"Lateness policy ({state}: {self.deduction_percent}% after {self.grace_minutes} min grace)"
+        return f"Lateness policy ({state}: {self.rate_per_minute}/min after {self.grace_minutes} min grace)"
 
 
 class StaffLatenessDeduction(TimeStampedModel):
@@ -622,6 +634,7 @@ class StaffLatenessDeduction(TimeStampedModel):
     clock_in_at = models.DateTimeField()
     late_minutes = models.PositiveIntegerField(help_text="Whole minutes clocked in after the scheduled start.")
     grace_minutes = models.PositiveIntegerField(help_text="Policy grace snapshot.")
+    rate_per_minute = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
     deduction_percent = models.DecimalField(max_digits=5, decimal_places=2, help_text="Policy percentage snapshot.")
     monthly_pay_basis = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
     days_in_month = models.PositiveSmallIntegerField(default=0)
