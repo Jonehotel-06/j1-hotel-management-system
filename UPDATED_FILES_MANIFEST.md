@@ -1,25 +1,25 @@
 # Updated files manifest
 
-Source: https://github.com/Jonehotel-06/j1-hotel-management-system
+Base repository commit: `391b8becdd9b25afd163ef70bce2421d31ebcdaf`. Paths below are relative to the repository root. Apply only after review; this is a partial batch, not a complete implementation.
 
-Base commit: `decbcf7adc9ca7f3e7c50d784993910c330f6964`
+- `backend/apps/bookings/services/booking_service.py` (modified)
+- `backend/apps/bookings/services/pricing.py` (modified)
+- `backend/apps/bookings/views.py` (modified)
+- `backend/apps/offers/serializers.py` (modified)
+- `backend/apps/offers/services.py` (modified)
+- `backend/apps/portal/views.py` (modified)
+- `backend/apps/portal/views_admin.py` (modified)
+- `backend/tests/test_batch03_offer_admin.py` (new)
+- `backend/tests/test_guest_discounts.py` (modified)
+- `backend/tests/test_portal_access.py` (modified)
+- `backend/tests/test_portal_invitations.py` (modified)
+- `docs/SEO.md` (modified)
+- `frontend/contact.html` (modified)
+- `frontend/dashboard/offers.html` (modified)
+- `frontend/index.html` (modified)
+- `frontend/llms.txt` (new)
+- `frontend/portal/index.html` (modified)
+- `frontend/seo_build.py` (modified)
+- `frontend/tests-js/test-seo.js` (modified)
 
-Isolated branch: `ai/batch-02-payroll`. No remote changes pushed. Refreshed after completing the four continuation items.
-
-Each packaged relative source path below is also its destination relative to the repository root. This is the complete replacement update package, not just the continuation delta.
-
-| Original / destination path | Change |
-|---|---|
-| `backend/apps/staff_operations/migrations/0016_latenessdeductionpolicy_rate_per_minute_and_more.py` | New |
-| `backend/apps/staff_operations/migrations/0017_payrollstockshortagecase_responsible_departments_and_more.py` | New |
-| `backend/apps/staff_operations/payroll_models.py` | Updated |
-| `backend/apps/staff_operations/payroll_serializers.py` | Updated |
-| `backend/apps/staff_operations/payroll_views.py` | Updated |
-| `backend/apps/staff_operations/services/payroll_service.py` | Updated |
-| `backend/apps/staff_operations/services/payroll_shortage_service.py` | New |
-| `backend/tests/test_lateness_deductions.py` | Updated |
-| `backend/tests/test_payroll_api.py` | Updated |
-| `frontend/dashboard/payroll.html` | Updated |
-| `frontend/tests-js/test-payroll-ui.js` | Updated |
-
-Additional deliverables: `IMPLEMENTATION_REPORT.md`, `ROLLBACK.md`, this manifest, `test_results/backend.log` and `test_results/frontend.log`. These are reports, not application source.
+Package-only documents: `IMPLEMENTATION_REPORT.md`, `UPDATED_FILES_MANIFEST.md`.

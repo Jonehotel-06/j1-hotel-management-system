@@ -65,7 +65,6 @@ class Quote:
                     "id": self.guest_discount.pk,
                     "discount_type": self.guest_discount.discount_type,
                     "discount_value": money(self.guest_discount.discount_value),
-                    "reason": self.guest_discount.reason,
                 }
                 if self.guest_discount
                 else None

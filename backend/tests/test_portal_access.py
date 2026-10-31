@@ -115,6 +115,28 @@ class PortalAccessTests(BaseAPITestCase):
         self.assertEqual(row["in_house_stay"]["reference"], stay.reference)
         self.assertEqual(row["in_house_stay"]["rooms"], [{"id": self.room.pk, "room_number": self.room.room_number}])
 
+    def test_room_occupant_does_not_see_other_rooms_or_booking_totals(self):
+        from apps.bookings.models import BookingRoom, RoomOccupant
+        other_room = make_room(self.room_type, "P02")
+        assignment = BookingRoom.objects.create(
+            booking=self.booking, room=other_room, check_in=self.booking.check_in,
+            check_out=self.booking.check_out, checked_in_at=timezone.now(),
+        )
+        StayRoom.objects.create(stay=self.stay, room=other_room, booking_room=assignment,
+                                actual_check_in_at=timezone.now())
+        RoomOccupant.objects.create(booking_room=assignment, email="room@example.com", full_name="Room guest")
+        token = "occupant-magic-token-0123456789-abcdefghijklmnopqrstuvwxyz"
+        PortalAccessChallenge.objects.create(email="room@example.com", token_hash=hash_secret(token),
+                                             expires_at=timezone.now() + timedelta(minutes=15))
+        session_token = self._consume(token)
+        response = self.client.get("/api/portal/me/", HTTP_X_PORTAL_SESSION=session_token)
+        self.assertEqual(response.status_code, 200, response.content)
+        row = response.json()["data"]["bookings"][0]
+        self.assertEqual(row["room_numbers"], ["P02"])
+        self.assertEqual(row["your_room_numbers"], ["P02"])
+        self.assertIsNone(row["total_amount"])
+        self.assertIsNone(row["amount_paid"])
+
     def test_logout_revokes_the_opaque_session_and_subsequent_access_fails(self):
         token = "portal-magic-token-0123456789-abcdefghijklmnopqrstuvwxyz"
         self._challenge(token)

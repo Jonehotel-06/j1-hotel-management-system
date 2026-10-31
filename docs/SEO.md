@@ -203,3 +203,15 @@ visible design change, so it is left to the owner.
 
 Never add: hidden text, keyword-stuffed footers, doorway pages per room type,
 invented reviews or ratings, or a second business listing.
+
+### Brand variations and AI discovery
+
+The central Hotel JSON-LD uses alternateName for common J-ONE/J1/J One
+spellings and points to the same canonical hotel entity. The optional public
+`/llms.txt` gives a short description and links to canonical public pages; it
+is a convention, not a search-engine standard or an indexing guarantee. Keep
+its facts aligned with the verified SITE record. Private areas still require
+server-side authorization: robots rules are not a security boundary. External
+crawling, indexing, brand association and AI recommendations depend on each
+platform; no ranking or recognition is guaranteed. Verify ownership and submit
+the sitemap to search engines separately, and monitor their indexing reports.

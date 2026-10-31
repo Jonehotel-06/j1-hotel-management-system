@@ -456,3 +456,22 @@ test("the generated SEO head is owned in one place and marked", () => {
     assert.equal((html.match(/<!-- SEO:END -->/g) || []).length, 1, `${page} has an unbalanced SEO block`);
   }
 });
+
+test("hotel JSON-LD associates common brand variants with the official domain", () => {
+  for (const page of ["index.html", "contact.html"]) {
+    const nodes = jsonLd(page).flatMap((item) => item["@graph"] || [item]);
+    const hotel = nodes.find((item) => item["@type"] === "Hotel");
+    assert.ok(hotel, `${page}: missing Hotel`);
+    assert.equal(hotel.url, ORIGIN + "/");
+    for (const name of ["J-ONE Hotel", "J One Hotel", "J1 Hotel", "Jone Hotel", "Jone Hotels", "J-ONE Hotel Enugu", "J1 Hotel Enugu", "J One Hotel Enugu"]) {
+      assert.ok(hotel.alternateName.includes(name), `${page}: missing ${name}`);
+    }
+    assert.equal(hotel.address.addressLocality, "Enugu");
+  }
+});
+
+test("llms.txt points to public canonical pages only", () => {
+  const text = read("llms.txt");
+  for (const page of ["/rooms", "/facilities", "/contact", "/offers"]) assert.ok(text.includes(ORIGIN + page));
+  assert.doesNotMatch(text, /https:\/\/jonehotels\.com\/(portal|dashboard)\//);
+});

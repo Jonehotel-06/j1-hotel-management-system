@@ -121,10 +121,26 @@ class PortalInvitationTests(BaseAPITestCase):
         self.assertEqual(response.status_code, 200, response.content)
         data = response.json()["data"]
         self.assertEqual(data["status"], "SENT")
+        self.assertTrue(data["invitation_created"])
+        self.assertTrue(data["portal_eligible"])
+        self.assertFalse(data["stay_ended"])
+        self.assertIsNotNone(data["sent_at"])
         self.assertNotIn("invite.guest@example.com", str(data))
         self.assertTrue(data["recipient_hint"].endswith("@example.com"))
         self.assertIn("/portal/login.html", data["copy_text"])
         self.assertNotIn("token", data["copy_text"].lower())
+
+    def test_staff_can_inspect_ended_stay_but_cannot_resend(self):
+        stay = self._in_house_stay()
+        stay.status = Stay.Status.CHECKED_OUT
+        stay.save(update_fields=["status", "updated_at"])
+        self.auth(self.receptionist)
+        url = f"/api/admin/bookings/{self.booking.booking_reference}/portal-invitation/"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["data"]["stay_ended"])
+        self.assertFalse(response.json()["data"]["portal_eligible"])
+        self.assertEqual(self.client.post(url, {}, format="json").status_code, 404)
 
     def test_resend_is_rate_limited_after_a_successful_send(self):
         self._in_house_stay()

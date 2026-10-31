@@ -231,7 +231,7 @@ def guest_discount_amount(discount, subtotal: Decimal) -> Decimal:
     return max(_ZERO, min(_q(amount), subtotal))
 
 
-def active_guest_discount(guest, on_date=None):
+def active_guest_discount(guest, on_date=None, *, subtotal=None):
     """The best currently-valid personal discount for a guest, or None.
 
     ``guest`` may be a Guest instance or None (guest-checkout before the row
@@ -248,8 +248,12 @@ def active_guest_discount(guest, on_date=None):
         is_active=True,
         start_date__lte=day,
     ).filter(Q_end_date_open(day))
-    # Deterministic pick: the largest percentage/amount, newest first on ties.
-    return qs.order_by("-discount_value", "-created_at").first()
+    # Comparing a percentage number to a fixed amount is meaningless. Compare
+    # their actual capped monetary value when pricing a particular stay.
+    if subtotal is not None:
+        candidates = qs.order_by("-created_at", "-pk")
+        return max(candidates, key=lambda d: guest_discount_amount(d, subtotal), default=None)
+    return qs.order_by("-discount_value", "-created_at", "-pk").first()
 
 
 def Q_end_date_open(day):
@@ -283,7 +287,7 @@ def best_discount_for_stay(*, guest, room_type, check_in, check_out, nights,
             candidates=offer_candidates,
         )
 
-    discount = active_guest_discount(guest, on_date=check_in)
+    discount = active_guest_discount(guest, on_date=check_in, subtotal=subtotal)
     personal_amount = guest_discount_amount(discount, subtotal) if discount else _ZERO
 
     # Larger wins; ties keep the public offer so the booking retains its link.

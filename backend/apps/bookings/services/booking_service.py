@@ -315,10 +315,14 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
     # unsuccessful booking never leaves a stray guest behind.
     guest = upsert_guest(user=user, guest_data=guest_data)
 
+    # A submitted email alone does not establish ownership of a guest record.
+    # Staff can select guests; public customers must authenticate to use a
+    # personal rate. Public promotions remain available to everyone.
+    pricing_guest = guest if is_staff or (user is not None and guest.user_id == user.pk) else None
     quote = calculate_quote(
         room_type=room_type, check_in=check_in, check_out=check_out, rooms=rooms,
         adults=adults, children=children, offer_code=offer_code,
-        settings_obj=settings_obj, for_staff=is_staff, guest=guest,
+        settings_obj=settings_obj, for_staff=is_staff, guest=pricing_guest,
     )
 
     # Re-verify inventory INSIDE the lock; this check is authoritative —
@@ -374,7 +378,7 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
                 quote = calculate_quote(
                     room_type=room_type, check_in=check_in, check_out=check_out, rooms=rooms,
                     adults=adults, children=children, offer_code=offer_code,
-                    settings_obj=settings_obj, for_staff=is_staff, guest=guest,
+                    settings_obj=settings_obj, for_staff=is_staff, guest=pricing_guest,
                 )
             free_rooms = [substitute["room"]] + [
                 r for r in free_rooms if r.pk != substitute["room"].pk

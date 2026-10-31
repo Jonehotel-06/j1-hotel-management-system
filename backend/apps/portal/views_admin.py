@@ -13,14 +13,18 @@ from apps.stays.models import Stay
 
 from .invitations import copy_text_for, mask_email, portal_login_url, resend_portal_invitation, sync_invitation_status
 from .models import GuestPortalInvitation
+from .eligibility import eligible_stay_ids_for_email
 
 
-def _stay_for_booking(lookup):
+def _stay_for_booking(lookup, *, require_in_house=False):
     booking = Booking.objects.filter(booking_reference=lookup).first()
     if booking is None:
         raise NotFound("Booking not found.")
     stay = Stay.objects.select_related("guest").filter(booking=booking).order_by("-pk").first()
-    if stay is None or stay.status != Stay.Status.IN_HOUSE:
+    if stay is None or (require_in_house and (
+        stay.status != Stay.Status.IN_HOUSE
+        or stay.booking.status in (Booking.Status.CHECKED_OUT, Booking.Status.CANCELLED)
+    )):
         raise NotFound("No in-house stay for this booking.")
     return stay
 
@@ -29,6 +33,11 @@ def _payload(stay, invitation):
     return {
         "stay_reference": stay.reference,
         "status": invitation.status if invitation else "NOT_QUEUED",
+        "invitation_created": invitation is not None,
+        "stay_ended": (stay.status == Stay.Status.CHECKED_OUT
+                       or stay.booking.status in (Booking.Status.CHECKED_OUT, Booking.Status.CANCELLED)),
+        "portal_eligible": stay.pk in eligible_stay_ids_for_email(getattr(stay.guest, "email", "")),
+        "sent_at": invitation.email_log.sent_at if invitation and invitation.email_log_id else None,
         "recipient_hint": mask_email(getattr(stay.guest, "email", "") or ""),
         "attempts": invitation.attempts if invitation else 0,
         "last_attempt_at": invitation.last_attempt_at if invitation else None,
@@ -52,7 +61,7 @@ class AdminBookingPortalInvitationView(APIView):
         return success_response(_payload(stay, invitation))
 
     def post(self, request, lookup):
-        stay = _stay_for_booking(lookup)
+        stay = _stay_for_booking(lookup, require_in_house=True)
         with transaction.atomic():
             invitation = resend_portal_invitation(stay=stay, actor=request.user)
         log_action(

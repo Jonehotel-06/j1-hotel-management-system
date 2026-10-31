@@ -138,6 +138,13 @@ class GuestDiscountPrecedenceTests(GuestDiscountTestMixin, BaseAPITestCase):
                 self.assertEqual(quote.discount, Decimal("0.00"))
                 self.assertEqual(quote.discount_source, "")
 
+    def test_personal_discounts_compare_actual_amounts(self):
+        self.make_discount(value="10.00")  # 20,000 on a 200,000 subtotal
+        self.make_discount(value="100.00", discount_type=GuestDiscount.DiscountType.FIXED_AMOUNT)
+        quote = self.quote(guest=self.guest)
+        self.assertEqual(quote.discount, Decimal("20000.00"))
+        self.assertEqual(quote.guest_discount.discount_type, GuestDiscount.DiscountType.PERCENTAGE)
+
     def test_open_ended_discount_stays_valid(self):
         self.make_discount(value="10.00", end_date=None)
         quote = self.quote(guest=self.guest)
@@ -168,6 +175,25 @@ class GuestDiscountPrecedenceTests(GuestDiscountTestMixin, BaseAPITestCase):
 
 class GuestDiscountBookingTests(GuestDiscountTestMixin, BaseAPITestCase):
     """The booking that results carries an immutable snapshot."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = make_user(email="verified.discount@test.dev")
+        self.guest.user = self.user
+        self.guest.save(update_fields=["user"])
+        self.auth(self.user)
+
+    def test_unverified_email_does_not_grant_personal_discount(self):
+        self.make_discount(value="25.00")
+        self.unauth()
+        # A standalone guest is matched by the submitted email during upsert.
+        self.guest.user = None
+        self.guest.save(update_fields=["user"])
+        res = self.create_booking()
+        self.assertIn(res.status_code, (200, 201), res.json())
+        booking = Booking.objects.get(guest__email=self.guest.email)
+        self.assertEqual(booking.discount_amount, Decimal("0.00"))
+        self.assertFalse(GuestDiscountApplication.objects.filter(booking=booking).exists())
 
     def create_booking(self):
         payload = {
@@ -230,6 +256,7 @@ class GuestDiscountBookingTests(GuestDiscountTestMixin, BaseAPITestCase):
             "check_out": self.check_out.isoformat(),
             "rooms": 1, "adults": 2, "children": 0,
         }
+        self.unauth()
         anonymous = self.client.post("/api/bookings/quote/", params, format="json")
         self.assertEqual(anonymous.status_code, 200, anonymous.json())
         self.assertEqual(Decimal(anonymous.json()["data"]["discount"]), Decimal("0.00"))
@@ -241,6 +268,7 @@ class GuestDiscountBookingTests(GuestDiscountTestMixin, BaseAPITestCase):
         self.assertEqual(Decimal(data["discount"]), Decimal("50000.00"))
         self.assertEqual(data["discount_source"], "GUEST_DISCOUNT")
         self.assertEqual(data["guest_discount"]["discount_value"], "25.00")
+        self.assertNotIn("reason", data["guest_discount"])
 
     def test_client_cannot_inject_its_own_discount(self):
         """Amounts posted by the client are ignored — pricing is backend-only."""

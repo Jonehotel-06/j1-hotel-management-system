@@ -73,10 +73,16 @@ class OfferAdminSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"end_date": ["End date cannot be before the start date."]})
         discount_type = attrs.get("discount_type", getattr(self.instance, "discount_type", None))
         value = attrs.get("discount_value", getattr(self.instance, "discount_value", None))
+        if value is not None and value <= 0:
+            raise serializers.ValidationError({"discount_value": ["Enter a discount greater than zero."]})
         if discount_type == Offer.DiscountType.PERCENTAGE and value is not None and value > 100:
             raise serializers.ValidationError({"discount_value": ["Percentage discounts cannot exceed 100."]})
         min_n = attrs.get("min_nights", getattr(self.instance, "min_nights", 1))
         max_n = attrs.get("max_nights", getattr(self.instance, "max_nights", None))
+        if min_n is not None and min_n < 1:
+            raise serializers.ValidationError({"min_nights": ["Minimum nights must be at least one."]})
+        if max_n is not None and max_n < 1:
+            raise serializers.ValidationError({"max_nights": ["Maximum nights must be at least one."]})
         if max_n is not None and min_n and max_n < min_n:
             raise serializers.ValidationError({"max_nights": ["Maximum nights must be >= minimum nights."]})
         return attrs

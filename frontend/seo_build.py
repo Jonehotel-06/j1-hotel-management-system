@@ -441,7 +441,11 @@ def hotel_node() -> dict:
         "@type": "Hotel",
         "@id": ORIGIN + "/#hotel",
         "name": SITE["name"],
-        "alternateName": ["J-ONE Hotel and Lodge", "J One Hotel", "Jone Hotels"],
+        "alternateName": [
+            "J-ONE Hotel and Lodge", "J-ONE Hotel", "J One Hotel", "J1 Hotel",
+            "Jone Hotel", "Jone Hotels", "J-ONE Hotel Enugu", "J1 Hotel Enugu",
+            "J One Hotel Enugu",
+        ],
         "url": ORIGIN + "/",
         "telephone": SITE["phone"],
         "email": SITE["email"],

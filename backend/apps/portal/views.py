@@ -173,15 +173,15 @@ class PortalOverviewView(APIView):
                 "check_in": booking.check_in.isoformat(),
                 "check_out": booking.check_out.isoformat(),
                 "room_type_name": booking.room_type.name,
-                # Keep the full room list for context, and state which of
-                # them this address may raise a request for.
-                "room_numbers": [assignment.room.room_number for assignment in booking.room_assignments.all()],
+                # Do not expose other occupants’ room numbers or the booking
+                # contact’s financial totals to an individual room guest.
+                "room_numbers": [assignment.room.room_number for assignment in my_rooms],
                 "your_room_numbers": [assignment.room.room_number for assignment in my_rooms],
                 "is_booking_contact": is_contact,
                 "in_house_stay": _in_house_stay_summary(booking, portal_email=portal_email),
                 "currency": booking.currency,
-                "total_amount": str(booking.total_amount),
-                "amount_paid": str(booking.amount_paid),
+                "total_amount": str(booking.total_amount) if is_contact else None,
+                "amount_paid": str(booking.amount_paid) if is_contact else None,
             })
         return success_response({
             "email": request.portal_session.email,
