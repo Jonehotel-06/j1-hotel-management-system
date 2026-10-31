@@ -23,12 +23,16 @@ _SLA = {
     HousekeepingTask.Priority.URGENT: timedelta(minutes=30),
 }
 _TERMINAL = {HousekeepingTask.Status.COMPLETED, HousekeepingTask.Status.CANCELLED}
+# Claim, Assigned and Cancelled are retired from the workflow (batch 04). A new
+# task is OPEN; a dispatcher assigns it (assigned_to) and the housekeeper accepts
+# it. ASSIGNED remains only as a source state so legacy rows can still move on.
+# Historical CANCELLED rows keep their status and stay readable.
 _TRANSITIONS = {
-    HousekeepingTask.Status.OPEN: {HousekeepingTask.Status.ASSIGNED, HousekeepingTask.Status.CANCELLED},
-    HousekeepingTask.Status.ASSIGNED: {HousekeepingTask.Status.ACCEPTED, HousekeepingTask.Status.CANCELLED},
-    HousekeepingTask.Status.ACCEPTED: {HousekeepingTask.Status.IN_PROGRESS, HousekeepingTask.Status.BLOCKED, HousekeepingTask.Status.CANCELLED},
+    HousekeepingTask.Status.OPEN: {HousekeepingTask.Status.ACCEPTED},
+    HousekeepingTask.Status.ASSIGNED: {HousekeepingTask.Status.ACCEPTED},
+    HousekeepingTask.Status.ACCEPTED: {HousekeepingTask.Status.IN_PROGRESS, HousekeepingTask.Status.BLOCKED},
     HousekeepingTask.Status.IN_PROGRESS: {HousekeepingTask.Status.READY_FOR_INSPECTION, HousekeepingTask.Status.BLOCKED},
-    HousekeepingTask.Status.BLOCKED: {HousekeepingTask.Status.IN_PROGRESS, HousekeepingTask.Status.CANCELLED},
+    HousekeepingTask.Status.BLOCKED: {HousekeepingTask.Status.IN_PROGRESS},
     HousekeepingTask.Status.READY_FOR_INSPECTION: {HousekeepingTask.Status.COMPLETED, HousekeepingTask.Status.IN_PROGRESS},
 }
 
@@ -129,7 +133,7 @@ def create_housekeeping_task(
                 task = HousekeepingTask.objects.create(
                     reference=_reference(), source_key=source_key, room=room, stay=stay,
                     service_request=service_request, type=task_type, priority=priority,
-                    status=HousekeepingTask.Status.ASSIGNED if assigned_to else HousekeepingTask.Status.OPEN,
+                    status=HousekeepingTask.Status.OPEN,
                     summary=summary, detail=str(detail or "").strip(), due_at=due_at or now + _SLA[priority],
                     assigned_to=assigned_to, created_by=actor,
                 )
@@ -172,42 +176,19 @@ def assign_housekeeping_task(*, task, actor, assignee=None, due_at=None, note=""
     _validate_assignee(assignee)
     if due_at is not None and due_at <= timezone.now():
         raise ValidationError({"due_at": "Due time must be in the future."})
-    if assignee is None and task.status != HousekeepingTask.Status.OPEN:
+    if assignee is None and task.status not in {HousekeepingTask.Status.OPEN, HousekeepingTask.Status.ASSIGNED}:
         raise ValidationError("Only an unstarted open task may be unassigned.")
     previous = task.status
     task.assigned_to = assignee
     if due_at is not None:
         task.due_at = due_at
-    if assignee and task.status == HousekeepingTask.Status.OPEN:
-        task.status = HousekeepingTask.Status.ASSIGNED
+    if assignee is None and task.status == HousekeepingTask.Status.ASSIGNED:
+        # A legacy ASSIGNED row with no worker goes back to the open queue.
+        task.status = HousekeepingTask.Status.OPEN
     task.save(update_fields=["assigned_to", "due_at", "status", "updated_at"])
     _event(task=task, event_type=HousekeepingTaskEvent.Type.ASSIGNED, actor=actor, message=note,
            previous_status=previous, new_status=task.status,
            details={"assigned_to_id": assignee.pk if assignee else None, "assigned_to": assignee.full_name if assignee else ""})
-    return task
-
-
-@transaction.atomic
-def claim_housekeeping_task(*, task, actor):
-    task = HousekeepingTask.objects.select_for_update().get(pk=task.pk)
-    if task.status in _TERMINAL:
-        raise ValidationError("A completed or cancelled task cannot be claimed.")
-    if task.assigned_to_id:
-        if task.assigned_to_id == actor.pk:
-            return task
-        raise ValidationError("Task is already assigned to another user.")
-    if not is_housekeeping_worker(actor) and not _is_dispatcher(actor):
-        raise PermissionDenied("Only a housekeeping user may claim an unassigned task.")
-    _validate_assignee(actor if is_housekeeping_worker(actor) else None)
-    if not is_housekeeping_worker(actor):
-        raise ValidationError("A dispatcher must assign the task to an active housekeeping user.")
-    previous = task.status
-    task.assigned_to = actor
-    if task.status == HousekeepingTask.Status.OPEN:
-        task.status = HousekeepingTask.Status.ASSIGNED
-    task.save(update_fields=["assigned_to", "status", "updated_at"])
-    _event(task=task, event_type=HousekeepingTaskEvent.Type.CLAIMED, actor=actor,
-           previous_status=previous, new_status=task.status, details={"assigned_to_id": actor.pk})
     return task
 
 

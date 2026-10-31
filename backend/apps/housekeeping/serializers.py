@@ -80,8 +80,16 @@ class HousekeepingAssignSerializer(RejectUnknownFieldsMixin, serializers.Seriali
         return attrs
 
 
+# ASSIGNED and CANCELLED are retired from the workflow, so they are no longer
+# accepted as requested statuses. Stored rows keep their values for history.
+_REQUESTABLE_STATUS_CHOICES = [
+    choice for choice in HousekeepingTask.Status.choices
+    if choice[0] not in {HousekeepingTask.Status.ASSIGNED, HousekeepingTask.Status.CANCELLED}
+]
+
+
 class HousekeepingStatusSerializer(serializers.Serializer):
-    status = serializers.ChoiceField(choices=HousekeepingTask.Status.choices)
+    status = serializers.ChoiceField(choices=_REQUESTABLE_STATUS_CHOICES)
     note = serializers.CharField(required=False, allow_blank=True, max_length=5000)
 
 

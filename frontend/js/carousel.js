@@ -22,6 +22,7 @@
     // Single-slide hero degrades to a static hero (no controls, no timer).
     if (slides.length < 2) {
       slides.forEach((s, i) => s.classList.toggle("is-active", i === 0));
+      slides.forEach((s) => { const img = s.querySelector("img[data-src]"); if (img) { img.setAttribute("src", img.getAttribute("data-src")); img.removeAttribute("data-src"); } });
       if (dotsWrap) dotsWrap.remove();
       if (prevBtn) prevBtn.remove();
       if (nextBtn) nextBtn.remove();
@@ -52,8 +53,22 @@
     let paused = false;
     const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+    // Uploaded hero slides other than the first keep their URL in data-src so
+    // they are not all downloaded on page load (every slide stays in layout,
+    // so loading="lazy" alone would not defer them). A slide's image is
+    // promoted to src only when it becomes the active or the next slide.
+    function hydrate(n) {
+      const img = slides[n] && slides[n].querySelector("img[data-src]");
+      if (img) {
+        img.setAttribute("src", img.getAttribute("data-src"));
+        img.removeAttribute("data-src");
+      }
+    }
+
     function go(i) {
       index = (i + slides.length) % slides.length;
+      hydrate(index);
+      hydrate((index + 1) % slides.length);
       slides.forEach((s, n) => {
         s.classList.toggle("is-active", n === index);
         s.setAttribute("aria-hidden", n === index ? "false" : "true");

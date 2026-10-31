@@ -55,7 +55,8 @@ test("service QR admin page is capability-gated and supports create, rotate, rev
   assert.match(page, /resourceAction\("serviceQrLinks",reference,"rotate"/);
   assert.match(page, /resourceAction\("serviceQrLinks",reference,"revoke"/);
   assert.match(page, /new Blob\(\[svg\],\{type:"image\/svg\+xml/);
-  assert.match(dashboard, /capabilities: \["service_qr\.manage"\]/);
+  // Batch 04 removed the sidebar entry; the page itself stays gated by management access.
+  assert.match(dashboard, /"service-qr\.html": \{ roles: MANAGEMENT \}/);
 });
 
 test("food-and-beverage QR requests are visible in the specialist guest-request workflow", () => {

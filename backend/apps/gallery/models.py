@@ -15,7 +15,14 @@ class GalleryItem(models.Model):
         OTHER = "OTHER", "Other"
 
     class HomepageSection(models.TextChoices):
+        # Four independent hero slots rotate on the homepage in this order. The
+        # original "hero" key is kept unchanged so the existing hero image and
+        # its public URL survive; hero_2..hero_4 are additional, separately
+        # stored slots that each have their own upload, replacement and removal.
         HERO = "hero", "Hero"
+        HERO_2 = "hero_2", "Hero 2"
+        HERO_3 = "hero_3", "Hero 3"
+        HERO_4 = "hero_4", "Hero 4"
         WELCOME = "welcome", "Welcome to J-ONE"
         EXPERIENCE = "experience", "Experience"
         FIND_US = "find_us", "Find Us"

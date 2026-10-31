@@ -1,7 +1,7 @@
 from django.db.models import Prefetch, Q
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import APIException, NotFound
 from rest_framework.views import APIView
 
 from apps.accounts.models import User
@@ -19,7 +19,7 @@ from .serializers import (
     HousekeepingTaskCreateSerializer, HousekeepingTaskDetailSerializer, HousekeepingTaskListSerializer,
 )
 from .services.task_service import (
-    add_housekeeping_comment, assign_housekeeping_task, claim_housekeeping_task,
+    add_housekeeping_comment, assign_housekeeping_task,
     create_housekeeping_task, housekeeping_queryset_for_user, scoped_task_key, transition_housekeeping_task,
 )
 
@@ -109,12 +109,23 @@ class HousekeepingTaskAssignView(APIView):
         return success_response(HousekeepingTaskDetailSerializer(_task_or_404(request.user, task.reference, detail=True)).data, message="Housekeeping dispatch recorded.")
 
 
-@extend_schema(tags=["Admin · Housekeeping"], summary="Claim an unassigned housekeeping task")
+class HousekeepingClaimRetired(APIException):
+    status_code = status.HTTP_410_GONE
+    default_detail = "Self-claiming housekeeping tasks have been retired. A dispatcher assigns the task to a housekeeper."
+    default_code = "HOUSEKEEPING_CLAIM_RETIRED"
+
+
+@extend_schema(tags=["Admin · Housekeeping"], summary="Retired: self-claim of housekeeping tasks (use dispatch)")
 class HousekeepingTaskClaimView(APIView):
+    """The route is kept so old clients receive a clear 410 instead of a 404.
+
+    The task is still looked up first, so an out-of-scope reference answers 404
+    exactly as it did before, and no task state is changed.
+    """
     permission_classes = [HasCapability]; required_capability = "housekeeping.task.manage"
     def post(self, request, reference):
-        task = claim_housekeeping_task(task=_task_or_404(request.user, reference), actor=request.user)
-        return success_response(HousekeepingTaskDetailSerializer(_task_or_404(request.user, task.reference, detail=True)).data, message="Housekeeping task claimed.")
+        _task_or_404(request.user, reference)
+        raise HousekeepingClaimRetired()
 
 
 @extend_schema(tags=["Admin · Housekeeping"], summary="Progress the controlled housekeeping task state machine")

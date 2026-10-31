@@ -39,7 +39,15 @@ class HousekeepingWorkflowTests(BaseAPITestCase):
         queue = self.client.get("/api/admin/housekeeping/")
         self.assertEqual(queue.status_code, 200, queue.content)
         self.assertEqual(queue.json()["data"][0]["reference"], reference)
-        self.assertEqual(self.client.post(f"/api/admin/housekeeping/{reference}/claim/", {}, format="json").status_code, 200)
+        # Batch 04: self-claim is retired (410). A dispatcher assigns the task first.
+        retired = self.client.post(f"/api/admin/housekeeping/{reference}/claim/", {}, format="json")
+        self.assertEqual(retired.status_code, 410, retired.content)
+        self.auth(self.manager)
+        dispatched = self.client.post(
+            f"/api/admin/housekeeping/{reference}/assign/", {"assigned_to_id": self.housekeeper.pk}, format="json",
+        )
+        self.assertEqual(dispatched.status_code, 200, dispatched.content)
+        self.auth(self.housekeeper)
         self.assertEqual(self.client.post(f"/api/admin/housekeeping/{reference}/status/", {"status": "ACCEPTED"}, format="json").status_code, 200)
         started = self.client.post(
             f"/api/admin/housekeeping/{reference}/status/", {"status": "IN_PROGRESS"}, format="json"

@@ -1,77 +1,216 @@
-# Batch 03 implementation report — partial, not release-ready
+# Batch 04 — Implementation report: gallery hero slots, housekeeping statuses, sidebar, reorder hand-off
 
-## Status and source
+Repository: `Jonehotel-06/j1-hotel-management-system`
+Branch: `batch-04-gallery-housekeeping-navigation` (isolated clone; the original working project was not modified)
+Deliverables: `ai_updates/batch_04_gallery_housekeeping_navigation/` (changed and new files only, at their original relative paths)
 
-Source: `Jonehotel-06/j1-hotel-management-system`, commit `391b8becdd9b25afd163ef70bce2421d31ebcdaf`. Changes were developed in a separate clone and branch `ai/batch-03`; the original repository was not modified. The package contains only changed/new repository files and these reports. **The requested stay-specific direct-link lifecycle is not implemented. Do not deploy this package as a completed Batch 03.** No migrations were added.
+---
 
-## 1. Existing implementation discovered
+## 1. Summary
 
-- Check-in calls `ensure_stay_for_check_in`, which schedules the booking contact's `GuestPortalInvitation` on commit. A one-to-one stay row provides automatic-send idempotency; an `EmailLog` records provider outcome and an authorized API allows status and resend. The invitation currently sends a branded link to the login page, not a direct sign-in credential. Separately, newly checked-in room occupants receive login-page emails using `RoomOccupant.portal_invited_at`.
-- Portal manual sign-in issues an email-scoped `PortalAccessChallenge` with a stored SHA-256 token hash. The link is one-use. Portal sessions use hashed tokens, HttpOnly cookies and active-stay eligibility checks; defaults include a seven-day sliding idle timeout and a 30-day absolute cap. Checkout checks eligibility immediately and attempts to revoke sessions. The principal is separate from staff authentication. Access is scoped by eligible **email**, not by the specific stay that produced a link.
-- `Offer` already models public offers; `GuestDiscount` models a private rule, and `GuestDiscountApplication` snapshots values and amount. The staff offers form supports general offers; guest search and individual discount creation already exist in the staff Guests page. The quote service chooses between a public offer and a guest discount. It does not stack them.
-- The central `frontend/seo_build.py` owns metadata, JSON-LD, canonicals, sitemap and robots. Public HTML already identifies the Enugu hotel and contains crawlable room and facility summaries. The central registry uses the canonical `https://jonehotels.com` origin and excludes private paths from the sitemap. `robots.txt` is not an authorization mechanism.
+| # | Item | Result |
+|---|------|--------|
+| 1 | Homepage hero images: four independent admin-managed slots | Implemented and verified in the browser |
+| 2 | Housekeeping: remove Claim, Assigned and Cancelled from user-facing UI | Implemented; history kept; backend transitions updated |
+| 3 | Sidebar: remove the "Service" entry | Implemented as "Service Links" (your choice); page, access rule and APIs kept |
+| 4 | Reorder button goes to Procurement | Destination is correct. The real defect was that the store was lost: a low-stock row at the second store produced a draft for the main store. Fixed and verified |
 
-## 2. Problems, root causes and outstanding work
+---
 
-### Critical: direct stay-specific portal invitation and lifecycle — NOT implemented
+## 2. Problems, root causes and fixes
 
-The current invitation is not a direct access link; each guest must request a separate one-use link. Reopening that link on another device after it is consumed cannot work. The session's idle/absolute limits can expire during a long stay. Since challenge and session records are email-scoped, rather than stay-specific, an old credential can potentially span independent stays for the same address while another stay remains eligible. Occupant invitations lack the same reliable per-recipient delivery status/resend path, and `portal_invited_at` reflects queuing, not necessarily provider delivery. Secure stay-specific rotation, per-recipient status, and automatic direct delivery are not implemented here. Early checkout, extensions, cancellation, later room check-in, concurrent check-in and multiple-device scenarios still require a coordinated end-to-end design and tests.
+### 2.1 Homepage hero (Task 1)
 
-Additionally, manual magic links currently put the token in the URL query and the central email pipeline stores message bodies in `EmailLog`. Simply putting a reusable token into those emails would leave bearer credentials in persisted email bodies and potentially access logs. A safe implementation must avoid persistent raw secrets, use fragment-based transport or equivalent, prevent referrer/analytics and logs exposure, bind every session and downstream portal/guest-service/finance query to the exact authorized stay and rooms, and revoke both links and sessions on checkout or rotation. It must retain delivery tracking without persisting raw message content and handle delivery exceptions outside the committed check-in transaction. No such workaround is claimed in this package.
+**Problem.** The admin could only manage one hero image. The public site replaced the whole slideshow with that single image.
 
-The status API changes below are a partial improvement only. `portal_eligible` means the contact address currently has an eligible active room in that stay; it is not evidence that a stay-bound credential was issued. There is no new staff dashboard interface for these fields, and occupant-specific status/resend remains outstanding.
+**Root cause.** The homepage hero exists only as the `hero` key of `GalleryItem.HomepageSection`. The public slider (`js/site-images.js`) read one `slots.hero` value and, when present, replaced the built-in five-slide carousel with one static slide. There was no upload progress, because the dashboard used `API.put()`, which has no progress support.
 
-### Private offer eligibility
+**Fix.**
+- Added `hero_2`, `hero_3`, `hero_4` as separate `HomepageSection` choices. `hero` keeps its key and its URL, so existing images and configuration are unchanged. Each slot uses its own existing endpoint, `/api/admin/gallery/homepage/<section>/`, so one upload never touches another slot's row or file, and no field is overwritten four times.
+- Public slideshow (`js/site-images.js`): builds the slides from whichever of `hero`, `hero_2`, `hero_3`, `hero_4` are set, in that order. If none is set, the built-in five-slide slideshow in `index.html` stays as it was. A single configured slot still gives a static hero, as before.
+- Slides after the first keep their URL in `data-src`. `js/carousel.js` promotes it to `src` only for the active and the next slide, so uploads are not all downloaded on page load.
+- A broken uploaded image falls back to the shipped image for its position, then is hidden.
+- Dashboard (`dashboard/gallery.html`): four hero cards with preview, replace and remove. Each save shows a progress bar and status text. The client check is the same as before: JPEG/PNG/WebP and 5 MB.
+- New helper `API.uploadWithProgress()` (`js/api.js`) uses `XMLHttpRequest`, because `fetch` cannot report upload progress. It sends the same auth, request-ID and terminal headers, uses the same error mapping, and does the same single refresh-and-retry on 401. Every other call still uses `request()`.
+- Server-side validation is unchanged: `validate_image_upload` with `MAX_UPLOAD_MB` (default 5).
 
-Previously public booking creation resolved a standalone guest by submitted email and then applied that guest's discount. An unverified person could submit the same email to receive a private rate. The pricing change requires a linked authenticated guest for public booking creation, or an authorized staff booking context. This intentionally means anonymous checkout no longer receives a personal rate merely from a matching email. Standalone guests need a securely linked account or staff assistance; account-linking is not implemented. Existing guest upsert behavior itself was not rewritten and needs a separate security review.
+### 2.2 Housekeeping statuses (Task 2)
 
-Comparing numeric fixed and percentage discount values directly also chose the wrong personal discount for some subtotals. Personal candidates are now compared by their actual capped monetary amount. Private discount reason is no longer exposed in the public quote. Existing applications and historical snapshots are not rewritten; rescheduling/repricing of existing bookings uses existing project behavior and is not fully redesigned here.
+**Problem.** Claim, Assigned and Cancelled were offered in the UI.
 
-### Other remaining gaps
+**Root cause.** `task_service._TRANSITIONS` and the status filter and buttons in `housekeeping.html` all included them. `create_housekeeping_task` set `ASSIGNED` when an assignee was given, and `claim_housekeeping_task` moved tasks to `ASSIGNED`.
 
-- Public listing intentionally retains the existing behavior of showing active upcoming offers, not only offers already in effect; pricing still validates applicable dates. If “active and eligible” is intended to exclude upcoming offers from the public page, this needs a product decision and a separate change.
-- Existing booking overview exposed all room numbers and booking-contact totals to a room occupant. The narrower overview now masks these, but this does not by itself establish end-to-end stay-specific authorization for every portal API.
-- No live production deployment, email-provider acceptance, Google/Bing indexing, AI-search recommendation, external structured-data validator, or real-browser/device verification was performed.
+**Fix (backend).**
+- `_TRANSITIONS`: OPEN → {ACCEPTED}; ASSIGNED → {ACCEPTED} (legacy source only); ACCEPTED → {IN_PROGRESS, BLOCKED}; IN_PROGRESS → {READY_FOR_INSPECTION, BLOCKED}; BLOCKED → {IN_PROGRESS}; READY_FOR_INSPECTION → {COMPLETED, IN_PROGRESS}. `_TERMINAL` is unchanged.
+- `create_housekeeping_task` always creates `OPEN`. An assignee is still recorded in `assigned_to` and in the `ASSIGNED` event, so the history is kept.
+- `assign_housekeeping_task` no longer promotes OPEN to ASSIGNED. Unassigning is allowed for OPEN and for legacy ASSIGNED, and a legacy ASSIGNED row goes back to OPEN.
+- `claim_housekeeping_task` was removed from the service. `HousekeepingTaskClaimView` (`POST <reference>/claim/`) now returns **HTTP 410** with code `HOUSEKEEPING_CLAIM_RETIRED`. The task is looked up first, so an out-of-scope reference still returns 404, and no state changes.
+- `HousekeepingStatusSerializer` only accepts requestable statuses. ASSIGNED and CANCELLED return 400.
+- The `Status` model choices are unchanged, and there is no data migration. Historical rows, CLAIMED events and ASSIGNED events are kept and remain readable.
 
-## 3. Files and original locations
+**Fix (frontend, `dashboard/housekeeping.html`).**
+- Status filter: ASSIGNED and CANCELLED options removed.
+- Claim button, `claim()` function and its click branch removed. The non-dispatcher toast no longer mentions claiming.
+- Transition map: CANCELLED removed; ASSIGNED kept only as a source (mirrors the backend).
+- Legacy display: `statusLabel()` shows stored ASSIGNED as "Open" and CANCELLED as "Closed" through `statusPill(status, label)`, in both the row and the detail view.
 
-See `UPDATED_FILES_MANIFEST.md` for every repository-relative path. In brief: booking pricing/creation and tests; offer validation/selection and tests; portal overview/status and tests; the existing SEO generator, its two generated public HTML pages and tests; one portal HTML rendering adjustment; the existing offers dashboard; SEO documentation; and a new `frontend/llms.txt`.
+**Behaviour change (intentional).** Housekeepers can no longer claim an unassigned task. They can still see it in their queue, but they cannot act on it until a dispatcher assigns it.
 
-## 4. Portal lifecycle and status changes actually made
+### 2.3 Sidebar (Task 3)
 
-Existing lifecycle remains: check-in schedules an email pointing at sign-in; the guest requests and consumes a one-time manual link; a session is subject to idle and absolute timeout; live room/stay eligibility and checkout control requests. **This is not the requested reusable direct-link lifecycle.**
+**Problem.** The sidebar had a "Service" entry that the brief asked to remove.
 
-The authorized invitation status API now reports whether a record exists, contact-address `portal_eligible`, provider `sent_at` if available, and whether the stay ended. Authorized staff can inspect a checked-out stay's record but cannot resend from it. Status remains backed by the existing `EmailLog` and is provider acceptance, not proof of mailbox delivery. It returns no raw token. The new fields are API-only. Room-occupant overview responses show only rooms permitted to that identity and omit the booking contact's totals; the portal renders a dash instead of a false zero for omitted totals.
+**Root cause.** Two entries could be meant. You chose **Service Links** (`service-qr.html`, the QR guest-portal links page). The entry was in `NAV` in `js/dashboard.js`, which drives both the desktop and the mobile sidebar.
 
-## 5. Security improvements and limitations
+**Fix.** Removed the single `NAV` line for "Service Links". Kept:
+- the page `dashboard/service-qr.html`,
+- its page-level access rule (`PAGE_ACCESS` → `MANAGEMENT`),
+- its API endpoints in `js/config.js`,
+- the `grid` icon, which is still used by Availability and Workstations.
 
-The personal rate is not awarded at public booking creation based solely on an unverified email. Public offers remain independent; staff permissions remain those of the existing endpoints. Personal rate amounts are calculated server-side, capped at the subtotal and compared with public offers. The individual guest's private reason is no longer returned in quote responses. Room numbers and booking totals are restricted in the occupant overview. No claim is made that these fixes provide complete guest isolation across all portal endpoints or that they implement token rotation or stay-specific credentials.
+"Guest Requests" (`service-requests.html`) is still in the sidebar. Room-service, guest-service and service APIs and models are untouched.
 
-## 6. Offer changes
+### 2.4 Reorder button (Task 4)
 
-The offers page now provides distinct entry points: create a general offer in place, or navigate to Guests to search and create a personal discount. Existing models, image handling, services and snapshot records are reused. General-offer API validation now rejects zero discounts and zero-night limits, in addition to existing date/order and percentage limits. The best personal discount is chosen by actual discount amount for the stay. No offer model or payment code was duplicated or migrated.
+**Problem.** The Reorder button sends the user to Procurement.
 
-## 7. SEO and AI discovery
+**Investigation.** The button is the intended reorder workflow. It opens the procurement reorder dialog, which calls `GET /api/admin/inventory/procurement/items/<id>/reorder-context/`, and it creates a purchase-order **draft** (`purchaseOrders`) after review. It is not a guessed destination. The `?reorder=` auto-open was also checked, and the access gate and the 403/404 contracts were checked.
 
-The existing Hotel JSON-LD `alternateName` now contains all requested variations, on the generated homepage and contact page; the Hotel URL, Website publisher entity, canonicals and existing sitemap continue to use the official origin. The new `llms.txt` provides a concise public description and links to canonical public pages; it does not expose private URLs or invent reviews, ratings, profiles or facts. Existing SEO architecture and robots rules remain authoritative. Search engine and AI indexing, interpretation, association and ranking depend on external services and are not guaranteed. `llms.txt` is an optional convention, not a promise that a crawler reads it. Maintain business facts consistently and submit/monitor the sitemap via the relevant search platforms.
+**Root cause (real defect).** The inventory Reorder link carried only the stock item id (`procurement.html?reorder=<item>`). The dialog then defaulted to the store with the most stock. So a low-stock row at `E2E-STORE-2` (2 on hand, reorder level 4) opened with **`DEMO-STORE` preselected**, and a draft created from it would have been delivered to the wrong store. Stock reference details were lost on the hand-off.
 
-## 8. Tests executed
+**Fix.**
+- `dashboard/inventory.html`: `reorderHref(itemId, locationId)` adds `&location=<balance.location>`. The row passes its own location.
+- `dashboard/procurement.html`:
+  - `reorderDefaultLocationId()` uses the linked store when the item is held there, and otherwise keeps the previous default.
+  - `reorderLocationInitial()` takes an explicit location id.
+  - The auto-open reads `?location=` and accepts digits only. A bad value is ignored.
+  - When the dialog came from a balance row, it shows a note with that row's on-hand and reorder level. The note is server data, not a typed or invented figure.
+  - The access gate (`if(!__procurementAllowed) return;`) is unchanged, so an unauthorised user never reaches `reorderItem`.
+- No backend change. Reorder quantities, unit prices, stock references and the draft flow are unchanged.
 
-All tests used the isolated source copy and local SQLite test database. The frontend build was run in a further disposable copy because `build.py` rewrites generated files. Results:
+---
 
-- `python manage.py test tests.test_portal_invitations tests.test_portal_access tests.test_guest_discounts --noinput`: **49 passed** after the portal/status and offer changes.
-- `python manage.py test tests.test_batch03_offer_admin tests.test_portal_invitations.PortalInvitationTests --noinput`: **16 passed**; includes general creation/validation, private creation/public-list isolation and current invitation status. After adding the cancelled-booking resend guard, `tests.test_portal_invitations.PortalInvitationTests` was rerun: **13 passed**.
-- `python manage.py test tests.test_guest_discounts tests.test_offer_eligibility tests.test_portal_access tests.test_portal_invitations tests.test_portal_stay_lifecycle tests.test_guest_portal_room_orders --noinput`: **131 run, 1 failure, 5 skipped**. The failure is `PortalCatalogueTests.test_menu_shows_only_active_items_with_availability_labels_and_no_internal_fields` (actual `Not Available`, expected `Currently unavailable`). The same single test was separately run against the untouched source commit and failed identically. The combined run preceded the final status API additions; the targeted invitation tests were rerun afterward.
-- `node --test tests-js/test-seo.js tests-js/test-offers-and-payments-ui.js tests-js/test-portal-ui.js tests-js/test-portal-catalog.js tests-js/test-portal-room-order.js`: **57 passed**.
-- `python build.py`, `python seo_build.py --check`, `python validate.py`: **passed** in the disposable frontend copy; validator checked 73 HTML files and 34 standalone JS files. Existing canonical/sitemap and JSON parsing assertions passed; no external schema validator was run.
-- `git diff --check` and Python compileall passed.
+## 3. Changed and new files
 
-The existing portal tests cover current check-in, idempotency, delivery failure, an unused manual link days later, cookie reuse, checkout and room isolation. They do **not** establish success for the requested reusable automatic link, device/browser lifecycle, stay-bound rotation, per-occupant delivery status, or all early checkout/extension/cancellation cases; those features remain incomplete. No test result should be interpreted as proving them.
+Paths are relative to the repository root. The copies are in `ai_updates/batch_04_gallery_housekeeping_navigation/` at the same paths.
 
-## 9. External dependencies and rollout
+| File | Status | Where / what changed |
+|------|--------|----------------------|
+| `backend/apps/gallery/models.py` | modified | `HomepageSection` (~line 17): `hero_2`, `hero_3`, `hero_4` added |
+| `backend/apps/gallery/migrations/0003_homepage_hero_slots.py` | new | `AlterField` on `homepage_section` choices only |
+| `backend/apps/gallery/tests/test_homepage_hero_slots.py` | new | 7 tests for the four-slot behaviour |
+| `backend/apps/housekeeping/services/task_service.py` | modified | `_TRANSITIONS` (~line 30); `create_housekeeping_task` status (~line 136); `assign_housekeeping_task` (~line 170); `claim_housekeeping_task` removed |
+| `backend/apps/housekeeping/views.py` | modified | `HousekeepingClaimRetired` (~line 112); `HousekeepingTaskClaimView` returns 410 (~line 119) |
+| `backend/apps/housekeeping/serializers.py` | modified | `_REQUESTABLE_STATUS_CHOICES` (~line 85) |
+| `backend/tests/test_housekeeping.py` | modified | Claim step replaced by dispatch → accept, plus a 410 assertion |
+| `backend/tests/test_batch04_housekeeping_statuses.py` | new | 8 tests: OPEN creation, dispatch, legacy rows, refused statuses, 410, history |
+| `frontend/js/site-images.js` | modified | Hero builder (`HERO_SLOTS` ~line 91, `bindHeroErrors` ~118, `renderHero` ~138, `applyHero` ~170) |
+| `frontend/js/carousel.js` | modified | `hydrate()` (~line 60) called from `go()` (~line 68) |
+| `frontend/js/api.js` | modified | `uploadWithProgress()` (~line 1135), exported |
+| `frontend/dashboard/gallery.html` | modified | Hero 1–4 cards, progress bar and status, `uploadWithProgress` call (~line 160) |
+| `frontend/js/dashboard.js` | modified | One `NAV` line removed (Service Links) |
+| `frontend/dashboard/housekeeping.html` | modified | Status filter, transition map and `statusLabel()` (~line 63–65), row buttons, claim removed |
+| `frontend/dashboard/inventory.html` | modified | `reorderHref(itemId, locationId)` (~line 77); row passes `row.location` |
+| `frontend/dashboard/procurement.html` | modified | `reorderLocationInitial` (~592), `reorderDefaultLocationId` (~601), `reorderItem(itemId, fromLocationId)` (~637), `?location=` auto-open |
+| `frontend/tests-js/test-batch04-gallery-housekeeping-navigation.js` | new | 18 static contract tests for Tasks 1–4 |
+| `frontend/tests-js/test-inventory-batch01-management.js` | modified | 3 assertions updated to the new signatures (see §6) |
+| `frontend/tests-js/test-service-qr-ui.js` | modified | 1 assertion moved from the removed nav entry to the page-level access rule |
 
-Delivery depends on configured email provider and frontend/API origins; actual acceptance is not mailbox delivery. Production must serve `llms.txt`, generated HTML and the canonical domain consistently. Search crawling and indexing are external. Before release, implement and independently security-review the missing portal lifecycle, design a private non-persistent email delivery path, address per-recipient invitation state and secure rotation, exercise real browsers and devices, and rerun the full booking/portal/offer suites. Review the intentional change to anonymous personal-rate eligibility with hotel staff.
+No other files were changed. No CSS, no new framework, no image storage change, no change to the public image URLs.
 
-## 10. Rollback instructions
+---
 
-For a deployment based exactly on the source commit, revert the modified paths in `UPDATED_FILES_MANIFEST.md` from commit `391b8becdd9b25afd163ef70bce2421d31ebcdaf`, remove the two new files `backend/tests/test_batch03_offer_admin.py` and `frontend/llms.txt`, and rebuild/redeploy the frontend. Preserve unrelated later changes: on a newer branch use a reviewed inverse patch or targeted restore rather than a blanket reset. No database migration or data rollback is required by this package. Rolling back restores the previously vulnerable anonymous personal-discount behavior and occupant overview exposure; evaluate that security consequence first. Keep existing booking, guest and discount-application records intact.
+## 4. Migrations
+
+- **`gallery.0003_homepage_hero_slots`**: `AlterField` on `GalleryItem.homepage_section`. It changes choices only, and the SQL is unchanged apart from SQLite table rebuilds. Applied to the E2E database; `makemigrations --check` reports no further drift.
+- **Housekeeping**: no migration. Model `Status` choices are unchanged. Existing rows are not rewritten.
+
+---
+
+## 5. Test results
+
+Environment: Python 3.13, Django project tests on SQLite (see limitations), Node 20, Playwright Chromium headless.
+
+### 5.1 Backend (`python manage.py test --parallel 1`)
+
+| Run | Tests | Result |
+|-----|-------|--------|
+| Baseline (original code) | 2235 | 3 failures, 27 skipped |
+| After changes | 2250 (+15 new) | 3 failures, 27 skipped |
+
+- The 3 failures are identical before and after, and are all listed in the repository's `baseline-known-failures.txt`:
+  - `test_department_roles … test_security_and_procurement_role_grants_stay_narrow`
+  - `test_portal_stay_lifecycle … test_menu_shows_only_active_items_with_availability_labels_and_no_internal_fields`
+  - `test_deployment_readiness … test_production_settings_boot_cleanly_with_northflank_mysqls_and_rediss_urls`
+- Targeted runs: `apps.gallery` 13 tests OK; housekeeping suites (`test_housekeeping`, `test_batch04_housekeeping_statuses`, `test_stays`, `test_batch08_room_assets`, `test_role_alias_guards`, `test_auto_checkout`) 39 tests OK.
+
+### 5.2 Frontend (`node --test tests-js/`)
+
+| Run | Tests | Pass | Fail |
+|-----|-------|------|------|
+| Baseline | 725 | 718 | 7 |
+| After changes | 743 | 736 | 7 |
+
+- The 7 failures are the same as baseline and unrelated to this batch: a deployed page count (72 vs 73), accounting copy, deploy config, PWA manifest scope, a table-layout audit, and accounting date fields.
+- The 18 new batch-04 tests all pass, including the sidebar guard for the removed entry.
+
+---
+
+## 6. Verified functionality (browser, Playwright headless, E2E stack)
+
+E2E stack: backend on `127.0.0.1:8000` with a separate SQLite database, frontend on `:5500` serving the repository. Test users have the seeded roles. The sandbox-only override that lets test users sign in from any device was applied to the E2E database only.
+
+**Task 1 — hero**
+- Oversize file (>5 MB) refused client-side with a message; no request sent.
+- Each of the four slots uploaded independently. A throttled 1 MB upload showed progress 3% → 7% → 12% → 19%.
+- Public homepage: four slides, four dots, in order. On load, only the active slide and the next slide had `src`; slides 3 and 4 kept `data-src` until they became active or next. Desktop and 375 px mobile both render.
+- Replacing `hero_2` changed only `hero_2`. Removing `hero_3` left the other three and gave a three-slide hero.
+- Broken uploaded media (route aborted) fell back to `assets/images/hero-1.jpg` and `hero-2.jpg`.
+- The `welcome`, `experience` and `find_us` slots were not uploaded or changed in this test run.
+
+**Task 2 — housekeeping**
+- Admin and housekeeper pages: status filter lists Open, Accepted, In progress, Ready for inspection, Blocked, Completed only. No Claim buttons.
+- API: `POST /claim/` returns 410 with `HOUSEKEEPING_CLAIM_RETIRED`; ASSIGNED and CANCELLED statuses return 400; housekeeper cannot act on an unassigned task (403).
+
+**Task 3 — sidebar**
+- Desktop and mobile (375 px, menu opened): no `service-qr.html` link. Guest Requests, Housekeeping and Inventory remain.
+
+**Task 4 — reorder**
+- Low-stock row (`E2E-STORE-2`, 2 on hand, reorder level 4) → Reorder: link is `procurement.html?reorder=10&location=3`; dialog preselects **E2E-STORE-2**; source note shown; total ₦45,000.00 for 5 crates at ₦9,000.00.
+- **Create draft** produced `PO-20261031-9FA837428D4F`: status DRAFT, `delivery_location_code = E2E-STORE-2`, total 45,000.00. No stock changed; the draft is awaiting approval.
+- Procurement-capable roles (admin, general manager, procurement officer, inventory clerk): all preselect E2E-STORE-2 for that row.
+- Direct link without `location` still preselects the highest-stock store (old behaviour). An invalid `location=abc` is ignored.
+- The page's own "Reorder stock item" button still opens its picker.
+- Housekeeper and receptionist: `procurement.html?reorder=10` and `inventory.html` both show `/403.html`; no Reorder link is rendered; API returns 403 `FORBIDDEN`. Anonymous returns 401. Missing item returns 404.
+
+**Low-stock notification → reorder path.** The codebase has no push, email or in-app low-stock notification. The "alert" is the inventory stock-state pill ("Low stock", from `needs_reorder`) and the "Needs reorder" view. That is the path tested above. The staff-dashboard KPI `low_stock_items` exists in the backend but no frontend consumes it.
+
+---
+
+## 7. Limitations and notes
+
+1. **Database.** The Django tests and E2E run used SQLite. `mysqlclient` could not be installed in the sandbox, so MySQL was not exercised. The migration is choices-only, so this is low risk, but it should be run once on the MySQL deployment.
+2. **Responsive hero images.** Uploaded hero images have no `srcset` variants. Each uploaded slide uses one WebP rendition on all devices. The shipped first slide keeps its `srcset`. Separate mobile and desktop renditions would need a new image-variant pipeline, which the brief excludes.
+3. **Caching.** `index.html` loads `js/carousel.js` and `js/site-images.js` with `?v=1.1.24`. The version was not bumped, so browsers may keep the old scripts until the deploy bumps the version or the cache expires.
+4. **Carousel rebuild.** The slideshow is rebuilt at most twice per page load (once from the cached hotel payload, once after the gallery fetch). The old carousel's timer continues on the detached node until the page is left. This is the same pattern as before the batch.
+5. **Housekeeping legacy rows.** Stored ASSIGNED rows show as "Open" but are only found under "All statuses", because the backend status filter is an exact match and the Open filter sends `OPEN`. Stored CANCELLED rows show as "Closed" and are also only under "All statuses". No data was changed, as agreed.
+6. **Housekeeping behaviour change.** Housekeepers can no longer self-assign. This is intended, but staff should be told that dispatchers must assign tasks first.
+7. **Pre-existing issue, not changed.** On the housekeeping page, `js/room-assets.js` requests asset configuration for every role. A housekeeper gets 403 for that request. It was already there and is outside batch 04.
+8. **Pre-existing, not changed.** After a reorder draft, the URL keeps `?reorder=…&location=…`. Refreshing reopens the dialog. This also happened before the batch.
+9. **Roles not browser-tested.** The `MANAGER` role was not in the E2E seed. The reorder gate for it follows the existing capability and role fallback, which are unchanged.
+10. **Sandbox-only items (not in the repository).** The E2E database received a second location (`E2E-STORE-2`), a replenish of item 10 there, an admin balance adjustment, a draft purchase order and sign-in grants for test users. These are sandbox data only and are not in the repository or its migrations.
+11. **Not pushed.** The changes are committed on the local branch only. No push was made.
+
+---
+
+## 8. Rollback
+
+**Files.** Restore the 15 modified files from `HEAD` of the original repository (or revert the batch commit). Delete the 4 new files.
+
+**Task 1 — migration.** Before reverting code, delete the `hero_2`, `hero_3` and `hero_4` rows (through the admin API or the Django shell), because the old code does not know those sections. Then run `python manage.py migrate gallery 0002`. The `hero` row and its image URL are unaffected.
+
+**Task 2.** Reverting the code restores the Claim route (200) and the Assigned and Cancelled transitions. No data was rewritten, so no data step is needed. Tasks assigned under the new rules remain valid under the old ones.
+
+**Task 3.** Re-add the single `NAV` line for "Service Links" in `js/dashboard.js`.
+
+**Task 4.** Revert `inventory.html` and `procurement.html`. The reorder API is unchanged.

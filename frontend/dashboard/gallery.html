@@ -89,7 +89,7 @@
 
 <section class="panel">
   <div class="panel-head"><h2>Homepage images</h2></div>
-  <div class="panel-body"><div data-homepage-slots style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;"></div></div>
+  <div class="panel-body"><p class="caption">The homepage hero slideshow shows each hero slide that has an image, in order 1 to 4. Empty slides are skipped; when no hero slide has an image the built-in slideshow is shown. Replacing or removing one slide does not change the others.</p><div data-homepage-slots style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;"></div></div>
 </section>
 <section class="panel">
   <div class="panel-head"><h2>Gallery &amp; media</h2><div class="panel-actions"><button class="btn btn-sm" data-gal-upload>Upload media</button></div></div>
@@ -118,7 +118,7 @@
 
 (function(){
   var slots=document.querySelector('[data-homepage-slots]');
-  var definitions=[['hero','Hero','1600 × 900'],['welcome','Welcome to J-ONE','1200 × 675'],['experience','Experience','1200 × 675'],['find_us','Find Us','1200 × 675']];
+  var definitions=[['hero','Hero slide 1','1600 × 900'],['hero_2','Hero slide 2','1600 × 900'],['hero_3','Hero slide 3','1600 × 900'],['hero_4','Hero slide 4','1600 × 900'],['welcome','Welcome to J-ONE','1200 × 675'],['experience','Experience','1200 × 675'],['find_us','Find Us','1200 × 675']];
   var slotURL=function(key){ return window.APP_CONFIG.API_ENDPOINTS.gallery+'homepage/'+encodeURIComponent(key)+'/'; };
   async function loadSlots(){
     try{
@@ -134,7 +134,7 @@
           '<p class="caption">Status: '+(item?'Published':'Built-in default')+'</p>'+
           '<label>Alternative text <input class="input" name="alt_text" maxlength="200" value="'+JONE.esc(item&&item.alt_text||'')+'"></label>'+
           '<label>Upload / replace <input class="input" name="image" type="file" accept="image/jpeg,image/png,image/webp"></label>'+
-          '<div data-slot-preview></div><div style="display:flex;gap:.5rem;margin-top:.7rem;">'+
+          '<div data-slot-preview></div><progress data-slot-progress max="100" value="0" hidden style="width:100%;margin-top:.5rem;" aria-label="Upload progress"></progress><p class="caption" data-slot-status role="status" aria-live="polite"></p><div style="display:flex;gap:.5rem;margin-top:.7rem;">'+
           '<button class="btn btn-sm" type="submit">Save</button>'+(item?'<button class="btn btn-sm btn-outline" data-slot-remove type="button">Remove</button>':'')+'</div>';
         var image=card.querySelector('[data-slot-image]');
         if(item&&item.image_url){ var img=document.createElement('img'); img.src=item.image_url; img.alt=item.alt_text||def[1]; img.loading='lazy'; img.style.cssText='width:100%;height:100%;object-fit:cover;'; image.appendChild(img); }
@@ -152,10 +152,15 @@
           e.preventDefault(); var file=picker.files[0];
           if(file && (file.size>5*1024*1024 || !['image/jpeg','image/png','image/webp'].includes(file.type))){ JONE.ui.toast('Choose a JPEG, PNG or WebP under 5 MB.','error');return; }
           var btn=card.querySelector('[type=submit]'); btn.disabled=true; btn.textContent='Saving…';
+          var bar=card.querySelector('[data-slot-progress]'), status=card.querySelector('[data-slot-status]');
           var fd=new FormData(); if(file) fd.append('image',file);
           fd.append('alt_text',card.elements.alt_text.value);
-          try{ await window.API.put(slotURL(key),fd); JONE.ui.toast(def[1]+' updated.','success'); loadSlots(); }
-          catch(err){ JONE.ui.toast(err.message||'Image could not be saved.','error'); btn.disabled=false; btn.textContent='Save'; }
+          bar.hidden=false; bar.value=0; status.textContent=file?'Uploading…':'Saving details…';
+          try{
+            await window.API.uploadWithProgress(slotURL(key),fd,{method:'PUT',onProgress:function(p){ bar.value=p; if(file) status.textContent='Uploading '+p+'%'; }});
+            JONE.ui.toast(def[1]+' updated.','success'); loadSlots();
+          }
+          catch(err){ JONE.ui.toast(err.message||'Image could not be saved.','error'); btn.disabled=false; btn.textContent='Save'; bar.hidden=true; status.textContent=''; }
         });
         var remove=card.querySelector('[data-slot-remove]');
         if(remove) remove.addEventListener('click',async function(){

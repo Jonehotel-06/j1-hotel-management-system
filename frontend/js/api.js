@@ -1125,8 +1125,98 @@ const API = (() => {
     return get(`/api/notifications/emails/`, { ...opts, params });
   }
 
+  /* ------------------------------ Upload with progress --------------------- */
+  /* fetch() cannot report upload progress, so a multipart upload that must show
+     a progress bar (homepage hero slides) goes through XMLHttpRequest instead.
+     It sends the same auth / request-id / terminal headers, maps errors with
+     the same APIError kinds, unwraps the same { success, data } envelope and
+     performs the same single 401 refresh-and-retry as request(). Used only where
+     progress is shown; every other call keeps using request(). */
+  function uploadWithProgress(path, formData, opts = {}, _retry = false) {
+    return new Promise((resolve, reject) => {
+      let safePath;
+      try {
+        safePath = assertUsablePath(path);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      const method = String(opts.method || "POST").toUpperCase();
+      const auth = opts.auth !== false;
+      const token = tokenProvider();
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, BASE + safePath, true);
+      xhr.setRequestHeader("Accept", "application/json");
+      if (auth && token) {
+        xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+        xhr.setRequestHeader("X-Request-ID", newRequestId());
+        const terminalReference = getWorkstationReference();
+        if (terminalReference) xhr.setRequestHeader("X-JONE-Terminal", terminalReference);
+      }
+      xhr.timeout = opts.timeout || 60000;
+      if (xhr.upload && typeof opts.onProgress === "function") {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable && event.total > 0) {
+            opts.onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+          }
+        };
+      }
+      if (opts.signal) {
+        if (opts.signal.aborted) xhr.abort();
+        else opts.signal.addEventListener("abort", () => xhr.abort(), { once: true });
+      }
+      xhr.onload = async () => {
+        const contentType = xhr.getResponseHeader("content-type") || "";
+        let body = xhr.responseText;
+        if (contentType.includes("application/json")) {
+          try {
+            body = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+          } catch (_) {
+            reject(new APIError(xhr.status, "The server sent a response we couldn't read. Please try again.", null, "parse"));
+            return;
+          }
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          let data = body;
+          if (data && typeof data === "object" && !Array.isArray(data) && data.success !== undefined && "data" in data) {
+            data = data.data !== undefined ? data.data : null;
+          }
+          resolve({ status: xhr.status, ok: true, data, pagination: null, response: null, headers: null });
+          return;
+        }
+        if (xhr.status === 401 && !_retry && auth && token && refreshProvider) {
+          const refreshed = await refreshProvider();
+          if (refreshed) {
+            try {
+              resolve(await uploadWithProgress(path, formData, opts, true));
+            } catch (err) {
+              reject(err);
+            }
+            return;
+          }
+          if (window.Auth && typeof window.Auth.onUnauthorized === "function") window.Auth.onUnauthorized();
+        }
+        reject(new APIError(xhr.status, friendlyMessage(xhr.status, body), body));
+      };
+      xhr.onerror = () => {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          reject(new APIError(0, "You appear to be offline. An internet connection is required — please reconnect and try again.", null, "offline"));
+          return;
+        }
+        reject(new APIError(0, "We couldn't reach our servers. Your connection or our service may be unavailable — please try again.", null, "network"));
+      };
+      xhr.ontimeout = () => {
+        reject(new APIError(0, "The request is taking longer than expected. It may still complete — please retry in a moment.", null, "timeout"));
+      };
+      xhr.onabort = () => {
+        reject(new APIError(0, "The request was cancelled.", null, "abort"));
+      };
+      xhr.send(formData);
+    });
+  }
+
   return {
-    get, getBlob, post, put, patch, del, request,
+    get, getBlob, post, put, patch, del, request, uploadWithProgress,
     downloadFile, downloadReport,
     // Public site
     getHotelInfo, getPolicies, getRooms, getRoom, checkAvailability, getUnavailableDates,

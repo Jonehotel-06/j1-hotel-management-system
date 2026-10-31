@@ -589,10 +589,21 @@ function reorderReviewText(values,record,context,names){
 }
 
 /* The preselected delivery store, displayed exactly like a searched result. */
-function reorderLocationInitial(context){
-  var wanted=String((context&&context.default_location_id)||"");
+function reorderLocationInitial(context,locationId){
+  var wanted=String(locationId!==undefined&&locationId!==null?locationId:((context&&context.default_location_id)||""));
   var row=((context&&context.balances)||[]).filter(function(balance){return String(balance.location_id)===wanted;})[0];
   return row?{id:row.location_id,code:row.location_code,name:row.location_name}:null;
+}
+
+/* Batch 04: the store a reorder defaults to. When the Reorder link came from a
+   low-stock balance row, that row's store is used if this item is held there;
+   otherwise the store with the most stock (the previous behaviour) is used. */
+function reorderDefaultLocationId(context,fromLocationId){
+  var balances=(context&&context.balances)||[];
+  if(fromLocationId!==undefined&&fromLocationId!==null&&fromLocationId!==""&&balances.some(function(row){return String(row.location_id)===String(fromLocationId);})){
+    return Number(fromLocationId);
+  }
+  return context&&context.default_location_id!==undefined&&context.default_location_id!==null?Number(context.default_location_id):null;
 }
 
 async function reorderContext(itemId){
@@ -623,7 +634,7 @@ async function pickReorderItem(){
   return picked;
 }
 
-async function reorderItem(itemId){
+async function reorderItem(itemId,fromLocationId){
   var selected=itemId?{id:Number(itemId)}:await pickReorderItem();
   if(!selected||!selected.id)return;
   var context=await reorderContext(selected.id);
@@ -631,10 +642,16 @@ async function reorderItem(itemId){
   var record=context.item;
   rememberItem(record);
   var balances=context.balances||[];
+  var deliveryLocationId=reorderDefaultLocationId(context,fromLocationId);
+  var sourceRow=null;
+  if(fromLocationId!==undefined&&fromLocationId!==null&&fromLocationId!==""){
+    balances.forEach(function(row){if(String(row.location_id)===String(fromLocationId))sourceRow=row;});
+  }
+  var sourceNote=sourceRow?'<p class="caption" data-proc-reorder-source>Opened from the low-stock balance at '+JONE.esc(sourceRow.location_code)+': '+JONE.esc(JONE.trimQuantityValue(String(sourceRow.quantity_on_hand)))+' on hand against a reorder level of '+JONE.esc(JONE.trimQuantityValue(String(sourceRow.reorder_level)))+'. Delivery is set to this store; change it below if needed.</p>':"";
   var onHand=balances.length?balances.map(function(row){return row.location_code+": "+JONE.trimQuantityValue(String(row.quantity_on_hand))+" "+reorderUnitLabel(baseUnitOf(record)).toLowerCase();}).join(" · "):"no balance recorded yet";
   var preferred=record.preferred_supplier?{id:record.preferred_supplier,name:record.preferred_supplier_name||("Supplier #"+record.preferred_supplier)}:null;
   var supplierName=preferred?preferred.name:"",defaultBalance=null;
-  balances.forEach(function(row){if(String(row.location_id)===String(context.default_location_id))defaultBalance=row;});
+  balances.forEach(function(row){if(String(row.location_id)===String(deliveryLocationId))defaultBalance=row;});
   var locationName=defaultBalance?(defaultBalance.location_code+" · "+defaultBalance.location_name):"";
   var values={};
   var draftKey=OPS.newIdempotencyKey("purchase-order");
@@ -645,6 +662,7 @@ async function reorderItem(itemId){
     fields:[
       {name:"reorder_context",type:"custom",render:function(mount){
         mount.innerHTML='<div class="proc-reorder-context"><p><strong>'+JONE.esc(record.sku||"")+' · '+JONE.esc(record.name||"")+'</strong></p>'+
+          sourceNote+
           '<p class="caption">'+JONE.esc(record.category||"No category")+' · stocked in '+JONE.esc(reorderUnitLabel(baseUnitOf(record)))+' · reorder level '+JONE.esc(JONE.trimQuantityValue(String(record.reorder_level||0)))+'</p>'+
           '<p class="caption">On hand — '+JONE.esc(onHand)+'</p>'+
           '<p class="caption">Standard cost '+JONE.esc(money(record.standard_cost||0))+' per '+JONE.esc(reorderUnitLabel(baseUnitOf(record)).toLowerCase())+' · '+JONE.esc(lastPurchase)+'</p>'+
@@ -669,7 +687,7 @@ async function reorderItem(itemId){
         refresh();
       },getValue:function(){return{};}},
       supplierPicker(preferred,function(row){supplierName=row?row.name:"";}),
-      locationPicker(context.default_location_id?reorderLocationInitial(context):null,function(row){locationName=row?((row.code||"")+" · "+(row.name||"")):"";}),
+      locationPicker(deliveryLocationId!==null?reorderLocationInitial(context,deliveryLocationId):null,function(row){locationName=row?((row.code||"")+" · "+(row.name||"")):"";}),
       {name:"expected_on",label:"Expected delivery date",type:"date"},
       {name:"notes",label:"Notes (optional)",type:"textarea",rows:2}
     ],
@@ -1062,7 +1080,7 @@ document.querySelector("[data-proc-new-order]").addEventListener("click",newOrde
 /* Batch 01: the reorder dialog is offered to every procurement-capable role, and the
    inventory screen’s per-row "Reorder" link arrives here as procurement.html?reorder=<item id>. */
 document.querySelectorAll("[data-proc-reorder]").forEach(function(button){button.addEventListener("click",function(){reorderItem(null);});});
-(function(){try{var wanted=new URLSearchParams(window.location.search).get("reorder");if(wanted&&/^\d+$/.test(String(wanted))){setTimeout(function(){reorderItem(wanted);},0);}}catch(_){/* a bad link must never break the page */}})();
+(function(){try{var params=new URLSearchParams(window.location.search);var wanted=params.get("reorder");var fromLocation=params.get("location");if(fromLocation&&!/^\d+$/.test(String(fromLocation)))fromLocation=null;if(wanted&&/^\d+$/.test(String(wanted))){setTimeout(function(){reorderItem(wanted,fromLocation||null);},0);}}catch(_){/* a bad link must never break the page */}})();
 document.querySelector("[data-proc-order-apply]").addEventListener("click",function(){loadOrders(1);});
 document.getElementById("proc-order-status").addEventListener("change",function(){loadOrders(1);});
 document.querySelector("[data-proc-new-supplier]").addEventListener("click",newSupplier);

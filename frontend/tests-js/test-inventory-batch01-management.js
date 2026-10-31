@@ -151,7 +151,7 @@ test("the reorder total is computed exactly from the purchase unit", () => {
 });
 
 test("the reorder dialog only asks for changeable fields and keeps the item details read-only", () => {
-  assert.match(PROCUREMENT, /async function reorderItem\(itemId\)/);
+  assert.match(PROCUREMENT, /async function reorderItem\(itemId,fromLocationId\)/);
   assert.match(PROCUREMENT, /API\.inventoryReorderContext\(itemId\)/);
   for (const field of ["reorder_quantity", "purchase_unit", "unit_purchase_price", "expected_on", "notes"]) {
     assert.match(PROCUREMENT, new RegExp('name:"' + field + '"'), field + " must be enterable");
@@ -183,7 +183,11 @@ test("a reorder is reviewed before submission and creates only a draft", () => {
 });
 
 test("the inventory screen links straight into the reorder dialog", () => {
-  assert.match(INVENTORY, /function reorderHref\(itemId\)\{return "procurement\.html\?reorder="/);
+  // Batch 04: the link also carries the low-stock row's store (&location=<id>).
+  assert.match(INVENTORY, /function reorderHref\(itemId,locationId\)\{var href="procurement\.html\?reorder="/);
+  assert.match(INVENTORY, /esc\(reorderHref\(row\.item,row\.location\)\)/);
   assert.match(INVENTORY, /if\(canReorder\(\)\)actions\+='<a class="btn btn-sm btn-outline" href="/);
-  assert.match(PROCUREMENT, /new URLSearchParams\(window\.location\.search\)\.get\("reorder"\)/);
+  // The auto-open reads ?reorder= from the URL (batch 04 also reads ?location=).
+  assert.match(PROCUREMENT, /new URLSearchParams\(window\.location\.search\)/);
+  assert.match(PROCUREMENT, /\.get\("reorder"\)/);
 });
