@@ -85,13 +85,173 @@
     /* Refund / undo — used by the refunds table and the missed-bookings page. */
     rotateCcw: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
     /* A guest who did not arrive (no-show action). */
-    userX: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="22" y2="13"/><line x1="22" y1="8" x2="17" y2="13"/>'
+    userX: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="22" y2="13"/><line x1="22" y1="8" x2="17" y2="13"/>',
+
+    /* ------------------------------------------------------------------
+       Amenity / facility glyphs.
+
+       The seed catalogue (apps/hotel/management/commands/seed_demo.py) stores
+       icon keys like "air-vent", "tv", "refrigerator", "cabinet",
+       "lamp-desk", "bath", "shower-head", "bell-concierge", "wine", "car",
+       "washing-machine" and "shield-check". None of those names existed in
+       PATHS, so every amenity icon resolved to an EMPTY <svg> — a visible
+       blank hole on the public site. They are added here with the same
+       Lucide-style geometry as the rest of the set (24x24, stroke 1.75).
+       ------------------------------------------------------------------ */
+    tv: '<rect x="2" y="7" width="20" height="13" rx="2"/><polyline points="17 2 12 7 7 2"/>',
+    airVent: '<path d="M6 12H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 8h12"/><path d="M18.3 17.7a2.5 2.5 0 0 1-3.16 3.83 2.53 2.53 0 0 1-1.14-2V12"/><path d="M6 10v11"/><path d="M6 16H3.4A2.4 2.4 0 0 0 1 18.4"/><path d="M6 18h14"/>',
+    refrigerator: '<rect x="5" y="2" width="14" height="20" rx="2"/><line x1="5" y1="10" x2="19" y2="10"/><line x1="9" y1="5" x2="9" y2="7"/><line x1="9" y1="13" x2="9" y2="16"/>',
+    cabinet: '<rect x="4" y="2" width="16" height="20" rx="2"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="9" y1="9" x2="9" y2="13"/><line x1="15" y1="9" x2="15" y2="13"/>',
+    lampDesk: '<path d="M8 2h8l3 9H5z"/><line x1="12" y1="11" x2="12" y2="21"/><line x1="7" y1="21" x2="17" y2="21"/><line x1="12" y1="2" x2="12" y2="4"/>',
+    bath: '<path d="M2 12h20v3a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5z"/><path d="M6 12V5a2 2 0 0 1 4 0"/><line x1="6" y1="20" x2="6" y2="22"/><line x1="18" y1="20" x2="18" y2="22"/>',
+    showerHead: '<path d="M4 4l2.5 2.5"/><path d="M7 9a6 6 0 0 1 8.5-8.5L21 6a6 6 0 0 1-8.5 8.5z"/><line x1="10" y1="6" x2="10" y2="6.01"/><line x1="14" y1="7" x2="14" y2="7.01"/><line x1="9" y1="11" x2="9" y2="11.01"/><line x1="13" y1="12" x2="13" y2="12.01"/>',
+    bellConcierge: '<path d="M3 18a9 9 0 0 1 18 0z"/><path d="M12 3v3"/><circle cx="12" cy="3" r="1"/><line x1="2" y1="21" x2="22" y2="21"/>',
+    wine: '<path d="M8 2h8l-.5 8a3.5 3.5 0 0 1-7 0z"/><line x1="12" y1="14" x2="12" y2="20"/><line x1="8" y1="22" x2="16" y2="22"/>',
+    car: '<path d="M5 17h14M3 13l2-5a2 2 0 0 1 1.9-1.4h10.2A2 2 0 0 1 19 8l2 5v4H3z"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/>',
+    washingMachine: '<rect x="3" y="2" width="18" height="20" rx="2"/><circle cx="12" cy="13" r="5"/><path d="M7 13a5 5 0 0 1 5-5"/><line x1="7" y1="6" x2="7" y2="6.01"/><line x1="11" y1="6" x2="11" y2="6.01"/>',
+    shieldCheck: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15.5 9.5"/>',
+    /* Generic fallback for an amenity whose stored icon key matches nothing. */
+    sparkle: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 17l.8 2.2L22 20l-2.2.8L19 23l-.8-2.2L16 20l2.2-.8z"/>'
   };
 
   function get(name) {
     const body = PATHS[name];
     const size = 24;
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body || ""}</svg>`;
+  }
+
+  /* ------------------------------------------------------------------
+     Amenity icon resolution.
+
+     The database stores a free-text icon key per amenity (rooms.Amenity.icon
+     and the facility catalogue). Keys in the wild are written in every shape
+     an administrator might type or a seed script might use:
+
+        "wifi"  "Wi-Fi"  "air-vent"  "Air Conditioning 2"  "tv"  "TV"
+        "shield-check"  "washing_machine"  "refrigerator"
+
+     Before this resolver existed, a key that was not an exact PATHS property
+     produced an empty <svg> — the icon silently disappeared. The mapping
+     below normalises the spelling (case, spaces, underscores, hyphens and
+     trailing digits) and then offers a synonym table for the catalogue's
+     descriptive keys, so an existing amenity renders its real glyph. When
+     nothing matches, `fallback` is used, which is never empty.
+     ------------------------------------------------------------------ */
+  const AMENITY_ALIASES = {
+    // Exact icon keys and the human names the hotel actually uses.
+    wifi: ["wifi", "wi-fi", "wireless", "internet", "free-wifi", "wlan", "hotspot"],
+    tv: [
+      "tv", "television", "televisions", "smart-tv", "led-tv", "cable-tv", "satellite-tv",
+      // The spellings an administrator actually types, and the ones a backend
+      // seed writes. normalizeKey() strips separators, so "flat-screen TV",
+      // "flat_screen_tv" and "flat screen tv" all reduce to "flatscreentv".
+      "flat-screen-tv", "flat-screen", "flatscreen", "flat-tv", "led", "lcd", "lcd-tv",
+      "plasma-tv", "tv-set", "television-set",
+    ],
+    airVent: [
+      "airvent", "air-vent", "air-conditioning", "airconditioning", "air-conditioner",
+      "airconditioner", "ac", "a-c", "split-ac", "hvac", "climate-control", "cooling",
+    ],
+    refrigerator: ["refrigerator", "fridge", "mini-fridge", "minifridge", "minibar-fridge", "freezer"],
+    cabinet: ["cabinet", "wardrobe", "closet", "cupboard", "locker", "armoire"],
+    lampDesk: [
+      "lamp", "desk", "lampdesk", "lamp-desk", "work-desk", "workspace", "study-desk",
+      "table-lamp", "desk-lamp", "reading-lamp", "bedside-lamp", "workstation",
+    ],
+    bath: ["bath", "bathtub", "tub", "private-bathroom", "bathroom", "ensuite", "en-suite", "toilet", "wc"],
+    showerHead: ["shower", "showerhead", "shower-head", "hot-water", "hotwater", "water-heater", "geyser", "heater"],
+    bellConcierge: ["concierge", "bellconcierge", "bell-concierge", "room-service", "service", "reception-bell"],
+    wine: ["wine", "bar", "cocktail", "drinks", "minibar", "lounge-bar", "wine-bar"],
+    car: ["car", "parking", "car-park", "carpark", "garage", "valet", "parking-space"],
+    washingMachine: ["washing", "washingmachine", "washing-machine", "laundry", "washer", "dryer", "ironing"],
+    shieldCheck: ["shield", "shieldcheck", "shield-check", "security", "safe", "safety", "cctv", "guard"],
+    zap: ["zap", "power", "power-supply", "generator", "backup-power", "electricity", "standby-power", "24-7-power"],
+    coffee: ["coffee", "coffee-maker", "kettle", "tea", "tea-maker", "espresso", "breakfast"],
+    utensils: ["utensils", "restaurant", "dining", "food", "kitchen", "room-dining", "cutlery"],
+    phone: ["phone", "telephone", "intercom", "landline"],
+    clock: ["clock", "24-hour", "24h", "round-the-clock", "all-hours"],
+    users: ["users", "guests", "capacity", "family", "extra-guest"],
+    bed: ["bed", "bedding", "linens", "bed-linen", "double-bed"],
+    ruler: ["ruler", "room-size", "size", "area"],
+    building: ["building", "view", "balcony", "terrace", "city-view", "garden-view"],
+    shirt: ["shirt", "iron", "ironing-service", "dry-cleaning", "trouser-press"],
+    sun: ["sun", "sunlight", "balcony-sun", "daylight"],
+    eye: ["eye", "view", "scenic-view"],
+    image: ["image", "picture", "gallery"],
+    home: ["home", "lodge", "apartment", "suite"],
+    star: ["star", "premium", "luxury", "executive"],
+    heart: ["heart", "romantic", "honeymoon"],
+    zap2: [],
+  };
+
+  // Reverse index: normalised spelling -> PATHS key. Built once.
+  const AMENITY_INDEX = (function buildAmenityIndex() {
+    const index = Object.create(null);
+    Object.keys(AMENITY_ALIASES).forEach(function (key) {
+      if (!PATHS[key]) return; // ignore a typo in the table itself
+      (AMENITY_ALIASES[key] || []).forEach(function (alias) {
+        const normalized = normalizeKey(alias);
+        if (normalized && !(normalized in index)) index[normalized] = key;
+      });
+      index[normalizeKey(key)] = key;
+    });
+    return index;
+  })();
+
+  /* "Air-Vent / TV  2" -> "airvent2" ... plus a digit-free variant. */
+  function normalizeKey(value) {
+    return String(value == null ? "" : value)
+      .toLowerCase()
+      .replace(/&/g, " and ")
+      .replace(/[^a-z0-9]+/g, "")
+      .trim();
+  }
+
+  /**
+   * Resolve a stored amenity/facility icon identifier to a real glyph name.
+   *
+   * @param {string} value   The stored identifier (may be any casing/spelling).
+   * @param {string} [fallback="sparkle"]  Used when nothing matches.
+   * @returns {string} A key that is guaranteed to exist in PATHS.
+   */
+  function resolveName(value, fallback) {
+    const safeFallback = PATHS[fallback] ? fallback : "sparkle";
+    const raw = String(value == null ? "" : value).trim();
+    if (!raw) return safeFallback;
+    // 1. An exact icon name always wins ("wifi", "chevronLeft", ...).
+    if (PATHS[raw]) return raw;
+    // 2. A normalised exact name ("Wi-Fi" -> "wifi").
+    const normalized = normalizeKey(raw);
+    if (PATHS[normalized]) return normalized;
+    // 3. The amenity synonym table.
+    if (AMENITY_INDEX[normalized]) return AMENITY_INDEX[normalized];
+    // 4. Trailing qualifiers ("tv2", "wifi-1") -> the unqualified key.
+    const trimmed = normalized.replace(/[0-9]+$/, "");
+    if (trimmed && PATHS[trimmed]) return trimmed;
+    if (trimmed && AMENITY_INDEX[trimmed]) return AMENITY_INDEX[trimmed];
+    // 5. Last resort: scan for a known synonym contained in the key, longest
+    //    first so "washingmachine" wins over "wash".
+    const candidates = Object.keys(AMENITY_INDEX).sort(function (a, b) { return b.length - a.length; });
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i];
+      if (candidate.length >= 4 && normalized.indexOf(candidate) !== -1) {
+        return AMENITY_INDEX[candidate];
+      }
+    }
+    return safeFallback;
+  }
+
+  /**
+   * Markup for an amenity icon: an inline SVG with a decorative wrapper.
+   * Never returns an empty string — an unknown key renders the fallback glyph
+   * instead of a blank container.
+   */
+  function amenity(value, options) {
+    options = options || {};
+    const size = parseInt(options.size || "18", 10) || 18;
+    const name = resolveName(value, options.fallback || "sparkle");
+    const svg = get(name).replace('width="24" height="24"', `width="${size}" height="${size}"`);
+    return `<span class="amenity-icon" aria-hidden="true">${svg}</span>`;
   }
 
   // Auto-inject every [data-icon] element.
@@ -117,5 +277,5 @@
   }
 
   window.JONE = window.JONE || {};
-  window.JONE.icons = { get, inject };
+  window.JONE.icons = { get, inject, resolveName, amenity, normalizeKey };
 })();

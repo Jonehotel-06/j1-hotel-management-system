@@ -231,6 +231,8 @@
 <script src="js/navigation.js?v=1.1.24"></script>
 <script>JONE.ui.initChrome(); JONE.nav.init();</script>
 <script src="js/site.js?v=1.1.24"></script>
+<!-- Task 05/06: the shared public room gallery + card. -->
+<script src="js/room-card.js?v=1.1.24"></script>
 <script>
 (function () {
   "use strict";
@@ -268,19 +270,31 @@
     }).filter(function (i) { return !!i.src; });
   }
 
+  /* ------------------------------------------------------------------
+     Task 05 — EVERY photo of this room, not just the cover.
+
+     The hero is rendered by the shared room-card gallery (js/room-card.js),
+     so the room-details page and the public listing behave identically:
+     previous/next arrows, a "1 / 5" counter, keyboard and swipe navigation,
+     lazy-loaded images, and the same de-duplicated image set the API returns.
+     The thumbnail strip below stays: it is a second, quicker way in, and
+     clicking any thumbnail opens the large viewer at that photo.
+     ------------------------------------------------------------------ */
   function buildThumbs(r) {
-    var imgs = r.images || r.gallery || [];
+    var imgs = window.JONE.roomCard ? JONE.roomCard.imagesOf(r) : [];
     var holder = document.getElementById("room-thumbs");
     if (!holder) return;
     holder.innerHTML = "";
-    if (imgs && imgs.length) {
-      var items = zoomItems(r);
-      imgs.slice(0, 4).forEach(function (src, i) {
+    if (imgs.length) {
+      var items = imgs.map(function (image) {
+        return { src: image.src, caption: image.caption || image.alt || r.name || "Room" };
+      });
+      imgs.forEach(function (image, i) {
         var d = document.createElement("button");
         d.type = "button";
         d.className = "media";
-        d.setAttribute("aria-label", "View photo of " + (r.name || "Room"));
-        d.innerHTML = '<img src="' + JONE.esc(src.image_url || src.image || src) + '" alt="' + JONE.esc(r.name) + '" loading="lazy">';
+        d.setAttribute("aria-label", "View photo " + (i + 1) + " of " + imgs.length + " of " + (r.name || "Room"));
+        d.innerHTML = '<img src="' + JONE.esc(image.src) + '" alt="' + JONE.esc(r.name || "Room") + '" loading="lazy" decoding="async">';
         d.addEventListener("click", function () {
           JONE.ui.lightbox.open(items, Math.min(i, items.length - 1));
         });
@@ -299,20 +313,32 @@
   function setHero(r) {
     var hero = document.getElementById("room-hero");
     if (!hero) return;
-    var imgs = r.images || r.gallery || [];
-    var primaryIndex = Math.max(0, imgs.findIndex(function (i) { return i && i.is_primary; }));
-    var primary = imgs[primaryIndex];
-    var url = primary && (primary.image_url || primary.image || primary);
-    if (url) {
+    if (window.JONE && window.JONE.roomCard) {
+      // Render the room's COMPLETE gallery into the hero and wire it.
+      //
+      // The element ships with the legacy `.media.responsive-16-9` classes,
+      // which set their own aspect ratio and would fight the gallery's own
+      // media box. Reacting to the shared component means those legacy classes
+      // are REPLACED, not layered on top — the fallback path below still uses
+      // them, so nothing is lost when the component is unavailable.
+      hero.className = "rc-hero";
+      hero.style.cssText = "margin-bottom:1rem;";
+      hero.innerHTML = window.JONE.roomCard.gallery(r, { index: 0 });
+      // enhance() wires cards; the hero is a bare gallery, so bind it through
+      // a temporary card wrapper that shares the same handler code.
+      window.JONE.roomCard.enhance(hero, [r]);
+      return;
+    }
+    // Fallback: the pre-existing single-photo hero.
+    var items = zoomItems(r);
+    if (items.length) {
       var btn = document.createElement("button");
       btn.type = "button";
       btn.className = "room-hero-zoom";
       btn.setAttribute("aria-label", "View photo of " + (r.name || "Room"));
       btn.style.cssText = "display:block;width:100%;height:100%;padding:0;border:0;background:none;cursor:zoom-in;";
-      btn.innerHTML = '<img src="' + JONE.esc(url) + '" alt="' + JONE.esc(r.name || "Room") + '" loading="lazy">';
-      btn.addEventListener("click", function () {
-        JONE.ui.lightbox.open(zoomItems(r), primaryIndex);
-      });
+      btn.innerHTML = '<img src="' + JONE.esc(items[0].src) + '" alt="' + JONE.esc(r.name || "Room") + '" loading="lazy">';
+      btn.addEventListener("click", function () { JONE.ui.lightbox.open(items, 0); });
       hero.innerHTML = "";
       hero.appendChild(btn);
     } else {
@@ -338,10 +364,15 @@
       '<span><span data-icon="users" data-size="16"></span>' + (r.max_guests || "—") + ' guests</span>' +
       (r.room_size ? '<span><span data-icon="maximize" data-size="16"></span>' + JONE.esc(r.room_size) + '</span>' : '') +
       (r.bed_type ? '<span><span data-icon="bed" data-size="16"></span>' + JONE.esc(r.bed_type) + '</span>' : ''));
+    /* Task 04: the amenity's OWN stored icon is rendered through the shared
+       resolver, and an amenity whose key matches nothing falls back to a real
+       glyph instead of an empty container. The check icon is kept as the
+       secondary marker so the list still reads as a feature list. */
     setHTML("#room-amenities", (r.amenities || []).map(function (a) {
       var nm = a && (a.name || a);
       if (!nm) return "";
-      return '<span style="display:inline-flex;align-items:center;gap:0.5rem;color:var(--color-text-muted);"><span data-icon="check" data-size="16" class="text-success"></span>' + JONE.esc(nm) + '</span>';
+      var icon = (window.JONE.icons && JONE.icons.resolveName) ? JONE.icons.resolveName(a.icon, "sparkle") : "check";
+      return '<span class="room-amenity-line"><span data-icon="' + JONE.esc(icon) + '" data-size="16" class="room-amenity-glyph"></span>' + JONE.esc(nm) + '</span>';
     }).join(""));
     selectedRoomId = null;
     selectedRoomNumber = null;

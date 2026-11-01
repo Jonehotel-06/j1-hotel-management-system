@@ -264,7 +264,16 @@
     if (!grid) return;
     grid.innerHTML = list.length
       ? list.map(function (f) {
-        return '<div class="facility-item"><div class="facility-icon"><span data-icon="' + (f.icon || "building") + '" data-size="22"></span></div><div><h3 class="h4">' + JONE.esc(f.name || f.title) + '</h3><p>' + JONE.esc(f.description || f.desc || "") + '</p></div></div>';
+        /* The stored icon key is free text ("air-vent", "Wi-Fi", "tv"...) and
+           used to be copied straight into data-icon. Any key that was not an
+           exact icon name produced an EMPTY <svg> — the blank icon hole the
+           hotel reported. JONE.icons.resolveName() maps the catalogue's own
+           spellings onto real glyphs and falls back instead of rendering
+           nothing. */
+        var iconName = (window.JONE && JONE.icons && JONE.icons.resolveName)
+          ? JONE.icons.resolveName(f.icon, "building")
+          : (f.icon || "building");
+        return '<div class="facility-item"><div class="facility-icon"><span data-icon="' + JONE.esc(iconName) + '" data-size="22"></span></div><div><h3 class="h4">' + JONE.esc(f.name || f.title) + '</h3><p>' + JONE.esc(f.description || f.desc || "") + '</p></div></div>';
       }).join("")
       : '<div class="empty-state"><span data-icon="building" data-size="42"></span><h3>No facilities listed yet</h3><p>We\'ll publish our facilities here soon. Please contact the hotel.</p></div>';
     JONE.icons.inject(grid);

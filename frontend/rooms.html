@@ -262,6 +262,8 @@
 <script src="js/navigation.js?v=1.1.24"></script>
 <script>JONE.ui.initChrome(); JONE.nav.init();</script>
 <script src="js/site.js?v=1.1.24"></script>
+<!-- Task 05/06: the shared public room card (gallery + information + booking). -->
+<script src="js/room-card.js?v=1.1.24"></script>
 <script>
 (function () {
   "use strict";
@@ -297,6 +299,19 @@
       JONE.icons.inject(holder);
       return;
     }
+    /* BATCH targeted_fixes_01 — task 06 (and task 05 inside it).
+       Every room card on the public site is rendered by ONE reusable
+       component, js/room-card.js: a large rounded gallery carrying every
+       uploaded photo with a "1 / 5" counter, the room category badge, the
+       room name, its real description and from-price, its real amenities and
+       a "Room features" checklist, then a "Check availability" button that
+       uses the existing booking flow. Nothing here is hardcoded per room. */
+    if (window.JONE && window.JONE.roomCard) {
+      window.JONE.roomCard.render(holder, out, { actions: "both", bookingLabel: "Check availability" });
+      return;
+    }
+    // Defensive fallback: if the component failed to load, still show the
+    // listing rather than a blank page. (Never expected in a correct deploy.)
     holder.innerHTML = out.map(function (r, ri) {
       const name = r.name || "Room";
       const img = r.primary_image_url

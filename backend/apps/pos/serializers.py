@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
+from apps.core.utils import staff_display_name, staff_person_name, staff_reference
 from apps.stays.models import Stay
 
 from .models import (
@@ -134,6 +135,10 @@ class PosOrderLineSerializer(serializers.ModelSerializer):
 
 class PosTenderSerializer(serializers.ModelSerializer):
     captured_by_email = serializers.CharField(source="captured_by.email", read_only=True)
+    # Task 11: the name of the cashier who took this tender, for the receipt.
+    # Additive and read-only; `captured_by_email` stays for API compatibility.
+    captured_by_name = serializers.SerializerMethodField()
+    captured_by_display = serializers.SerializerMethodField()
     cash_session_reference = serializers.CharField(source="cash_session.reference", read_only=True)
     financial_reference = serializers.CharField(source="collection_transaction.reference", read_only=True)
 
@@ -141,9 +146,19 @@ class PosTenderSerializer(serializers.ModelSerializer):
         model = PosTender
         fields = [
             "id", "reference", "method", "status", "amount", "currency", "external_reference",
-            "cash_session_reference", "captured_at", "captured_by_email", "financial_reference", "notes",
+            "cash_session_reference", "captured_at", "captured_by_email", "captured_by_name",
+            "captured_by_display", "financial_reference", "notes",
         ]
         read_only_fields = fields
+
+    def get_captured_by_name(self, obj):
+        return staff_person_name(getattr(obj, "captured_by", None))
+
+    def get_captured_by_display(self, obj):
+        user = getattr(obj, "captured_by", None)
+        if user is None:
+            return ""
+        return staff_display_name(user) or staff_reference(user)
 
 
 class PosOrderEventSerializer(serializers.ModelSerializer):
@@ -326,6 +341,21 @@ class PosOrderListSerializer(serializers.ModelSerializer):
     stay_reference = serializers.CharField(source="stay.reference", read_only=True)
     folio_reference = serializers.CharField(source="folio.reference", read_only=True)
     created_by_email = serializers.CharField(source="created_by.email", read_only=True)
+    # ---------------------------------------------------------------------
+    # Task 11 (targeted fixes 01): the Restaurant and Bar receipts must show
+    # the member of staff who actually took the order, not their e-mail
+    # address. These two ADDITIVE read-only fields carry the registered name
+    # from the staff record shown on the receipt. `created_by_email` is kept
+    # exactly as it was for API compatibility and internal use, but nothing
+    # customer-facing prints it as the staff identity any more.
+    #
+    # `created_by_name` is the name, or "" when the record has none;
+    # `created_by_display` is what the receipt prints ("John Okafor", or the
+    # employee code when a profile genuinely has no name) — never an e-mail.
+    # ---------------------------------------------------------------------
+    created_by_name = serializers.SerializerMethodField()
+    created_by_display = serializers.SerializerMethodField()
+    created_by_department = serializers.SerializerMethodField()
     line_count = serializers.IntegerField(read_only=True)
     table_session_reference = serializers.CharField(source="table_session.reference", read_only=True, allow_null=True)
     table_session_code = serializers.CharField(source="table_session.table.code", read_only=True, allow_null=True)
@@ -352,9 +382,28 @@ class PosOrderListSerializer(serializers.ModelSerializer):
             "guest_name", "table_number", "table_session_reference", "table_session_code", "service_request_reference",
             "delivery_location", "currency", "subtotal", "tax_amount",
             "total_amount", "submitted_at", "delivered_at", "created_at", "created_by_email", "line_count",
+            "created_by_name", "created_by_display", "created_by_department",
             "net_total", "returned_amount", "amount_paid", "outstanding_balance", "settlement_action_available",
         ]
         read_only_fields = fields
+
+    # -- staff identity for receipts (task 11) ---------------------------
+    def get_created_by_name(self, obj):
+        return staff_person_name(getattr(obj, "created_by", None))
+
+    def get_created_by_display(self, obj):
+        user = getattr(obj, "created_by", None)
+        if user is None:
+            return ""
+        profile = getattr(user, "staff_profile", None)
+        name = staff_display_name(user)
+        if name:
+            return name
+        return staff_reference(user)
+
+    def get_created_by_department(self, obj):
+        profile = getattr(getattr(obj, "created_by", None), "staff_profile", None)
+        return str(getattr(profile, "department", "") or "")
 
     @staticmethod
     def _captured(obj):
@@ -785,6 +834,9 @@ class PosReturnableOrderSerializer(serializers.ModelSerializer):
     """One bar order as the return screen lists it."""
 
     staff_email = serializers.CharField(source="created_by.email", read_only=True)
+    # Task 11: a person's name wherever staff identity is shown. `staff_email`
+    # is unchanged for compatibility; the interface now labels rows by name.
+    staff_name = serializers.SerializerMethodField()
     amount_paid = serializers.SerializerMethodField()
     net_total = serializers.SerializerMethodField()
     outstanding_balance = serializers.SerializerMethodField()
@@ -796,10 +848,16 @@ class PosReturnableOrderSerializer(serializers.ModelSerializer):
         model = PosOrder
         fields = [
             "id", "reference", "mode", "status", "settlement_status", "guest_name", "table_number",
-            "staff_email", "currency", "total_amount", "returned_amount", "net_total", "amount_paid",
+            "staff_email", "staff_name", "currency", "total_amount", "returned_amount", "net_total", "amount_paid",
             "outstanding_balance", "return_count", "line_count", "delivered_at", "created_at",
         ]
         read_only_fields = fields
+
+    def get_staff_name(self, obj):
+        user = getattr(obj, "created_by", None)
+        if user is None:
+            return ""
+        return staff_display_name(user) or staff_reference(user)
 
     def get_amount_paid(self, obj):
         paid = getattr(obj, "paid_total", None)

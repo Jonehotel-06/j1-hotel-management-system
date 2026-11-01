@@ -15,6 +15,7 @@ from apps.accounts.capabilities import has_capability
 from apps.accounts.models import User
 from apps.core.approvals import override_event_details, override_note, require_independent_approver
 from apps.core.utils import hotel_today
+from apps.core.utils import staff_display_name as shared_staff_display_name
 from apps.finance.models import CashMovement, CashSession, FinancialLine, FinancialTransaction
 from apps.finance.services import accounting
 from apps.finance.services.ledger_service import create_posted_transaction
@@ -28,6 +29,72 @@ from ..models import (
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")
+
+
+# ---------------------------------------------------------------------------
+# Staff display names (targeted fixes 01 — task 10)
+#
+# Payroll validation used to name employees by their internal staff code:
+#
+#     "Compensation is missing for: STF-20261028-169B2A646559, ..."
+#
+# A payroll administrator cannot act on that; they have to look the code up.
+# Every user-facing message below now names the PERSON. The internal
+# identifiers (``User.pk`` and ``StaffProfile.employee_code``) are untouched
+# and are still the values the API accepts and stores — only the wording of
+# the message changed. When a profile genuinely has no usable name, the
+# fallback names the employee code so an administrator can still investigate,
+# and never invents or guesses a name.
+# ---------------------------------------------------------------------------
+NAME_UNAVAILABLE = "Name unavailable"
+
+
+def staff_display_name(profile, *, include_department: bool = False) -> str:
+    """The employee's registered name, for a message a person has to read.
+
+    Delegates to :func:`apps.core.utils.staff_display_name`, which reads the
+    registered name from the staff record and never falls back to an e-mail
+    address. When the record genuinely has no name the message says
+    "Name unavailable" and includes the staff code so an administrator can
+    still investigate — a name is never invented or guessed.
+
+    ``include_department`` appends the department in brackets, so two
+    employees with the same name can be told apart ("John Okafor (Kitchen)").
+    """
+    profile_department = getattr(profile, "department", "") if include_department else ""
+    name = shared_staff_display_name(getattr(profile, "user", None), department=profile_department)
+    if name:
+        return name
+    code = str(getattr(profile, "employee_code", "") or "").strip()
+    return f"{NAME_UNAVAILABLE} ({code})" if code else NAME_UNAVAILABLE
+
+
+def staff_names_for(profiles, *, include_department: bool = True) -> list[str]:
+    """Display names for a list of profiles, in the order supplied."""
+    return [staff_display_name(profile, include_department=include_department) for profile in profiles]
+
+
+#: How many employees a single validation message will name before it summarises
+#: the rest. Thirty names is already a long line; a run that cannot pay more than
+#: that needs the payroll officer to look at the data, not read a paragraph.
+COMPENSATION_GAP_NAME_LIMIT = 30
+
+
+def compensation_gap_message(profiles) -> str:
+    """The "Compensation is missing for …" message, naming EMPLOYEES.
+
+    One definition so every caller — the period run, a future bulk endpoint, a
+    test — produces exactly the same wording. Names only: a staff code appears
+    solely inside the "Name unavailable" fallback, and an e-mail address never
+    appears at all.
+    """
+    profiles = list(profiles or ())
+    names = staff_names_for(profiles[:COMPENSATION_GAP_NAME_LIMIT], include_department=True)
+    message = "Compensation is missing for: " + ", ".join(names)
+    remaining = len(profiles) - len(names)
+    if remaining > 0:
+        message += f" and {remaining} more"
+    return message
 
 
 def _decimal(value, label, *, maximum=None):
@@ -618,17 +685,25 @@ def create_payroll_period(
     for row in compensation_rows:
         compensation_by_user.setdefault(row.staff_id, row)
 
-    missing = [profile.employee_code for profile in eligible_profiles if profile.user_id not in compensation_by_user]
-    if missing:
-        raise ValidationError({"staff": "Compensation is missing for: " + ", ".join(missing[:30])})
+    # Task 10: name the EMPLOYEES, never their internal staff codes. The list
+    # is built from the same eligible profiles the run will use, so it names
+    # exactly the people who cannot be paid yet.
+    missing_profiles = [profile for profile in eligible_profiles if profile.user_id not in compensation_by_user]
+    if missing_profiles:
+        raise ValidationError({"staff": compensation_gap_message(missing_profiles)})
 
     adjustments_by_staff = {}
     for row in adjustments or []:
         staff_id = int(row.get("staff_id") or 0)
-        if staff_id not in profile_by_user:
-            raise ValidationError({"adjustments": f"Staff account {staff_id} is not eligible for this payroll run."})
+        # Task 10: adjustments already name the employee where the id resolves;
+        # an id that is NOT part of this run cannot name anyone, so the message
+        # keeps the id (the only fact available) instead of inventing a name.
+        selected_profile = profile_by_user.get(staff_id)
+        who = staff_display_name(selected_profile, include_department=True) if selected_profile else f"Staff account {staff_id}"
+        if selected_profile is None:
+            raise ValidationError({"adjustments": f"{who} is not eligible for this payroll run."})
         if staff_id in adjustments_by_staff:
-            raise ValidationError({"adjustments": f"Staff account {staff_id} appears more than once."})
+            raise ValidationError({"adjustments": f"{who} appears more than once."})
         adjustments_by_staff[staff_id] = row
 
     selected_compensation = [compensation_by_user[uid] for uid in user_ids]
@@ -647,7 +722,7 @@ def create_payroll_period(
         ).exists()
         if changed_during_period:
             raise ValidationError(
-                {"starts_on": f"Compensation for {profile_by_user[compensation.staff_id].employee_code} changes during the period; split the run at the effective date."}
+                {"starts_on": f"Compensation for {staff_display_name(profile_by_user[compensation.staff_id], include_department=True)} changes during the period; split the run at the effective date."}
             )
 
     try:
@@ -790,7 +865,7 @@ def create_payroll_period(
         deductions_total = _components_total(deductions)
         net = (gross - deductions_total).quantize(CENT)
         if net < ZERO:
-            raise ValidationError({"deductions": f"Internal deductions exceed gross pay for {profile.employee_code}."})
+            raise ValidationError({"deductions": f"Internal deductions exceed gross pay for {staff_display_name(profile, include_department=True)}."})
         line = PayrollLine.objects.create(
             period=period,
             staff=profile.user,

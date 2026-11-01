@@ -51,6 +51,62 @@ from .services.inventory_service import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Task 09 (targeted fixes 01) — WHO MAY RECORD STOCK
+#
+# The Store Keeper keeps the hotel's stock; Admin and the General Manager
+# oversee it. No other department may create or adjust a stock record, so the
+# cashier, the chef, the waiter, the receptionist, the accountant and everyone
+# else are refused at the API — not merely hidden in the interface.
+#
+# Reading stock stays exactly as wide as it was: those endpoints still accept
+# ``inventory.manage``, so every department keeps the visibility it needs to
+# do its job (a chef seeing ingredients, a waiter seeing what is available).
+# Only the MUTATIONS carry the extra ``inventory.record`` requirement below.
+#
+# Operational consumption is NOT affected: POS sales, kitchen tickets and
+# approved stock issues post through their own existing services, which this
+# change never touches. The restriction covers MANUAL stock recording only.
+# ---------------------------------------------------------------------------
+STOCK_RECORDING_CAPABILITY = "inventory.record"
+STOCK_RECORDING_REFUSAL = (
+    "Only the Store Keeper, the Administrator or the General Manager can record stock. "
+    "Your role has stock visibility but no stock-recording authority."
+)
+
+
+class StockRecordingMixin:
+    """Require ``inventory.record`` on top of the existing inventory gate.
+
+    Applied to every endpoint that CREATES or ADJUSTS a stock record:
+
+    * stock items and locations (create / edit)
+    * opening stock, receipts, issues, returns, transfers, replenishments
+    * stock-balance adjustments and stock-count creation/submission
+
+    Read-only endpoints are untouched. ``HasCapability`` still runs first, so
+    the refusal is a 403 for anyone outside the inventory workspace and a
+    precise 403 for a permitted viewer without recording authority.
+    """
+
+    stock_recording_capability = STOCK_RECORDING_CAPABILITY
+
+    #: Methods that only READ. A list/create view serves GET for everybody who
+    #: holds the existing inventory capability, so the recording authority is
+    #: checked on the unsafe methods only.
+    SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if request.method in self.SAFE_METHODS:
+            return
+        from apps.accounts.capabilities import has_capability
+        from rest_framework.exceptions import PermissionDenied
+
+        if not has_capability(request.user, self.stock_recording_capability):
+            raise PermissionDenied(STOCK_RECORDING_REFUSAL)
+
+
 def _page(view, request, queryset, serializer):
     paginator = StandardPagination(); page = paginator.paginate_queryset(queryset, request, view=view)
     return paginator.get_paginated_response(serializer(page, many=True).data)
@@ -93,7 +149,7 @@ ACCOUNTING_VISIBLE_STATUSES = tuple(
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="List or create stock locations")
-class StockLocationListCreateView(APIView):
+class StockLocationListCreateView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     def get(self, request):
         queryset=StockLocation.objects.all().order_by("name")
@@ -107,7 +163,7 @@ class StockLocationListCreateView(APIView):
         return success_response(StockLocationSerializer(location).data, message="Stock location created.", status=status.HTTP_201_CREATED)
 
 
-class StockLocationDetailView(APIView):
+class StockLocationDetailView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     def patch(self, request, pk):
         location=StockLocation.objects.filter(pk=pk).first()
@@ -117,7 +173,7 @@ class StockLocationDetailView(APIView):
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="List or create stock catalog items")
-class StockItemListCreateView(APIView):
+class StockItemListCreateView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
 
     #: Whitelisted orderings for the SKU search. A storekeeper searching a SKU
@@ -201,6 +257,45 @@ class StockItemListCreateView(APIView):
         return success_response(StockItemSerializer(item).data, message="Stock item created.", status=status.HTTP_201_CREATED)
 
 
+@extend_schema(tags=["Admin · Inventory"], summary="Identify one stock item from a scanned barcode")
+class StockBarcodeLookupView(APIView):
+    """Task 03 — narrow, read-only lookup for a USB HID barcode scanner.
+
+    One indexed query per scan instead of downloading the catalogue. The
+    response identifies the item and reports its CURRENT balances; it records
+    NO movement, adjustment, receipt or count, and the permission it requires is
+    the read-side ``inventory.manage`` — the same capability that already lets a
+    department see stock. The screen still needs ``inventory.record`` to act on
+    what it found.
+
+    ``?barcode=`` (or ``?code=``) is the scanned value. A code matching nothing
+    returns 404 with a message that says so plainly; a code matching more than
+    one item returns 400 asking for the duplicate to be corrected, because
+    guessing which item was meant is exactly the mistake a stock room cannot
+    afford.
+    """
+
+    permission_classes = [HasCapability]
+    required_capability = "inventory.manage"
+
+    def get(self, request):
+        from .services.stock_barcode_service import resolve_stock_item, scan_payload
+
+        code = (
+            request.query_params.get("barcode")
+            or request.query_params.get("code")
+            or request.query_params.get("sku")
+            or ""
+        )
+        item, matched_by = resolve_stock_item(code)
+        payload = scan_payload(item, matched_by)
+        message = (
+            f"{item.name} · {item.sku}"
+            + (" (inactive item)" if not item.is_active else "")
+        )
+        return success_response(payload, message=message)
+
+
 @extend_schema(tags=["Admin · Inventory"], summary="Find active POS menu items for inventory recipe setup")
 class InventoryMenuItemDirectoryView(APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
@@ -214,7 +309,7 @@ class InventoryMenuItemDirectoryView(APIView):
         return _page(self, request, queryset, InventoryMenuItemDirectorySerializer)
 
 
-class StockItemDetailView(APIView):
+class StockItemDetailView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     def patch(self, request, pk):
         item=StockItem.objects.select_related("preferred_supplier").filter(pk=pk).first()
@@ -290,7 +385,7 @@ class StockBalanceListView(APIView):
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="Correct one stock balance (administrator only)")
-class StockBalanceAdjustView(APIView):
+class StockBalanceAdjustView(StockRecordingMixin, APIView):
     """Administrator-only correction of stock at hand.
 
     Gated on ``inventory.adjust.approve`` — the capability that already owns
@@ -353,7 +448,7 @@ class StockBalanceAdjustmentListView(APIView):
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="Replenish an existing stock item without changing its master data")
-class StockItemReplenishView(APIView):
+class StockItemReplenishView(StockRecordingMixin, APIView):
     """Add stock to an existing item — the 'replenish' half of Add Stock Item.
 
     Selecting an existing SKU must never create a second catalog row and must
@@ -440,7 +535,7 @@ def _recipe_or_404(reference):
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="List or create versioned POS menu stock recipes")
-class StockRecipeListCreateView(APIView):
+class StockRecipeListCreateView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     def get(self, request):
         queryset = StockRecipe.objects.select_related("menu_item", "location", "created_by", "retired_by").prefetch_related("lines__item").order_by("menu_item__sku", "-version")
@@ -463,7 +558,7 @@ class StockRecipeListCreateView(APIView):
         return success_response(StockRecipeSerializer(recipe).data, message="Stock recipe version created." if created else "Existing stock recipe returned.", status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
-class StockRecipeRetireView(APIView):
+class StockRecipeRetireView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     def post(self, request, reference):
         recipe = retire_stock_recipe(recipe=_recipe_or_404(reference), actor=request.user)
@@ -525,7 +620,7 @@ class StockConsumptionReverseView(APIView):
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="List stock counts or begin a frozen stock-count snapshot")
-class StockCountListCreateView(APIView):
+class StockCountListCreateView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     def get(self, request):
         queryset = StockCount.objects.select_related("location", "initiated_by", "submitted_by", "approved_by").prefetch_related("lines__item", "lines__adjustment_movement").order_by("-created_at", "-pk")
@@ -552,7 +647,7 @@ class StockCountDetailView(APIView):
         return success_response(StockCountSerializer(stock_count).data)
 
 
-class StockCountSubmitView(APIView):
+class StockCountSubmitView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     def post(self, request, reference):
         serializer = StockCountSubmitSerializer(data=request.data); serializer.is_valid(raise_exception=True)
@@ -584,7 +679,7 @@ class StockCountApproveView(APIView):
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="Record a source-keyed controlled outgoing stock issue")
-class StockIssueView(APIView):
+class StockIssueView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     def post(self, request):
         serializer=IssueStockSerializer(data=request.data); serializer.is_valid(raise_exception=True); data=serializer.validated_data
@@ -654,7 +749,7 @@ def _opening_in_base_units(item, data):
         raise ValidationError({"quantity": "The converted quantity is too large to record."}) from exc
 
 
-class StockOpeningView(APIView):
+class StockOpeningView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     @transaction.atomic
     def post(self, request):
@@ -688,7 +783,7 @@ class StockOpeningView(APIView):
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="Record a source-keyed stock return into store")
-class StockReturnView(APIView):
+class StockReturnView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     def post(self, request):
         serializer = ReturnStockSerializer(data=request.data); serializer.is_valid(raise_exception=True); data = serializer.validated_data
@@ -713,7 +808,7 @@ class StockReturnView(APIView):
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="Transfer stock between two active locations")
-class StockTransferView(APIView):
+class StockTransferView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     def post(self, request):
         serializer = TransferStockSerializer(data=request.data); serializer.is_valid(raise_exception=True); data = serializer.validated_data
@@ -1106,7 +1201,7 @@ class PurchaseOrderPayView(APIView):
         )
 
 
-class GoodsReceiptCreateView(APIView):
+class GoodsReceiptCreateView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]; required_capability = "procurement.manage"
     def post(self, request, reference):
         serializer=GoodsReceiptCreateSerializer(data=request.data); serializer.is_valid(raise_exception=True); data=serializer.validated_data

@@ -144,7 +144,10 @@ test("every dashboard page is graded by the access registry", () => {
   }
   assert.deepEqual(ungraded, [],
     "these pages are in neither the registry nor the shell: " + ungraded.join(", "));
-  assert.equal(PAGES.length, 43, "the dashboard has 43 pages; a new page needs a gate AND a registry entry");
+  /* The count is a tripwire: adding a page without a gate and a registry entry
+     must fail this suite. Batch 01 task 02 added menu-print.html (the separate
+     menu-item printing workflow), taking 43 -> 44. */
+  assert.equal(PAGES.length, 44, "the dashboard has 44 pages; a new page needs a gate AND a registry entry");
 });
 
 test("the registry holds no stale page names and no empty rule", () => {

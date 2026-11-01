@@ -9,6 +9,8 @@ urlpatterns = [
     path("items/", views.StockItemListCreateView.as_view(), name="items"),
     path("items/<int:pk>/", views.StockItemDetailView.as_view(), name="item-detail"),
     path("items/<int:pk>/replenish/", views.StockItemReplenishView.as_view(), name="item-replenish"),
+    # Task 03: identify ONE stock item from a scanned barcode. Read-only.
+    path("items/barcode-lookup/", views.StockBarcodeLookupView.as_view(), name="item-barcode-lookup"),
     path("menu-items/", views.InventoryMenuItemDirectoryView.as_view(), name="menu-item-directory"),
     path("balances/", views.StockBalanceListView.as_view(), name="balances"),
     path("balances/<int:pk>/adjust/", views.StockBalanceAdjustView.as_view(), name="balance-adjust"),

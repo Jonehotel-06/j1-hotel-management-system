@@ -116,18 +116,56 @@ class RoomImageSerializer(serializers.ModelSerializer):
 
 
 class RoomTypeListSerializer(serializers.ModelSerializer):
-    """Lightweight representation for catalog/availability lists."""
+    """Lightweight representation for catalog/availability lists.
+
+    Task 05 (targeted fixes 01): the public listing must let a guest see EVERY
+    image uploaded for a room, not only the cover photo. ``images`` and
+    ``image_count`` are therefore part of this list row as well. The payload
+    stays small because it carries only the same four gallery attributes the
+    detail endpoint already returns (URL, alt text, caption, ordering) — never
+    the binary or extra metadata — and the active-image queryset is prefetched
+    by ``_catalog_queryset()`` so listing N rooms is still one query.
+    """
 
     primary_image_url = serializers.SerializerMethodField()
     amenities = serializers.SerializerMethodField()
+    images = serializers.SerializerMethodField()
+    image_count = serializers.SerializerMethodField()
 
     class Meta:
         model = RoomType
         fields = [
             "id", "name", "slug", "short_description", "base_price", "max_guests",
             "bed_type", "bed_count", "room_size", "view", "is_featured",
-            "primary_image_url", "amenities",
+            "primary_image_url", "images", "image_count", "amenities",
         ]
+
+    def _ordered_active_images(self, obj):
+        """Active images in display order — cover first, then the rest.
+
+        ``_prefetched_images`` is the cache the catalog queryset fills; reusing
+        it keeps the list endpoint at a constant number of queries. Images are
+        de-duplicated by URL and by primary key so a record accidentally
+        attached twice can never produce a duplicated gallery entry (task 05
+        requirement 10).
+        """
+        images = getattr(obj, "_prefetched_images", None)
+        if images is None:
+            images = obj.images.all()
+        actives = [img for img in images if img.is_active]
+        actives.sort(key=lambda img: (img.display_order, img.pk))
+        primary = _primary_image(actives)
+        if primary is not None:
+            actives = [primary] + [img for img in actives if img.pk != primary.pk]
+        seen_urls, seen_pks, unique = set(), set(), []
+        for img in actives:
+            url = _absolute(self, img.image)
+            if not url or url in seen_urls or img.pk in seen_pks:
+                continue
+            seen_urls.add(url)
+            seen_pks.add(img.pk)
+            unique.append(img)
+        return unique
 
     def get_primary_image_url(self, obj):
         images = getattr(obj, "_prefetched_images", None)
@@ -137,6 +175,14 @@ class RoomTypeListSerializer(serializers.ModelSerializer):
             images = obj.images.all()
         primary = _primary_image(images)
         return _absolute(self, primary.image if primary else None)
+
+    def get_images(self, obj):
+        return RoomTypeImageSerializer(
+            self._ordered_active_images(obj), many=True, context=self.context
+        ).data
+
+    def get_image_count(self, obj) -> int:
+        return len(self._ordered_active_images(obj))
 
     def get_amenities(self, obj):
         return [{"name": a.name, "icon": a.icon} for a in obj.amenities.all() if a.is_active]
@@ -155,11 +201,11 @@ class RoomTypeDetailSerializer(RoomTypeListSerializer):
         ]
 
     def get_images(self, obj):
-        images = sorted(
-            (img for img in obj.images.all() if img.is_active),
-            key=lambda i: (i.display_order, i.id),
-        )
-        return RoomTypeImageSerializer(images, many=True, context=self.context).data
+        # Task 05: same ordered, de-duplicated collection the list rows use, so
+        # the detail page and the listing always agree on order and count.
+        return RoomTypeImageSerializer(
+            self._ordered_active_images(obj), many=True, context=self.context
+        ).data
 
     def get_amenities(self, obj):
         return AmenitySerializer(

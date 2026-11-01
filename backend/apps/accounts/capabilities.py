@@ -52,7 +52,22 @@ CAPABILITY_DEFINITIONS = (
     ("housekeeping.task.assign", "Dispatch housekeeping tasks", "Operations", "Assign and inspect housekeeping tasks."),
     ("maintenance.work_order.manage", "Manage maintenance work orders", "Operations", "Work permitted maintenance orders."),
     ("maintenance.work_order.assign", "Dispatch maintenance work orders", "Operations", "Assign and verify maintenance work orders."),
-    ("inventory.manage", "Manage inventory", "Inventory", "Create permitted inventory movements and counts."),
+    # Task 09 of targeted_fixes_01 splits the ONE inventory capability into the
+    # two authorities it always conflated:
+    #
+    #   inventory.manage — the inventory WORKSPACE: reading balances, movements,
+    #                      counts, recipes, consumption hand-offs and reports.
+    #   inventory.record — RECORDING stock: creating stock items, opening
+    #                      stock, receipts, issues, returns, transfers,
+    #                      replenishment, balances adjustments and stock counts.
+    #
+    # Only the Store Keeper, the Administrator and the General Manager hold
+    # inventory.record. Reading stock stays exactly as wide as before, so no
+    # department loses visibility of the stock it consumes.
+    ("inventory.manage", "Manage inventory", "Inventory", "View permitted inventory records, balances and movements."),
+    ("inventory.record", "Record stock", "Inventory",
+     "Create stock items, opening stock, receipts, issues, returns, transfers, replenishments, "
+     "adjustments and stock counts."),
     ("inventory.adjust.approve", "Approve inventory adjustments", "Inventory", "Approve count variances before stock adjustments post."),
     ("procurement.manage", "Manage procurement", "Inventory", "Create and receive permitted procurement records."),
     ("procurement.approve", "Approve procurement", "Inventory", "Approve purchase orders requested by another user."),
@@ -93,7 +108,8 @@ ROLE_CAPABILITY_CODES = {
         "bar.order.manage", "bar.menu.manage", "pos.return.record", "pos.return.refund",
         "kitchen.queue.view", "kitchen.ticket.manage",
         "guest_request.manage", "guest_request.assign", "housekeeping.task.manage", "housekeeping.task.assign",
-        "maintenance.work_order.manage", "maintenance.work_order.assign", "inventory.manage", "inventory.adjust.approve",
+        "maintenance.work_order.manage", "maintenance.work_order.assign", "inventory.manage", "inventory.record",
+        "inventory.adjust.approve",
         "procurement.manage", "procurement.approve", "staff.profile.manage", "staff.view", "staff.manage",
         "shift.manage", "attendance.clock",
         "attendance.manage", "leave.request", "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
@@ -120,7 +136,9 @@ ROLE_CAPABILITY_CODES = {
     "MAINTENANCE": frozenset({
         "maintenance.work_order.manage", "guest_request.manage", "attendance.clock", "leave.request",
     }),
-    "INVENTORY_CLERK": frozenset({"inventory.manage", "procurement.manage", "attendance.clock", "leave.request"}),
+    "INVENTORY_CLERK": frozenset({
+        "inventory.manage", "inventory.record", "procurement.manage", "attendance.clock", "leave.request",
+    }),
     "FRONT_DESK_SUPERVISOR": frozenset({
         "booking.read", "booking.manage", "stay.check_in", "stay.check_out", "folio.view", "folio.charge.post",
         "payment.read", "payment.capture", "payment.receipt.send", "payment.refund.request",
@@ -137,7 +155,8 @@ ROLE_CAPABILITY_CODES = {
         "bar.order.manage", "bar.menu.manage", "pos.return.record", "pos.return.refund",
         "kitchen.queue.view", "kitchen.ticket.manage", "guest_request.manage",
         "guest_request.assign", "housekeeping.task.manage", "housekeeping.task.assign", "maintenance.work_order.manage",
-        "maintenance.work_order.assign", "inventory.manage", "inventory.adjust.approve", "procurement.manage",
+        "maintenance.work_order.assign", "inventory.manage", "inventory.record", "inventory.adjust.approve",
+        "procurement.manage",
         "procurement.approve", "staff.profile.manage", "staff.view", "staff.manage", "shift.manage",
         "attendance.clock", "attendance.manage",
         "leave.request", "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
@@ -224,9 +243,16 @@ ROLE_CAPABILITY_CODES = {
     "PROCUREMENT_OFFICER": frozenset({
         "procurement.manage", "staff.profile.manage", "staff.view", "staff.manage",
         "shift.manage", "attendance.clock", "attendance.manage", "leave.request",
+        # Task 09: stock visibility only. Recording stock items, opening stock,
+        # counts and adjustments belongs to the Store Keeper, Admin and General
+        # Manager — this role administers procurement and staff records.
         "inventory.manage",
     }),
-    "STOREKEEPER": frozenset({"inventory.manage", "procurement.manage", "attendance.clock", "leave.request"}),
+    # Task 09: the Store Keeper is the hotel's stock custodian, so they keep the
+    # full inventory workspace AND stock-recording authority.
+    "STOREKEEPER": frozenset({
+        "inventory.manage", "inventory.record", "procurement.manage", "attendance.clock", "leave.request",
+    }),
     "PORTER": frozenset({"guest_request.manage", "attendance.clock", "leave.request"}),
     "KITCHEN_ASSISTANT": frozenset({"kitchen.queue.view", "kitchen.ticket.manage", "attendance.clock", "leave.request"}),
     "GUEST": frozenset(),

@@ -394,6 +394,8 @@
 <script>JONE.ui.initChrome(); JONE.nav.init();</script>
 <script src="js/site.js?v=1.1.24"></script>
 <script src="js/carousel.js?v=1.1.24"></script>
+<!-- Task 05/06: the shared public room card (gallery + information + booking). -->
+<script src="js/room-card.js?v=1.1.24"></script>
 <script>
 (function () {
   "use strict";
@@ -401,30 +403,13 @@
   /* Featured rooms driven entirely by the backend. No fake fallback records. */
 
   function roomCard(r, idx) {
-    /* Verified /api/rooms/ item: { name, slug, short_description, base_price
-       (string), max_guests, bed_type, bed_count, room_size, view,
-       is_featured, primary_image_url, amenities:[{name, icon}] } */
-    const img = r.primary_image_url
-      ? '<button type="button" class="media" data-room-img="' + idx + '" aria-label="View photo of ' + JONE.esc(r.name || "Room") + '"><img src="' + JONE.esc(r.primary_image_url) + '" alt="' + JONE.esc(r.name || "Room") + '" loading="lazy"></button>'
-      : '<div class="media placeholder"><div class="placeholder-placeholder"><span data-icon="bed" data-size="32"></span></div></div>';
-    const bed = [r.bed_count > 1 ? r.bed_count + " \u00D7 " : "", r.bed_type].filter(Boolean).join("");
-    const amNames = (r.amenities || []).slice(0, 3).map(a => a.name).join(" \u00B7 ");
-    return '<article class="card card-hover room-card">' +
-      img +
-      '<div class="room-card-body">' +
-        '<h3>' + JONE.esc(r.name || "Room") + '</h3>' +
-        (r.short_description ? '<p class="muted" style="margin-bottom:0.6rem;font-size:var(--fs-sm);">' + JONE.esc(r.short_description) + '</p>' : '') +
-        '<div class="room-facts">' +
-          '<span><span data-icon="users" data-size="15"></span>' + (r.max_guests || 2) + ' guests</span>' +
-          (r.room_size ? '<span><span data-icon="maximize" data-size="15"></span>' + JONE.esc(r.room_size) + '</span>' : '') +
-          (bed ? '<span><span data-icon="bed" data-size="15"></span>' + JONE.esc(bed) + '</span>' : '') +
-        '</div>' +
-        (amNames ? '<div class="room-facts"><span>' + JONE.esc(amNames) + '</span></div>' : '') +
-        '<div class="room-card-foot">' +
-          '<div class="room-price"><div class="price">' + JONE.formatNaira(r.base_price) + '<small> / night</small></div></div>' +
-          '<a class="btn btn-sm" href="room-details.html?room=' + JONE.esc(r.slug || r.id) + '">Details</a>' +
-        '</div>' +
-      '</div></article>';
+    /* Task 06: the featured rooms use the SAME shared card as the rooms page,
+       so a room looks identical wherever a guest meets it. All content comes
+       from GET /api/rooms/ — nothing here is hardcoded. */
+    if (window.JONE && window.JONE.roomCard) {
+      return window.JONE.roomCard.markup(r, { index: idx, actions: "both", bookingLabel: "Check availability" });
+    }
+    return "";
   }
 
   async function loadFeatured() {
@@ -437,16 +422,8 @@
       const rooms = (list && list.items) || list || [];
       if (rooms.length) {
         holder.innerHTML = rooms.map((r, i) => roomCard(r, i)).join("");
-        // Room photos open in the shared image-preview modal.
-        holder.querySelectorAll("[data-room-img]").forEach(btn => {
-          btn.addEventListener("click", () => {
-            const r = rooms[Number(btn.getAttribute("data-room-img"))];
-            if (!r || !r.primary_image_url) return;
-            JONE.ui.lightbox.open(
-              [{ src: r.primary_image_url, caption: r.name || "Room" }], 0
-            );
-          });
-        });
+        // Wire each card's gallery (arrows, counter, swipe, lightbox).
+        if (window.JONE && window.JONE.roomCard) window.JONE.roomCard.enhance(holder, rooms);
       } else {
         // Backend connected but has no featured rooms hide, never fake.
         if (section) section.style.display = "none";

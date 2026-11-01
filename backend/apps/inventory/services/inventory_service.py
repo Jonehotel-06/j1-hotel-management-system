@@ -78,6 +78,45 @@ def scoped_key(*, prefix, scope, raw_key):
     return f"{prefix}:{hashlib.sha256(f'{scope}:{raw_key}'.encode()).hexdigest()}"
 
 
+# ---------------------------------------------------------------------------
+# Task 09 (targeted fixes 01) — stock-recording authority at the SERVICE layer.
+#
+# The API refuses a stock mutation from a role without ``inventory.record``
+# (HTTP 403). This is the same rule enforced one layer lower, so a management
+# command, a celery task or a future view cannot bypass it by calling the
+# service directly. It is deliberately NOT applied to
+# ``record_stock_movement(..., automated=True)``: POS sales, kitchen tickets,
+# approved issues/consumption and goods receipts confirmed by an authorised
+# operator post through system paths that must keep working exactly as before.
+#
+# ``actor=None`` (a scheduled/automated job) is allowed: those jobs carry no
+# user and their attribution is recorded on the movement itself.
+# ---------------------------------------------------------------------------
+STOCK_RECORDING_CAPABILITY = "inventory.record"
+STOCK_RECORDING_ROLES = frozenset({"STOREKEEPER", "ADMIN", "GENERAL_MANAGER", "MANAGER", "INVENTORY_CLERK"})
+STOCK_RECORDING_REFUSAL = (
+    "Only the Store Keeper, the Administrator or the General Manager can record stock manually."
+)
+
+
+def assert_can_record_stock(actor, *, action="record stock"):
+    """Refuse a MANUAL stock mutation from a role without recording authority.
+
+    Raises ``PermissionDenied`` (rendered as HTTP 403 by DRF) so the refusal is
+    identical wherever it is raised. Automated system paths pass ``actor=None``
+    and are never blocked here.
+    """
+    if actor is None:
+        return
+    from apps.accounts.capabilities import has_capability
+
+    if has_capability(actor, STOCK_RECORDING_CAPABILITY):
+        return
+    from rest_framework.exceptions import PermissionDenied
+
+    raise PermissionDenied(f"You do not have permission to {action}. {STOCK_RECORDING_REFUSAL}")
+
+
 def _locked_balance(*, item, location):
     """Serialize a projection row even when this is its first movement."""
     StockItem.objects.select_for_update().get(pk=item.pk)
@@ -96,9 +135,22 @@ def _locked_balance(*, item, location):
 def record_stock_movement(
     *, item, location, movement_type, quantity_delta, source_key, actor=None,
     unit_cost=None, source_reference="", notes="", metadata=None, allow_negative=False,
-    department="", recipient="",
+    department="", recipient="", automated=False,
 ) -> tuple[StockMovement, bool]:
-    """Append an immutable movement and update the locked balance projection."""
+    """Append an immutable movement and update the locked balance projection.
+
+    This is the LOW-LEVEL primitive every stock path funnels through — POS
+    depletion, kitchen tickets, housekeeping consumption and the manual
+    endpoints alike — so the recording-authority check (task 09) is NOT made
+    here: a waiter completing a sale must still deplete stock. The check lives
+    in the MANUAL entry points (``issue_stock``, ``transfer_stock``,
+    ``replenish_stock_item``, ``adjust_stock_balance``, ``record_opening_stock``,
+    ``record_stock_return``, ``receive_goods``, ``approve_stock_count``), which
+    are reached only from the staff API and management commands.
+
+    ``automated`` documents that a caller is a system path; it is recorded in
+    ``metadata`` by the caller and does not change behaviour here.
+    """
     if movement_type not in StockMovement.Type.values:
         raise ValidationError({"type": "Invalid stock movement type."})
     source_key = str(source_key or "").strip()
@@ -171,6 +223,7 @@ def issue_stock(
     created here, so the department's consumption can never inflate expenses
     twice.
     """
+    assert_can_record_stock(actor, action="record stock in the inventory ledger")
     if movement_type not in {StockMovement.Type.ISSUE, StockMovement.Type.MAINTENANCE_ISSUE, StockMovement.Type.WRITE_OFF}:
         raise ValidationError("This issue operation only supports controlled outgoing stock movement types.")
     quantity = _quantity(quantity, positive=True)
@@ -195,6 +248,7 @@ def issue_stock(
 
 @transaction.atomic
 def transfer_stock(*, item, from_location, to_location, quantity, actor, transfer_key, notes=""):
+    assert_can_record_stock(actor, action="record stock in the inventory ledger")
     if from_location.pk == to_location.pk:
         raise ValidationError("Stock transfer locations must differ.")
     quantity = _quantity(quantity, positive=True)
@@ -702,6 +756,7 @@ def _validate_receipt_retry(existing, *, po, raw_lines, received_on, supplier_de
 @transaction.atomic
 def receive_goods(*, purchase_order, receipt_lines, actor, source_key, received_on=None, supplier_delivery_reference="", notes=""):
     """Receive bounded PO quantities and append stock receipts exactly once."""
+    assert_can_record_stock(actor, action="record received stock")
     po = PurchaseOrder.objects.select_for_update().select_related("supplier", "delivery_location").get(pk=purchase_order.pk)
     source_key = str(source_key or "").strip()
     if not source_key: raise ValidationError("A stable receipt source key is required.")
@@ -1026,6 +1081,7 @@ def replenish_stock_item(
     idempotent — exactly like a goods receipt — and a reorder can never
     increase stock on its own.
     """
+    assert_can_record_stock(actor, action="record stock in the inventory ledger")
     item = StockItem.objects.select_for_update().select_related("preferred_supplier").get(pk=item.pk)
     location = StockLocation.objects.select_for_update().get(pk=location.pk)
     if not item.is_active:
@@ -1064,6 +1120,7 @@ def adjust_stock_balance(
     a ledger entry without its reason — or a reason without its ledger entry —
     cannot exist.
     """
+    assert_can_record_stock(actor, action="record stock in the inventory ledger")
     balance = StockBalance.objects.select_for_update().select_related("item", "location").get(pk=balance.pk)
     item, location = balance.item, balance.location
     # A retried request (lost reply, double submit) must return the correction
@@ -2225,6 +2282,7 @@ def key_for_pos_return(*, return_reference, location_id, item_id):
 @transaction.atomic
 def record_opening_stock(*, item, location, quantity, actor, source_key="", idempotency_key="", unit_cost=None, notes="", metadata=None):
     """Record an idempotent opening-balance stock movement."""
+    assert_can_record_stock(actor, action="record stock in the inventory ledger")
     key = source_key or idempotency_key
     quantity = _quantity(quantity, positive=True)
     cost = _cost(unit_cost) if unit_cost not in (None, "") else item.standard_cost
@@ -2292,6 +2350,7 @@ def record_stock_return(
     into the movement's evidence so the issue/return/adjustment trail of a
     reusable asset is auditable without any side table.
     """
+    assert_can_record_stock(actor, action="record a stock return")
     key = source_key or idempotency_key
     quantity = _quantity(quantity, positive=True)
     cost = _cost(unit_cost) if unit_cost not in (None, "") else item.standard_cost

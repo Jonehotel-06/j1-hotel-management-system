@@ -30,15 +30,30 @@ test("Menu management links to the label printing page", () => {
 });
 
 test("Labels page prints a chosen quantity per product", () => {
+  /* Batch 01 task 01 moved the printing model into js/barcode-labels.js so the
+     same code can be unit-tested. The page keeps a default "labels per
+     product" box AND a per-product quantity, which is what the operator needs
+     when one shelf has four units and another has thirty. */
   assert.match(LABELS, /id="label-copies"/);
   assert.match(LABELS, /id="apply-copies"/);
-  assert.match(LABELS, /function labelCopies\(\)/);
-  assert.match(LABELS, /for \(var i = 0; i < labelCopies\(\); i\+\+\) expanded\.push\(item\)/);
   assert.match(LABELS, /id="print-labels"/);
+  assert.match(LABELS, /js\/barcode-labels\.js/);
+
+  const MODEL = read("js/barcode-labels.js");
+  assert.match(MODEL, /function setDefaultCopies\(state, value\)/);
+  assert.match(MODEL, /function setQuantity\(state, item, value\)/);
+  assert.match(MODEL, /function labelCount\(state\)/);
+  /* One label object per requested copy, built from the same plan the preview
+     renders — what is previewed is exactly what prints. */
+  assert.match(MODEL, /for \(var i = 0; i < count; i\+\+\)/);
 });
 
 test("Labels encode the stored barcode and never fabricate a value", () => {
-  assert.ok(LABELS.includes('var sku = item.barcode || item.sku || item.item_sku || "";'));
-  assert.doesNotMatch(LABELS, /"SKU-" \+ item\.id/);
-  assert.match(LABELS, /JONE\.barcode\.generateBarcodeSvg\(sku/);
+  const MODEL = read("js/barcode-labels.js");
+  assert.match(MODEL, /return String\(item\.barcode \|\| item\.sku \|\| item\.item_sku \|\| ""\)\.trim\(\)/);
+  assert.doesNotMatch(MODEL, /"SKU-" \+ item\.id/);
+  assert.match(MODEL, /JONE\.barcode/);
+  assert.match(MODEL, /generateBarcodeSvg\(code/);
+  /* An unencodable code is reported, never replaced with a guess. */
+  assert.match(MODEL, /cannot be printed as Code 128/);
 });

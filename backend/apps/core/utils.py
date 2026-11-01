@@ -43,6 +43,71 @@ def generate_cancellation_reference() -> str:
     return f"J1C-{timezone.now():%Y%m%d}-{secrets.token_hex(5).upper()}"
 
 
+# ---------------------------------------------------------------------------
+# Staff display names (targeted fixes 01 — tasks 10 and 11)
+#
+# Two different screens reported an employee by an INTERNAL identifier where a
+# person needed to read a name:
+#
+#   * payroll validation said "Compensation is missing for:
+#     STF-20261028-169B2A646559, ..."                     (staff code)
+#   * Restaurant/Bar receipts said "Cashier: waiter@jonehotels.com"
+#                                                        (e-mail address)
+#
+# This helper is the single, authoritative way to turn a staff account into the
+# name a human should see. It reads ONLY the registered name on the staff
+# record — never the e-mail address, never the primary key, and it never
+# invents or guesses anything. Internal identifiers are untouched: the audit
+# trail, payroll lines and transaction ownership keep using them.
+# ---------------------------------------------------------------------------
+STAFF_NAME_UNAVAILABLE = "Name unavailable"
+
+
+def staff_person_name(user) -> str:
+    """The registered first/middle/last name of a staff account.
+
+    Returns ``""`` (empty) when the account genuinely has no usable name, so
+    each caller can apply its own fallback. An e-mail address is deliberately
+    NOT a name and is never returned here.
+    """
+    if user is None:
+        return ""
+    parts = [
+        getattr(user, "first_name", "") or "",
+        getattr(user, "middle_name", "") or "",
+        getattr(user, "last_name", "") or "",
+    ]
+    return " ".join(part.strip() for part in parts if str(part).strip()).strip()
+
+
+def staff_display_name(user, *, department: str = "", fallback: str = "") -> str:
+    """A staff account's name for a user-facing message or a printed receipt.
+
+    ``department`` is appended in brackets when supplied, so two employees with
+    the same name can be told apart. ``fallback`` is used only when the record
+    has no name at all; callers on a receipt pass ``""`` so the receipt simply
+    omits the line rather than printing "Name unavailable" to a customer.
+    """
+    name = staff_person_name(user)
+    if not name:
+        return fallback
+    department = str(department or "").strip()
+    return f"{name} ({department})" if department else name
+
+
+def staff_reference(user) -> str:
+    """The internal identifier a receipt/message may fall back to.
+
+    Employee code first (an administrator recognises it), then the account
+    reference; never the e-mail address.
+    """
+    profile = getattr(user, "staff_profile", None)
+    code = str(getattr(profile, "employee_code", "") or "").strip()
+    if code:
+        return code
+    return str(getattr(user, "pk", "") or "")
+
+
 def money(value) -> str:
     """Canonical API representation of a Decimal money amount."""
     from decimal import Decimal

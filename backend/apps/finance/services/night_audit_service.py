@@ -213,6 +213,11 @@ def accounts_receivable_aging(*, as_of=None, limit=100, currency: str = "NGN") -
             "credit_balance": row["credit_balance"],
             "age_days": row["age_days"],
             "bucket": row["age_bucket"],
+            # Task 07 (targeted_fixes_01): which of the five settleable
+            # situations this folio is in — unpaid, partly paid, paid,
+            # cancelled or refunded. Derived from the same signed ledger
+            # balance above, so it can never disagree with ``balance_due``.
+            "settlement_state": row["settlement_state"],
         }
         for row in report["items"]
     ]
@@ -239,6 +244,9 @@ def accounts_receivable_aging(*, as_of=None, limit=100, currency: str = "NGN") -
             }
             for key, _low, _high in AGING_BUCKETS
         ],
+        # Task 07: folio counts and amounts per settlement state, over the whole
+        # population. A dashboard tile can read these without re-deriving them.
+        "settlement": report["settlement"],
         "items": items,
         "by_booking": report["by_booking"],
         "items_truncated": report["items_truncated"],

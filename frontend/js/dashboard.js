@@ -32,6 +32,11 @@
          than the priced, settled service it is. */
       { label: "Laundry", href: "laundry.html", icon: "shirt", view: "laundry", capabilities: ["guest_request.manage", "guest_request.assign"] },
       { label: "Barcode Labels", href: "barcode-labels.html", icon: "printer", view: "barcode-labels", capabilities: ["inventory.manage", "pos.order.manage"] },
+      /* Task 02: menu-information printing is its OWN screen. It answers a
+         different question from barcode labels ("what is on this item and what
+         does it cost") and is reachable by the kitchen and service teams, who
+         must not be given the stores' label workflow. */
+      { label: "Menu Printing", href: "menu-print.html", icon: "fileText", view: "menu-print", capabilities: ["pos.menu.manage", "restaurant.menu.manage", "bar.menu.manage", "pos.order.manage"] },
       { label: "Housekeeping", href: "housekeeping.html", icon: "bed", view: "housekeeping", capabilities: ["housekeeping.task.manage", "housekeeping.task.assign"] },
       { label: "Maintenance", href: "maintenance.html", icon: "settings", view: "maintenance", capabilities: ["maintenance.work_order.manage", "maintenance.work_order.assign"] },
       { label: "Inventory", href: "inventory.html", icon: "inbox", view: "inventory", capabilities: ["inventory.manage", "inventory.adjust.approve"], procurementPlacement: false },
@@ -152,6 +157,9 @@
     "maintenance.html": { roles: ["admin", "general_manager", "receptionist", "housekeeping"] },
     "pos.html": { roles: ["admin", "general_manager", "waiter", "chef", "kitchen_assistant"] },
     "barcode-labels.html": { roles: ["admin", "general_manager", "storekeeper", "waiter"] },
+    /* Task 02: printing MENU INFORMATION is a menu/service task, deliberately
+       separate from the stores-facing barcode label screen. */
+    "menu-print.html": { roles: ["admin", "general_manager", "waiter", "chef", "kitchen_assistant"] },
     "service-qr.html": { roles: MANAGEMENT },
 
     /* Stores and procurement. */

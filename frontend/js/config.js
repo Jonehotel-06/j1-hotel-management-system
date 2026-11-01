@@ -324,6 +324,9 @@
     /* Inventory and procurement (capability-gated server-side). */
     inventoryLocations:           "/api/admin/inventory/locations/",
     inventoryItems:               "/api/admin/inventory/items/",
+    /* Task 03: one indexed lookup per USB HID scan. Read-only by design — the
+       scan identifies the stock item, it never records a movement. */
+    inventoryBarcodeLookup:       "/api/admin/inventory/items/barcode-lookup/",
     inventoryMenuItems:           "/api/admin/inventory/menu-items/",
     inventoryBalances:            "/api/admin/inventory/balances/",
     /* Read-only forward projection (§ "product profitability / valuation").

@@ -222,10 +222,22 @@
       )
     );
 
-    if (receipt.cashier) {
-      lines.push(
-        padLine("Cashier: " + receipt.cashier, "", chars).replace(/\s+$/, "")
-      );
+    /* Task 11: the staff line names the PERSON who took/served the order.
+
+       Receipts used to print `order.created_by_email`, so a customer-facing
+       ticket read "Cashier: waiter@jonehotels.com". The caller now passes
+       `receipt.staff_name` (the registered name from the staff profile) and
+       `receipt.cashier` is only kept as a compatibility fallback. An e-mail
+       address is never used as the staff line: if the name is unavailable the
+       line is omitted rather than printing an address or "Name unavailable"
+       to a guest. The label follows the service mode: a restaurant/bar order
+       is "Served by", anything else stays "Cashier". */
+    var staffLabel = receipt.staff_label || (receipt.is_food_service ? "Served by" : "Cashier");
+    var staffName = String(receipt.staff_name || receipt.cashier || "").trim();
+    if (staffName && staffName.indexOf("@") === -1) {
+      wrapText(staffLabel + ": " + staffName, chars).forEach(function (line) {
+        lines.push(line.replace(/\s+$/, ""));
+      });
     }
 
     if (receipt.workstation) {

@@ -265,6 +265,99 @@ def unposted_stay_balance(*, as_of: date, currency: str) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Task 07 — SETTLEMENT STATE
+#
+# "Outstanding" is a number; "settled" is a story. A guest statement has to be
+# able to say which of the five situations a folio is in, because they call for
+# completely different action:
+#
+#   UNPAID     nothing has been paid and the guest owes money   → collect
+#   PARTIAL    something was paid, money is still owed          → collect the rest
+#   PAID       nothing is owed and nothing is held              → close it
+#   CANCELLED  the booking was cancelled / did not arrive       → check for refund
+#   REFUNDED   the hotel holds a credit for the guest           → pay it out
+#
+# The state is DERIVED from the ledger balance and the booking status. It is
+# never stored, so it can never drift from the money it describes, and this
+# function has no side effect of any kind.
+# ---------------------------------------------------------------------------
+SETTLEMENT_UNPAID = "UNPAID"
+SETTLEMENT_PARTIAL = "PARTIALLY_PAID"
+SETTLEMENT_PAID = "PAID"
+SETTLEMENT_CANCELLED = "CANCELLED"
+SETTLEMENT_REFUNDED = "REFUNDED"
+
+#: Booking statuses that mean the stay will not be delivered.
+_DEAD_BOOKING_STATUSES = frozenset({"CANCELLED", "EXPIRED", "NO_SHOW"})
+
+
+def settlement_state(*, balance: Decimal, booking_status: str = "") -> str:
+    """Classify one folio's settlement from its ledger balance.
+
+    ``balance`` is signed the way the control account stores it: positive means
+    the guest owes the hotel, negative means the hotel is holding the guest's
+    money.
+
+    The mapping is deliberately conservative in one direction only: a cancelled
+    or no-show booking that still owes money is reported as CANCELLED rather
+    than UNPAID, because the desk needs to know the stay is not happening before
+    it starts chasing payment. A cancelled booking that is holding a guest's
+    money is REFUNDED, which is the actionable state for Finance.
+    """
+    balance = _money(balance)
+    status = str(booking_status or "").upper()
+    dead = status in _DEAD_BOOKING_STATUSES
+    if balance > ZERO:
+        return SETTLEMENT_CANCELLED if dead else SETTLEMENT_UNPAID
+    if balance < ZERO:
+        # The hotel owes the guest: an overpayment, a prepaid stay whose nights
+        # have not been charged, or a cancellation. It is money to give back.
+        return SETTLEMENT_REFUNDED
+    if dead:
+        return SETTLEMENT_CANCELLED
+    # Nothing owed, nothing held. If anything at all was settled, it is paid;
+    # a folio with no money on it at all is still reported as paid because
+    # there is nothing left to collect.
+    return SETTLEMENT_PAID
+
+
+def settlement_state_for_row(row) -> str:
+    """The settlement state of one folio row, including the partial case."""
+    balance = _money(row["balance"])
+    charges = (
+        _money(row["accommodation_charges"])
+        + _money(row["food_beverage_charges"])
+        + _money(row["other_charges"])
+    )
+    settled = -_money(row["payments_allocated"]) + -_money(row["discounts"]) + _money(row["refunds"])
+    state = settlement_state(balance=balance, booking_status=row["folio__booking__status"] or "")
+    # A guest who has paid SOMETHING against a real charge but still owes is
+    # partially paid, which reads very differently on a statement from "unpaid".
+    if state == SETTLEMENT_UNPAID and charges > ZERO and settled > ZERO:
+        return SETTLEMENT_PARTIAL
+    return state
+
+
+def settlement_summary(rows) -> dict:
+    """Counts and amounts per settlement state, for a dashboard tile."""
+    summary = {
+        SETTLEMENT_UNPAID: {"folios": 0, "amount": ZERO},
+        SETTLEMENT_PARTIAL: {"folios": 0, "amount": ZERO},
+        SETTLEMENT_PAID: {"folios": 0, "amount": ZERO},
+        SETTLEMENT_CANCELLED: {"folios": 0, "amount": ZERO},
+        SETTLEMENT_REFUNDED: {"folios": 0, "amount": ZERO},
+    }
+    for row in rows:
+        state = settlement_state_for_row(row)
+        summary[state]["folios"] += 1
+        summary[state]["amount"] += abs(_money(row["balance"]))
+    return {
+        state: {"folios": entry["folios"], "amount": money(entry["amount"])}
+        for state, entry in summary.items()
+    }
+
+
 def _room_numbers(folio_rows) -> dict:
     """Room numbers per booking — one bounded query, only for the rows shown.
 
@@ -405,6 +498,9 @@ def guest_receivables(
                 "outstanding": money(balance if balance > ZERO else ZERO),
                 "credit_balance": money(-balance if balance < ZERO else ZERO),
                 "balance": money(balance),
+                # Task 07: WHICH situation this folio is in, derived from the
+                # ledger balance and the booking status. See settlement_state().
+                "settlement_state": settlement_state_for_row(row),
                 "age_days": max((as_of - started).days, 0),
                 "age_bucket": _age_bucket((as_of - started).days),
                 "movements": row["movements"],
@@ -461,6 +557,10 @@ def guest_receivables(
             unapplied_guest_deposits(as_of=as_of, currency=currency)),
         "folios_owing": len(owing_rows),
         "folios_in_credit": len(credit_rows),
+        # Task 07: the five settleable situations, counted over the WHOLE
+        # population (not the itemised page), so a tile can never disagree with
+        # the table it sits above.
+        "settlement": settlement_summary(rows),
         # Exposure on stays the ledger has not charged yet. Reported beside
         # the receivable, never inside it.
         "stay_value_not_yet_charged": money(not_charged["amount"]),
@@ -507,6 +607,12 @@ def guest_receivables(
             ),
             "net_receivable": "The ASSET.GUEST_RECEIVABLE control-account balance. Equals gross − credits + unassigned.",
             "unassigned_receivables": "Posted receivable lines with no folio attached (e.g. a walk-in POS charge).",
+            "settlement": (
+                "UNPAID (nothing paid, money owed) · PARTIALLY_PAID (something paid, money still owed) · "
+                "PAID (nothing owed and nothing held) · CANCELLED (booking cancelled/expired/no-show) · "
+                "REFUNDED (the hotel holds the guest's money). Derived from the signed ledger balance, "
+                "never stored, so it cannot drift from the money."
+            ),
             "total_outstanding": "Alias of gross_receivables, kept for existing API consumers.",
             "stay_value_not_yet_charged": (
                 "Booking total less payments received, less the accommodation already charged to a "

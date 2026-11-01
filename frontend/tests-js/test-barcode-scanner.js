@@ -114,9 +114,14 @@ test("POS page wires scans through the server lookup and increments one cart lin
   assert.doesNotMatch(page, /itemMatch = it/);
   const config = fs.readFileSync(path.join(FRONTEND, "js", "config.js"), "utf8");
   assert.match(config, /posBarcodeLookup:\s+"\/api\/admin\/pos\/menu\/barcode-lookup\/"/);
+  /* Batch 01 task 01 moved barcode encoding out of the page and into
+     js/barcode-labels.js, so the label rule is unit-testable. The page still
+     contains it in prose; the ENCODING assertions follow the code. */
   const labels = fs.readFileSync(path.join(FRONTEND, "dashboard", "barcode-labels.html"), "utf8");
   assert.match(labels, /Code 128/);
-  assert.match(labels, /item\.barcode \|\| item\.sku/);
+  const labelModel = fs.readFileSync(path.join(FRONTEND, "js", "barcode-labels.js"), "utf8");
+  assert.match(labelModel, /item\.barcode \|\| item\.sku/);
+  assert.match(labelModel, /Code 128/);
 });
 
 test("profile page renders the self-service employment records from the owner-scoped endpoint", () => {

@@ -1,0 +1,408 @@
+/* ==========================================================================
+   css/room-cards.css — the public room card design system (Task 06).
+
+   One card component, used by the home page "featured rooms", the rooms
+   listing and the room-details page. Everything is driven by the design
+   tokens in variables.css so the card follows the site's light/dark theme.
+
+   Layout summary (from the supplied reference direction):
+     [ rounded gallery · counter top-left · category badge top-right ]
+     [ white information card: name, description, from-price            ]
+     [ amenity chips · "Room features" checklist · Check availability ]
+   ========================================================================== */
+
+.room-grid {
+  /* A single column on phones, two on tablets, three/four on desktop. */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: var(--sp-6);
+  align-items: start;
+}
+
+.rc-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 160ms ease, transform 160ms ease, border-color 160ms ease;
+  height: 100%;
+}
+.rc-card:hover,
+.rc-card:focus-within {
+  box-shadow: var(--shadow-md);
+  border-color: var(--color-border-strong);
+}
+
+/* ------------------------------- Gallery -------------------------------- */
+.rc-media-wrap { position: relative; }
+
+.rc-media {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: var(--color-surface-deep);
+  overflow: hidden;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  outline: none;
+}
+.rc-media.is-zoomable { cursor: zoom-in; }
+.rc-media:focus-visible {
+  box-shadow: inset 0 0 0 3px var(--color-accent);
+}
+.rc-media-empty {
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+}
+.rc-placeholder { opacity: 0.5; }
+
+.rc-slides { position: absolute; inset: 0; }
+
+.rc-slide {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+}
+.rc-slide[hidden] { display: none; }
+.rc-slide img {
+  width: 100%;
+  height: 100%;
+  /* The uploaded photo keeps its own aspect ratio inside the frame — it is
+     never stretched or squashed (task 05, requirement 8). */
+  object-fit: cover;
+  display: block;
+}
+
+/* Counter, upper-left, as in the reference. */
+.rc-counter {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 2;
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--radius-pill);
+  background: rgba(20, 22, 26, 0.66);
+  color: #fff;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(4px);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Category badge, upper-right. */
+.rc-badge {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 2;
+  max-width: calc(100% - 7rem);
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-heading);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: var(--shadow-xs);
+}
+
+.rc-nav {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--color-heading);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 140ms ease, background 140ms ease;
+}
+.rc-nav.prev { left: 0.6rem; }
+.rc-nav.next { right: 0.6rem; }
+.rc-nav:hover { background: #fff; }
+.rc-nav:focus-visible { opacity: 1; box-shadow: var(--shadow-focus); }
+
+/* Arrows appear on hover/focus on pointer devices; on touch screens they stay
+   visible because there is no hover state to reveal them. */
+.rc-card:hover .rc-nav,
+.rc-card:focus-within .rc-nav { opacity: 1; }
+@media (hover: none) {
+  .rc-nav { opacity: 1; }
+}
+
+.rc-expand {
+  position: absolute;
+  bottom: 0.6rem;
+  right: 0.6rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--color-heading);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+.rc-card:hover .rc-expand,
+.rc-card:focus-within .rc-expand { opacity: 1; }
+@media (hover: none) { .rc-expand { opacity: 1; } }
+.rc-expand:focus-visible { opacity: 1; box-shadow: var(--shadow-focus); }
+
+/* ----------------------------- Information ------------------------------ */
+.rc-body {
+  /* The white room-information card of the reference design. Inner padding
+     rather than a second surface keeps the card visually one object. */
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  flex: 1;
+  background: var(--color-surface);
+}
+
+.rc-title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  line-height: 1.2;
+  color: var(--color-heading);
+  letter-spacing: -0.01em;
+}
+
+.rc-desc {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  /* Two lines keeps every card in a row the same height without truncating a
+     short description into an ellipsis. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.rc-price {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  color: var(--color-text-muted);
+  font-size: var(--fs-sm);
+}
+.rc-price strong {
+  color: var(--color-heading);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.rc-price .rc-from { color: var(--color-text-faint); }
+.rc-price .rc-per { color: var(--color-text-faint); }
+
+/* Amenity chips — a clean responsive row of real room amenities. */
+.rc-amenities {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.5rem;
+}
+.rc-amenity {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.28rem 0.6rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  max-width: 100%;
+}
+.rc-amenity > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rc-amenity-icon {
+  display: inline-flex;
+  color: var(--color-accent);
+  flex: 0 0 auto;
+}
+.rc-amenity-icon svg { display: block; }
+
+/* "Room features" — small check icons, clear names, consistent spacing. */
+.rc-features {
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--color-border);
+}
+.rc-features-title {
+  margin: 0 0 0.5rem;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--color-heading);
+  letter-spacing: 0.01em;
+}
+.rc-features ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+.rc-features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: var(--fs-sm);
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+.rc-check {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-top: 0.15em;
+  color: var(--color-success);
+}
+.rc-check svg { display: block; }
+
+/* -------------------------------- Actions ------------------------------- */
+.rc-actions {
+  display: flex;
+  gap: var(--sp-3);
+  margin-top: auto;
+  padding-top: var(--sp-4);
+}
+.rc-btn {
+  flex: 1 1 0;
+  justify-content: center;
+  /* Consistent button dimensions: same height whether one or two buttons. */
+  min-height: 2.65rem;
+  white-space: nowrap;
+}
+.rc-btn-wide { flex: 1 1 100%; }
+
+/* ------------------------------- Responsive ----------------------------- */
+@media (max-width: 480px) {
+  .room-grid { gap: var(--sp-5); }
+  .rc-body { padding: var(--sp-4); gap: var(--sp-2); }
+  .rc-title { font-size: var(--fs-lg); }
+  .rc-media { aspect-ratio: 3 / 2; }
+  .rc-btn { min-height: 2.75rem; }
+}
+
+@media (min-width: 1200px) {
+  /* Wide screens: four cards fit without a horizontal scrollbar. */
+  .room-grid { grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rc-card,
+  .rc-nav,
+  .rc-expand { transition: none; }
+}
+
+/* ==========================================================================
+ * Room-details hero (task 05 / 06)
+ *
+ * The detail page renders the SAME gallery markup as a card, inside the
+ * existing #room-hero element. These rules give it the room the card does not
+ * have, without touching the legacy `.room-hero` rules still used by the
+ * fallback path when the shared component is unavailable.
+ * ========================================================================== */
+.rc-hero {
+  display: block;
+  overflow: hidden;
+  border-radius: var(--radius-md, 12px);
+}
+.rc-hero .rc-media-wrap {
+  border-radius: inherit;
+  overflow: hidden;
+}
+/* The hero is the focal image on the page, so it is taller than a card's
+   media and never collapses on a narrow phone. */
+.rc-hero .rc-media {
+  aspect-ratio: 16 / 9;
+  max-height: 32rem;
+}
+.rc-hero .rc-slide img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.rc-hero .rc-nav {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+.rc-hero .rc-counter {
+  font-size: var(--fs-sm, 0.875rem);
+  padding: 0.3rem 0.65rem;
+}
+@media (max-width: 640px) {
+  .rc-hero .rc-media { aspect-ratio: 4 / 3; }
+  /* Touch targets stay at the 44 px minimum on a phone. */
+  .rc-hero .rc-nav { width: 2.5rem; height: 2.5rem; }
+}
+
+/* ==========================================================================
+ * Room-details amenity list (task 04 / 06)
+ *
+ * Each amenity renders an icon resolved through JONE.icons.resolveName(), so an
+ * unknown backend icon key shows a sensible fallback glyph instead of an empty
+ * <svg>. These rules keep the glyph and its label aligned on every width.
+ * ========================================================================== */
+.room-amenity-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.35rem 0;
+  min-width: 0;
+}
+.room-amenity-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1.35rem;
+  height: 1.35rem;
+  color: var(--color-primary, #373435);
+}
+.room-amenity-glyph svg,
+.room-amenity-glyph img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* A label longer than the column wraps under itself, never under the icon. */
+.room-amenity-line > span:last-child,
+.room-amenity-line .room-amenity-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 480px) {
+  .room-amenity-line { font-size: var(--fs-sm, 0.875rem); }
+}
