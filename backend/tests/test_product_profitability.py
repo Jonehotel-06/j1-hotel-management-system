@@ -95,6 +95,15 @@ class ProjectionServiceTests(ProjectionFixtureMixin, BaseAPITestCase):
         self.manager = make_staff("val-manager@staff.dev", role=User.Role.MANAGER)
         self.build_catalog()
 
+    def test_matching_name_or_sku_without_mapping_does_not_supply_a_price(self):
+        MenuItem.objects.create(category=self.category, name="A different name", sku=self.wipe.sku, base_price=Decimal("999.00"))
+        MenuItem.objects.create(category=self.category, name=self.wipe.name, sku="DIFFERENT-SKU", base_price=Decimal("888.00"))
+        record_stock_movement(item=self.wipe, location=self.store, movement_type=StockMovement.Type.OPENING,
+                              quantity_delta="2", source_key="unmapped-opening", actor=self.clerk)
+        row = product_profitability_projection(item_ids=[self.wipe.pk])[0]
+        self.assertIsNone(row["selling_price"])
+        self.assertIsNone(row["expected_gross_margin_percent"])
+
     def test_weighted_average_cost_comes_from_the_receipt_ledger(self):
         self.receive(item=self.gin, location=self.bar, quantity=4, unit_cost="10000.00", key="gin-a")
         self.receive(item=self.gin, location=self.bar, quantity=2, unit_cost="13000.00", key="gin-b")

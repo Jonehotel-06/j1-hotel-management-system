@@ -123,7 +123,7 @@ class PackRecordingTests(BaseAPITestCase):
 
 
 class DirectSaleProfitabilityTests(BaseAPITestCase):
-    def test_directly_sold_product_shows_expected_revenue_and_gross_profit(self):
+    def test_matching_name_without_direct_sale_mapping_does_not_imply_a_price(self):
         manager = make_staff("profit-manager@staff.dev", role=User.Role.MANAGER)
         location = StockLocation.objects.create(code="DP-BAR", name="Direct profit bar")
         item = StockItem.objects.create(
@@ -140,11 +140,10 @@ class DirectSaleProfitabilityTests(BaseAPITestCase):
         rows = product_profitability_projection(item_ids=[item.pk])
         self.assertEqual(len(rows), 1)
         row = rows[0]
-        self.assertEqual(row["price_basis"], "MENU_ITEM_MATCH")
-        self.assertEqual(row["selling_price"], Decimal("1500.00"))
-        self.assertEqual(row["expected_sales_revenue"], Decimal("30000.00"))
-        self.assertEqual(row["expected_gross_profit"], Decimal("20000.00"))
-        self.assertEqual(row["expected_gross_margin_percent"], Decimal("66.67"))
+        self.assertIsNone(row["selling_price"])
+        self.assertIsNone(row["expected_sales_revenue"])
+        self.assertIsNone(row["expected_gross_profit"])
+        self.assertIsNone(row["expected_gross_margin_percent"])
 
 
 class ProcessTwiceDoesNotDeductTwiceTests(BaseAPITestCase):

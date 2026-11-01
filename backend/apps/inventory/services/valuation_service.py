@@ -51,7 +51,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.db.models import DecimalField, F, Q, Sum
 
-from apps.pos.models import MenuCategory, MenuItem
+from apps.pos.models import MenuCategory
 
 from ..models import GoodsReceiptLine, StockBalance, StockItem, StockMovement, StockRecipe
 from .inventory_service import unit_label
@@ -210,10 +210,8 @@ def _recipe_basis(item_ids):
     # are stocked (one menu item = one stock item). Their selling price is the
     # price of the menu item the stock item is *configured* to be sold as — an
     # explicit, auditable link — so expected revenue and gross profit show
-    # without a recipe. An unconfigured item is still matched by SKU or name
-    # for display only (this projection never deducts anything and never
-    # creates a recipe); the inventory console's configuration audit lists
-    # those items so they can be configured properly.
+    # without a recipe. Unconfigured items must not acquire a price merely
+    # because their name or SKU resembles a menu item.
     missing_ids = [item_id for item_id in item_ids if not per_item.get(item_id)]
     if missing_ids:
         configured = (
@@ -236,32 +234,6 @@ def _recipe_basis(item_ids):
             price_kinds[item.pk] = "MENU_ITEM_MATCH"
             if menu.category_id:
                 departments.setdefault(item.pk, set()).add(menu.category.get_service_area_display())
-        missing_ids = [item_id for item_id in missing_ids if not per_item.get(item_id)]
-    if missing_ids:
-        stock_rows = {
-            row.pk: row for row in StockItem.objects.filter(pk__in=missing_ids).only("pk", "sku", "name")
-        }
-        menu_rows = list(
-            MenuItem.objects.filter(is_active=True).select_related("category")
-            .only("sku", "name", "base_price", "category__service_area")
-        )
-        by_sku = {}
-        by_name = {}
-        for menu in menu_rows:
-            if menu.base_price and menu.base_price > ZERO:
-                by_sku.setdefault(str(menu.sku or "").strip().lower(), menu)
-                by_name.setdefault(str(menu.name or "").strip().lower(), menu)
-        for item_id in missing_ids:
-            item = stock_rows.get(item_id)
-            if item is None:
-                continue
-            menu = by_sku.get(str(item.sku or "").strip().lower()) or by_name.get(str(item.name or "").strip().lower())
-            if menu is None:
-                continue
-            per_item[item_id] = [menu.base_price]
-            price_kinds[item_id] = "MENU_ITEM_MATCH"
-            if menu.category_id:
-                departments.setdefault(item_id, set()).add(menu.category.get_service_area_display())
     return per_item, departments, price_kinds
 
 
@@ -357,8 +329,7 @@ def product_profitability_projection(*, search="", location_id=None, department=
             "latest_receipt_cost": _quantize(latest_cost.get(key), MONEY_QUANTUM) if latest_cost.get(key) is not None else None,
             "selling_price": _quantize(selling_price, MONEY_QUANTUM) if selling_price is not None else None,
             "price_basis": price_basis,
-            # A price taken from a menu item (a configured direct sale, or the
-            # display-only SKU/name match) comes from no recipe at all, so it
+            # A price from a configured direct sale comes from no recipe, so it
             # reports zero onward uses instead of implying a BOM exists.
             "recipe_count": 0 if price_basis == "MENU_ITEM_MATCH" else len(prices),
             "current_stock": _quantize(quantity, QUANTITY_QUANTUM),
