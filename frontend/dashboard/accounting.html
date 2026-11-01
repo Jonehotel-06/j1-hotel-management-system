@@ -274,7 +274,6 @@
     <div>
       <h3 class="section-title">Balance sheet <span class="caption" data-bs="asof"></span></h3>
       <div class="table-wrap"><table class="table"><thead><tr><th class="cell-clamp">Account</th><th class="num cell-nowrap">Amount</th></tr></thead><tbody data-tbody="bs-sheet"></tbody></table></div>
-      <p class="caption" data-bs="receivable-note" hidden></p>
       <p class="caption" data-bs="presentation-note"></p>
     </div>
   </div>
@@ -360,17 +359,10 @@
 <!-- RECEIVABLES AGING -->
 <details class="panel finance-section" data-acc-section="ar-aging" id="ar-aging">
   <summary class="panel-head"><h2>Guest receivables</h2>
-    <span class="caption">What each guest owes, from the guest-receivable control account</span>
+    <span class="caption">One row per folio — what each guest owes. A collections worksheet, not a financial-statement figure</span>
     <span class="acc-chevron" data-icon="chevronDown" data-size="18"></span>
   </summary>
   <div class="panel-body no-pad">
-    <section class="kpi-grid" style="padding:1rem;" aria-label="Guest receivable position">
-      <div class="kpi"><div class="kpi-label">Guests owing</div><div class="kpi-value" data-ar="gross">--</div><div class="kpi-sub" data-ar="gross-sub">&nbsp;</div></div>
-      <div class="kpi"><div class="kpi-label">Guest credit balances</div><div class="kpi-value" data-ar="credits">--</div><div class="kpi-sub">Advances and overpayments the hotel is holding</div></div>
-      <div class="kpi"><div class="kpi-label">Unapplied guest deposits</div><div class="kpi-value" data-ar="deposits">--</div><div class="kpi-sub">Money received, not yet applied to a folio</div></div>
-      <div class="kpi"><div class="kpi-label">Stay value not yet charged</div><div class="kpi-value" data-ar="unposted">--</div><div class="kpi-sub">Booked nights the ledger has not charged yet</div></div>
-    </section>
-    <p class="caption" style="padding:0 1rem;margin:0 0 0.75rem;" data-ar="recon"></p>
     <div class="table-wrap"><table class="table">
       <thead><tr><th class="cell-clamp">Age bucket</th><th class="num cell-nowrap">Folios</th><th class="num cell-nowrap">Balance due</th></tr></thead>
       <tbody data-tbody="x-ar-buckets"></tbody>
@@ -846,6 +838,23 @@
     }
   }
 
+  /* ---------------- Shared detail-row renderers (IIFE scope) ----------------
+     expenseDetailRow / expenseDetailText are used by the expense dialog (inside
+     load()) AND by openPurchaseOrder() at this IIFE's top level. A function
+     declaration is only hoisted within the scope that contains it, so when
+     these two helpers sat inside load() the purchase-order detail modal threw
+     "ReferenceError: expenseDetailRow is not defined" and rendered "Purchase
+     order unavailable". They are deliberately declared here, at the shared
+     scope — not duplicated — so every renderer resolves the same helpers. */
+  function expenseDetailRow(label, value, opts) {
+    opts = opts || {};
+    return '<div class="profile-row"><dt>' + JONE.esc(label) + '</dt><dd' +
+      (opts.numeric ? ' class="num"' : '') + '>' + value + '</dd></div>';
+  }
+  function expenseDetailText(value) {
+    return (value === null || value === undefined || value === "") ? "\u2014" : JONE.esc(value);
+  }
+
   function load(){
     var requestId=++loadSequence;
     var dates=activeDates();
@@ -915,6 +924,13 @@
       JONE.ui.toast((err&&err.message)||"The drawer review could not be recorded.","error");
     }
   }
+  /* Delegated row-action listeners bind exactly once — not on every load()
+     re-render. load() runs again whenever the page refreshes its data (and
+     once at boot), and binding on each run multiplied every click handler, so
+     a row action fired once per refresh (duplicate delegated financial
+     actions). The guard hangs off load itself so it survives re-entry. */
+  if (!load.__delegatedBound) {
+  load.__delegatedBound = true;
   document.addEventListener("click", function (event) {
     var review = event.target.closest ? event.target.closest("[data-cash-variance]") : null;
     if (!review) return;
@@ -1018,6 +1034,17 @@
     event.preventDefault();
     openExpenseDetails(view.getAttribute("data-approval-expense"), view);
   });
+  /* A3: the verified supplier purchase-order reference is recorded from the
+     accounting side (Procurement can only edit it while the order is still a
+     DRAFT/SUBMITTED). Delegated like the rest because the detail body is
+     re-rendered on every open. */
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest ? event.target.closest("[data-po-supplier-reference]") : null;
+    if (!button) return;
+    event.preventDefault();
+    setVerifiedSupplierReference(button.getAttribute("data-po-supplier-reference"));
+  });
+  }
   /* ---------------------- Expense details drill-down ----------------------
      Every expense record opens a details dialog that distinguishes what was
      INCURRED from what was actually PAID, discloses the attachment, and shows the
@@ -1026,14 +1053,9 @@
      host (skeleton -> content -> error), so ESC, backdrop click, focus movement
      and the mobile rendering are the same as every other dialog in the console. */
   var EXPENSE_STATUS_PAID = { POSTED: true };
-  function expenseDetailRow(label, value, opts) {
-    opts = opts || {};
-    return '<div class="profile-row"><dt>' + JONE.esc(label) + '</dt><dd' +
-      (opts.numeric ? ' class="num"' : '') + '>' + value + '</dd></div>';
-  }
-  function expenseDetailText(value) {
-    return (value === null || value === undefined || value === "") ? "\u2014" : JONE.esc(value);
-  }
+  /* expenseDetailRow / expenseDetailText live at the shared IIFE scope (see the
+     note above load()) so openPurchaseOrder() can use them too; they were moved
+     out of load() to fix the "expenseDetailRow is not defined" PO-modal error. */
   /* Audit-event payloads are evidence, but raw JSON dumps have unbreakable
      tokens that blow out the dialog on phones. Render them as labelled
      lines instead: same facts, readable, and wrap-safe. */
@@ -1461,6 +1483,35 @@
     });
     if (result) { JONE.ui.toast("Payable raised. Nothing has been paid yet.", "success"); load(); }
   }
+  /* A3: record (or correct) the verified supplier purchase-order reference
+     from the accounting review. One field, server-audited, nothing else on
+     the order is touched. */
+  var currentPoDetail = null;
+  async function setVerifiedSupplierReference(reference){
+    var current = (currentPoDetail && currentPoDetail.supplier_reference) || "";
+    var result = await JONE.dashboard.formModal({
+      title: "Verified supplier reference · " + reference,
+      submitText: "Save reference",
+      fields: [
+        {
+          name: "supplier_reference", label: "Supplier's purchase-order / invoice reference", value: current,
+          maxLength: 120,
+          help: "The supplier's own reference for this order, as verified against their invoice or confirmation. Leave blank to clear an unverified claim."
+        }
+      ],
+      onSubmit: async function (values){
+        var response = await window.API.post(
+          window.APP_CONFIG.API_ENDPOINTS.procurementAccountingOrders + encodeURIComponent(reference) + "/supplier-reference/",
+          { supplier_reference: String(values.supplier_reference || "").trim() }
+        );
+        return response;
+      }
+    });
+    if (result) {
+      JONE.ui.toast("Supplier reference recorded.", "success");
+      openPurchaseOrder(reference);
+    }
+  }
   async function openPurchaseOrder(reference){
     JONE.dashboard.panel.open("Purchase order " + reference, '<div class="loading-skeleton" aria-busy="true">Loading purchase order…</div>');
     var body = JONE.dashboard.panel.body();
@@ -1485,21 +1536,49 @@
           JONE.esc(payable.paid_at ? "paid" : "unpaid") + "</td></tr>";
       }).join("");
       if (body) {
+        currentPoDetail = po;
+        var poPayments = (po.payments || []).map(function (payment) {
+          return "<tr><td>" + JONE.esc(payment.paid_on || "—") + "</td><td>" +
+            JONE.esc(String(payment.method || "").replace(/_/g, " ").toLowerCase()) +
+            '</td><td class="num">' + JONE.esc(moneyCell(payment.amount)) + "</td><td>" +
+            JONE.esc(payment.reference || "—") + "</td><td>" +
+            (payment.accounting_settlement_reference
+              ? JONE.esc(payment.accounting_settlement_reference)
+              : '<span class="caption">not linked</span>') + "</td><td>" +
+            (payment.evidence_url
+              ? '<a href="' + JONE.esc(payment.evidence_url) + '" target="_blank" rel="noopener">evidence</a>'
+              : '<span class="caption">—</span>') + "</td></tr>";
+        }).join("");
         body.innerHTML =
           '<div class="profile-grid">' +
             expenseDetailRow("Supplier", expenseDetailText(po.supplier_name)) +
             expenseDetailRow("Order status", JONE.dashboard.statusPill(po.status)) +
+            expenseDetailRow("Requested on", po.created_at ? JONE.esc(JONE.formatDateTime(po.created_at)) : "\u2014") +
+            expenseDetailRow("Requested by", expenseDetailText(po.requested_by_email)) +
+            expenseDetailRow("Approved by", expenseDetailText(po.approved_by_email)) +
+            expenseDetailRow(
+              "Supplier reference (verified)",
+              expenseDetailText(po.supplier_reference) +
+                ' <button class="btn btn-sm btn-outline" type="button" data-po-supplier-reference="' + JONE.esc(reference) + '">Set / correct</button>'
+            ) +
+            expenseDetailRow("Delivery location", expenseDetailText(po.delivery_location_code)) +
             expenseDetailRow("Ordered total", JONE.esc(moneyCell(po.total_amount)), { numeric: true }) +
             expenseDetailRow("Received value", JONE.esc(moneyCell(position.received_value != null ? position.received_value : po.received_value)), { numeric: true }) +
             expenseDetailRow("Payable raised", JONE.esc(moneyCell(position.payable_raised)), { numeric: true }) +
             expenseDetailRow("Still unpaid", JONE.esc(moneyCell(position.payable_outstanding)), { numeric: true }) +
             expenseDetailRow("Unbilled received value", JONE.esc(moneyCell(position.unbilled_received_value)), { numeric: true }) +
-            expenseDetailRow("Requested by", expenseDetailText(po.requested_by_email)) +
-            expenseDetailRow("Approved by", expenseDetailText(po.approved_by_email)) +
-            expenseDetailRow("Delivery location", expenseDetailText(po.delivery_location_code)) +
           "</div>" +
+          (po.notes
+            ? '<h4 class="detail-section-title">Procurement notes / justification</h4><p>' + JONE.esc(po.notes) + "</p>"
+            : "") +
+          '<h4 class="detail-section-title">Supporting documents</h4>' +
+          (po.approval_receipt_url
+            ? '<p><a href="' + JONE.esc(po.approval_receipt_url) + '" target="_blank" rel="noopener">Approval evidence (supplier invoice / payment receipt)</a></p>'
+            : '<p class="caption">No approval evidence was attached to this order.</p>') +
+          (po.payment_reference ? '<p class="caption">Payment reference at approval: ' + JONE.esc(po.payment_reference) + "</p>" : "") +
           '<h4 class="detail-section-title">Ordered lines</h4><div class="table-wrap"><table class="table"><thead><tr><th>SKU</th><th>Item</th><th class="num">Ordered</th><th class="num">Received</th><th class="num">Unit cost</th></tr></thead><tbody>' + (lines || '<tr><td colspan="5">No lines</td></tr>') + "</tbody></table></div>" +
           '<h4 class="detail-section-title">Goods receipts</h4><div class="table-wrap"><table class="table"><thead><tr><th>Receipt</th><th>Received on</th><th class="num">Value</th></tr></thead><tbody>' + (receipts || '<tr><td colspan="3">Nothing received yet — so nothing is payable.</td></tr>') + "</tbody></table></div>" +
+          '<h4 class="detail-section-title">Supplier payments recorded by Procurement</h4><div class="table-wrap"><table class="table"><thead><tr><th>Paid on</th><th>Method</th><th class="num">Amount</th><th>Bank / cheque ref</th><th>Accounting settlement</th><th><span class="sr-only">Evidence</span></th></tr></thead><tbody>' + (poPayments || '<tr><td colspan="6">None recorded.</td></tr>') + "</tbody></table></div>" +
           '<h4 class="detail-section-title">Supplier payables raised from this order</h4><div class="table-wrap"><table class="table"><thead><tr><th>Payable</th><th>Status</th><th class="num">Amount</th><th><span class="sr-only">Payment state</span></th></tr></thead><tbody>' + (payables || '<tr><td colspan="4">None raised yet.</td></tr>') + "</tbody></table></div>";
       }
     } catch (err) {
@@ -2022,12 +2101,7 @@
       var body = document.querySelector("[data-tbody=bs-sheet]");
       if (body) {
         var html = "<tr><td colspan=\"2\" style=\"font-weight:700;\">Assets</td></tr>";
-        var receivableRow = null, receivablesNegative = false;
         (sheet.assets || []).forEach(function (r) {
-          if (r.account_code === "ASSET.GUEST_RECEIVABLE") {
-            receivableRow = r;
-            receivablesNegative = Number(r.amount) < 0;
-          }
           html += bsRow(r.label || r.account_code, r.amount);
         });
         html += bsRow("Total assets", sheet.total_assets, true);
@@ -2044,33 +2118,18 @@
         html += bsRow("Net assets (total assets − total liabilities)", sheet.net_assets, true);
         body.innerHTML = html;
       }
-      /* A guest receivable that is credit-normal is not a hidden problem and it
-         is not a display bug: it is money already applied to guest folios beyond
-         the charges those folios carry (advance payments on cancelled, no-show or
-         part-stayed bookings). The amount is shown exactly as the ledger reports
-         it; the note names the cause and the approved route back to zero, because
-         posted transactions are never edited. */
-      var receivableNote = document.querySelector("[data-bs=receivable-note]");
-      if (receivableNote) {
-        if (receivablesNegative && receivableRow) {
-          receivableNote.hidden = false;
-          receivableNote.textContent = "Guest receivables are credit-normal by " + moneyCell(receivableRow.amount) + ": " +
-            "more has been applied to guest folios than the charges posted to them — typically advance payments on " +
-            "cancelled, no-show or part-stayed bookings. The ledger is unedited. Clear it through the existing " +
-            "approved route: refund the guest balance through Approvals, or post a balanced reclassification journal " +
-            "to Guest deposits held. Review the folio balances under Guest receivables and Posted transactions.";
-        } else {
-          receivableNote.hidden = true;
-          receivableNote.textContent = "";
-        }
-      }
+      /* The guest-receivable roll and its credit-normal disclosure are
+         withdrawn from the statement presentation (critical repair A2): the
+         named line no longer exists, its true ledger balance folds into
+         Other assets, and no replacement figure is shown. */
       var asofEl = document.querySelector("[data-bs=asof]"); if (asofEl) asofEl.textContent = sheet.as_of ? ("as of " + sheet.as_of) : "";
       var recon = document.querySelector("[data-bs=recon]");
       if (recon) recon.textContent = sheet.balanced ? "The balance sheet balances against the ledger." : ("WARNING: imbalance of " + moneyCell(sheet.difference) + " — investigate before relying on this statement.");
       var presentationNote = document.querySelector("[data-bs=presentation-note]");
       if (presentationNote) {
         presentationNote.textContent = ((sheet.presentation || {}).equity_note || "") + " " +
-          ((sheet.presentation || {}).withheld_note || "");
+          ((sheet.presentation || {}).withheld_note || "") + " " +
+          ((sheet.presentation || {}).withheld_asset_note || "");
       }
     } catch (err) {
       JONE.ui.toast((err && err.message) || "The financial statements could not be loaded.", "error");
@@ -2578,23 +2637,12 @@
       if(!b||!it) return;
       b.innerHTML=empty(3,"Loading…"); it.innerHTML="";
       return get(EP.financeArAging,{as_of:p.to}).then(function(d){
-        function tile(name,value){ var el=document.querySelector('[data-ar="'+name+'"]'); if(el) el.textContent=value; }
-        tile("gross",money(d.total_outstanding));
-        tile("gross-sub",(d.folios_owing||0)+" folio"+((d.folios_owing===1)?"":"s"));
-        tile("credits",money(d.guest_credit_balances));
-        tile("deposits",money(d.unapplied_guest_deposits));
-        tile("unposted",money(d.stay_value_not_yet_charged));
-        /* The identity that makes this report trustworthy is published, not
-           assumed: the guest balances below must add up to the control
-           account on the balance sheet. */
-        var rc=d.reconciliation||{};
-        tile("recon",rc.reconciles
-          ? ("Guest balances reconcile to "+(rc.control_account||"the control account")+": "+
-             money(d.total_outstanding)+" owing less "+money(d.guest_credit_balances)+" in credit"+
-             ((Number(d.unassigned_receivables)!==0)?(" plus "+money(d.unassigned_receivables)+" not attached to a folio"):"")+
-             " = "+money(d.net_receivable)+".")
-          : ("WARNING: guest balances differ from the control account by "+money(rc.difference)+
-             " — investigate before relying on this report."));
+        /* The guest-receivable ROLL (the aggregate position cards and the
+           control-account reconciliation) is withdrawn from this page: the
+           aggregate mixed collected money with recognised charges and could
+           not be produced reliably as a statement figure. The per-folio
+           worksheet below remains, and the endpoint still reports the same
+           data for diagnosis. */
         var bk=d.buckets||[];
         b.innerHTML=(bk.length?bk.map(function(x){
           return '<tr><td>'+esc(x.label||x.key)+'</td><td class="num">'+esc(x.count||0)+'</td><td class="num">'+esc(money(x.total))+'</td></tr>';
@@ -2706,21 +2754,10 @@
       rows.push(tr(["Net assets (total assets − total liabilities)",money(b.net_assets)],1,true));
       h+='<h2>Balance sheet as at '+esc(b.as_of||to)+'</h2>'+tbl(["Account","Amount"],rows,1);
     } else h+=unavailable("Balance sheet",R.bs);
-    if(R.ar.ok){
-      var ar=R.ar.d;
-      h+='<h2>Guest receivables as at '+esc(ar.as_of||to)+'</h2>'+tbl(["Age bucket","Folios","Balance due"],(ar.buckets||[]).map(function(x){
-        return tr([x.label||x.key,x.count||0,money(x.total)],1);
-      }).concat([
-        tr(["Total outstanding (guests owing)","",money(ar.total_outstanding)],1,true),
-        tr(["Guest credit balances (advances held)","",money(ar.guest_credit_balances)],1),
-        tr(["Unapplied guest deposits","",money(ar.unapplied_guest_deposits)],1),
-        tr(["Guest receivable control account","",money(ar.net_receivable)],1,true),
-        tr(["Stay value not yet charged to a folio","",money(ar.stay_value_not_yet_charged)],1)
-      ]),1);
-      h+='<p>'+(ar.reconciliation&&ar.reconciliation.reconciles
-        ?"Guest balances reconcile to the "+esc(ar.reconciliation.control_account||"")+" control account."
-        :"WARNING: guest balances do not reconcile to the control account — investigate before relying on this report.")+'</p>';
-    } else h+=unavailable("Receivables aging",R.ar);
+    /* The guest-receivable roll is not part of the printed financial
+       statements (critical repair A2): the aggregate could not be produced
+       reliably and is no longer presented as a statement figure. The
+       receivables worksheet stays on the Accounting page for collections. */
     if(single){
       if(R.na.ok){
         var n=R.na.d, t=n.tenders||{}, cap=t.captured||{}, ref=t.refunded||{};

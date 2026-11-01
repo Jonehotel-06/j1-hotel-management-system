@@ -132,6 +132,46 @@ def _send_magic_link(*, email: str, token: str):
     )
 
 
+def mint_invitation_challenge(*, email: str, metadata=None) -> str:
+    """Mint a stay-scoped invitation magic link (critical repair C3).
+
+    Unlike a requested sign-in link, an invitation link stays REDEEMABLE
+    while the guest is eligible: it expires at checkout or when a newer
+    invitation for the same address supersedes it, never by elapsed time or
+    by use. The raw token exists only inside the returned URL; only its
+    SHA-256 digest is stored, and no log, email log or audit row receives
+    the raw value.
+    """
+    email = normalize_portal_email(email)
+    now = timezone.now()
+    with transaction.atomic():
+        # A newer invitation supersedes earlier invitation links for this
+        # address so a resend cannot leave a pile of working links behind.
+        PortalAccessChallenge.objects.filter(
+            Q(expires_at__isnull=True) | Q(expires_at__gt=now),
+            email=email,
+            purpose=PortalAccessChallenge.Purpose.INVITATION,
+        ).update(expires_at=now)
+        token = secrets.token_urlsafe(32)
+        challenge = PortalAccessChallenge.objects.create(
+            email=email,
+            purpose=PortalAccessChallenge.Purpose.INVITATION,
+            token_hash=hash_secret(token),
+            # No elapsed-time expiry: the link stays redeemable while the
+            # address has an eligible in-house stay. Checkout ends it.
+            expires_at=None,
+            metadata=metadata or {},
+        )
+        log_action(
+            actor=None,
+            action="PORTAL_INVITATION_LINK_MINTED",
+            instance=challenge,
+            metadata={"purpose": challenge.purpose},
+            summary="Guest portal invitation link minted",
+        )
+    return portal_magic_link(token)
+
+
 def request_access_challenge(*, email: str, request=None) -> None:
     """Create/send a one-use challenge without exposing whether a guest exists.
 
@@ -155,12 +195,15 @@ def request_access_challenge(*, email: str, request=None) -> None:
         if recent_count >= _challenge_limit():
             return
 
-        # A newer link supersedes any outstanding one for this address. This
-        # bounds the attack surface and makes the latest email unambiguous.
+        # A newer REQUESTED link supersedes any outstanding requested one for
+        # this address. This bounds the attack surface and makes the latest
+        # email unambiguous. Invitation links are separate (C3): they stay
+        # redeemable for the stay and are not superseded by sign-in requests.
         PortalAccessChallenge.objects.filter(
             Q(expires_at__isnull=True) | Q(expires_at__gt=now),
             email=email,
             consumed_at__isnull=True,
+            purpose=PortalAccessChallenge.Purpose.LOGIN,
         ).update(expires_at=now)
         token = secrets.token_urlsafe(32)
         challenge = PortalAccessChallenge.objects.create(
@@ -207,8 +250,12 @@ def consume_access_challenge(*, raw_token: str, request=None):
                 raise AuthenticationFailed(PORTAL_ACCESS_ENDED_MESSAGE, code=PORTAL_ACCESS_ENDED_CODE)
             raise AuthenticationFailed(INVALID_PORTAL_CREDENTIAL_MESSAGE)
 
-        challenge.consumed_at = now
-        challenge.save(update_fields=["consumed_at", "updated_at"])
+        if challenge.purpose != PortalAccessChallenge.Purpose.INVITATION:
+            # Requested sign-in links are single-use. Invitation links (C3)
+            # stay redeemable while the guest is eligible — `is_consumable`
+            # already granted access without the one-use burn.
+            challenge.consumed_at = now
+            challenge.save(update_fields=["consumed_at", "updated_at"])
         raw_session_token = secrets.token_urlsafe(32)
         session = PortalSession.objects.create(
             email=challenge.email,
@@ -303,7 +350,12 @@ def end_portal_access_for_checked_out_stay(stay) -> None:
         PortalAccessChallenge.objects.filter(
             Q(expires_at__isnull=True) | Q(expires_at__gt=now),
             email__iexact=email,
-            consumed_at__isnull=True,
+        ).filter(
+            # Requested links end when consumed; invitation links (C3) are
+            # still redeemable right up to checkout, so BOTH their unconsumed
+            # and their redeemed rows must end with the stay.
+            Q(consumed_at__isnull=True)
+            | Q(purpose=PortalAccessChallenge.Purpose.INVITATION),
         ).update(expires_at=now)
         for session in PortalSession.objects.filter(email__iexact=email, revoked_at__isnull=True):
             revoke_session(session, reason=CHECKOUT_REVOKE_REASON)

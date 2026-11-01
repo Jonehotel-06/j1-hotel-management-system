@@ -13,6 +13,7 @@ from apps.core.models import TimeStampedModel
 class PortalAccessChallenge(TimeStampedModel):
     class Purpose(models.TextChoices):
         LOGIN = "LOGIN", "Portal sign in"
+        INVITATION = "INVITATION", "Stay invitation link"
 
     email = models.EmailField(db_index=True)
     purpose = models.CharField(max_length=30, choices=Purpose.choices, default=Purpose.LOGIN)
@@ -38,6 +39,11 @@ class PortalAccessChallenge(TimeStampedModel):
 
     @property
     def is_consumable(self):
+        if self.purpose == self.Purpose.INVITATION:
+            # Critical repair C3: an invitation link stays redeemable while the
+            # guest is eligible. Checkout or a newer invitation expires it;
+            # opening it (even on several devices during the stay) does not.
+            return self.expires_at is None or self.expires_at > timezone.now()
         if self.consumed_at is not None:
             return False
         return self.expires_at is None or self.expires_at > timezone.now()

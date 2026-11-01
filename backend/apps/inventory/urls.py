@@ -41,6 +41,7 @@ urlpatterns = [
     # Read-only Accounting hand-off (submitted onwards; drafts never listed).
     path("accounting/purchase-orders/", views.PurchaseOrderAccountingListView.as_view(), name="accounting-purchase-orders"),
     path("accounting/purchase-orders/<str:reference>/", views.PurchaseOrderAccountingDetailView.as_view(), name="accounting-purchase-order-detail"),
+    path("accounting/purchase-orders/<str:reference>/supplier-reference/", views.PurchaseOrderSupplierReferenceView.as_view(), name="accounting-purchase-order-supplier-reference"),
     path("purchase-orders/", views.PurchaseOrderListCreateView.as_view(), name="purchase-orders"),
     path("purchase-orders/<str:reference>/", views.PurchaseOrderDetailView.as_view(), name="purchase-order-detail"),
     path("purchase-orders/<str:reference>/submit/", views.PurchaseOrderSubmitView.as_view(), name="purchase-order-submit"),

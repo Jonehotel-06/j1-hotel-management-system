@@ -100,6 +100,26 @@ def _set_room_cleaning_projection(*, task, target_status):
 
 
 @transaction.atomic
+def mark_room_clean(*, room):
+    """Mark a room's clean/dirty projection CLEAN (critical repair D1).
+
+    Receptionists must be able to release a ready room from the housekeeping
+    page without waiting for a manager. The projection is backend
+    authoritative: only ``housekeeping_status`` moves, the room's occupancy
+    and maintenance statuses (AVAILABLE/OCCUPIED/MAINTENANCE/…) are never
+    touched, and repeat calls are idempotent. The caller's identity and the
+    before/after state are recorded by the view's audit action.
+    """
+    room = Room.objects.select_for_update().get(pk=room.pk)
+    before = room.housekeeping_status
+    changed = before != Room.HousekeepingStatus.CLEAN
+    if changed:
+        room.housekeeping_status = Room.HousekeepingStatus.CLEAN
+        room.save(update_fields=["housekeeping_status", "updated_at"])
+    return room, before, changed
+
+
+@transaction.atomic
 def create_housekeeping_task(
     *, room, task_type, summary, priority=HousekeepingTask.Priority.NORMAL, stay=None,
     service_request=None, detail="", due_at=None, assigned_to=None, actor=None, source_key=None,

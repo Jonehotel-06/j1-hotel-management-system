@@ -20,7 +20,8 @@ from .serializers import (
 )
 from .services.task_service import (
     add_housekeeping_comment, assign_housekeeping_task,
-    create_housekeeping_task, housekeeping_queryset_for_user, scoped_task_key, transition_housekeeping_task,
+    create_housekeeping_task, housekeeping_queryset_for_user, mark_room_clean, scoped_task_key,
+    transition_housekeeping_task,
 )
 
 
@@ -145,3 +146,77 @@ class HousekeepingTaskCommentView(APIView):
         serializer = HousekeepingCommentSerializer(data=request.data); serializer.is_valid(raise_exception=True)
         event = add_housekeeping_comment(task=_task_or_404(request.user, reference), actor=request.user, message=serializer.validated_data["message"])
         return success_response(HousekeepingTaskDetailSerializer(_task_or_404(request.user, event.task.reference, detail=True)).data, message="Housekeeping comment recorded.")
+
+
+@extend_schema(tags=["Admin · Housekeeping"], summary="List active rooms that are not ready (not clean)")
+class HousekeepingRoomsNotReadyView(APIView):
+    """The 'Rooms not ready' board behind the receptionist mark-clean flow.
+
+    Critical repair D1: receptionists could not release a ready room at all —
+    room edits are manager-only, so a clean room stayed 'not ready' until a
+    manager logged in. This bounded projection (room, states, room type) is
+    the data the housekeeping page needs; the release itself is the audited
+    mark-clean action below.
+    """
+    permission_classes = [HasCapability]; required_capability = "housekeeping.task.assign"
+
+    def get(self, request):
+        rooms = (
+            Room.objects.filter(is_active=True)
+            .exclude(housekeeping_status=Room.HousekeepingStatus.CLEAN)
+            .select_related("room_type")
+            .order_by("room_number")
+        )
+        data = [
+            {
+                "room_number": room.room_number,
+                "floor": room.floor,
+                "room_type": room.room_type.name,
+                "housekeeping_status": room.housekeeping_status,
+                "status": room.status,
+            }
+            for room in rooms
+        ]
+        return success_response(data)
+
+
+@extend_schema(tags=["Admin · Housekeeping"], summary="Mark a room clean (receptionist release)")
+class RoomMarkCleanView(APIView):
+    """Backend-authoritative 'mark room clean' (critical repair D1).
+
+    Gated to ``housekeeping.task.assign`` (the dispatcher capability the
+    housekeeping page already uses, held by receptionists and housekeeping
+    staff). Only the clean/dirty projection moves — occupancy and maintenance
+    states are preserved — repeat calls are idempotent, and every call is
+    audited with who, when and the before/after state.
+    """
+    permission_classes = [HasCapability]; required_capability = "housekeeping.task.assign"
+
+    def post(self, request, room_number):
+        room = Room.objects.filter(room_number=room_number, is_active=True).first()
+        if room is None:
+            raise NotFound("Room not found.")
+        note = str((request.data or {}).get("note", "") or "").strip()[:500]
+        room, before, changed = mark_room_clean(room=room)
+        log_action(
+            actor=request.user,
+            action="HOUSEKEEPING_ROOM_MARKED_CLEAN",
+            instance=room,
+            request=request,
+            metadata={
+                "room_number": room.room_number,
+                "housekeeping_status_before": before,
+                "housekeeping_status_after": room.housekeeping_status,
+                "room_status_unchanged": room.status,
+                "note": note,
+            },
+        )
+        return success_response(
+            {
+                "room_number": room.room_number,
+                "housekeeping_status": room.housekeeping_status,
+                "status": room.status,
+                "changed": changed,
+            },
+            message="Room marked clean." if changed else "Room was already clean.",
+        )

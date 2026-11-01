@@ -124,7 +124,7 @@ def post_accommodation_charge_for_night(*, stay, service_date: date, actor=None)
             }
         )
     source_key = f"accommodation:{stay.reference}:{service_date.isoformat()}"
-    return create_posted_transaction(
+    financial_transaction, created = create_posted_transaction(
         transaction_type=FinancialTransaction.Type.ACCOMMODATION_CHARGE,
         source_key=source_key,
         idempotency_key=source_key,
@@ -154,6 +154,14 @@ def post_accommodation_charge_for_night(*, stay, service_date: date, actor=None)
             }
         ],
     )
+    # A2 correction: a recognised night releases the matching guest deposit to
+    # the receivable (idempotent per payment). Money collected ahead of its
+    # room nights stays in LIABILITY.GUEST_DEPOSITS until this point —
+    # allocating it earlier credited the receivable before any charge existed.
+    from .payment_collection_service import apply_unallocated_payments_for_booking
+
+    apply_unallocated_payments_for_booking(booking=booking, folio=folio, actor=actor)
+    return financial_transaction, created
 
 
 @transaction.atomic

@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.payments.models import Payment
@@ -49,6 +50,63 @@ def _assert_collected(payment: Payment):
         raise ValidationError("Only a successfully collected payment can enter the finance ledger.")
     if Decimal(payment.amount or 0) <= Decimal("0.00"):
         raise ValidationError("A successful payment must have a positive amount.")
+
+
+def allocation_capacity(*, folio, settles="") -> Decimal:
+    """How much a new allocation may credit ``ASSET.GUEST_RECEIVABLE`` now.
+
+    An allocation settles guest charges, so it may not exceed the posted,
+    unsettled charges of the balance it settles: refunds of settled money
+    re-open their share. Money arriving ahead of its charges stays in
+    ``LIABILITY.GUEST_DEPOSITS`` — the account that actually describes it —
+    until the matching charge posts and releases it. Crediting the receivable
+    before the charge exists is what drove the guest-receivable control
+    account credit-normal (the negative-₦576,800 class of balance).
+    """
+    from .folio_service import booking_folio_charge_balance
+
+    if settles == FolioPosting.Settles.ACCOMMODATION:
+        rows = (
+            FolioPosting.objects.filter(
+                folio=folio,
+                transaction__status=FinancialTransaction.Status.POSTED,
+            )
+            .exclude(folio__status=Folio.Status.VOIDED)
+            .filter(
+                Q(
+                    kind=FolioPosting.Kind.CHARGE,
+                    transaction__type=FinancialTransaction.Type.ACCOMMODATION_CHARGE,
+                )
+                | Q(
+                    kind__in=[FolioPosting.Kind.PAYMENT, FolioPosting.Kind.REFUND],
+                    settles=FolioPosting.Settles.ACCOMMODATION,
+                )
+            )
+            .values_list("effect", "amount")
+        )
+        balance = Decimal("0.00")
+        for effect, amount in rows:
+            balance += amount if effect == FolioPosting.Effect.DEBIT else -amount
+        return max(balance.quantize(Decimal("0.01")), Decimal("0.00"))
+    if settles == FolioPosting.Settles.FOLIO_CHARGES:
+        # The desk settlement draws on exactly the figure it is bounded by
+        # (``booking_folio_charge_balance``): the folio charges of the booking.
+        return max(booking_folio_charge_balance(booking=folio.booking), Decimal("0.00"))
+    # The historical blank tag counts with the folio charges but has always
+    # been netted against the folio's whole balance, so its capacity is that
+    # balance: an application can never push a folio into credit.
+    rows = (
+        FolioPosting.objects.filter(
+            folio=folio,
+            transaction__status=FinancialTransaction.Status.POSTED,
+        )
+        .exclude(folio__status=Folio.Status.VOIDED)
+        .values_list("effect", "amount")
+    )
+    balance = Decimal("0.00")
+    for effect, amount in rows:
+        balance += amount if effect == FolioPosting.Effect.DEBIT else -amount
+    return max(balance.quantize(Decimal("0.01")), Decimal("0.00"))
 
 
 @transaction.atomic
@@ -102,7 +160,9 @@ def ensure_payment_collection(*, payment, actor=None) -> tuple[FinancialTransact
 
 
 @transaction.atomic
-def apply_payment_to_folio(*, payment, folio, actor=None, amount=None, settles="") -> tuple[PaymentAllocation, bool]:
+def apply_payment_to_folio(
+    *, payment, folio, actor=None, amount=None, settles="", allocation_key=None
+) -> tuple[PaymentAllocation, bool]:
     """Apply one payment's available deposit to a matching open folio.
 
     The initial vertical slice deliberately has one immutable application per
@@ -125,7 +185,7 @@ def apply_payment_to_folio(*, payment, folio, actor=None, amount=None, settles="
     if folio.currency.upper() != payment.currency.upper():
         raise ValidationError("Payment and folio currency must match.")
 
-    allocation_key = f"payment-allocation:{payment.reference}:{folio.reference}"
+    allocation_key = allocation_key or f"payment-allocation:{payment.reference}:{folio.reference}"
     existing = (
         PaymentAllocation.objects.select_for_update()
         .select_related("transaction")
@@ -145,6 +205,13 @@ def apply_payment_to_folio(*, payment, folio, actor=None, amount=None, settles="
     requested = requested.quantize(Decimal("0.01"))
     if requested <= Decimal("0.00") or requested > available:
         raise ValidationError("Allocation amount must be positive and no greater than the unallocated payment balance.")
+    capacity = allocation_capacity(folio=folio, settles=settles)
+    if requested > capacity:
+        raise ValidationError(
+            "Payment allocation cannot exceed the posted, unsettled charges it settles "
+            f"({capacity:.2f} {folio.currency}); the remainder stays a guest deposit "
+            "until its charges are recognised."
+        )
 
     ensure_payment_collection(payment=payment, actor=actor or payment.user)
     financial_transaction, _ = create_posted_transaction(
@@ -222,7 +289,14 @@ def apply_payment_to_folio(*, payment, folio, actor=None, amount=None, settles="
 
 @transaction.atomic
 def apply_unallocated_payments_for_booking(*, booking, folio, actor=None) -> list[PaymentAllocation]:
-    """Lazily bridge all successful legacy/current payments once a folio opens."""
+    """Apply collected booking money to the folio's RECOGNISED charges only.
+
+    Runs at folio opening and again after each recognised accommodation
+    night. Money collected ahead of its room nights stays in
+    ``LIABILITY.GUEST_DEPOSITS`` and is released to the receivable only as the
+    matching charges post (see ``allocation_capacity``); every partial
+    application gets its own immutable, idempotency-keyed allocation.
+    """
     if folio.booking_id != booking.pk:
         raise ValidationError("The folio must belong to the supplied booking.")
     payments = list(
@@ -238,8 +312,19 @@ def apply_unallocated_payments_for_booking(*, booking, folio, actor=None) -> lis
             .values_list("amount", flat=True),
             Decimal("0.00"),
         )
-        if Decimal(payment.amount) - already_allocated <= Decimal("0.00"):
+        available = Decimal(payment.amount) - already_allocated
+        if available <= Decimal("0.00"):
             continue
+        capacity = allocation_capacity(folio=folio, settles=FolioPosting.Settles.ACCOMMODATION)
+        if capacity <= Decimal("0.00"):
+            continue
+        allocable = min(available, capacity).quantize(Decimal("0.01"))
+        prior_for_pair = PaymentAllocation.objects.filter(payment=payment, folio=folio).count()
+        allocation_key = (
+            None
+            if prior_for_pair == 0 and allocable == available.quantize(Decimal("0.01"))
+            else f"payment-allocation:{payment.reference}:{folio.reference}:{prior_for_pair + 1}"
+        )
         allocation, created = apply_payment_to_folio(
             # A booking payment is money for the STAY: it lands on the folio as
             # an AR credit, but it may never be netted against the guest's
@@ -248,6 +333,8 @@ def apply_unallocated_payments_for_booking(*, booking, folio, actor=None) -> lis
             payment=payment,
             folio=folio,
             actor=actor,
+            amount=None if allocable == available.quantize(Decimal("0.01")) else allocable,
+            allocation_key=allocation_key,
         )
         if created:
             allocations.append(allocation)

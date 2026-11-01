@@ -224,6 +224,26 @@ class FinanceFoundationTests(BaseAPITestCase):
         )
         collection, collection_created = ensure_payment_collection(payment=payment, actor=self.actor)
         repeated_collection, repeated_created = ensure_payment_collection(payment=payment, actor=self.actor)
+        # The receivable-timing repair: money is applied only against charges
+        # that exist. The guest's ₦100 charge must be recognised first; before
+        # it is, the application is refused and the money stays a deposit.
+        with self.assertRaises(ValidationError):
+            apply_payment_to_folio(payment=payment, folio=self.folio, actor=self.actor)
+        create_posted_transaction(
+            transaction_type=FinancialTransaction.Type.ACCOMMODATION_CHARGE,
+            source_key="test:finance:bridge-charge",
+            actor=self.actor,
+            source_reference=self.stay.booking.booking_reference,
+            lines=self._balanced_lines("100.00", folio=self.folio),
+            postings=[{
+                "line_index": 0,
+                "folio": self.folio,
+                "kind": FolioPosting.Kind.CHARGE,
+                "effect": FolioPosting.Effect.DEBIT,
+                "amount": "100.00",
+                "description": "Controlled test charge",
+            }],
+        )
         allocation, allocation_created = apply_payment_to_folio(
             payment=payment, folio=self.folio, actor=self.actor
         )
@@ -234,7 +254,7 @@ class FinanceFoundationTests(BaseAPITestCase):
         self.assertEqual(PaymentAllocation.objects.filter(payment=payment).count(), 1)
         self.assertEqual(
             folio_balance_queryset().get(pk=self.folio.pk).balance,
-            Decimal("-100"),
+            Decimal("0.00"),
         )
 
         first_refund = Refund.objects.create(
@@ -263,9 +283,11 @@ class FinanceFoundationTests(BaseAPITestCase):
             sum(RefundApplication.objects.filter(payment=payment).values_list("amount", flat=True), Decimal("0.00")),
             Decimal("70.00"),
         )
+        # ₦70 of the ₦100 came back, so the ₦100 charge is unsettled again by
+        # exactly that amount — the refund re-opens the charge, never nets.
         self.assertEqual(
             folio_balance_queryset().get(pk=self.folio.pk).balance,
-            Decimal("-30"),
+            Decimal("70.00"),
         )
 
     def test_folio_posting_is_immutable_and_balance_is_database_computed(self):

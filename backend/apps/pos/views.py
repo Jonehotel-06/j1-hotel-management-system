@@ -877,10 +877,20 @@ class PosRestaurantTableSessionCloseView(APIView):
 
 @extend_schema(tags=["Admin · POS"], summary="Find in-house stays for a room-service order")
 class PosRoomServiceStayListView(APIView):
-    """Searchable, paginated guest picker scoped to POS order capability."""
+    """Searchable, paginated in-house guest picker for room-charge workflows.
+
+    Critical repair D2: room service AND laundry both need the list of
+    in-house guests to offer room charging, but the view required
+    ``pos.order.manage`` alone — a receptionist (who manages guest requests
+    but takes no POS orders) got 403 and the laundry page reported "No guests
+    are currently in house" while the hotel was full. The read-only guest
+    lookup is opened to EITHER capability, matching how the order list view
+    scopes mode-appropriate access; the data stays limited to in-house stays.
+    """
 
     permission_classes = [HasCapability]
-    required_capability = "pos.order.manage"
+    required_capabilities = ("pos.order.manage", "guest_request.manage")
+    require_any_capability = True
     pagination_class = StandardPagination
 
     def get(self, request):

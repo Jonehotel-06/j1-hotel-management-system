@@ -279,6 +279,63 @@
     var typeLabelOf = {};
     roomTypes.forEach(function(t){ typeLabelOf[t.value] = t.label.split(" \u2014 ")[0]; });
 
+    /* ---- C1: instant booking quote --------------------------------------
+       Backend-authoritative display: POST /api/bookings/quote/ computes the
+       price (the same endpoint the public form quotes from) and this block
+       only RENDERS its answer — dates, room type, nights, nightly rate,
+       rooms and total, with no tax line. It refreshes when the stay-defining
+       inputs change and drops stale replies. */
+    var quoteBox = null, quoteTimer = null, quoteSeq = 0;
+    function scheduleQuote(){
+      if (quoteTimer) clearTimeout(quoteTimer);
+      quoteTimer = setTimeout(refreshQuote, 350);
+    }
+    function refreshQuote(){
+      if (!quoteBox) return;
+      var form = quoteBox.closest("form");
+      if (!form) return;
+      var slug = form.elements["room_type"] ? form.elements["room_type"].value : "";
+      var rooms = Math.max(1, Number((form.elements["rooms"] && form.elements["rooms"].value) || 1));
+      var adults = Math.max(1, Number((form.elements["adults"] && form.elements["adults"].value) || 1));
+      var children = Math.max(0, Number((form.elements["children"] && form.elements["children"].value) || 0));
+      var offer = (form.elements["offer_code"] && form.elements["offer_code"].value || "").trim();
+      if (!slug || !calSel.checkIn || !calSel.checkOut) {
+        quoteBox.textContent = "Fill in the stay details above to see the price.";
+        return;
+      }
+      var my = ++quoteSeq;
+      window.API.quoteBooking({
+        room_type: slug, check_in: calSel.checkIn, check_out: calSel.checkOut,
+        rooms: rooms, adults: adults, children: children,
+        offer_code: offer || undefined
+      }).then(function(res){
+        if (my !== quoteSeq) return;
+        var data = (res && res.data) || res || {};
+        if (data.rooms != null && Number(data.rooms) !== rooms) return;
+        var lines = [];
+        lines.push("<strong>" + JONE.esc(data.room_type && data.room_type.name ? data.room_type.name : (typeLabelOf[slug] || "Room")) + "</strong> \u00b7 " +
+          escDate(data.check_in) + " \u2192 " + escDate(data.check_out) + " \u00b7 " +
+          escNum(data.nights) + " night" + (Number(data.nights) === 1 ? "" : "s"));
+        lines.push(escNum(data.rooms) + " room" + (Number(data.rooms) === 1 ? "" : "s") + " \u00b7 " +
+          JONE.formatNaira(data.price_per_night) + " per night");
+        if (data.discount && Number(data.discount) > 0) {
+          lines.push("Subtotal " + JONE.formatNaira(data.subtotal) + " \u00b7 discount \u2212" + JONE.formatNaira(data.discount));
+        }
+        lines.push("<strong>Total " + JONE.formatNaira(data.total) + "</strong>");
+        quoteBox.innerHTML = lines.join("<br>");
+      }).catch(function(err){
+        if (my !== quoteSeq) return;
+        quoteBox.textContent = "Quote unavailable: " + ((err && err.message) || "please check the stay details.");
+      });
+    }
+    function escDate(iso){ if (!iso) return "\u2014"; var p = String(iso).split("-"); return p.length === 3 ? (p[2] + " " + ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(p[1]) - 1] + " " + p[0]) : String(iso); }
+    function escNum(v){ return JONE.esc(String(v == null ? "\u2014" : v)); }
+
+    /* ---- C2: per-room guest rows (name + email per additional room) ------
+       The backend contract is authoritative (RoomOccupant rows, validated
+       server-side); this block collects and sanity-checks the desk's input. */
+    var roomGuestsApi = { read: function(){ return []; }, form: null };
+
     function nightUnavailable(iso){
       if (!calEntry) return false;
       var d = calEntry.dates[iso];
@@ -343,6 +400,7 @@
                 } else if (reason === "range-unavailable") {
                   setCalStatus("That stay crosses a sold-out night \u2014 the check-out was cleared.");
                 }
+                scheduleQuote();
               },
               onRetry: function(){ refreshAvailability(true); }
             });
@@ -383,12 +441,90 @@
         { name: "source", label: "Source", type: "select", options: [{ value: "WALK_IN", label: "Walk-in" }, { value: "PHONE", label: "Phone" }], value: "WALK_IN" },
         { name: "status", label: "Status", type: "select", options: [{ value: "CONFIRMED", label: "Confirmed" }, { value: "PENDING", label: "Pending payment" }], value: "CONFIRMED" },
         { name: "offer_code", label: "Discount / offer code (optional)", value: "", help: "Apply an approved offer to this guest. The server calculates the discount and final total." },
+        {
+          name: "booking_quote", label: "Instant quote", type: "custom",
+          help: "Calculated by the server from the values above and shown before the booking is created. Display only \u2014 the booking records the authoritative amounts.",
+          render: function(mount, form){
+            quoteBox = document.createElement("div");
+            quoteBox.className = "caption";
+            quoteBox.setAttribute("aria-live", "polite");
+            quoteBox.style.cssText = "border:1px solid #d8d8d8;border-radius:.5rem;padding:.75rem .9rem;margin:0;";
+            quoteBox.textContent = "Fill in the stay details above to see the price.";
+            mount.appendChild(quoteBox);
+            ["room_type", "rooms", "adults", "children", "offer_code"].forEach(function(name){
+              var el = form.elements[name];
+              if (el) {
+                el.addEventListener("input", scheduleQuote);
+                el.addEventListener("change", scheduleQuote);
+              }
+            });
+            scheduleQuote();
+          },
+          getValue: function(){ return null; }
+        },
         { name: "special_requests", label: "Special requests", type: "textarea", rows: 2, value: "" },
         { name: "internal_notes", label: "Internal notes", type: "textarea", rows: 2, value: "" },
         { name: "guest_first_name", label: "Guest first name", required: true },
         { name: "guest_last_name", label: "Guest last name", required: true },
         { name: "guest_email", label: "Guest email", type: "email", required: true },
-        { name: "guest_phone", label: "Guest phone", required: true }
+        { name: "guest_phone", label: "Guest phone", required: true },
+        {
+          name: "room_guests", label: "Guests in the other rooms", type: "custom",
+          help: "When booking more than one room, record who is staying in each additional room. Each guest is invited to the portal at their own email address; the booking contact above stays the guest of the first room and is never overwritten here.",
+          render: function(mount, form){
+            roomGuestsApi.form = form;
+            var box = document.createElement("div");
+            mount.appendChild(box);
+            function readRows(){
+              return Array.prototype.slice.call(box.querySelectorAll("[data-room-guest-row]")).map(function(row){
+                return {
+                  name: (row.querySelector("[data-rg-name]") || {}).value || "",
+                  email: ((row.querySelector("[data-rg-email]") || {}).value || "").trim()
+                };
+              });
+            }
+            roomGuestsApi.read = readRows;
+            function buildRows(){
+              var prev = readRows();
+              var rooms = Math.max(1, Number((form.elements["rooms"] && form.elements["rooms"].value) || 1));
+              var html = "";
+              for (var i = 1; i < rooms; i++) {
+                var p = prev[i - 1] || {};
+                html += '<div data-room-guest-row="' + i + '" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end;margin:.35rem 0;">' +
+                  '<strong style="min-width:4.5rem;padding-bottom:.45rem;">Room ' + (i + 1) + '</strong>' +
+                  '<label style="flex:1 1 10rem;">Guest name<input class="input" data-rg-name value="' + JONE.esc(p.name || "") + '" placeholder="Full name"></label>' +
+                  '<label style="flex:1 1 13rem;">Email<input class="input" type="email" data-rg-email value="' + JONE.esc(p.email || "") + '" placeholder="guest@example.com"></label>' +
+                  '</div>';
+              }
+              box.innerHTML = rooms > 1
+                ? html
+                : '<p class="caption" style="margin:0;">Booking one room \u2014 the booking contact is its guest. Add rooms to record who is staying in each one.</p>';
+            }
+            buildRows();
+            var roomsInput = form.elements["rooms"];
+            if (roomsInput) roomsInput.addEventListener("input", buildRows);
+          },
+          getValue: function(){ return roomGuestsApi.read(); },
+          validate: function(){
+            var rows = roomGuestsApi.read();
+            var form = roomGuestsApi.form;
+            var primary = String(((form && form.elements["guest_email"]) || {}).value || "").trim().toLowerCase();
+            var seen = {};
+            for (var i = 0; i < rows.length; i++) {
+              var name = String(rows[i].name || "").trim();
+              var email = String(rows[i].email || "").trim().toLowerCase();
+              if (!name && !email) continue;
+              var where = "Room " + (i + 2) + " guest";
+              if (!name) return where + ": please enter the guest's name.";
+              if (!email) return where + ": please enter the guest's email address.";
+              if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return where + ": " + email + " is not a valid email address.";
+              if (primary && email === primary) return where + ": " + email + " is the booking contact \u2014 the contact stays the guest of the first room and cannot also be a room guest.";
+              if (seen[email]) return where + ": " + email + " is already listed in " + seen[email] + ". Each guest can only be in one room of this booking.";
+              seen[email] = "Room " + (i + 2);
+            }
+            return "";
+          }
+        }
       ],
       onSubmit: async function(v){
         var payload = {
@@ -410,6 +546,18 @@
           }
         };
         if (v.offer_code && String(v.offer_code).trim()) payload.offer_code = String(v.offer_code).trim();
+        /* C2: per-room guests for multi-room bookings — name + email per
+           additional room, sent at creation so every occupant is recorded
+           (and later invited to the portal) before the desk moves on.
+           room_index is 0-based with the booking contact in the first room. */
+        var roomGuests = (v.room_guests || []).map(function(g, i){
+          return {
+            full_name: String(g.name || "").trim(),
+            email: String(g.email || "").trim(),
+            room_index: i + 1
+          };
+        }).filter(function(g){ return g.full_name || g.email; });
+        if (roomGuests.length) payload.room_guests = roomGuests;
         try {
           var res = await window.API.create("bookings", payload);
           created = (res && res.data) || null;

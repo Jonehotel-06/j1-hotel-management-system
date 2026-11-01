@@ -803,6 +803,21 @@ const API = (() => {
     return get(`${base}/${encodeURIComponent(itemId)}/reorder-context/`, opts);
   }
 
+  /* D1 — housekeeping room readiness: the not-ready board and the
+     receptionist "mark clean" release
+     (POST /api/admin/housekeeping/rooms/{room_number}/mark-clean/). URL
+     construction stays here so pages never hard-code deployment paths. */
+  async function housekeepingRoomsNotReady(opts = {}) {
+    const base = resourceEp("housekeepingTasks");
+    if (!base) throw notConfigured("housekeepingTasks");
+    return get(`${base}/rooms/not-ready/`, opts);
+  }
+  async function housekeepingMarkRoomClean(roomNumber, payload, opts = {}) {
+    const base = resourceEp("housekeepingTasks");
+    if (!base) throw notConfigured("housekeepingTasks");
+    return post(`${base}/rooms/${encodeURIComponent(roomNumber)}/mark-clean/`, payload || {}, opts);
+  }
+
   async function remove(name, id, opts = {}) {
     const base = resourceEp(name);
     if (!base) throw notConfigured(name);
@@ -1233,6 +1248,7 @@ const API = (() => {
     getNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead, getNotification,
     // Staff resources + actions
     list, getOne, getStaffBookingReceipt, create, update, remove, resourceAction, inventoryReorderContext,
+    housekeepingRoomsNotReady, housekeepingMarkRoomClean,
     rescheduleBooking, getOccupancyCalendar, listMissedBookings, listLateArrivals,
     listGuestDiscounts, createGuestDiscount, updateGuestDiscount, deactivateGuestDiscount,
     confirmBooking, staffCancelBooking, checkInBooking, checkOutBooking, bookingFolioClearance,

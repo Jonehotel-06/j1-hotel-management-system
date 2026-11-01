@@ -15,14 +15,22 @@ test.after(() => disposeAll());
 const PAGE = fs.readFileSync(path.join(FRONTEND, "dashboard", "accounting.html"), "utf8");
 
 function loadDetailHelpers(ctx) {
+  // The row renderers were hoisted to the shared page-script scope (fix for the
+  // "expenseDetailRow is not defined" purchase-order error); slice points
+  // follow the shipped layout: row renderers, then status map + dialog helpers.
+  const rowStart = PAGE.indexOf("function expenseDetailRow(");
+  const rowEnd = PAGE.indexOf("function load(){");
   const mapStart = PAGE.indexOf("var EXPENSE_STATUS_PAID =");
-  const detailStart = PAGE.indexOf("function expenseDetailRow(");
   const detailEnd = PAGE.indexOf("async function openExpenseDetails(");
-  assert.ok(mapStart > 0 && detailStart > mapStart && detailEnd > detailStart, "detail helpers not found");
+  assert.ok(
+    rowStart > 0 && rowEnd > rowStart && mapStart > rowEnd && detailEnd > mapStart,
+    "detail helpers not found",
+  );
   loadScript(ctx, "js/icons.js");
   loadScript(ctx, "js/dashboard.js");
   ctx.window.JONE.dashboard.statusPill = (value) => `<span class="pill">${ctx.window.JONE.esc(value || "\u2014")}</span>`;
   vm.runInContext("function moneyCell(v){return JONE.formatNaira(v);}", ctx);
+  vm.runInContext(PAGE.slice(rowStart, rowEnd), ctx, { filename: "accounting.html#row-renderers" });
   vm.runInContext(PAGE.slice(mapStart, detailEnd), ctx, { filename: "accounting.html#detail-helpers" });
   return ctx.window;
 }

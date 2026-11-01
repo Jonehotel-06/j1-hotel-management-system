@@ -30,6 +30,7 @@ from .serializers import (
     PurchaseOrderDetailSerializer, PurchaseOrderListSerializer,
     PurchaseOrderPaymentInputSerializer, PurchaseOrderUpdateSerializer, ReturnStockSerializer,
     StockBalanceAdjustmentSerializer, StockBalanceAdjustSerializer, StockBalanceSerializer,
+    SupplierReferenceInputSerializer,
     StockConsumptionRequestSerializer, StockReplenishSerializer, ReorderContextSerializer,
     StockCountCreateSerializer, StockCountSerializer, StockCountSubmitSerializer, StockItemSerializer,
     InventoryMenuItemDirectorySerializer,
@@ -1182,6 +1183,7 @@ class PurchaseOrderPayView(APIView):
             paid_on=data.get("paid_on"),
             evidence_file=request.FILES.get("evidence_file") or request.FILES.get("receipt"),
             notes=data.get("notes", ""),
+            accounting_settlement_reference=data.get("accounting_settlement_reference", ""),
         )
         po = _po_or_404(po.reference, detail=True)
         log_action(
@@ -1190,6 +1192,7 @@ class PurchaseOrderPayView(APIView):
                 "reference": po.reference, "payment_id": payment.pk,
                 "amount": str(payment.amount), "method": payment.method,
                 "payment_reference": payment.reference,
+                "accounting_settlement_reference": payment.accounting_settlement_reference,
                 "has_evidence": bool(payment.evidence_file),
             },
         )
@@ -1269,6 +1272,49 @@ class PurchaseOrderAccountingDetailView(_AccountingHandoffAccess, APIView):
         if po is None:
             raise NotFound("Purchase order not found, or it has not been submitted yet.")
         return success_response(PurchaseOrderAccountingSerializer(po).data)
+
+
+@extend_schema(
+    tags=["Admin · Procurement"],
+    summary="Accounting hand-off: record the verified supplier purchase-order reference",
+)
+class PurchaseOrderSupplierReferenceView(_AccountingHandoffAccess, APIView):
+    """Record (or correct) the supplier's own reference for this order.
+
+    ``PurchaseOrderUpdateSerializer`` can only set ``supplier_reference``
+    while the order is a DRAFT or SUBMITTED — by the time the order reaches
+    Accounting it is immutable there, so the verified supplier reference
+    (the number the supplier's invoice or confirmation carries) had nowhere
+    to be recorded. This is that place: same hand-off access as reading the
+    panel, an audit entry for every change, and no other field is touched.
+    """
+
+    serializer_class = SupplierReferenceInputSerializer
+
+    def post(self, request, reference):
+        po = _accounting_po_queryset().filter(reference=reference).first()
+        if po is None:
+            raise NotFound("Purchase order not found, or it has not been submitted yet.")
+        serializer = SupplierReferenceInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_reference = serializer.validated_data["supplier_reference"]
+        before = po.supplier_reference
+        if new_reference != before:
+            po.supplier_reference = new_reference
+            po.save(update_fields=["supplier_reference", "updated_at"])
+            log_action(
+                actor=request.user, action="PURCHASE_ORDER_SUPPLIER_REFERENCE_SET",
+                instance=po, request=request,
+                metadata={
+                    "reference": po.reference,
+                    "supplier_reference_from": before,
+                    "supplier_reference_to": new_reference,
+                },
+            )
+        return success_response(
+            PurchaseOrderAccountingSerializer(po).data,
+            message="Supplier reference updated.",
+        )
 
 
 def _bool_param(request, name):

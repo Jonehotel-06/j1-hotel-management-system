@@ -84,20 +84,21 @@ test("task 4: profit and loss separates income, expenses and collections", () =>
 
 /* ---------------------------------------------------------------- task 7 */
 
-test("task 7: guest receivables show credits, deposits and a reconciliation", () => {
+test("task 7 (critical repair A2): the guest-receivable roll is withdrawn, per-folio rows stay", () => {
+  // The unreliable aggregate roll must no longer be presented anywhere on
+  // the financial screens: no position tiles, no control-account
+  // reconciliation, no credit-normal note on the balance sheet.
   assert.match(ACCOUNTING, /<h2>Guest receivables<\/h2>/);
   for (const tile of ['data-ar="gross"', 'data-ar="credits"', 'data-ar="deposits"', 'data-ar="unposted"']) {
-    assert.ok(ACCOUNTING.includes(tile), `missing receivable tile ${tile}`);
+    assert.ok(!ACCOUNTING.includes(tile), `guest-receivable roll tile ${tile} must not be presented`);
   }
-  // The identity that makes the report trustworthy is printed on the page.
-  assert.match(ACCOUNTING, /d\.reconciliation/);
-  assert.match(ACCOUNTING, /Guest balances reconcile to/);
-  assert.match(ACCOUNTING, /guest balances differ from the control account/);
-  // A credit balance is its own column; it is never collapsed into zero.
+  assert.ok(!ACCOUNTING.includes("Guest balances reconcile to"), "the aggregate reconciliation roll is withdrawn");
+  assert.ok(!ACCOUNTING.includes('data-bs="receivable-note"'), "the credit-normal roll note is withdrawn");
+  // Individual guest folio records and payment history are preserved: one
+  // row per folio, with credits never netted against what the guest owes.
   assert.match(ACCOUNTING, /x\.credit_balance/);
   assert.match(ACCOUNTING, /x\.folio_reference/);
   assert.match(ACCOUNTING, /x\.rooms/);
-  assert.match(ACCOUNTING, /stay_value_not_yet_charged/);
 });
 
 /* ---------------------------------------------------------------- task 8 */

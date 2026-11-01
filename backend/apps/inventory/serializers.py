@@ -503,7 +503,7 @@ class PurchaseOrderPaymentSerializer(serializers.ModelSerializer):
         fields = [
             "id", "amount", "method", "reference", "paid_on",
             "evidence_url", "evidence_uploaded_at", "uploaded_by_email",
-            "notes", "created_at",
+            "notes", "accounting_settlement_reference", "created_at",
         ]
         read_only_fields = fields
 
@@ -528,6 +528,12 @@ class PurchaseOrderPaymentInputSerializer(serializers.Serializer):
     paid_on = serializers.DateField(required=False)
     evidence_file = serializers.FileField(required=False, allow_null=True)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    #: Optional mirror of the authoritative Accounting settlement (the
+    #: executed SupplierPaymentRequest). Cross-checked server-side against
+    #: the ledger; blank for payments settled outside the payables workflow.
+    accounting_settlement_reference = serializers.CharField(
+        required=False, allow_blank=True, max_length=64,
+    )
 
 
 class PurchaseOrderListSerializer(serializers.ModelSerializer):
@@ -610,6 +616,17 @@ class PurchaseOrderDecisionSerializer(serializers.Serializer):
     """Reject (return to draft) or cancel: the reason is mandatory evidence."""
 
     reason = serializers.CharField(max_length=1000, trim_whitespace=True)
+
+
+class SupplierReferenceInputSerializer(serializers.Serializer):
+    """Accounting's verified supplier purchase-order reference.
+
+    The supplier's own number for this order as it appears on their invoice
+    or confirmation. Blank is allowed (clearing an unverified claim); the
+    value is recorded verbatim with an audit entry.
+    """
+
+    supplier_reference = serializers.CharField(required=True, allow_blank=True, max_length=120)
 
 
 class PurchaseOrderGoodsReceiptSummarySerializer(serializers.ModelSerializer):

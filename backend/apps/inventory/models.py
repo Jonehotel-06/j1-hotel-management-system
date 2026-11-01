@@ -438,6 +438,16 @@ class PurchaseOrderPayment(TimeStampedModel):
         upload_to="purchase_orders/payments/%Y/%m/", null=True, blank=True,
         help_text="Supplier invoice or payment receipt for this payment.",
     )
+    #: The authoritative Accounting settlement this record mirrors, when it
+    #: mirrors one: the ``SupplierPaymentRequest`` reference whose execution
+    #: actually moved this money. Validated at write time (executed request,
+    #: same order's payable, same amount, linked at most once) so a
+    #: procurement payment record can never contradict the finance ledger.
+    #: Blank means the payment was settled outside the Accounting payables
+    #: workflow and is not claimed to match any ledger settlement.
+    accounting_settlement_reference = models.CharField(
+        max_length=64, blank=True, default="", db_index=True,
+    )
     evidence_uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
         related_name="purchase_order_payments_uploaded",

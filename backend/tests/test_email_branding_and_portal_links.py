@@ -144,8 +144,8 @@ class BrandedTemplateFallbackTests(TestCase):
 class PortalInvitationEmailTests(TestCase):
     """The guest-portal invitation is a real branded HTML email."""
 
-    def _bodies(self, first_name="Ada"):
-        return invitation_email_bodies(None, first_name)
+    def _bodies(self, first_name="Ada", access_link=""):
+        return invitation_email_bodies(None, first_name, access_link=access_link)
 
     def test_the_html_body_is_inline_styled_and_email_client_safe(self):
         _, html = self._bodies()
@@ -185,6 +185,25 @@ class PortalInvitationEmailTests(TestCase):
         self.assertIn("one-time sign-in link", text)
         self.assertNotIn("j1-button", text)
         self.assertNotIn("token=", text.lower())
+
+    def test_the_invitation_carries_the_actual_access_link(self):
+        """Critical repair C3: the email IS the access link, not a promise."""
+        link = f"{LOCAL_ORIGIN}/portal/login.html?token=invitation-token-example"
+        text, html = self._bodies(access_link=link)
+        self.assertIn(link, text)
+        self.assertIn(link, html)
+        self.assertIn("stays valid for the length of your stay", text)
+        # When the link is present the old "we will send one later" promise
+        # must be gone from both parts.
+        self.assertNotIn("we will send a one-time sign-in link", text)
+        self.assertNotIn("we will send a one-time sign-in link", html)
+
+    def test_the_staff_copy_text_never_carries_an_access_token(self):
+        from apps.portal.invitations import copy_text_for
+
+        copy = copy_text_for(None, "Ada")
+        self.assertNotIn("token=", copy.lower())
+        self.assertIn(portal_login_url(), copy)
 
     def _login_url(self):
         return portal_login_url()

@@ -72,6 +72,15 @@ SUPPRESSED_EXPENSE_ACCOUNTS = (
 )
 OTHER_LIABILITIES_LABEL = "Other liabilities"
 OTHER_EXPENSES_LABEL = "Other expenses"
+# The guest-receivable roll (task: critical repair A2) joins the same policy:
+# the named statement line is withdrawn because the old aggregate combined
+# collected money with recognised charges and produced credit balances no
+# guest actually owed. The account's true ledger balance is preserved and
+# folds into Other assets so the statement keeps footing; the ledger account,
+# every folio and every historical posting remain untouched, and no
+# replacement figure or balancing journal is fabricated.
+SUPPRESSED_ASSET_ACCOUNTS = (accounting.ACCOUNTS_RECEIVABLE,)
+OTHER_ASSETS_LABEL = "Other assets"
 
 
 def _dec(value) -> Decimal:
@@ -129,7 +138,7 @@ def balance_sheet(*, as_of=None) -> dict:
             rows.append({"account_code": "", "label": aggregate_label, "amount": money(withheld)})
         return rows, total
 
-    assets, total_assets = section("ASSET.")
+    assets, total_assets = section("ASSET.", SUPPRESSED_ASSET_ACCOUNTS, OTHER_ASSETS_LABEL)
     liabilities, total_liabilities = section("LIABILITY.", SUPPRESSED_LIABILITY_ACCOUNTS)
     # Equity is still computed — the balance check depends on it — but it is
     # no longer itemised for the reader (task 5).
@@ -189,10 +198,18 @@ def balance_sheet(*, as_of=None) -> dict:
             ),
             "withheld_liability_accounts": list(SUPPRESSED_LIABILITY_ACCOUNTS),
             "withheld_expense_accounts": list(SUPPRESSED_EXPENSE_ACCOUNTS),
+            "withheld_asset_accounts": list(SUPPRESSED_ASSET_ACCOUNTS),
+            "guest_receivable_roll": "withdrawn",
             "withheld_note": (
                 "Statutory tax payable is no longer named on the statement. Any balance it still carries "
                 "is reported inside 'Other liabilities' so the section continues to foot and the ledger "
                 "history stays intact."
+            ),
+            "withheld_asset_note": (
+                "The guest-receivable roll is no longer presented as a named statement line. The "
+                "guest-receivable control account's true ledger balance is reported inside 'Other "
+                "assets' so the section continues to foot; the ledger account, every folio and every "
+                "historical posting remain intact. No replacement balance has been created."
             ),
         },
         "opening_balances_basis": "Opening balances are posted as balanced journals against EQUITY.OPENING_BALANCE via Accounting → Post journal entry, normally dated before the period under review.",

@@ -519,10 +519,68 @@ def attach_purchase_order_receipt(*, purchase_order, actor, upload, payment_refe
     return po
 
 
+def _validate_accounting_settlement_link(*, po, reference, amount):
+    """Refuse a procurement payment that would contradict the finance ledger.
+
+    The claim being checked: "this row mirrors Accounting settlement
+    ``reference``". A true claim must satisfy every rule — the request
+    exists, its execution actually moved the money, it settles THIS order's
+    payable, and it moved exactly this amount. A settlement backs at most
+    one payment record, so mirroring it twice would double-count.
+    """
+    from apps.finance.models import SupplierPaymentRequest
+
+    request = (
+        SupplierPaymentRequest.objects.select_related("expense")
+        .filter(reference__iexact=reference)
+        .first()
+    )
+    if request is None:
+        raise ValidationError({
+            "accounting_settlement_reference": (
+                f"{reference!r} is not a recorded Accounting supplier payment. "
+                "Execute the supplier payment in Accounting first, or leave this "
+                "field blank for a payment settled outside the payables workflow."
+            ),
+        })
+    if request.status != SupplierPaymentRequest.Status.EXECUTED:
+        raise ValidationError({
+            "accounting_settlement_reference": (
+                f"Accounting supplier payment {request.reference} is "
+                f"{request.get_status_display().lower()} — it has not actually "
+                "paid the supplier, so this record cannot mirror it."
+            ),
+        })
+    if request.expense.purchase_order_id != po.pk:
+        raise ValidationError({
+            "accounting_settlement_reference": (
+                f"Accounting supplier payment {request.reference} settles payable "
+                f"{request.expense.reference}, not purchase order {po.reference}."
+            ),
+        })
+    if Decimal(request.amount) != amount or request.currency != po.currency:
+        raise ValidationError({
+            "accounting_settlement_reference": (
+                f"Accounting supplier payment {request.reference} moved "
+                f"{request.amount} {request.currency}; recording {amount} "
+                f"{po.currency} against it would contradict the ledger."
+            ),
+        })
+    if PurchaseOrderPayment.objects.filter(
+        accounting_settlement_reference__iexact=reference
+    ).exists():
+        raise ValidationError({
+            "accounting_settlement_reference": (
+                f"Accounting supplier payment {request.reference} is already "
+                "mirrored by another supplier payment record."
+            ),
+        })
+
+
 @transaction.atomic
 def record_purchase_order_payment(
     *, purchase_order, actor, method, amount=None, reference="",
-    paid_on=None, evidence_file=None, notes="",
+    paid_on=None, evidence_file=None, notes="", accounting_settlement_reference="",
 ):
     """Record real money paid to the supplier against a purchase order.
 
@@ -530,6 +588,15 @@ def record_purchase_order_payment(
     authorised; this is the money-out itself, one append-only row per
     payment, each with its own receipt or invoice evidence. The order
     moves to ``PAID`` once the recorded payments cover its total.
+
+    ``accounting_settlement_reference`` optionally binds the record to the
+    authoritative Accounting settlement (the executed
+    ``SupplierPaymentRequest``) that actually moved this money. When given,
+    the link is verified — the request must exist, be executed, settle THIS
+    order's payable and move exactly this amount — so a procurement payment
+    record can never contradict the finance ledger. It stays optional
+    because a supplier payment may legitimately be settled outside the
+    Accounting payables workflow.
     """
     from apps.core.storage import delete_quietly, save_upload
     from apps.core.validators import validate_document_upload
@@ -577,9 +644,16 @@ def record_purchase_order_payment(
             "amount": f"The payment cannot exceed the outstanding balance of {outstanding} {po.currency}.",
         })
 
+    settlement_reference = str(accounting_settlement_reference or "").strip()[:64]
+    if settlement_reference:
+        _validate_accounting_settlement_link(
+            po=po, reference=settlement_reference, amount=amount,
+        )
+
     payment = PurchaseOrderPayment(
         purchase_order=po, amount=amount, method=method, reference=reference,
         paid_on=paid_on, notes=str(notes or "")[:2000],
+        accounting_settlement_reference=settlement_reference,
     )
     if evidence_file is not None:
         validate_document_upload(evidence_file)

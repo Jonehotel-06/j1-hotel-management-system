@@ -95,3 +95,32 @@ class PosApiTests(BaseAPITestCase):
         self.auth(self.receptionist)
         response = self.client.get("/api/admin/pos/orders/")
         self.assertEqual(response.status_code, 403, response.content)
+
+    def test_receptionist_can_load_in_house_guests_for_laundry_room_charging(self):
+        """Critical repair D2: laundry room-charge needs the in-house feed.
+
+        The picker required ``pos.order.manage`` alone, so a receptionist got
+        403 and the laundry page reported an empty hotel. The read-only
+        lookup is open to either POS order or guest request management; the
+        POS ORDER endpoints stay closed to the receptionist (test above).
+        """
+        self.auth(self.receptionist)
+        response = self.client.get("/api/admin/pos/room-service-stays/", {"search": "pos-api-guest"})
+        self.assertEqual(response.status_code, 200, response.content)
+        rows = response.json()["data"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], self.stay.pk)
+
+        # Only in-house stays: cancelled and never-arrived guests never show.
+        other_type = make_room_type("Picker other", price="1000.00")
+        cancelled = make_booking(
+            make_guest("pos-api-cancelled@example.com"), other_type,
+            check_in=hotel_today(), check_out=hotel_today() + timedelta(days=1), total="1000.00",
+        )
+        cancelled_stay = Stay.objects.create(
+            reference=f"STY-{cancelled.booking_reference}", booking=cancelled, guest=cancelled.guest,
+            status=Stay.Status.CANCELLED, expected_arrival=cancelled.check_in, expected_departure=cancelled.check_out,
+        )
+        rows = self.client.get("/api/admin/pos/room-service-stays/").json()["data"]
+        self.assertNotIn(cancelled_stay.pk, [row["id"] for row in rows])
+        self.assertIn(self.stay.pk, [row["id"] for row in rows])

@@ -50,7 +50,7 @@ def portal_login_url() -> str:
     return f"{_portal_frontend_url()}/portal/login.html"
 
 
-def invitation_email_bodies(invitation, guest_first_name: str = "", *, stay=None):
+def invitation_email_bodies(invitation, guest_first_name: str = "", *, stay=None, access_link: str = ""):
     """The guest-portal invitation as ``(text_body, html_body)``.
 
     The invitation used to be sent as plain text with no HTML alternative, so
@@ -67,12 +67,28 @@ def invitation_email_bodies(invitation, guest_first_name: str = "", *, stay=None
 
     This promotes no capability the portal does not have: the copy is
     deliberately limited to the folio, room-service and request-tracking
-    features the guest can actually reach.
+    features the guest can actually reach. Critical repair C3: the invitation
+    carries the guest's ACTUAL access link (``access_link``), minted for their
+    own address and redeemable for the length of the stay, instead of only
+    promising that a link will be sent later. The raw token never reaches a
+    log or audit row — only this email body carries it.
     """
     from apps.core.email_design import render_notice_email
 
     greeting = f"Dear {guest_first_name}," if guest_first_name else "Dear guest,"
-    login_url = portal_login_url()
+    login_url = access_link or portal_login_url()
+    if access_link:
+        sign_in_copy = (
+            "Use the secure button below to sign in — the link is personal to this "
+            "email address and stays valid for the length of your stay. There is no "
+            "password to remember."
+        )
+    else:
+        sign_in_copy = (
+            "Sign in with the email address you gave at check-in. For your security "
+            "we will send a one-time sign-in link to that address — there is no "
+            "password to remember."
+        )
     details = []
     if stay is not None:
         booking = getattr(stay, "booking", None)
@@ -90,9 +106,7 @@ def invitation_email_bodies(invitation, guest_first_name: str = "", *, stay=None
             "without needing to call the front desk.",
             "Through the portal you can view your folio, request room service, and "
             "track the requests you have already raised.",
-            "Sign in with the email address you gave at check-in. For your security "
-            "we will send a one-time sign-in link to that address — there is no "
-            "password to remember.",
+            sign_in_copy,
         ],
         details=details,
         cta_label="Open the guest portal",
@@ -115,12 +129,18 @@ def mask_email(email: str) -> str:
 
 
 def copy_text_for(invitation: GuestPortalInvitation, guest_first_name: str = "") -> str:
+    """Copy-ready staff fallback — deliberately WITHOUT any access token.
+
+    Staff can paste this message to a guest through another channel, but the
+    magic link itself is only ever delivered to the guest's own address.
+    """
     greeting = f"Dear {guest_first_name}," if guest_first_name else "Dear guest,"
     return (
         f"{greeting}\n\nYou can manage your J-ONE Hotel & Lodge stay online: view your folio, "
         f"request room service and track your requests.\n\n"
-        f"Open {portal_login_url()} and sign in with the email address you gave at check-in. "
-        f"We will send a one-time sign-in link to that address.\n\nJ-ONE Hotel & Lodge"
+        f"Open the secure guest portal link we emailed to this address — it stays valid for "
+        f"the length of your stay. If you need a fresh link, open {portal_login_url()} and "
+        f"request one; we will email it to this address.\n\nJ-ONE Hotel & Lodge"
     )
 
 
@@ -138,7 +158,7 @@ def schedule_portal_invitation(stay_id: int) -> None:
 # note telling them how to sign in. Sending is idempotent per occupant
 # (``portal_invited_at``) and never blocks a check-in.
 # ---------------------------------------------------------------------------
-def room_guest_email_bodies(*, occupant, booking) -> tuple[str, str]:
+def room_guest_email_bodies(*, occupant, booking, access_link: str = "") -> tuple[str, str]:
     from apps.core.email_design import render_notice_email
 
     greeting = f"Dear {occupant.full_name}," if occupant.full_name else "Dear guest,"
@@ -147,6 +167,16 @@ def room_guest_email_bodies(*, occupant, booking) -> tuple[str, str]:
         {"label": "Room", "value": occupant.booking_room.room.room_number},
         {"label": "Stay", "value": f"{booking.check_in:%d %b %Y} → {booking.check_out:%d %b %Y}"},
     ]
+    if access_link:
+        sign_in_copy = (
+            "Use the secure button below to sign in — the link is personal to this "
+            "email address and stays valid for the length of your stay."
+        )
+    else:
+        sign_in_copy = (
+            "Sign in with this email address — we will send a one-time sign-in "
+            "link to it, so there is no password to remember."
+        )
     return render_notice_email(
         category="Guest portal",
         title="Your room is ready at J-ONE",
@@ -157,12 +187,11 @@ def room_guest_email_bodies(*, occupant, booking) -> tuple[str, str]:
             "You can use the guest portal with this email address to request room "
             "service, housekeeping, maintenance or anything else your room needs, "
             "and to track the requests you have already raised.",
-            "Sign in with this email address — we will send a one-time sign-in "
-            "link to it, so there is no password to remember.",
+            sign_in_copy,
         ],
         details=details,
         cta_label="Open the guest portal",
-        cta_url=portal_login_url(),
+        cta_url=access_link or portal_login_url(),
         footnote=(
             "If you are not staying in this room, you can ignore this message — "
             "no account has been created and no action is required."
@@ -196,7 +225,17 @@ def _deliver_room_guest_invitations(booking_id: int, assignment_ids) -> None:
     )
     for occupant in occupants:
         try:
-            text_body, html_body = room_guest_email_bodies(occupant=occupant, booking=booking)
+            # C3: each room guest receives THEIR OWN access link, minted for
+            # their own address — never the booker's link, never anyone else's.
+            from .services import mint_invitation_challenge
+
+            access_link = mint_invitation_challenge(
+                email=occupant.email,
+                metadata={"occupant_id": occupant.pk, "booking_reference": booking.booking_reference},
+            )
+            text_body, html_body = room_guest_email_bodies(
+                occupant=occupant, booking=booking, access_link=access_link
+            )
             from apps.core.emails import queue_email
 
             queue_email(
@@ -245,7 +284,20 @@ def _deliver(invitation: GuestPortalInvitation, *, actor_id=None) -> GuestPortal
     invitation.save(update_fields=["recipient_email", "status", "attempts", "last_attempt_at", "last_error_code", "updated_at"])
     first_name = (getattr(stay.guest, "first_name", "") or "").strip()
     try:
-        text_body, html_body = invitation_email_bodies(invitation, first_name, stay=stay)
+        # C3: the invitation carries the guest's ACTUAL access link — minted
+        # for this address and redeemable for the length of the stay. If the
+        # link cannot be minted the delivery is recorded FAILED and retried by
+        # the staff resend flow; a link-less "request a link" email is never
+        # sent while the corrected flow promises a working link.
+        from .services import mint_invitation_challenge
+
+        access_link = mint_invitation_challenge(
+            email=email,
+            metadata={"stay_reference": stay.reference, "invitation_id": invitation.pk},
+        )
+        text_body, html_body = invitation_email_bodies(
+            invitation, first_name, stay=stay, access_link=access_link
+        )
         log = send_email_safe(
             "Manage your stay with J-ONE Hotel & Lodge",
             text_body,

@@ -354,6 +354,28 @@ def _goods_receipt_totals(*, start_date: date, end_date: date, currency: str) ->
     return _amount(totals.get("value")), int(totals.get("receipts") or 0)
 
 
+def _printed_expense_account_rows(breakdown: dict) -> list[dict]:
+    """The expense-account rows as PRINTED (A1).
+
+    ``breakdown['by_account']`` is the reconciliation evidence and keeps
+    every account, including the presentations withdrawn in batch 01
+    (tax accounts). The print exports must name none of them: withdrawn
+    rows are folded into one neutral ``Other expenses`` line so the sheet
+    still reconciles without presenting tax.
+    """
+    rows = breakdown.get("by_account") or []
+    printed = [row for row in rows if row.get("presented", True)]
+    withheld = [row for row in rows if not row.get("presented", True)]
+    if withheld:
+        printed = printed + [{
+            "account_code": "",
+            "label": "Other expenses",
+            "amount": money(sum((_amount(row.get("amount")) for row in withheld), ZERO)),
+            "transactions": sum(row.get("transactions") or 0 for row in withheld),
+        }]
+    return printed
+
+
 def _expense_detail_breakdown(*, start_date: date, end_date: date, currency: str) -> dict:
     """Departmental / category detail behind EXPENSE.OPERATING (task 2).
 
@@ -917,7 +939,7 @@ def summary_xlsx_bytes(report: dict) -> bytes:
     expenses.append(["Period", report.get("start_date"), report.get("end_date")])
     expenses.append([])
     expenses.append(["Ledger account", f"Amount ({unit})", "Transactions"])
-    for row in breakdown.get("by_account") or []:
+    for row in _printed_expense_account_rows(breakdown):
         _money_row(expenses, [row.get("label"), _metric_amount_number(row, "amount"), row.get("transactions")])
     _money_row(expenses, ["Total expenses", _metric_amount_number(report, "total_expenses")])
     expenses.append([])
@@ -1047,7 +1069,7 @@ def summary_pdf_bytes(report: dict) -> bytes:
             _table(
                 ["Ledger account", f"Amount ({unit})", "Transactions"],
                 [[row.get("label"), _display_amount(row.get("amount"), unit), str(row.get("transactions") or 0)]
-                 for row in breakdown.get("by_account") or []],
+                 for row in _printed_expense_account_rows(breakdown)],
                 [250, 150, 90],
             ),
             Spacer(1, 10),

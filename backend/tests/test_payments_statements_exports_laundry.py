@@ -124,9 +124,18 @@ class StatementTests(BaseAPITestCase):
         assets = {r["account_code"]: r["amount"] for r in data["assets"]}
         self.assertEqual(assets[accounting.CASH_ON_HAND], "100000.00")
         self.assertEqual(assets[accounting.BANK_CLEARING], "40000.00")
-        # The collection credited a receivable that had no opening balance,
-        # so the sheet honestly shows the negative receivable it created.
-        self.assertEqual(assets[accounting.ACCOUNTS_RECEIVABLE], "-40000.00")
+        # Critical repair A2: the guest-receivable roll is withdrawn from the
+        # statement. The account is no longer named as a statement line and
+        # its true ledger balance (the credit the collection above created)
+        # folds into Other assets — nothing is invented or hidden.
+        self.assertNotIn(accounting.ACCOUNTS_RECEIVABLE, assets)
+        other_assets = [r for r in data["assets"] if r["label"] == "Other assets"]
+        self.assertEqual(len(other_assets), 1)
+        self.assertEqual(other_assets[0]["amount"], "-40000.00")
+        self.assertEqual(data["presentation"]["guest_receivable_roll"], "withdrawn")
+        self.assertEqual(
+            data["presentation"]["withheld_asset_accounts"], [accounting.ACCOUNTS_RECEIVABLE]
+        )
         self.assertEqual(data["total_assets"], "100000.00")
         # Batch 01 task 5: the equity section is withdrawn from the
         # presentation and replaced by net assets, which is identical to total

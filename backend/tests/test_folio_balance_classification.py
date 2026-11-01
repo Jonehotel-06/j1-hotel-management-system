@@ -60,6 +60,7 @@ from apps.finance.services.folio_service import (
     folio_balance_queryset,
 )
 from apps.finance.services.ledger_service import create_posted_transaction
+from apps.finance.services.accommodation_service import post_due_accommodation_charges_for_stay
 from apps.finance.services.payment_collection_service import ensure_processed_refund
 from apps.guest_services.models import LaundryOrder
 from apps.inventory.models import StockItem, StockLocation, Supplier
@@ -108,10 +109,13 @@ class FolioBalanceClassificationTests(BaseAPITestCase):
         room_type = make_room_type("Balance suite", price="140000.00")
         room = make_room(room_type, "901")
         # ₦420,000 for the stay, paid in full at booking level — the reported
-        # guest's position before the laundry bill.
+        # guest's position before the laundry bill. The stay has already
+        # consumed its three nights (the receivable-timing repair settles
+        # money only against RECOGNISED charges, so the fixture recognises the
+        # nights first and the money then legitimately settles them).
         self.booking = make_booking(
             make_guest("folio-balance@example.com"), room_type, rooms=[room],
-            check_in=self.today, check_out=self.today + timedelta(days=3),
+            check_in=self.today - timedelta(days=3), check_out=self.today,
             total="420000.00", amount_paid="420000.00", status="CHECKED_IN",
         )
         self.stay = Stay.objects.create(
@@ -119,6 +123,9 @@ class FolioBalanceClassificationTests(BaseAPITestCase):
             guest=self.booking.guest, status=Stay.Status.IN_HOUSE,
             expected_arrival=self.booking.check_in, expected_departure=self.booking.check_out,
         )
+        # The three elapsed room nights are recognised through the production
+        # nightly path before any money touches the folio.
+        post_due_accommodation_charges_for_stay(stay=self.stay, actor=self.manager)
         # The real collection that made the booking look paid, then the real
         # check-in bridge that puts it on the folio (stays.services._ensure_main_folio
         # is the production path; this is not a hand-built posting).
@@ -405,7 +412,10 @@ class FolioBalanceClassificationTests(BaseAPITestCase):
         for row in data["charges"]:
             self.assertEqual(row["kind"], "CHARGE")
         self.assertEqual(
-            FolioPosting.objects.filter(folio=self.folio, effect=FolioPosting.Effect.DEBIT).count(), 2
+            FolioPosting.objects.filter(folio=self.folio, effect=FolioPosting.Effect.DEBIT)
+            .exclude(transaction__type=FinancialTransaction.Type.ACCOMMODATION_CHARGE)
+            .count(),
+            2,
         )
         self.assertEqual(data["outstanding_balance"], "5200.00")
         self.assertEqual(data["amount_to_settle"], "5200.00")
@@ -447,12 +457,13 @@ class FolioBalanceClassificationTests(BaseAPITestCase):
         self.assertEqual(detail_data["folio_charges"], clearance["folio_balance"])
         self.assertEqual(detail_data["outstanding_balance"], clearance["outstanding_balance"])
 
-        # The raw folio ledger is untouched by the classification: it still holds
-        # the room payment credit and the laundry charge, exactly as posted.
+        # The raw folio ledger is untouched by the classification: it holds the
+        # recognised room nights (+420,000), the room payment credit that
+        # settles them (−420,000) and the laundry charge, exactly as posted.
         raw = folio_balance_queryset(Folio.objects.filter(pk=self.folio.pk)).values_list(
             "balance", flat=True
         ).get()
-        self.assertEqual(raw, Decimal("3200.00") - Decimal("420000.00"))
+        self.assertEqual(raw, Decimal("3200.00"))
 
     # ------------- 6. nothing existing is edited, deleted or moved ----------
 

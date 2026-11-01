@@ -18,14 +18,21 @@ function loadPageHelpers(ctx) {
   // Run the page's real helpers verbatim: the status map, the row builders and
   // metric()/metricAmount() are sliced straight out of the shipped HTML so the
   // test cannot drift from production code.
+  // The row renderers (expenseDetailRow/expenseDetailText) were hoisted OUT of
+  // load() to the shared page-script scope so openPurchaseOrder() can resolve
+  // them (fix for the "expenseDetailRow is not defined" purchase-order error).
+  // The slice points below follow that shipped layout: row renderers first,
+  // then the status map and the dialog helpers still inside load().
+  const rowStart = PAGE.indexOf("function expenseDetailRow(");
+  const rowEnd = PAGE.indexOf("function load(){");
   const mapStart = PAGE.indexOf("var EXPENSE_STATUS_PAID =");
-  const mapEnd = PAGE.indexOf("function expenseDetailRow(");
-  const detailStart = PAGE.indexOf("function expenseDetailRow(");
+  const detailStart = PAGE.indexOf("function eventDetailsHtml(");
   const detailEnd = PAGE.indexOf("async function openExpenseDetails(");
   const metricStart = PAGE.indexOf("function metric(report,key){");
   const metricEnd = PAGE.indexOf("function setFinanceKpisLoading(");
   for (const [name, start, end] of [
-    ["status map", mapStart, mapEnd], ["detail helpers", detailStart, detailEnd], ["metric helpers", metricStart, metricEnd],
+    ["shared row renderers", rowStart, rowEnd], ["status map", mapStart, detailStart],
+    ["detail helpers", detailStart, detailEnd], ["metric helpers", metricStart, metricEnd],
   ]) {
     assert.ok(start > 0 && end > start, `${name} not found in the shipped page`);
   }
@@ -42,8 +49,8 @@ function loadPageHelpers(ctx) {
     + "function moneyCell(v){return JONE.formatNaira(v);}",
     ctx,
   );
-  vm.runInContext(PAGE.slice(mapStart, mapEnd), ctx, { filename: "accounting.html#status-map" });
-  vm.runInContext(PAGE.slice(detailStart, detailEnd), ctx, { filename: "accounting.html#detail-helpers" });
+  vm.runInContext(PAGE.slice(rowStart, rowEnd), ctx, { filename: "accounting.html#row-renderers" });
+  vm.runInContext(PAGE.slice(mapStart, detailEnd), ctx, { filename: "accounting.html#status-map-and-detail-helpers" });
   vm.runInContext(PAGE.slice(metricStart, metricEnd), ctx, { filename: "accounting.html#metric-helpers" });
   const win = ctx.window;
   for (const name of ["expenseDetailHtml", "expenseDetailRow", "expenseDetailText", "metric", "metricAmount", "metricTransactions", "transactionLabel"]) {

@@ -10,8 +10,11 @@ by folio and states the approved correction routes.
 
 These tests pin three things:
 
-1. an over-applied folio really is what drives the credit balance (the same
-   collection/allocation path staff use produces folio balance -100.00);
+1. an over-applied folio really is what drives the credit balance. The
+   corrected allocation path now REFUSES to credit the receivable ahead of
+   the charges (the money stays a guest deposit), and the historical rows
+   that already carry an over-application are rebuilt through the same
+   immutable postings the service writes so the report can be tested on them;
 2. the command reports that folio, the movement split by transaction type and
    both correction routes — including through ``--json``;
 3. the command changes nothing: no transaction, line or folio posting is
@@ -91,12 +94,9 @@ class GuestReceivableCheckTests(BaseAPITestCase):
             }],
         )
 
-    def _collect_and_allocate(self, amount, reference="J1P-RECEIVABLE-1"):
-        """Money arrives and is applied to the folio — the staff-facing path."""
-        from apps.finance.services.payment_collection_service import (
-            apply_payment_to_folio,
-            ensure_payment_collection,
-        )
+    def _collect(self, amount, reference="J1P-RECEIVABLE-1"):
+        """Money arrives — the collection half of the staff-facing path."""
+        from apps.finance.services.payment_collection_service import ensure_payment_collection
 
         payment = Payment.objects.create(
             booking=self.stay.booking,
@@ -108,8 +108,87 @@ class GuestReceivableCheckTests(BaseAPITestCase):
             status=Payment.Status.SUCCESS,
         )
         ensure_payment_collection(payment=payment, actor=self.actor)
+        return payment
+
+    def _collect_and_allocate(self, amount, reference="J1P-RECEIVABLE-1"):
+        """Money arrives and is applied to the folio — the staff-facing path."""
+        from apps.finance.services.payment_collection_service import apply_payment_to_folio
+
+        payment = self._collect(amount, reference=reference)
         apply_payment_to_folio(payment=payment, folio=self.folio, actor=self.actor)
         return payment
+
+    def _legacy_over_apply(self, payment, amount):
+        """Rebuild an application row exactly as pre-correction data holds it.
+
+        The corrected service refuses to credit the receivable ahead of the
+        charges (proved in the first test below), so the historical mechanism
+        is reconstructed here from the same immutable building blocks the
+        service writes. ``guest_receivable_check`` must still explain rows in
+        this shape, so the report tests run against them.
+        """
+        from apps.finance.models import FinancialEvent, PaymentAllocation
+
+        allocation_key = f"payment-allocation:{payment.reference}:{self.folio.reference}"
+        financial_transaction, _ = create_posted_transaction(
+            transaction_type=FinancialTransaction.Type.PAYMENT_ALLOCATION,
+            source_key=allocation_key,
+            idempotency_key=allocation_key,
+            actor=self.actor,
+            source_reference=payment.booking.booking_reference,
+            external_reference=payment.reference,
+            narrative=f"Apply payment {payment.reference} to folio {self.folio.reference}",
+            metadata={
+                "payment_reference": payment.reference,
+                "folio_reference": self.folio.reference,
+                "booking_reference": payment.booking.booking_reference,
+                "historical_row": True,
+            },
+            currency=payment.currency,
+            business_date=(payment.paid_at.date() if payment.paid_at else hotel_today()),
+            occurred_at=payment.paid_at,
+            lines=[
+                {"account_code": accounting.GUEST_DEPOSITS,
+                 "direction": FinancialLine.Direction.DEBIT, "amount": amount,
+                 "description": f"Release guest deposit {payment.reference}"},
+                {"account_code": accounting.ACCOUNTS_RECEIVABLE,
+                 "direction": FinancialLine.Direction.CREDIT, "amount": amount,
+                 "folio": self.folio,
+                 "description": f"Payment applied to {self.folio.reference}"},
+            ],
+            postings=[{
+                "line_index": 1,
+                "folio": self.folio,
+                "kind": FolioPosting.Kind.PAYMENT,
+                "effect": FolioPosting.Effect.CREDIT,
+                "amount": amount,
+                "settles": "",
+                "description": f"Payment {payment.reference}",
+                "source_reference": payment.reference,
+            }],
+        )
+        allocation = PaymentAllocation.objects.create(
+            payment=payment,
+            transaction=financial_transaction,
+            folio=self.folio,
+            amount=Decimal(amount),
+            currency=payment.currency.upper(),
+            source_key=allocation_key,
+            allocated_by=self.actor,
+        )
+        FinancialEvent.objects.create(
+            transaction=financial_transaction,
+            type=FinancialEvent.Type.ALLOCATED,
+            actor=self.actor,
+            details={
+                "payment_reference": payment.reference,
+                "folio_reference": self.folio.reference,
+                "amount": str(amount),
+                "payment_allocation_id": allocation.pk,
+                "historical_row": True,
+            },
+        )
+        return allocation
 
     def _run(self, *args):
         out = StringIO()
@@ -123,13 +202,28 @@ class GuestReceivableCheckTests(BaseAPITestCase):
         # Even money in and out: the folio, and therefore the receivable, is clear.
         self.assertEqual(folio_balance_queryset().get(pk=self.folio.pk).balance, Decimal("0.00"))
 
-        self._collect_and_allocate("30000.00", reference="J1P-RECEIVABLE-AHEAD")
-        # A payment applied to a folio whose stay has not yet consumed the nights
-        # it paid for: the folio is 30,000 in credit, which is the receivable.
+        # The corrected path REFUSES money ahead of its charges: the payment is
+        # collected (cash/bank evidence stays), but nothing is applied to the
+        # folio and the receivable is untouched.
+        from apps.finance.models import PaymentAllocation
+        from apps.finance.services.payment_collection_service import apply_payment_to_folio
+        from django.core.exceptions import ValidationError
+
+        payment = self._collect("30000.00", reference="J1P-RECEIVABLE-AHEAD")
+        with self.assertRaises(ValidationError):
+            apply_payment_to_folio(payment=payment, folio=self.folio, actor=self.actor)
+        self.assertEqual(PaymentAllocation.objects.filter(payment=payment).count(), 0)
+        self.assertEqual(folio_balance_queryset().get(pk=self.folio.pk).balance, Decimal("0.00"))
+
+        # Rows that predate the correction carry the over-application — a
+        # payment applied to a folio whose stay has not yet consumed the nights
+        # it paid for. The folio is 30,000 in credit, which is the receivable,
+        # and that is exactly what the command must explain below.
+        self._legacy_over_apply(payment, "30000.00")
         self.assertEqual(folio_balance_queryset().get(pk=self.folio.pk).balance, Decimal("-30000.00"))
 
     def test_the_report_names_the_credit_folios_the_movement_split_and_the_correction_routes(self):
-        self._collect_and_allocate("30000.00", reference="J1P-RECEIVABLE-CREDIT")
+        self._legacy_over_apply(self._collect("30000.00", reference="J1P-RECEIVABLE-CREDIT"), "30000.00")
 
         output = self._run()
         self.assertIn("Guest receivables", output)
@@ -142,7 +236,7 @@ class GuestReceivableCheckTests(BaseAPITestCase):
         self.assertIn("never edited", output)
 
     def test_the_json_report_carries_the_balance_and_the_folio_detail(self):
-        self._collect_and_allocate("30000.00", reference="J1P-RECEIVABLE-JSON")
+        self._legacy_over_apply(self._collect("30000.00", reference="J1P-RECEIVABLE-JSON"), "30000.00")
         out = StringIO()
         call_command("guest_receivable_check", "--json", stdout=out)
         import json
@@ -156,7 +250,7 @@ class GuestReceivableCheckTests(BaseAPITestCase):
         self.assertEqual(payload["folio_balance_total"], payload["balance"])
 
     def test_a_single_folio_can_be_drilled_down_to_its_postings(self):
-        self._collect_and_allocate("30000.00", reference="J1P-RECEIVABLE-DRILL")
+        self._legacy_over_apply(self._collect("30000.00", reference="J1P-RECEIVABLE-DRILL"), "30000.00")
         output = self._run("--folio", self.folio.reference)
         self.assertIn(self.folio.reference, output)
         # The allocation that over-applied the folio is named with its source
@@ -166,7 +260,9 @@ class GuestReceivableCheckTests(BaseAPITestCase):
 
     def test_the_command_writes_nothing(self):
         self._post_charge("20000.00")
-        self._collect_and_allocate("25000.00", reference="J1P-RECEIVABLE-READONLY")
+        self._legacy_over_apply(
+            self._collect("25000.00", reference="J1P-RECEIVABLE-READONLY"), "25000.00"
+        )
         before = (
             FinancialTransaction.objects.count(),
             FinancialLine.objects.count(),
@@ -185,7 +281,9 @@ class GuestReceivableCheckTests(BaseAPITestCase):
         self.assertTrue(self._run().count("CREDIT-NORMAL") >= 1)
 
     def test_fail_on_credit_is_a_report_only_exit_code(self):
-        self._collect_and_allocate("10000.00", reference="J1P-RECEIVABLE-FAIL")
+        self._legacy_over_apply(
+            self._collect("10000.00", reference="J1P-RECEIVABLE-FAIL"), "10000.00"
+        )
         before = FinancialTransaction.objects.count()
         with self.assertRaises(CommandError):
             call_command("guest_receivable_check", "--fail-on-credit", stdout=StringIO())

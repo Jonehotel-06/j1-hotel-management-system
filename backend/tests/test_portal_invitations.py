@@ -49,13 +49,22 @@ class PortalInvitationTests(BaseAPITestCase):
         self.assertEqual(invitation.email_log.status, EmailLog.Status.SENT)
         self.assertEqual(EmailLog.objects.filter(kind=INVITATION_KIND).count(), 1)
 
-    def test_invitation_body_contains_portal_link_but_no_token(self):
+    def test_invitation_body_carries_the_personal_access_link(self):
+        """Critical repair C3: the invitation IS the access link.
+
+        This test used to pin the DEFECTIVE contract — a portal page link
+        with an explicit absence of any token (the old "we will send a
+        one-time sign-in link later" design, which forced the guest to chase
+        a second email). The task mandates the invitation carry the guest's
+        personal magic link; the raw token therefore travels in the email
+        body alone, and only its SHA-256 digest is stored server-side
+        (pinned in tests.test_portal_invitation_links).
+        """
         with self.captureOnCommitCallbacks(execute=True):
             self._check_in()
         log = GuestPortalInvitation.objects.get().email_log
         self.assertEqual(log.to_email, self.guest.email)
-        self.assertIn("/portal/login.html", log.body)
-        self.assertNotIn("token", log.body.lower())
+        self.assertIn("/portal/login.html?token=", log.body)
 
     def test_rescheduling_is_idempotent(self):
         with self.captureOnCommitCallbacks(execute=True):

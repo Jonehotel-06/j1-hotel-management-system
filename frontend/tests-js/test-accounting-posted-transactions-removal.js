@@ -125,7 +125,12 @@ test("the audit-log and reports routes that still show the records are advertise
   assert.match(ACCOUNTING, /Reports and\s+the audit log|Reports and the audit log/);
 });
 
-test("the receivables aging section keeps the reconciliation warning", () => {
-  assert.match(ACCOUNTING, /Guest balances reconcile to the/);
-  assert.match(ACCOUNTING, /do not reconcile to the control account/);
+test("the receivables aging roll and its reconciliation are withdrawn (critical repair A2)", () => {
+  /* The guest-receivable aggregate roll must no longer be presented as a
+     reliable figure — neither on screen nor in the printed statement. */
+  assert.ok(!ACCOUNTING.includes("Guest balances reconcile to"), "the reconciliation roll is withdrawn");
+  assert.ok(!ACCOUNTING.includes("do not reconcile to the control account"), "the printed roll warning is withdrawn");
+  assert.ok(!ACCOUNTING.includes("Guest receivables as at"), "the printed receivables roll is withdrawn");
+  /* The per-folio collections worksheet remains. */
+  assert.match(ACCOUNTING, /data-tbody="x-ar-items"/);
 });

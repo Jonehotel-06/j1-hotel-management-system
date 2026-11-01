@@ -10,6 +10,8 @@ urlpatterns = [
     path("assets/discrepancies/", asset_views.ReportView.as_view()),
     path("assets/discrepancies/<int:pk>/reviews/", asset_views.ReviewView.as_view()),
     path("", views.HousekeepingTaskListCreateView.as_view(), name="tasks"),
+    path("rooms/not-ready/", views.HousekeepingRoomsNotReadyView.as_view(), name="rooms-not-ready"),
+    path("rooms/<str:room_number>/mark-clean/", views.RoomMarkCleanView.as_view(), name="room-mark-clean"),
     path("<str:reference>/", views.HousekeepingTaskDetailView.as_view(), name="task-detail"),
     path("<str:reference>/assign/", views.HousekeepingTaskAssignView.as_view(), name="task-assign"),
     path("<str:reference>/claim/", views.HousekeepingTaskClaimView.as_view(), name="task-claim"),
