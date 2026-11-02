@@ -109,6 +109,25 @@ def allocation_capacity(*, folio, settles="") -> Decimal:
     return max(balance.quantize(Decimal("0.01")), Decimal("0.00"))
 
 
+def _available_unallocated_deposit(payment) -> Decimal:
+    """Remaining deposit, excluding refunds already taken from that deposit.
+
+    Caller must hold the payment row lock, shared with refund posting, so a
+    concurrent allocation cannot spend a deposit while it is being refunded.
+    Refunds against an allocation reopen receivables, not the deposit.
+    """
+    allocated = sum(
+        PaymentAllocation.objects.filter(payment=payment).values_list("amount", flat=True),
+        Decimal("0.00"),
+    )
+    refunded_deposit = sum(
+        RefundApplication.objects.filter(payment=payment, payment_allocation__isnull=True)
+        .values_list("amount", flat=True),
+        Decimal("0.00"),
+    )
+    return (Decimal(payment.amount) - allocated - refunded_deposit).quantize(Decimal("0.01"))
+
+
 @transaction.atomic
 def ensure_payment_collection(*, payment, actor=None) -> tuple[FinancialTransaction, bool]:
     """Record a successful payment's gross collection exactly once.
@@ -195,10 +214,7 @@ def apply_payment_to_folio(
     if existing:
         return existing, False
 
-    prior_allocations = list(
-        PaymentAllocation.objects.select_for_update().filter(payment=payment).only("amount")
-    )
-    available = Decimal(payment.amount) - sum((item.amount for item in prior_allocations), Decimal("0.00"))
+    available = _available_unallocated_deposit(payment)
     if available <= Decimal("0.00"):
         raise ValidationError("This payment has no unallocated balance remaining.")
     requested = Decimal(str(amount)) if amount is not None else available
@@ -308,13 +324,7 @@ def apply_unallocated_payments_for_booking(*, booking, folio, actor=None) -> lis
     )
     allocations = []
     for payment in payments:
-        already_allocated = sum(
-            PaymentAllocation.objects.select_for_update()
-            .filter(payment=payment)
-            .values_list("amount", flat=True),
-            Decimal("0.00"),
-        )
-        available = Decimal(payment.amount) - already_allocated
+        available = _available_unallocated_deposit(payment)
         if available <= Decimal("0.00"):
             continue
         capacity = allocation_capacity(folio=folio, settles=FolioPosting.Settles.ACCOMMODATION)
@@ -363,7 +373,8 @@ def ensure_processed_refund(*, refund, actor=None) -> tuple[FinancialTransaction
     if Decimal(refund.amount or 0) <= Decimal("0.00"):
         raise ValidationError("A processed refund must have a positive amount.")
 
-    payment = refund.payment
+    # Serialize refund and allocation against the same payment row.
+    payment = Payment.objects.select_for_update().select_related("booking", "user").get(pk=refund.payment_id)
     ensure_payment_collection(payment=payment, actor=actor or refund.requested_by)
     source_key = f"refund:{refund.pk}"
     existing = FinancialTransaction.objects.select_for_update().filter(source_key=source_key).first()

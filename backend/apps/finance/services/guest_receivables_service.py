@@ -411,7 +411,10 @@ def guest_receivables(
     as_of = as_of or hotel_today()
     currency = str(currency or "NGN").upper()
 
-    control = control_account_balance(as_of=as_of, currency=currency)
+    control_totals = receivable_lines(as_of=as_of, currency=currency).aggregate(
+        balance=_signed(), unassigned=_signed(Q(folio__isnull=True)),
+    )
+    control = _money(control_totals["balance"])
     rows = list(folio_balance_rows(as_of=as_of, currency=currency))
 
     gross = ZERO
@@ -439,7 +442,7 @@ def guest_receivables(
     # Receivable postings that were never attached to a folio (for example a
     # walk-in POS charge raised with no folio open). Surfaced rather than
     # dropped, because the control account contains them.
-    unassigned = control - (gross - credits)
+    unassigned = _money(control_totals["unassigned"])
 
     other_currencies = (
         FinancialLine.objects.filter(

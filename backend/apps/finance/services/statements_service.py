@@ -95,7 +95,12 @@ def _signed(account_code: str, debits: Decimal, credits: Decimal) -> Decimal:
 
 
 def _balances(*, before=None, through=None):
-    qs = FinancialLine.objects.filter(transaction__status=FinancialTransaction.Status.POSTED)
+    # These statement APIs label their output NGN and do not perform FX
+    # translation. Never add foreign-currency journal amounts to naira.
+    qs = FinancialLine.objects.filter(
+        transaction__status=FinancialTransaction.Status.POSTED,
+        transaction__currency="NGN",
+    )
     if before is not None:
         qs = qs.filter(transaction__business_date__lt=before)
     if through is not None:
@@ -176,6 +181,7 @@ def balance_sheet(*, as_of=None) -> dict:
     return {
         "as_of": as_of.isoformat(),
         "currency": "NGN",
+        "currency_basis": "NGN posted transactions only; foreign currencies are excluded, not translated.",
         "assets": assets,
         "total_assets": money(total_assets),
         "liabilities": liabilities,
@@ -227,6 +233,7 @@ def cash_flow(*, start, end) -> dict:
     lines = (
         FinancialLine.objects.filter(
             transaction__status=FinancialTransaction.Status.POSTED,
+            transaction__currency="NGN",
             transaction__business_date__gte=start,
             transaction__business_date__lte=end,
         )
@@ -270,6 +277,7 @@ def cash_flow(*, start, end) -> dict:
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
         "currency": "NGN",
+        "currency_basis": "NGN posted transactions only; foreign currencies are excluded, not translated.",
         "operating_activities": money(operating),
         "investing_activities": "0.00",
         "investing_note": "No fixed-asset or investment accounts exist in this ledger; inventory purchases are operating activities for a hotel.",

@@ -23,7 +23,7 @@ from django.db import IntegrityError, transaction
 
 from apps.accounts.capabilities import has_capability
 
-from ..models import Expense, SupplierPaymentRequest
+from ..models import Expense, FinancialTransaction, SupplierPaymentRequest
 from .expense_service import create_expense_handover
 
 
@@ -49,9 +49,13 @@ def _expense_posted_money(expense: Expense) -> tuple[bool, str]:
     is the money-out transaction. A posted CASH/BANK/CARD expense credits a
     tender account at posting, so no second settlement is expected.
     """
-    if expense.settlement_transaction_id:
+    if expense.status != Expense.Status.POSTED:
+        return False, ""
+    if (expense.settlement_transaction_id
+            and expense.settlement_transaction.status == FinancialTransaction.Status.POSTED):
         return True, expense.settlement_transaction.reference
-    if expense.financial_transaction_id and expense.payment_method != Expense.PaymentMethod.PAYABLE:
+    if (expense.financial_transaction_id and expense.payment_method != Expense.PaymentMethod.PAYABLE
+            and expense.financial_transaction.status == FinancialTransaction.Status.POSTED):
         return True, expense.financial_transaction.reference
     return False, ""
 
@@ -89,11 +93,34 @@ def reconcile_procurement_payment_with_accounting(*, payment, actor=None) -> dic
                 status = PurchaseOrderPayment.AccountingPostingStatus.REQUIRES_REVIEW
             else:
                 posted, transaction_reference = _expense_posted_money(existing)
-                status = (
-                    PurchaseOrderPayment.AccountingPostingStatus.POSTED
-                    if posted
-                    else PurchaseOrderPayment.AccountingPostingStatus.HANDED_TO_ACCOUNTING
-                )
+                source_id = (existing.metadata or {}).get("procurement_payment_id")
+                if source_id is not None and str(source_id) != str(payment.pk):
+                    # One payable per PO is not proof that a later instalment
+                    # was represented by the first handover's journal.
+                    transaction_reference = ""
+                    status = PurchaseOrderPayment.AccountingPostingStatus.REQUIRES_REVIEW
+                elif posted and not (
+                    str(source_id) == str(payment.pk)
+                    and existing.workflow_origin == Expense.WorkflowOrigin.PROCUREMENT_PAYMENT
+                    and existing.payment_method != Expense.PaymentMethod.PAYABLE
+                    and existing.amount == payment.amount
+                    and existing.currency == po.currency
+                    and existing.supplier_reference == (payment.reference or po.reference)[:120]
+                    and {"BANK_TRANSFER": Expense.PaymentMethod.BANK_TRANSFER,
+                         "CHEQUE": Expense.PaymentMethod.BANK_TRANSFER,
+                         "CARD": Expense.PaymentMethod.CARD}.get(payment.method) == existing.payment_method
+                ):
+                    # An unrelated payable/settlement on the same order is not
+                    # evidence that THIS disbursement was posted. A verified
+                    # explicit supplier-payment-request link uses MIRRORED.
+                    transaction_reference = ""
+                    status = PurchaseOrderPayment.AccountingPostingStatus.REQUIRES_REVIEW
+                else:
+                    status = (
+                        PurchaseOrderPayment.AccountingPostingStatus.POSTED
+                        if posted
+                        else PurchaseOrderPayment.AccountingPostingStatus.HANDED_TO_ACCOUNTING
+                    )
         elif has_capability(actor, "expense.request") or has_capability(actor, "expense.manage"):
             method_map = {
                 PurchaseOrderPayment.PaymentMethod.BANK_TRANSFER: Expense.PaymentMethod.BANK_TRANSFER,
