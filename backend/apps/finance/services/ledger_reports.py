@@ -135,6 +135,14 @@ def overview(*, start, end, currency="NGN"):
                            and r["code"] not in {accounting.GUEST_DEPOSITS, accounting.ACCOUNTS_PAYABLE}), ZERO)
     accounts = [{"code": r["code"], "account": r["label"], "amount": money(r["closing"])}
                 for r in rows if r["code"].startswith("ASSET.BANK")]
+    # Accounting-audit repair: the signed AR control balance is NOT a
+    # receivable. When guests prepay, it is credit-normal and used to render a
+    # negative "Guest receivables" card. The subledger position separates
+    # genuine debit receivables, guest credit/advances and unapplied deposits.
+    from .guest_receivables_service import guest_position
+
+    guest = guest_position(as_of=end, currency=currency)
+    payable_closing = positions.get(accounting.ACCOUNTS_PAYABLE, ZERO)
     return {"currency": currency, "start": start.isoformat(), "end": end.isoformat(),
             "earned_revenue": pnl["totals"]["net_revenue"], "expenses": pnl["totals"]["expenses"],
             "net_profit": pnl["totals"]["net_profit"],
@@ -143,12 +151,27 @@ def overview(*, start, end, currency="NGN"):
             "bank_total": money(sum((Decimal(row["amount"]) for row in accounts), ZERO)),
             "pos_clearing": money(positions.get(accounting.CARD_CLEARING, ZERO)),
             "paystack_clearing": money(positions.get("ASSET.PAYSTACK_SETTLEMENT", ZERO)),
-            "guest_receivables_control": money(positions.get(accounting.ACCOUNTS_RECEIVABLE, ZERO)),
-            "guest_advances_control": money(-positions.get(accounting.GUEST_DEPOSITS, ZERO)),
-            "supplier_payables_control": money(-positions.get(accounting.ACCOUNTS_PAYABLE, ZERO)),
+            # Non-negative, per-folio debit balances only (plus unassigned AR
+            # debits). Credit balances are never presented as negative AR.
+            "guest_receivables_control": guest["gross_guest_receivables"],
+            # Genuine money held for guests: folio credits + unapplied deposits.
+            "guest_advances_control": guest["guest_advances"],
+            "guest_credit_balances": guest["guest_credit_balances"],
+            "unapplied_guest_deposits": guest["unapplied_guest_deposits"],
+            "unpaid_bills": guest["unpaid_bills"]["amount"],
+            "partially_paid": guest["partially_paid"]["amount"],
+            "fully_paid_folios": guest["fully_paid"]["folios"],
+            "refunded_total": guest["refunded_total"],
+            "net_receivable_control": guest["net_receivable_control"],
+            "guest_balances": guest,
+            # A debit-normal payable control is an overpayment, not a negative
+            # liability: clamp and surface it separately.
+            "supplier_payables_control": money(max(-payable_closing, ZERO)),
+            "supplier_prepayments": money(max(payable_closing, ZERO)),
             "other_obligations": money(liability_other), "warnings": _warnings(rows) + [
                 "Bank clearing may include historic Paystack collections; it is not a verified bank balance.",
-                "Guest and supplier control balances can include unallocated or legacy differences; reconcile subledgers."]}
+                "Guest balances are classified from posted folio lines; the signed control balance is audit evidence only.",
+                "Supplier control balances can include unallocated or legacy differences; reconcile subledgers."]}
 
 
 def cash_bank(*, start, end, currency="NGN"):

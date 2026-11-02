@@ -288,6 +288,33 @@ SETTLEMENT_PAID = "PAID"
 SETTLEMENT_CANCELLED = "CANCELLED"
 SETTLEMENT_REFUNDED = "REFUNDED"
 
+# ---------------------------------------------------------------------------
+# Accounting audit repair — BALANCE CLASSIFICATION
+#
+# ``settlement_state`` is a legacy API contract: it calls every credit-normal
+# folio "REFUNDED" because the desk action for money held is "give it back".
+# That is an ACTION label, not an accounting classification. A guest who paid
+# NGN 100,000 against NGN 85,000 of charges has NOT been refunded: the hotel
+# holds a NGN 15,000 advance (a liability). A refund is a separate posted
+# REFUND transaction (money actually returned to the guest).
+#
+# ``balance_classification`` is additive: it is derived from the same posted
+# ledger lines, distinguishes unpaid bills, partially paid bills, fully paid
+# folios, genuine guest credit/advances and actual refunds, and never turns a
+# credit into a negative receivable. Existing ``settlement_state`` consumers
+# keep their contract unchanged.
+# ---------------------------------------------------------------------------
+CLASS_UNPAID_BILL = "UNPAID_BILL"
+CLASS_PARTIALLY_PAID = "PARTIALLY_PAID"
+CLASS_FULLY_PAID = "FULLY_PAID"
+CLASS_GUEST_CREDIT = "GUEST_CREDIT"
+CLASS_REFUNDED = "REFUNDED"
+CLASS_CANCELLED = "CANCELLED"
+BALANCE_CLASSES = (
+    CLASS_UNPAID_BILL, CLASS_PARTIALLY_PAID, CLASS_FULLY_PAID,
+    CLASS_GUEST_CREDIT, CLASS_REFUNDED, CLASS_CANCELLED,
+)
+
 #: Booking statuses that mean the stay will not be delivered.
 _DEAD_BOOKING_STATUSES = frozenset({"CANCELLED", "EXPIRED", "NO_SHOW"})
 
@@ -337,6 +364,168 @@ def settlement_state_for_row(row) -> str:
     if state == SETTLEMENT_UNPAID and charges > ZERO and settled > ZERO:
         return SETTLEMENT_PARTIAL
     return state
+
+
+def balance_classification_for_row(row) -> str:
+    """The accounting classification of one folio, derived from posted lines.
+
+    ``balance`` is debit-positive (guest owes) / credit-negative (hotel holds
+    money). ``refunds`` is the signed REFUND posting on this folio: only a
+    posted refund transaction makes a folio REFUNDED. An unpaid charge is
+    never a credit, and a credit is never a negative receivable.
+    """
+    balance = _money(row["balance"])
+    charges = (
+        _money(row["accommodation_charges"])
+        + _money(row["food_beverage_charges"])
+        + _money(row["other_charges"])
+    )
+    settled = -_money(row["payments_allocated"]) - _money(row["discounts"]) + _money(row["refunds"])
+    refund_postings = max(_money(row["refunds"]), ZERO)
+    status = str(row["folio__booking__status"] or "").upper()
+    dead = status in _DEAD_BOOKING_STATUSES
+    # Money ACTUALLY returned takes precedence: the refund posting both
+    # explains the renewed debit and keeps the folio out of "unpaid bills".
+    if refund_postings > ZERO and balance >= ZERO:
+        return CLASS_REFUNDED
+    if balance > ZERO:
+        if dead:
+            return CLASS_CANCELLED
+        return CLASS_PARTIALLY_PAID if charges > ZERO and settled > ZERO else CLASS_UNPAID_BILL
+    if balance < ZERO:
+        return CLASS_REFUNDED if refund_postings > ZERO else CLASS_GUEST_CREDIT
+    if dead:
+        return CLASS_CANCELLED
+    return CLASS_REFUNDED if refund_postings > ZERO else CLASS_FULLY_PAID
+
+
+def classification_summary(rows) -> dict:
+    """Counts and amounts per accounting classification, over ALL folios."""
+    summary = {name: {"folios": 0, "amount": ZERO} for name in BALANCE_CLASSES}
+    refunded_total = ZERO
+    for row in rows:
+        state = balance_classification_for_row(row)
+        balance = _money(row["balance"])
+        refunds = _money(row["refunds"])
+        refunded_total += max(refunds, ZERO)
+        summary[state]["folios"] += 1
+        if state in (CLASS_UNPAID_BILL, CLASS_PARTIALLY_PAID, CLASS_CANCELLED):
+            summary[state]["amount"] += max(balance, ZERO)
+        elif state == CLASS_GUEST_CREDIT:
+            summary[state]["amount"] += max(-balance, ZERO)
+        elif state == CLASS_REFUNDED:
+            summary[state]["amount"] += max(refunds, ZERO)
+    return {
+        state: {"folios": entry["folios"], "amount": money(entry["amount"])}
+        for state, entry in summary.items()
+    }
+
+
+def guest_position(*, as_of: date, currency: str = "NGN") -> dict:
+    """One ledger-authoritative guest position for the Accounting page.
+
+    Balances are as-of ``as_of`` (a position, not a period flow). The figures
+    are deliberately kept SEPARATE: receivables, credit/advances, unapplied
+    deposits, unpaid/partial bills and actual refunds never collapse into one
+    signed number.
+    """
+    report = guest_receivables(as_of=as_of, currency=currency, limit=1, include_settled=True)
+    rows = list(folio_balance_rows(as_of=as_of, currency=currency))
+    gross = _money(report["gross_receivables"])
+    credits = _money(report["guest_credit_balances"])
+    unassigned = _money(report["unassigned_receivables"])
+    deposits = _money(report["unapplied_guest_deposits"])
+    classification = classification_summary(rows)
+    refunded_total = sum((max(_money(row["refunds"]), ZERO) for row in rows), ZERO)
+    return {
+        "as_of": report["as_of"],
+        "currency": report["currency"],
+        "basis": report["basis"],
+        "gross_receivables": money(gross),
+        "unassigned_receivables": money(unassigned),
+        "gross_guest_receivables": money(max(
+            gross + max(unassigned, ZERO) - _money(classification[CLASS_CANCELLED]["amount"]), ZERO
+        )),
+        "guest_credit_balances": money(credits),
+        "unapplied_guest_deposits": money(deposits),
+        # A debit-normal GUEST_DEPOSITS balance (legacy allocations exceeding
+        # recorded deposits) is NOT an advance: clamp it so advances can never
+        # be understated or negative.
+        "guest_advances": money(credits + max(deposits, ZERO) + max(-unassigned, ZERO)),
+        "net_receivable_control": report["net_receivable"],
+        "unpaid_bills": classification[CLASS_UNPAID_BILL],
+        "partially_paid": classification[CLASS_PARTIALLY_PAID],
+        "fully_paid": classification[CLASS_FULLY_PAID],
+        "guest_credit": classification[CLASS_GUEST_CREDIT],
+        "refunded": classification[CLASS_REFUNDED],
+        "cancelled": classification[CLASS_CANCELLED],
+        "classification": classification,
+        "refunded_total": money(refunded_total),
+        "reconciles": report["reconciliation"]["reconciles"],
+        "control_account_balance": report["reconciliation"]["control_account_balance"],
+        "definitions": {
+            "gross_guest_receivables": "Posted debit balances guests genuinely owe; never negative.",
+            "guest_advances": "Posted folio credit balances plus unapplied guest deposits (hotel holds guest money).",
+            "unpaid_bills": "Posted charges with no payment applied.",
+            "partially_paid": "Posted charges with some, but not all, payment applied.",
+            "fully_paid": "Posted charges fully settled, nothing held.",
+            "guest_credit": "Actual money received in excess of posted charges (advance), not a negative receivable.",
+            "refunded": "Money actually returned to a guest: posted REFUND transactions only.",
+            "net_receivable_control": "Signed ASSET.GUEST_RECEIVABLE control balance (audit only; never shown as receivables).",
+        },
+    }
+
+
+def guest_position_from_report(report: dict, classification: dict | None = None) -> dict:
+    """Build the position block from an already-computed receivables report.
+
+    Used by ``financial_summary`` so the balance figures cost no second ledger
+    pass. ``classification`` is supplied when the caller already has the rows.
+    """
+    gross = _money(report["gross_receivables"])
+    credits = _money(report["guest_credit_balances"])
+    unassigned = _money(report["unassigned_receivables"])
+    deposits = _money(report["unapplied_guest_deposits"])
+    classes = classification or report.get("classification") or {}
+    def _class(name):
+        return classes.get(name) or {"folios": 0, "amount": money(ZERO)}
+    return {
+        "as_of": report["as_of"],
+        "currency": report["currency"],
+        "basis": report["basis"],
+        "gross_receivables": money(gross),
+        "unassigned_receivables": money(unassigned),
+        "gross_guest_receivables": money(max(
+            gross + max(unassigned, ZERO)
+            - _money((classes.get(CLASS_CANCELLED) or {}).get("amount", ZERO)), ZERO
+        )),
+        "guest_credit_balances": money(credits),
+        "unapplied_guest_deposits": money(deposits),
+        # A debit-normal GUEST_DEPOSITS balance (legacy allocations exceeding
+        # recorded deposits) is NOT an advance: clamp it so advances can never
+        # be understated or negative.
+        "guest_advances": money(credits + max(deposits, ZERO) + max(-unassigned, ZERO)),
+        "net_receivable_control": report["net_receivable"],
+        "unpaid_bills": _class(CLASS_UNPAID_BILL),
+        "partially_paid": _class(CLASS_PARTIALLY_PAID),
+        "fully_paid": _class(CLASS_FULLY_PAID),
+        "guest_credit": _class(CLASS_GUEST_CREDIT),
+        "refunded": _class(CLASS_REFUNDED),
+        "cancelled": _class(CLASS_CANCELLED),
+        "classification": classes,
+        "reconciles": report["reconciliation"]["reconciles"],
+        "control_account_balance": report["reconciliation"]["control_account_balance"],
+        "definitions": {
+            "gross_guest_receivables": "Posted debit balances guests genuinely owe; never negative.",
+            "guest_advances": "Posted folio credit balances plus unapplied guest deposits (hotel holds guest money).",
+            "unpaid_bills": "Posted charges with no payment applied.",
+            "partially_paid": "Posted charges with some, but not all, payment applied.",
+            "fully_paid": "Posted charges fully settled, nothing held.",
+            "guest_credit": "Actual money received in excess of posted charges (advance), not a negative receivable.",
+            "refunded": "Money actually returned to a guest: posted REFUND transactions only.",
+            "net_receivable_control": "Signed control-account balance; audit evidence only, not a receivable card.",
+        },
+    }
 
 
 def settlement_summary(rows) -> dict:
@@ -504,6 +693,9 @@ def guest_receivables(
                 # Task 07: WHICH situation this folio is in, derived from the
                 # ledger balance and the booking status. See settlement_state().
                 "settlement_state": settlement_state_for_row(row),
+                # Accounting-audit repair: the true classification. A credit
+                # balance is an advance, not a refund and not negative AR.
+                "balance_classification": balance_classification_for_row(row),
                 "age_days": max((as_of - started).days, 0),
                 "age_bucket": _age_bucket((as_of - started).days),
                 "movements": row["movements"],
@@ -564,6 +756,9 @@ def guest_receivables(
         # population (not the itemised page), so a tile can never disagree with
         # the table it sits above.
         "settlement": settlement_summary(rows),
+        "classification": classification_summary(rows),
+        "refunded_total": money(sum(
+            (max(_money(row["refunds"]), ZERO) for row in rows), ZERO)),
         # Exposure on stays the ledger has not charged yet. Reported beside
         # the receivable, never inside it.
         "stay_value_not_yet_charged": money(not_charged["amount"]),
@@ -617,6 +812,12 @@ def guest_receivables(
                 "never stored, so it cannot drift from the money."
             ),
             "total_outstanding": "Alias of gross_receivables, kept for existing API consumers.",
+            "balance_classification": (
+                "UNPAID_BILL (no payment) · PARTIALLY_PAID (some payment, money still owed) · "
+                "FULLY_PAID (settled) · GUEST_CREDIT (money received exceeding posted charges) · "
+                "REFUNDED (a posted refund transaction returned money) · CANCELLED (dead booking). "
+                "Credit balances are never negative receivables and never netted across guests."
+            ),
             "stay_value_not_yet_charged": (
                 "Booking total less payments received, less the accommodation already charged to a "
                 "folio — i.e. contracted room value the ledger has not recognised yet (future nights, "

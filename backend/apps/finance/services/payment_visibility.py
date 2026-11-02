@@ -107,10 +107,26 @@ def settlement_measure_filters():
             transaction__metadata__accounting_class=accounting_class,
         )
 
+    # Reversal splits. A posted reversal debits the tender account that the
+    # original disbursement credited; without these, a reversed supplier
+    # payment stayed in "supplier_payments_made" forever (only the *total*
+    # disbursement netted it, through a negative "other" residual).
+    reversal_base = Q(
+        transaction__reversal_of__type__in=DISBURSEMENT_TYPES,
+        direction=FinancialLine.Direction.DEBIT,
+        account_code__in=TENDER_ASSET_ACCOUNTS,
+    )
     return {
         # Money that actually left a tender account, split by what it was for.
         "supplier_payments_made": paid_out_of_tender_with_debit(account_code=accounting.INVENTORY_ASSET) | settled_on_account("INVENTORY"),
         "operating_expenses_paid": paid_out_of_tender_with_debit(account_code=accounting.OPERATING_EXPENSE) | settled_on_account("OPERATING"),
+        "supplier_payment_reversals": reversal_base & (
+            Q(transaction__reversal_of__metadata__expense_settlement=True)
+            | Q(transaction__reversal_of__metadata__accounting_class="INVENTORY")
+        ),
+        "operating_payment_reversals": reversal_base & (
+            Q(transaction__reversal_of__metadata__accounting_class="OPERATING")
+        ),
         "net_payroll_paid": Q(
             transaction__type=FinancialTransaction.Type.PAYROLL_PAYMENT,
             direction=FinancialLine.Direction.CREDIT,
@@ -187,7 +203,8 @@ def expense_approval_counts(*, start_date: date, end_date: date) -> dict:
     )
 
 
-def unposted_procurement_payment_visibility(*, currency: str) -> dict:
+def unposted_procurement_payment_visibility(*, currency: str, start_date: date | None = None,
+                                            end_date: date | None = None) -> dict:
     """Operational payments that have not been mirrored or posted in Finance.
 
     These rows are evidence that money left the hotel. They are deliberately
@@ -203,14 +220,71 @@ def unposted_procurement_payment_visibility(*, currency: str) -> dict:
     pending = PurchaseOrderPayment.objects.filter(purchase_order__currency=currency).exclude(
         accounting_posting_status__in=settled
     )
+    # Accounting-audit repair: this workflow EXCEPTION was previously
+    # unscoped, so the same NGN 124,800 appeared in a 2024 report, a 2025
+    # report and a 2026 report. A period report must only name exceptions
+    # whose payment evidence falls inside that period.
+    if start_date is not None:
+        pending = pending.filter(paid_on__gte=start_date)
+    if end_date is not None:
+        pending = pending.filter(paid_on__lte=end_date)
     aggregate = pending.aggregate(count=Count("pk"), amount=Sum("amount", default=ZERO))
     return {
         "count": int(aggregate["count"] or 0),
         "amount": money(_amount(aggregate["amount"])),
-        "added_to_posted_totals": False,
+            "added_to_posted_totals": False,
+        "period_start": start_date.isoformat() if start_date else None,
+        "period_end": end_date.isoformat() if end_date else None,
         "note": (
-            "Procurement payments are operational evidence. A Finance handover, approved expense "
-            "or mirrored executed settlement is the only route into posted financial figures."
+            "Procurement payments are operational evidence, scoped to the selected paid-on period. "
+            "A Finance handover, approved expense or mirrored executed settlement is the only route "
+            "into posted financial figures."
+        ),
+    }
+
+
+def approved_unpaid_procurement_visibility(*, end_date: date, currency: str) -> dict:
+    """Approved purchase commitments with no payment evidence (operational only).
+
+    Approval is NOT a payment and NOT a posted liability. These orders are
+    surfaced as a separate count/amount so an approved purchase can never be
+    folded into cash disbursed or paid expenses.
+    """
+    from django.db.models import F, OuterRef, Subquery, Sum as DBSum, Value as DBValue
+    from django.db.models.functions import Coalesce, Greatest
+    from apps.inventory.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderPayment
+
+    # One bounded aggregate: ordered value and paid value are correlated
+    # subqueries, so no per-order Python loop and no join multiplication.
+    ordered = (PurchaseOrderLine.objects.filter(purchase_order=OuterRef("pk"))
+               .order_by().values("purchase_order")
+               .annotate(total=DBSum(F("quantity_ordered") * F("unit_cost")))
+               .values("total")[:1])
+    paid = (PurchaseOrderPayment.objects.filter(purchase_order=OuterRef("pk"))
+            .order_by().values("purchase_order")
+            .annotate(total=DBSum("amount")).values("total")[:1])
+    rows = (PurchaseOrder.objects.filter(
+                currency=currency,
+                status__in=("APPROVED", "ORDERED", "PARTIALLY_RECEIVED", "RECEIVED"),
+            ).exclude(payment_status=PurchaseOrder.PaymentStatus.PAID)
+            .annotate(
+                ordered_value=Coalesce(Subquery(ordered), DBValue(ZERO)),
+                paid_value=Coalesce(Subquery(paid), DBValue(ZERO)),
+            )
+            .annotate(outstanding=Greatest(F("ordered_value") - F("paid_value"), DBValue(ZERO))))
+    totals = rows.aggregate(
+        amount=DBSum("outstanding", default=ZERO),
+        orders=Count("pk", filter=Q(outstanding__gt=ZERO)),
+    )
+    return {
+        "orders": int(totals["orders"] or 0),
+        "amount": money(_amount(totals["amount"])),
+        "as_of": end_date.isoformat(),
+        "posted_liability": False,
+        "note": (
+            "Approved/ordered purchase commitments with unpaid operational balances. "
+            "Approval and goods receipt do not post cash and do not create a posted "
+            "supplier liability; only a posted expense/payable or executed settlement does."
         ),
     }
 
@@ -227,8 +301,10 @@ def supplier_payment_visibility(
     receipt total supplied by the caller; it is visibility only and is never
     added to a posted-money measure.
     """
-    supplier_payments_made = _amount(totals.get("supplier_payments_made"))
-    operating_expenses_paid = _amount(totals.get("operating_expenses_paid"))
+    supplier_payments_made = (_amount(totals.get("supplier_payments_made"))
+                              - _amount(totals.get("supplier_payment_reversals")))
+    operating_expenses_paid = (_amount(totals.get("operating_expenses_paid"))
+                               - _amount(totals.get("operating_payment_reversals")))
     net_payroll_paid = _amount(totals.get("net_payroll_paid")) - _amount(totals.get("payroll_cash_reversals"))
     total_disbursements = _amount(totals.get("total_disbursements")) - _amount(totals.get("disbursement_reversals"))
 
@@ -243,7 +319,9 @@ def supplier_payment_visibility(
     opening = opening_payables_balance(before=start_date, currency=currency)
     outstanding = opening + payables_raised - payables_settled
     approvals = expense_approval_counts(start_date=start_date, end_date=end_date)
-    unposted = unposted_procurement_payment_visibility(currency=currency)
+    unposted = unposted_procurement_payment_visibility(
+        currency=currency, start_date=start_date, end_date=end_date,
+    )
 
     return {
         "goods_receipts_value": money(_amount(goods_receipts_value)),
@@ -321,5 +399,6 @@ def supplier_payment_visibility(
 
 __all__ = [
     "supplier_payment_visibility", "settlement_measure_filters", "expense_approval_counts",
-    "opening_payables_balance", "TENDER_ASSET_ACCOUNTS", "DISBURSEMENT_TYPES",
+    "opening_payables_balance", "unposted_procurement_payment_visibility",
+    "approved_unpaid_procurement_visibility", "TENDER_ASSET_ACCOUNTS", "DISBURSEMENT_TYPES",
 ]

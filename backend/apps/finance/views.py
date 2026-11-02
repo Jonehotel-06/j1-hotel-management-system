@@ -65,6 +65,7 @@ from apps.core.utils import hotel_today
 from .services.journal_service import chart_of_accounts, post_manual_journal, record_cash_drop
 from .services.night_audit_service import accounts_receivable_aging, daily_reconciliation
 from .services.procurement_payable_service import (
+    purchase_order_payable_position,
     purchase_order_payables_index,
     raise_payable_from_purchase_order,
 )
@@ -75,6 +76,7 @@ from .services.supplier_payment_service import (
     propose_supplier_payment,
     review_supplier_payment,
     submit_supplier_payment,
+    reverse_supplier_settlement,
 )
 from .services.statements_service import balance_sheet, cash_flow
 from .services.reporting_service import financial_summary, summary_pdf_bytes, summary_xlsx_bytes
@@ -985,7 +987,13 @@ class PurchaseOrderPayableListView(APIView):
         if references is not None and len(references) > 200:
             raise ValidationError({"references": "Ask for at most 200 purchase orders at a time."})
         index = purchase_order_payables_index(references=references)
-        return success_response({"purchase_orders": index, "count": len(index)})
+        # Additive Accounting-page position. ``purchase_orders`` and ``count``
+        # keep their exact existing shape for every other consumer.
+        return success_response({
+            "purchase_orders": index,
+            "count": len(index),
+            "position": purchase_order_payable_position(index, as_of=hotel_today()),
+        })
 
 
 @extend_schema(
@@ -1265,3 +1273,27 @@ class SupplierPaymentRequestCancelView(APIView):
             SupplierPaymentRequestSerializer(payment_request).data,
             message="Payment request cancelled. Nothing was paid.",
         )
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Reverse an executed supplier payment (Accounting)")
+class SupplierSettlementReverseView(APIView):
+    """Controlled reversal: posts a VOID, reopens AP, keeps every original row."""
+
+    permission_classes = [HasCapability]
+    required_capability = "expense.approve"
+
+    def post(self, request, reference):
+        result = reverse_supplier_settlement(
+            reference=reference, actor=request.user,
+            reason=str(request.data.get("reason") or ""),
+        )
+        log_action(
+            actor=request.user, action="SUPPLIER_SETTLEMENT_REVERSED",
+            instance=FinancialTransaction.objects.filter(reference=reference).first(),
+            request=request,
+            metadata={"reversal_reference": result["reference"],
+                      "expense_reference": result.get("expense_reference", ""),
+                      "reason": str(request.data.get("reason") or "")[:500]},
+        )
+        return success_response(result, message="Supplier payment reversed; the payable is open again.",
+                                status=status.HTTP_201_CREATED if result.get("created") else status.HTTP_200_OK)

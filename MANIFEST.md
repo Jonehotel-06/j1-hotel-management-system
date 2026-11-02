@@ -1,19 +1,36 @@
-# Batch 08 package manifest
+# Changed Files — Manifest
 
-Source: https://github.com/Jonehotel-06/j1-hotel-management-system, commit `c17a84f`. Package contains only the following changed/new repository-relative files and the five Batch 08 documents at package root. Paths below are also the original integration locations; new files did not previously exist.
+**Exactly 14 files** were created or modified. All other project files are unchanged. `changed_files/` contains **only** these files, in their original relative paths. No migration was created, so no migration file is included. `git diff --stat` and the complete unified diff are in `../patches/`.
 
-| Path | Change |
-|---|---|
-| `backend/apps/housekeeping/models.py` | Modified: asset catalog, configurations, inspection evidence and reviews |
-| `backend/apps/housekeeping/urls.py` | Modified: asset route registration before task reference routes |
-| `backend/apps/housekeeping/asset_views.py` | New: role-gated API and workflow |
-| `backend/apps/housekeeping/migrations/0002_reusableitem_assetinspection_assetinspectionline_and_more.py` | New: schema migration |
-| `backend/tests/test_batch08_room_assets.py` | New: backend/API tests |
-| `frontend/dashboard/housekeeping.html` | Modified: responsive asset panel, original task queue retained |
-| `frontend/js/room-assets.js` | New: asynchronous panel logic |
-| `frontend/tests/batch08_mobile.py` | New: Playwright component smoke test |
-| `MANIFEST.md` | New: this manifest |
-| `CHANGES.md` | New: changes and known limitations |
-| `TEST_REPORT.md` | New: executed checks and results |
-| `HOUSEKEEPING_WORKFLOW.md` | New: process and API contract |
-| `DEPENDENCIES.md` | New: deployment and test dependencies |
+Line references below are to the **repaired** files in this folder (verified 2026-11-02).
+
+## File path | What changed | Why it changed
+
+| File path | What changed | Why it changed |
+| --- | --- | --- |
+| `backend/apps/finance/services/guest_receivables_service.py` | Added constants `CLASS_UNPAID_BILL`/`PARTIALLY_PAID`/`FULLY_PAID`/`GUEST_CREDIT`/`REFUNDED`/`CANCELLED` (L307), `balance_classification_for_row()` (L369), `classification_summary()` (L402), `guest_position()` (L424), `guest_position_from_report()` (L479); exposed `balance_classification` per item (L698), plus `classification` / `refunded_total` in `guest_receivables()` (L815). Legacy `settlement_state` unchanged. `gross_guest_receivables` excludes cancelled folios and clamps at zero; `guest_advances` clamps debit-normal deposits. | A credit folio was labelled `REFUNDED` with no refund; the signed control balance was treated as a negative receivable. Adds the six required separate classifications without changing any existing API key. |
+| `backend/apps/finance/services/night_audit_service.py` | Imports `guest_position_from_report` (L183); AR aging response adds `classification` (L255), `refunded_total` and `guest_balances` (L257), `balance_classification` per item, and a definition note. | Publishes the corrected classifications through the existing `/api/admin/finance/reports/ar-aging/` endpoint used by both Accounting and Reports (additive). |
+| `backend/apps/finance/services/ledger_reports.py` | `overview()` (L138–170) now computes `guest_position()` and publishes `gross_guest_receivables` as `guest_receivables_control`, `guest_advances` as `guest_advances_control`, plus `guest_credit_balances`, `unapplied_guest_deposits`, `unpaid_bills`, `partially_paid`, `fully_paid_folios`, `refunded_total`, `net_receivable_control`, `guest_balances`; clamps `supplier_payables_control` and adds `supplier_prepayments`. | Removed the negative "Guest receivables" preview card and the negative supplier payable card; both were signed control balances, not assets/liabilities. |
+| `backend/apps/finance/services/payment_visibility.py` | Added `supplier_payment_reversals` / `operating_payment_reversals` conditional measures (L123, L305); `unposted_procurement_payment_visibility()` now accepts `start_date`/`end_date` (L206, L236) and filters `paid_on`; added `approved_unpaid_procurement_visibility()` (L246) as one bounded aggregate; `supplier_payments_made` / `operating_expenses_paid` net their reversals. | The same 124,800.00 NGN exception appeared in 2024/2025/2026; reversed supplier payments stayed "paid"; approved-but-unpaid commitments had no Accounting visibility. |
+| `backend/apps/finance/services/reporting_service.py` | `financial_summary()` adds `guest_balances` (L798) and `supplier_balances` (L801) built from already-computed ledger data. **No extra SQL queries** (strict `assertNumQueries(15)` still passes). | Accounting needs the two separated positions on one call; Reports and every other consumer keep all existing keys unchanged. |
+| `backend/apps/finance/services/procurement_payable_service.py` | Added `_posted_and_not_reversed()` (L64), `posted_expense_paid_amount()` (L84), `supplier_invoice_status_summary()` (L219), `purchase_order_payable_position()` (L281); `purchase_order_payable_summary()` (L183) now separates `posted_payable_liability`, `unposted_payable_documents`, `actual_supplier_payments` and computes `payable_outstanding` from posted liability − valid payments. `purchase_order_payables_index()` return shape unchanged. | Draft PO-linked documents were counted as liabilities and `paid_at` markers were counted as cash. Approval/goods receipt must never be a payment. |
+| `backend/apps/finance/services/supplier_payment_service.py` | `payable_balance()` (L82) excludes settlements with a posted reversal and validates posting markers; added `reverse_supplier_settlement()` (L385): append-only `VOID` journal, `FinancialEvent(REVERSED)`, independent-approver check, idempotent, clears only legacy workflow markers. | There was no supplier-settlement reversal workflow; a recalled payment could never reopen the payable. |
+| `backend/apps/finance/services/statements_service.py` | `balance_sheet()` (L182–267) adds `presented_assets`, `presented_liabilities`, `presented_total_*`, `presented_net_assets`, `presented_balanced`, `guest_position`, `guest_credit_liability`, `presentation_note`. Legacy `assets`/`liabilities`/`balanced` rows retained. | A credit-normal AR balance was folded into `Other assets = -302,500.00` instead of being presented as a liability; the statement still foots. |
+| `backend/apps/finance/views.py` | `PurchaseOrderPayableIndexView.get()` adds an additive `position` block (L995) via `purchase_order_payable_position()` (import L68); added `SupplierSettlementReverseView` (L1279). | Accounting needs the posted-vs-draft PO position and a controlled reversal route; existing `purchase_orders` / `count` keys unchanged. |
+| `backend/apps/finance/urls.py` | One route (L68): `supplier-settlements/<str:reference>/reverse/`. | Exposes the new Accounting-only reversal workflow. |
+| `frontend/dashboard/accounting.html` | Added `[data-pos]` balance KPI section (L122), `setPos()`/`posAmount()` (L577), `renderFinance()` publishing `guest_balances`/`supplier_balances` (L754), `loadStatements()` preferring `presented_*` rows (L2225), `CLASS_LABELS` + AR classification table/column (L2759), PO cells exposing `posted_payable_liability`/`unposted_payable_documents`/`actual_supplier_payments` (L1528) and PO `position` note, supplier reversal button/handler/action (L1055–1056, L1706, L1846). | Frontend must display the backend values rather than hide, relabel or recompute them; adds the required categories and a safe reversal action. |
+| `frontend/dashboard/accounting-ledger.html` | Replaced the "Control account" caption (L54) with "Debit folio balances only"; added 8 metric cards: `guest_credit_balances` (L56), `unapplied_guest_deposits`, `unpaid_bills`, `partially_paid`, `refunded_total` (L60), `supplier_prepayments` (L62); clarified supplier payables caption. | The preview previously showed a negative receivable; now every figure is a named, separate server metric. |
+| `backend/tests/test_accounting_audit_repair.py` | **New** (591 lines): `GuestBalanceMatrixTests` (L90) + `SupplierBalanceMatrixTests` (L335), 24 tests covering all mandatory cases, DB/service/API/summary/balance-sheet lineage, refunds, reversals, duplicates, partials, dates, zero/large values, multiple folios/services, checkout, API errors and refresh. | Mandatory regression evidence; uses an isolated disposable DB only. |
+| `frontend/tests-js/test-accounting-audit-repair-ui.js` | **New** (241 lines): asserts Reports byte-equality (L25), new markup/keys, `renderFinanceWith()` (L100) rendering backend decimal strings, AR credit-vs-refund classification, and ledger preview metrics. | Proves frontend displays backend values and that Reports was untouched. |
+
+## Files deliberately NOT changed
+
+`frontend/dashboard/reports.html`, `frontend/js/config.js`, `frontend/js/api.js`, `frontend/js/accounting-rebuild.js`, all `backend/apps/inventory/**`, `backend/apps/bookings/**`, `backend/apps/stays/**`, `backend/apps/pos/**`, `backend/apps/guest_services/**`, `backend/apps/payments/**`, `backend/apps/reports/**`, authentication/permissions, all other dashboard pages, all migrations, `ACCOUNTING_FORMULAS.md`, `ACCOUNTING_IMPLEMENTATION_REPORT.md` and all root reports. The authoritative clone `/home/user/JONE_ORIGINAL` remains clean at `main` HEAD `26556a9`.
+
+## Verification of this manifest
+
+```
+cd /home/user/JONE_WORK
+git status --porcelain           # exactly the 12 M + 2 ?? entries above
+git diff --stat                  # 14 files, 1737 insertions, 48 deletions
+```

@@ -179,7 +179,9 @@ def accounts_receivable_aging(*, as_of=None, limit=100, currency: str = "NGN") -
     ``total_outstanding``, ``buckets``, ``items``, ``items_truncated``,
     ``definitions``) are preserved; everything else is additive.
     """
-    from .guest_receivables_service import AGING_BUCKETS, guest_receivables
+    from .guest_receivables_service import (
+        AGING_BUCKETS, guest_position_from_report, guest_receivables,
+    )
 
     as_of = as_of or hotel_today()
     report = guest_receivables(as_of=as_of, currency=currency, limit=limit)
@@ -218,6 +220,9 @@ def accounts_receivable_aging(*, as_of=None, limit=100, currency: str = "NGN") -
             # cancelled or refunded. Derived from the same signed ledger
             # balance above, so it can never disagree with ``balance_due``.
             "settlement_state": row["settlement_state"],
+            # Accounting-audit repair: a genuine accounting classification.
+            # "REFUNDED" now means a posted refund, not merely a credit balance.
+            "balance_classification": row["balance_classification"],
         }
         for row in report["items"]
     ]
@@ -247,6 +252,9 @@ def accounts_receivable_aging(*, as_of=None, limit=100, currency: str = "NGN") -
         # Task 07: folio counts and amounts per settlement state, over the whole
         # population. A dashboard tile can read these without re-deriving them.
         "settlement": report["settlement"],
+        "classification": report["classification"],
+        "refunded_total": report["refunded_total"],
+        "guest_balances": guest_position_from_report(report, report["classification"]),
         "items": items,
         "by_booking": report["by_booking"],
         "items_truncated": report["items_truncated"],
@@ -261,6 +269,11 @@ def accounts_receivable_aging(*, as_of=None, limit=100, currency: str = "NGN") -
             "credit_balance": (
                 "Credit balance on the same folio — an advance or overpayment the hotel holds. Reported, "
                 "never clamped to zero and never netted against another guest."
+            ),
+            "balance_classification": (
+                "UNPAID_BILL · PARTIALLY_PAID · FULLY_PAID · GUEST_CREDIT · REFUNDED · CANCELLED. "
+                "GUEST_CREDIT is money actually received in excess of posted charges; REFUNDED "
+                "requires a posted REFUND transaction. Credit is never negative receivables."
             ),
             "age_basis": "Days since arrival (or folio opening when there is no booking); future arrivals age as current.",
             **report["definitions"],

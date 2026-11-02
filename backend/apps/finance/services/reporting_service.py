@@ -785,11 +785,41 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
         "by_department": by_department,
         "by_day": serialized_days,
     }
-    from .guest_receivables_service import guest_receivables
+    from .guest_receivables_service import guest_position_from_report, guest_receivables
 
     receivables = guest_receivables(
         as_of=end_date, currency=currency, limit=1, include_settled=False
     )
+    # Accounting-audit repair: the Accounting page must publish the guest and
+    # supplier POSITIONS as separate, ledger-derived classifications rather
+    # than a single signed control-account number. Both blocks are additive:
+    # every existing key above is unchanged, so other consumers (including the
+    # Reports page, which reads only the measures it labels) are unaffected.
+    result["guest_balances"] = guest_position_from_report(
+        receivables, receivables["classification"]
+    )
+    result["supplier_balances"] = {
+        "basis": "posted_immutable_ledger_and_posted_expense_documents",
+        "as_of": end_date.isoformat(),
+        "currency": currency,
+        "invoices_recognized": payments["supplier_invoices_recognized"],
+        "payables_raised": payments["supplier_payables_raised"],
+        "payables_settled": payments["supplier_payables_settled"],
+        "opening_payables": payments["supplier_payables_opening_balance"],
+        "outstanding_payables": payments["outstanding_supplier_payables"],
+        "actual_supplier_payments": payments["supplier_payments_made"],
+        "total_cash_disbursed": payments["total_cash_disbursements"],
+        "unposted_procurement_payments": payments["unposted_procurement_payments"],
+        "definitions": {
+            "outstanding_payables": "Posted supplier invoices less valid payments applied; a period-end balance, never a cash flow.",
+            "actual_supplier_payments": "Posted tender credits for supplier disbursements, net of their reversals. Approval alone moves no money.",
+            "approval_is_not_payment": (
+                "Purchase-order approval and goods receipt post no cash. Approved-but-unpaid orders, "
+                "unpaid/partially paid/fully paid invoice counts and posted liabilities are reported by the "
+                "Accounting purchase-order payable endpoint; they are never folded into cash disbursed."
+            ),
+        },
+    }
     result["reconciliation"] = build_reconciliation(summary=result, receivables=receivables)
     return result
 

@@ -55,9 +55,13 @@ from apps.accounts.capabilities import has_capability
 from apps.core.approvals import override_event_details, override_note, require_independent_approver
 from apps.core.utils import hotel_today
 
-from ..models import ApprovalRequest, Expense, SupplierPaymentRequest
+from ..models import (
+    ApprovalRequest, Expense, FinancialEvent, FinancialLine, FinancialTransaction,
+    SupplierPaymentRequest, SupplierSettlement,
+)
 from .approval_service import _review_approval, active_control_policy, request_approval, requires_manager_approval
 from .expense_service import settle_expense_payment
+from .ledger_service import create_posted_transaction
 from .references import generate_finance_reference
 
 CENT = Decimal("0.01")
@@ -76,13 +80,30 @@ TERMINAL_STATUSES = (
 
 
 def payable_balance(expense: Expense) -> Decimal:
-    """Outstanding amount after posted instalments; legacy final payments remain paid."""
-    if expense.settlement_transaction_id or expense.paid_at:
-        return ZERO
+    """Outstanding amount after VALID posted instalments.
+
+    Accounting-audit repair: a reversed supplier payment used to remain
+    counted as successful, because the original settlement journal stays
+    POSTED and the reversal is a separate balancing journal. A posted VOID
+    referencing that settlement reopens the liability, so the supplier can be
+    paid again through the controlled workflow.
+    """
     from django.db.models import Sum
-    from ..models import SupplierSettlement
+    from ..models import FinancialTransaction, SupplierSettlement
+    from .procurement_payable_service import _posted_and_not_reversed
+
+    if expense.status == Expense.Status.VOIDED:
+        return ZERO
+    marker = expense.settlement_transaction
+    if expense.paid_at and (marker is None or _posted_and_not_reversed(marker)):
+        return ZERO
+    if marker is not None and _posted_and_not_reversed(marker) and not expense.paid_at:
+        return ZERO
     settled = SupplierSettlement.objects.filter(
-        expense=expense, transaction__status="POSTED"
+        expense=expense,
+        transaction__status=FinancialTransaction.Status.POSTED,
+    ).exclude(
+        transaction__reversals__status=FinancialTransaction.Status.POSTED
     ).aggregate(total=Sum("amount"))["total"] or ZERO
     return (Decimal(expense.amount) - Decimal(settled)).quantize(CENT)
 
@@ -359,3 +380,104 @@ def supplier_payment_requests_for(expense: Expense) -> list[SupplierPaymentReque
         .select_related("requested_by", "reviewed_by", "executed_by")
         .order_by("-created_at", "-pk")
     )
+
+
+def reverse_supplier_settlement(*, reference: str, actor, reason: str) -> dict:
+    """Reverse an executed supplier payment without rewriting any posting.
+
+    The original settlement journal and its ``SupplierSettlement`` stay
+    untouched. A balanced POSTED VOID journal reopens accounts payable and
+    restores the tender account. Every balance/visibility calculation in this
+    audit now excludes a settlement with a posted reversal, so the invoice
+    becomes payable again and the cash actually returns.
+
+    This is an additive workflow: no deletion, no truncation and no mutation
+    of historical financial rows. Only the *workflow markers* on the expense
+    document (legacy final-payment flags) are cleared when a reversal reopens
+    the payable.
+    """
+    if not has_capability(actor, "expense.approve"):
+        raise PermissionDenied("Reversing a supplier payment requires expense.approve.")
+    reason = str(reason or "").strip()
+    if len(reason) < 5:
+        raise ValidationError({"reason": "Provide a reversal reason of at least five characters."})
+    with transaction.atomic():
+        settlement = (SupplierSettlement.objects
+                      .select_for_update()
+                      .select_related("expense", "transaction", "paid_by")
+                      .filter(transaction__reference=reference)
+                      .first())
+        if settlement is None:
+            from rest_framework.exceptions import NotFound
+            raise NotFound("Executed supplier settlement not found for that journal reference.")
+        original = settlement.transaction
+        if original.status != FinancialTransaction.Status.POSTED:
+            raise ValidationError("Only a posted supplier settlement can be reversed.")
+        existing = FinancialTransaction.objects.filter(
+            reversal_of=original, status=FinancialTransaction.Status.POSTED
+        ).first()
+        if existing:
+            return {"reference": existing.reference, "created": False,
+                    "settlement_reference": settlement.idempotency_key,
+                    "expense_reference": settlement.expense.reference}
+        if (original.metadata or {}).get("expense_settlement") is not True:
+            raise ValidationError("This journal is not a controlled supplier settlement.")
+        evidence = require_independent_approver(
+            requester=settlement.paid_by, actor=actor,
+            workflow="supplier settlement reversal",
+        )
+        lines = list(original.lines.order_by("pk"))
+        if not lines or any(line.folio_id for line in lines):
+            raise ValidationError("Supplier settlement has unexpected lines; investigate before reversing.")
+        key = f"supplier-settlement-reversal:{original.reference}"
+        reversed_tx, created = create_posted_transaction(
+            transaction_type=FinancialTransaction.Type.VOID,
+            source_key=key, idempotency_key=key,
+            actor=actor, source_reference=original.reference,
+            narrative=f"Supplier payment reversal: {reason}"[:500],
+            currency=original.currency, business_date=hotel_today(),
+            reversal_of=original,
+            metadata=override_event_details({
+                "entry_kind": "SUPPLIER_SETTLEMENT_REVERSAL",
+                "expense_settlement_reversal": True,
+                "expense_id": settlement.expense_id,
+                "expense_reference": settlement.expense.reference,
+                "settlement_amount": str(settlement.amount),
+                "reason": reason,
+            }, evidence),
+            lines=[{
+                "account_code": line.account_code,
+                "direction": (FinancialLine.Direction.CREDIT
+                              if line.direction == FinancialLine.Direction.DEBIT
+                              else FinancialLine.Direction.DEBIT),
+                "amount": line.amount,
+                "description": f"Reversal of {original.reference}",
+            } for line in lines],
+        )
+        if not created:
+            return {"reference": reversed_tx.reference, "created": False,
+                    "settlement_reference": settlement.idempotency_key,
+                    "expense_reference": settlement.expense.reference}
+        FinancialEvent.objects.create(
+            transaction=original, type=FinancialEvent.Type.REVERSED, actor=actor,
+            details={"reversal_reference": reversed_tx.reference, "reason": reason,
+                     "override": evidence},
+        )
+        # Clear only the legacy document markers; no financial row is edited.
+        expense = settlement.expense
+        update = {}
+        if expense.settlement_transaction_id == original.pk:
+            update["settlement_transaction"] = None
+        if expense.paid_at and payable_balance(expense) > ZERO:
+            update.update(paid_at=None, paid_by=None, payment_reference="",
+                          payment_receipt_url="", payment_receipt_file=None)
+        if update:
+            Expense.objects.filter(pk=expense.pk).update(**update)
+        return {
+            "reference": reversed_tx.reference,
+            "created": True,
+            "settlement_reference": settlement.idempotency_key,
+            "expense_reference": settlement.expense.reference,
+            "amount": str(settlement.amount),
+            "payable_reopened": str(payable_balance(Expense.objects.get(pk=expense.pk))),
+        }

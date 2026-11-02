@@ -52,8 +52,70 @@ from django.db import IntegrityError, transaction
 
 from apps.accounts.capabilities import has_capability
 
-from ..models import Expense
+from ..models import Expense, FinancialTransaction, SupplierSettlement
+from . import accounting
 from .expense_service import create_expense
+
+TENDER_CREDIT_ACCOUNTS = (
+    accounting.CASH_ON_HAND, accounting.BANK_CLEARING, accounting.CARD_CLEARING,
+)
+
+
+def _posted_and_not_reversed(transaction) -> bool:
+    """A journal is evidence only while POSTED and not reversed by a POSTED VOID."""
+    if transaction is None or getattr(transaction, "status", None) != FinancialTransaction.Status.POSTED:
+        return False
+    return not transaction.reversals.filter(
+        status=FinancialTransaction.Status.POSTED
+    ).exists()
+
+
+def _active_settlements_total(expense) -> Decimal:
+    """Posted supplier instalments, excluding payments later reversed."""
+    rows = SupplierSettlement.objects.filter(
+        expense=expense,
+        transaction__status=FinancialTransaction.Status.POSTED,
+    ).exclude(
+        transaction__reversals__status=FinancialTransaction.Status.POSTED
+    )
+    return sum((Decimal(row.amount) for row in rows), ZERO).quantize(CENT)
+
+
+def posted_expense_paid_amount(expense) -> Decimal:
+    """Money ACTUALLY paid against one expense, from posted evidence only.
+
+    Three legitimate shapes are handled:
+
+    * an expense paid at posting (CASH / BANK_TRANSFER / CARD) — its posted
+      journal credits a tender account;
+    * a PAYABLE settled in instalments — each active ``SupplierSettlement``;
+    * a legacy fully settled PAYABLE — ``paid_at`` / ``settlement_transaction``.
+
+    A reversed payment never counts. Draft, submitted, approved and voided
+    expenses have no posted money and therefore pay nothing.
+    """
+    if expense.status != Expense.Status.POSTED:
+        return ZERO
+    amount = Decimal(expense.amount).quantize(CENT)
+    invoice = expense.financial_transaction
+    if not _posted_and_not_reversed(invoice):
+        return ZERO
+    marker = expense.settlement_transaction
+    if expense.paid_at and _posted_and_not_reversed(marker):
+        return amount
+    if expense.payment_method != Expense.PaymentMethod.PAYABLE:
+        if invoice.lines.filter(
+            account_code__in=TENDER_CREDIT_ACCOUNTS,
+            direction="CREDIT",
+        ).exists():
+            return amount
+        return ZERO
+    active = _active_settlements_total(expense)
+    # A legacy final-settlement marker without a linked journal is historical
+    # evidence of full payment; keep it readable without inventing a posting.
+    if expense.paid_at and marker is None:
+        return amount
+    return min(active, amount)
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")
@@ -88,6 +150,7 @@ def _live_payables(purchase_order):
     return list(
         Expense.objects.filter(purchase_order=purchase_order)
         .exclude(status__in=DEAD_PAYABLE_STATUSES)
+        .select_related("financial_transaction", "settlement_transaction")
         .prefetch_related("supplier_settlements__transaction")
         .order_by("created_at", "pk")
     )
@@ -97,14 +160,15 @@ def purchase_order_payable_summary(purchase_order) -> dict:
     """Read-only payable position of one purchase order."""
     received = _received_value(purchase_order)
     payables = _live_payables(purchase_order)
+    # ``payable_raised`` is the document total (kept for the existing API
+    # contract): a DRAFT/SUBMITTED/APPROVED document is NOT a posted liability.
     billed = sum((Decimal(expense.amount) for expense in payables), ZERO).quantize(CENT)
-    def paid_amount(expense):
-        if expense.settlement_transaction_id or expense.paid_at:
-            return Decimal(expense.amount)
-        return sum((Decimal(row.amount) for row in expense.supplier_settlements.all()
-                    if row.transaction.status == "POSTED"), ZERO)
-
-    paid = sum((paid_amount(expense) for expense in payables), ZERO).quantize(CENT)
+    posted = [expense for expense in payables if _posted_and_not_reversed(expense.financial_transaction)]
+    posted_liability = sum((Decimal(expense.amount) for expense in posted), ZERO).quantize(CENT)
+    unposted_documents = sum(
+        (Decimal(expense.amount) for expense in payables if expense not in posted), ZERO
+    ).quantize(CENT)
+    paid = sum((posted_expense_paid_amount(expense) for expense in posted), ZERO).quantize(CENT)
     return {
         "purchase_order": purchase_order.reference,
         "status": purchase_order.status,
@@ -112,15 +176,28 @@ def purchase_order_payable_summary(purchase_order) -> dict:
         "ordered_total": str(purchase_order.total_amount),
         "received_value": str(received),
         "payable_raised": str(billed),
-        "payable_outstanding": str((billed - paid).quantize(CENT)),
+        # Accounting-audit repair: outstanding is a POSTED liability less
+        # VALID payments. Draft payables are no liability at all; reversed
+        # payments do not discharge an invoice.
+        "payable_outstanding": str(max(posted_liability - paid, ZERO).quantize(CENT)),
+        "posted_payable_liability": str(posted_liability),
+        "unposted_payable_documents": str(unposted_documents),
+        "actual_supplier_payments": str(paid),
         "unbilled_received_value": str(max(received - billed, ZERO).quantize(CENT)),
         "payables": [
             {
                 "reference": expense.reference,
                 "status": expense.status,
                 "amount": str(Decimal(expense.amount).quantize(CENT)),
-                "paid_amount": str(paid_amount(expense).quantize(CENT)),
-                "outstanding_amount": str((Decimal(expense.amount) - paid_amount(expense)).quantize(CENT)),
+                "paid_amount": str(posted_expense_paid_amount(expense).quantize(CENT)),
+                "outstanding_amount": str(
+                    (Decimal(expense.amount) - posted_expense_paid_amount(expense)).quantize(CENT)
+                    if expense.status == Expense.Status.POSTED else ZERO
+                ),
+                "posted_liability": str(
+                    Decimal(expense.amount).quantize(CENT)
+                    if _posted_and_not_reversed(expense.financial_transaction) else ZERO
+                ),
                 "payment_method": expense.payment_method,
                 "paid_at": expense.paid_at.isoformat() if expense.paid_at else None,
                 "payment_reference": expense.payment_reference,
@@ -139,6 +216,53 @@ def purchase_order_payable_summary(purchase_order) -> dict:
     }
 
 
+def supplier_invoice_status_summary(*, end_date, currency="NGN") -> dict:
+    """Unpaid / partially paid / paid POSTED supplier invoices (as-of a date).
+
+    Only posted expenses with a posted, unreversed journal are invoices. The
+    classification uses the same payment evidence as the purchase-order
+    payable position, so the Accounting page cannot disagree with its own
+    drill-down. Reversed payments reopen the liability.
+    """
+    rows = (
+        Expense.objects.filter(
+            status=Expense.Status.POSTED,
+            currency=currency,
+            financial_transaction__business_date__lte=end_date,
+        )
+        .select_related("financial_transaction", "settlement_transaction")
+        .prefetch_related("supplier_settlements__transaction")
+    )
+    buckets = {
+        "UNPAID": {"invoices": 0, "amount": ZERO},
+        "PARTIALLY_PAID": {"invoices": 0, "amount": ZERO},
+        "PAID": {"invoices": 0, "amount": ZERO},
+        "CANCELLED": {"invoices": 0, "amount": ZERO},
+    }
+    for expense in rows:
+        if not _posted_and_not_reversed(expense.financial_transaction):
+            buckets["CANCELLED"]["invoices"] += 1
+            continue
+        amount = Decimal(expense.amount).quantize(CENT)
+        paid = min(posted_expense_paid_amount(expense), amount)
+        outstanding = max(amount - paid, ZERO).quantize(CENT)
+        if expense.payment_method != Expense.PaymentMethod.PAYABLE and paid >= amount:
+            state = "PAID"
+        elif paid <= ZERO:
+            state = "UNPAID"
+        elif outstanding > ZERO:
+            state = "PARTIALLY_PAID"
+        else:
+            state = "PAID"
+        buckets[state]["invoices"] += 1
+        buckets[state]["amount"] += outstanding
+    return {
+        state: {"invoices": entry["invoices"],
+                "outstanding_amount": str(entry["amount"].quantize(CENT))}
+        for state, entry in buckets.items()
+    }
+
+
 def purchase_order_payables_index(*, references=None) -> dict:
     """Payable positions keyed by purchase-order reference, for the Accounting list."""
     from apps.inventory.models import PurchaseOrder
@@ -152,6 +276,41 @@ def purchase_order_payables_index(*, references=None) -> dict:
     ):
         index[purchase_order.reference] = purchase_order_payable_summary(purchase_order)
     return index
+
+
+def purchase_order_payable_position(index: dict, *, as_of) -> dict:
+    """Accounting-page summary for an already-built payable index.
+
+    Kept OUT of ``financial_summary`` so the shared summary keeps its exact
+    query budget; this is called by the Accounting purchase-order endpoint.
+    """
+    from .payment_visibility import approved_unpaid_procurement_visibility
+
+    return {
+        "as_of": as_of.isoformat(),
+        "purchase_orders": len(index),
+        "approved_unpaid_procurement": approved_unpaid_procurement_visibility(
+            end_date=as_of, currency="NGN"
+        ),
+        "posted_liability": str(sum(
+            (Decimal(row["posted_payable_liability"]) for row in index.values()), ZERO
+        ).quantize(CENT)),
+        "outstanding_payable": str(sum(
+            (Decimal(row["payable_outstanding"]) for row in index.values()), ZERO
+        ).quantize(CENT)),
+        "actual_supplier_payments": str(sum(
+            (Decimal(row["actual_supplier_payments"]) for row in index.values()), ZERO
+        ).quantize(CENT)),
+        "unposted_payable_documents": str(sum(
+            (Decimal(row["unposted_payable_documents"]) for row in index.values()), ZERO
+        ).quantize(CENT)),
+        "invoice_status": supplier_invoice_status_summary(end_date=as_of, currency="NGN"),
+        "approval_is_not_payment": (
+            "Approved purchase orders and goods receipts post no cash. Only a posted expense/payable "
+            "and an executed, unreversed supplier settlement are accounting money. Draft payables "
+            "are documents, not liabilities."
+        ),
+    }
 
 
 @transaction.atomic

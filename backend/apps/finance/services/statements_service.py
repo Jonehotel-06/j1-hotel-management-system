@@ -178,6 +178,42 @@ def balance_sheet(*, as_of=None) -> dict:
     # definition, which is what lets the equity section be withdrawn from the
     # presentation without the statement becoming false or unbalanced.
     net_assets = _dec(total_assets - total_liabilities)
+
+    # Accounting-audit repair (additive, contract-preserving).
+    # A credit-normal ASSET.GUEST_RECEIVABLE balance is money the hotel holds
+    # for guests: a LIABILITY, not a negative asset. The legacy ``assets`` /
+    # ``liabilities`` rows above are kept byte-for-byte for existing API
+    # consumers. The corrected presentation is published here and is what the
+    # Accounting page renders; no ledger line, folio or historical posting is
+    # edited and the statement still foots.
+    ar_balance = _signed(
+        accounting.ACCOUNTS_RECEIVABLE,
+        *balances.get(accounting.ACCOUNTS_RECEIVABLE, [ZERO, ZERO]),
+    )
+    guest_credit = _dec(max(-ar_balance, ZERO))
+    presented_assets, presented_liabilities = assets, liabilities
+    presented_total_assets, presented_total_liabilities = total_assets, total_liabilities
+    if guest_credit > ZERO:
+        presented_assets = []
+        for row in assets:
+            if row["label"] == OTHER_ASSETS_LABEL:
+                adjusted = _dec(Decimal(row["amount"]) + guest_credit)
+                if adjusted != ZERO:
+                    presented_assets.append({**row, "amount": money(adjusted)})
+            else:
+                presented_assets.append(row)
+        presented_liabilities = list(liabilities) + [{
+            "account_code": "", "label": "Guest credit / advances",
+            "amount": money(guest_credit),
+        }]
+        presented_total_assets = _dec(total_assets + guest_credit)
+        presented_total_liabilities = _dec(total_liabilities + guest_credit)
+    presented_difference = _dec(
+        presented_total_assets - presented_total_liabilities - total_equity_with_earnings
+    )
+    from .guest_receivables_service import guest_position
+
+    position = guest_position(as_of=as_of, currency="NGN")
     return {
         "as_of": as_of.isoformat(),
         "currency": "NGN",
@@ -219,6 +255,23 @@ def balance_sheet(*, as_of=None) -> dict:
             ),
         },
         "opening_balances_basis": "Opening balances are posted as balanced journals against EQUITY.OPENING_BALANCE via Accounting → Post journal entry, normally dated before the period under review.",
+        # Corrected presentation used by the Accounting page. Legacy rows stay
+        # available above for other consumers; nothing is hidden or rewritten.
+        "presented_assets": presented_assets,
+        "presented_liabilities": presented_liabilities,
+        "presented_total_assets": money(presented_total_assets),
+        "presented_total_liabilities": money(presented_total_liabilities),
+        "presented_net_assets": money(_dec(presented_total_assets - presented_total_liabilities)),
+        "presented_difference": money(presented_difference),
+        "presented_balanced": presented_difference == ZERO,
+        "guest_position": position,
+        "guest_credit_liability": money(guest_credit),
+        "presentation_note": (
+            "Guest credit / advances is a liability (money actually received in excess of posted "
+            "charges), not a negative guest receivable. Receivables, credits, unpaid and partially "
+            "paid bills are reported separately in guest_position. The signed control-account "
+            "balance remains in the ledger for audit only."
+        ),
     }
 
 

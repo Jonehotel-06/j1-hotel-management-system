@@ -65,4 +65,5 @@ urlpatterns = [
     path("supplier-payments/<str:reference>/review/", views.SupplierPaymentRequestReviewView.as_view(), name="supplier-payment-review"),
     path("supplier-payments/<str:reference>/execute/", views.SupplierPaymentRequestExecuteView.as_view(), name="supplier-payment-execute"),
     path("supplier-payments/<str:reference>/cancel/", views.SupplierPaymentRequestCancelView.as_view(), name="supplier-payment-cancel"),
+    path("supplier-settlements/<str:reference>/reverse/", views.SupplierSettlementReverseView.as_view(), name="supplier-settlement-reverse"),
 ]

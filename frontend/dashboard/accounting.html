@@ -114,6 +114,23 @@
     </section>
     <p class="caption" data-finance-basis style="margin:0.85rem 0 0;">Posted immutable ledger · Business date · NGN</p>
 
+    <!-- ACCOUNTING AUDIT REPAIR — separated balance classifications.
+         These are ledger-derived BALANCES, never a single signed control-account
+         number. A guest credit is a liability (money the hotel actually holds),
+         not a negative receivable; approval of a purchase is not a payment. -->
+    <h2 class="section-title" data-balance-heading>Guest &amp; supplier balances</h2>
+    <section class="kpi-grid" data-balance-kpis aria-label="Guest and supplier balance classifications">
+      <div class="kpi"><div class="kpi-label">Guest receivables</div><div class="kpi-value" data-pos="gross-guest-receivables">--</div><div class="kpi-sub" data-pos="gross-guest-receivables-sub">Posted debit folio balances only · never negative</div></div>
+      <div class="kpi"><div class="kpi-label">Guest credit / advances</div><div class="kpi-value" data-pos="guest-advances">--</div><div class="kpi-sub">Folio credits + unapplied deposits · hotel holds this money</div></div>
+      <div class="kpi"><div class="kpi-label">Unpaid bills</div><div class="kpi-value" data-pos="unpaid-bills">--</div><div class="kpi-sub" data-pos="unpaid-bills-sub">Charges with no payment applied</div></div>
+      <div class="kpi"><div class="kpi-label">Partially paid bills</div><div class="kpi-value" data-pos="partially-paid">--</div><div class="kpi-sub" data-pos="partially-paid-sub">Some payment applied, money still owed</div></div>
+      <div class="kpi"><div class="kpi-label">Fully paid folios</div><div class="kpi-value" data-pos="fully-paid">--</div><div class="kpi-sub">Folios with charges settled in full</div></div>
+      <div class="kpi"><div class="kpi-label">Refunded (money returned)</div><div class="kpi-value" data-pos="refunded">--</div><div class="kpi-sub">Posted REFUND transactions only, never a credit balance</div></div>
+      <div class="kpi"><div class="kpi-label">Supplier payables outstanding</div><div class="kpi-value" data-pos="supplier-outstanding">--</div><div class="kpi-sub">Posted invoices less valid payments applied</div></div>
+      <div class="kpi"><div class="kpi-label">Approved, not paid (procurement)</div><div class="kpi-value" data-pos="approved-unpaid">--</div><div class="kpi-sub">Operational commitment · posts no cash and no liability</div></div>
+    </section>
+    <p class="caption" data-balance-basis style="margin:0.85rem 0 0;">Separate classifications from posted folio lines and supplier invoices. Unpaid bills, partially paid bills, fully paid folios, guest credit/advances and actual refunds are never netted against each other. Purchase approval and goods receipt do not create cash outflow.</p>
+
     <!-- Attention strip: only rendered when the night audit found something
          that needs a person. The details stay in Night Audit &amp; Operations. -->
     <div class="finance-alerts" data-finance-alerts hidden></div>
@@ -172,6 +189,7 @@
     </div>
     <p class="caption" style="margin:0.9rem 0 0.5rem;">Outstanding payables — credit documents not yet paid.</p>
     <p class="caption" data-payables-note style="margin:0 0 0.6rem;">Recording a supplier payment releases the payable once and files the transfer receipt.</p>
+    <p class="caption" data-po-position-note style="margin:0 0 0.6rem;">Only POSTED supplier invoices create a liability. Approved orders, goods receipts and DRAFT payables are documents; they never post cash and never count as paid expenses.</p>
     <div class="table-wrap"><table class="table">
       <thead><tr><th class="cell-nowrap">Reference</th><th class="cell-clamp">Supplier</th><th class="cell-nowrap">Status</th><th class="num cell-nowrap">Amount</th><th class="cell-nowrap"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody data-tbody="acct-payables"></tbody>
@@ -365,14 +383,18 @@
   </summary>
   <div class="panel-body no-pad">
     <div class="table-wrap"><table class="table">
+      <thead><tr><th class="cell-clamp">Balance classification</th><th class="num cell-nowrap">Folios</th><th class="num cell-nowrap">Amount</th></tr></thead>
+      <tbody data-tbody="x-ar-classes"></tbody>
+    </table></div>
+    <div class="table-wrap"><table class="table">
       <thead><tr><th class="cell-clamp">Age bucket</th><th class="num cell-nowrap">Folios</th><th class="num cell-nowrap">Balance due</th></tr></thead>
       <tbody data-tbody="x-ar-buckets"></tbody>
     </table></div>
     <div class="table-wrap"><table class="table">
-      <thead><tr><th class="cell-nowrap">Booking</th><th class="cell-clamp">Guest</th><th class="cell-nowrap">Rooms</th><th class="cell-nowrap">Folio</th><th class="num cell-nowrap">Charges</th><th class="num cell-nowrap">Payments</th><th class="num cell-nowrap">Discounts</th><th class="num cell-nowrap">Refunds</th><th class="num cell-nowrap">Age (days)</th><th class="num cell-nowrap">Outstanding</th><th class="num cell-nowrap">Credit</th></tr></thead>
+      <thead><tr><th class="cell-nowrap">Booking</th><th class="cell-clamp">Guest</th><th class="cell-nowrap">Rooms</th><th class="cell-nowrap">Folio</th><th class="num cell-nowrap">Charges</th><th class="num cell-nowrap">Payments</th><th class="num cell-nowrap">Discounts</th><th class="num cell-nowrap">Refunds</th><th class="num cell-nowrap">Classification</th><th class="num cell-nowrap">Age (days)</th><th class="num cell-nowrap">Outstanding</th><th class="num cell-nowrap">Credit</th></tr></thead>
       <tbody data-tbody="x-ar-items"></tbody>
     </table></div>
-    <p class="caption" style="padding:0.75rem 1rem 1rem;margin:0;">One row per folio, so a multi-room or multi-folio booking shows each account separately. Outstanding is what the guest owes; Credit is an advance the hotel holds for them. The two are never netted against each other, and a credit is never shown as zero. In-house folios are also listed under Night audit &amp; operations.</p>
+    <p class="caption" style="padding:0.75rem 1rem 1rem;margin:0;">One row per folio, so a multi-room or multi-folio booking shows each account separately. Outstanding is what the guest owes; Credit is a GUEST CREDIT / ADVANCE the hotel holds for them. The two are never netted against each other, and a credit is never shown as zero or labelled REFUNDED. REFUNDED means a posted refund returned money to the guest. In-house folios are also listed under Night audit &amp; operations.</p>
   </div>
 </details>
 
@@ -452,6 +474,7 @@
   var payablesNote=document.querySelector("[data-payables-note]");
   var financeKpis=document.querySelector("[data-finance-kpis]");
   var financeBasis=document.querySelector("[data-finance-basis]");
+  var balanceBasis=document.querySelector("[data-balance-basis]");
   var range=document.getElementById("rp-range");
   var fromEl=document.getElementById("rp-from");
   var toEl=document.getElementById("rp-to");
@@ -548,6 +571,17 @@
     document.querySelectorAll("[data-rp="+name+"]").forEach(function(el){
       el.textContent=(val==null||val==="")?"--":val;
     });
+  }
+  /* Accounting audit repair: balance-classification cards. Values are the
+     server's Decimal strings, formatted for display only — no arithmetic here. */
+  function setPos(name,val){
+    document.querySelectorAll("[data-pos="+name+"]").forEach(function(el){
+      el.textContent=(val==null||val==="")?"--":val;
+    });
+  }
+  function posAmount(block,currency){
+    if(!block || block.amount==null || block.amount==="") return "--";
+    return formatMoney(block.amount,currency);
   }
 
   function localDateISO(){
@@ -714,6 +748,24 @@
     setKpi("supplier-payments",supplier.supplier_payments_made==null?"--":formatMoney(supplier.supplier_payments_made,currency));
     setKpi("supplier-payments-sub","Actually disbursed in this period");
     setKpi("invoices-recognized",supplier.supplier_invoices_recognized==null?"--":formatMoney(supplier.supplier_invoices_recognized,currency));
+    /* ACCOUNTING AUDIT REPAIR: render the backend's separated guest and
+       supplier positions verbatim. No browser-side arithmetic, no clamping of
+       credits to zero and no relabelling of a control-account balance as AR. */
+    var guest=(latest.financial.guest_balances)||{};
+    var supBal=(latest.financial.supplier_balances)||{};
+    setPos("gross-guest-receivables",guest.gross_guest_receivables==null?"--":formatMoney(guest.gross_guest_receivables,currency));
+    setPos("gross-guest-receivables-sub","Debit folios · control balance "+String(guest.net_receivable_control==null?"—":formatMoney(guest.net_receivable_control,currency))+" (audit only)");
+    setPos("guest-advances",guest.guest_advances==null?"--":formatMoney(guest.guest_advances,currency));
+    setPos("unpaid-bills",posAmount(guest.unpaid_bills,currency));
+    setPos("unpaid-bills-sub",(guest.unpaid_bills&&guest.unpaid_bills.folios!=null)?String(guest.unpaid_bills.folios)+" folios":"Charges with no payment applied");
+    setPos("partially-paid",posAmount(guest.partially_paid,currency));
+    setPos("partially-paid-sub",(guest.partially_paid&&guest.partially_paid.folios!=null)?String(guest.partially_paid.folios)+" folios":"Some payment applied, money still owed");
+    setPos("fully-paid",(guest.fully_paid&&guest.fully_paid.folios!=null)?String(guest.fully_paid.folios):"--");
+    setPos("refunded",guest.refunded_total==null?(guest.refunded&&guest.refunded.amount!=null?formatMoney(guest.refunded.amount,currency):"--"):formatMoney(guest.refunded_total,currency));
+    setPos("supplier-outstanding",supBal.outstanding_payables==null?(supplier.outstanding_supplier_payables==null?"--":formatMoney(supplier.outstanding_supplier_payables,currency)):formatMoney(supBal.outstanding_payables,currency));
+    if(balanceBasis){
+      balanceBasis.textContent="As of "+String(guest.as_of||"—")+" · "+String(guest.basis||"posted_immutable_ledger")+" · Guest reconciliation: "+(guest.reconciles===true?"reconciles":"review")+" · Supplier basis: "+String(supBal.basis||"posted_immutable_ledger");
+    }
     /* The settlement contract is published by the reporting service itself, so
        the section explains the two-step flow in the backend's own words. */
     if(payablesNote&&supplier.payable_settlement_posting_note){
@@ -1000,6 +1052,8 @@
     if (executePayment) { event.preventDefault(); executeSupplierPayment(executePayment.getAttribute("data-supplier-payment-execute")); return; }
     var cancelPayment = event.target.closest ? event.target.closest("[data-supplier-payment-cancel]") : null;
     if (cancelPayment) { event.preventDefault(); cancelSupplierPayment(cancelPayment.getAttribute("data-supplier-payment-cancel")); return; }
+    var reverseSettlement = event.target.closest ? event.target.closest("[data-supplier-settlement-reverse]") : null;
+    if (reverseSettlement) { event.preventDefault(); reverseSupplierSettlement(reverseSettlement.getAttribute("data-supplier-settlement-reverse")); return; }
     var approve = event.target.closest ? event.target.closest("[data-expense-approve]") : null;
     if (!approve) return;
     event.preventDefault();
@@ -1445,6 +1499,19 @@
   }
   function renderPurchaseOrders(){
     if (!poBody) return;
+    /* Accounting audit repair: publish the server's posted-vs-draft position
+       and the "approved but unpaid" commitment without turning approval into
+       cash. These are display-only Decimal strings from the backend. */
+    var poPosition = (latestProcurement.payables && latestProcurement.payables.position) || {};
+    var approved = poPosition.approved_unpaid_procurement || {};
+    setPos("approved-unpaid", approved.amount == null ? "--" : moneyCell(approved.amount));
+    var poNote = document.querySelector("[data-po-position-note]");
+    if (poNote && poPosition.approval_is_not_payment) {
+      poNote.textContent = poPosition.approval_is_not_payment +
+        " Unpaid / partially paid posted invoices: " +
+        String(poPosition.invoice_status ? poPosition.invoice_status.UNPAID.invoices : "—") + " / " +
+        String(poPosition.invoice_status ? poPosition.invoice_status.PARTIALLY_PAID.invoices : "—") + ".";
+    }
     var orders = latestProcurement.orders;
     if (!Array.isArray(orders)) return;
     poBody.innerHTML = orders.length ? orders.map(function (order) {
@@ -1457,8 +1524,11 @@
         '<td class="cell-nowrap">' + JONE.esc(receiptLabel(order.receipt_progress)) + "</td>" +
         '<td class="num cell-nowrap">' + JONE.esc(moneyCell(order.total_amount)) + "</td>" +
         '<td class="num cell-nowrap">' + JONE.esc(moneyCell(position.received_value != null ? position.received_value : order.received_value)) + "</td>" +
-        '<td class="num cell-nowrap">' + JONE.esc(moneyCell(position.payable_raised != null ? position.payable_raised : "0.00")) + "</td>" +
-        '<td class="num cell-nowrap">' + JONE.esc(moneyCell(position.payable_outstanding != null ? position.payable_outstanding : "0.00")) + "</td>" +
+        '<td class="num cell-nowrap">' + JONE.esc(moneyCell(position.payable_raised != null ? position.payable_raised : "0.00")) +
+          '<div class="caption">Posted liability ' + JONE.esc(moneyCell(position.posted_payable_liability != null ? position.posted_payable_liability : "0.00")) +
+          (Number(position.unposted_payable_documents || 0) > 0 ? ' · draft/unposted documents ' + JONE.esc(moneyCell(position.unposted_payable_documents)) : "") + '</div></td>' +
+        '<td class="num cell-nowrap">' + JONE.esc(moneyCell(position.payable_outstanding != null ? position.payable_outstanding : "0.00")) +
+          '<div class="caption">Actually paid ' + JONE.esc(moneyCell(position.actual_supplier_payments != null ? position.actual_supplier_payments : "0.00")) + '</div></td>' +
         '<td class="cell-nowrap"><div class="row-actions">' + poActionCell(order) + "</div></td>" +
         "</tr>";
     }).join("") : '<tr><td colspan="9"><div class="empty-state"><h3>No submitted purchase orders</h3><p>An order appears here once Procurement submits it; drafts stay in Procurement.</p></div></td></tr>';
@@ -1630,6 +1700,11 @@
     if (status === "PROPOSED" || status === "SUBMITTED" || status === "APPROVED") {
       html += '<button class="btn btn-sm btn-outline" type="button" data-supplier-payment-cancel="' + reference + '">Cancel</button>';
     }
+    /* Accounting audit repair: a controlled reversal posts a VOID journal and
+       reopens the payable; no historical posting is deleted or rewritten. */
+    if (status === "EXECUTED" && CAN.approveExpense && row.settlement_reference) {
+      html += '<button class="btn btn-sm btn-outline" type="button" data-supplier-settlement-reverse="' + JONE.esc(row.settlement_reference) + '">Reverse payment</button>';
+    }
     return html || '<span class="caption">—</span>';
   }
   function renderSupplierPayments(){
@@ -1763,6 +1838,28 @@
       }
     });
     if (result) { JONE.ui.toast("Payment request cancelled.", "success"); load(); }
+  }
+  /* Accounting audit repair: reverse an EXECUTED supplier settlement. The
+     server posts a balanced VOID journal (Dr tender / Cr accounts payable),
+     keeps every original financial row, and reopens the invoice. The reason
+     and an independent-approver check are enforced by the backend. */
+  async function reverseSupplierSettlement(journalReference){
+    var result = await JONE.dashboard.formModal({
+      title: "Reverse supplier payment · " + journalReference, submitText: "Reverse payment", wide: true,
+      fields: [
+        { name: "reason", label: "Why is this payment being reversed?", type: "text", required: true, maxLength: 2000,
+          help: "A reversal posts a new VOID journal and reopens the payable. The original payment record is preserved." }
+      ],
+      onSubmit: async function (values){
+        if (String(values.reason || "").trim().length < 5) throw new Error("Record why the payment is being reversed.");
+        await window.API.post(
+          "/api/admin/finance/supplier-settlements/" + encodeURIComponent(journalReference) + "/reverse/",
+          { reason: values.reason }
+        );
+        return { message: "Supplier payment reversed. The payable is open again." };
+      }
+    });
+    if (result) { JONE.ui.toast("Supplier payment reversed; payable reopened.", "success"); load(); }
   }
 
   /* Has the capability read finished? Until it has, the role-based fallback
@@ -2120,16 +2217,29 @@
          call now, for the balance sheet. */
       var bs = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.financeBalanceSheet, { params: bsParams });
       var sheet = bs.data || {};
+      /* ACCOUNTING AUDIT REPAIR: a credit-normal guest-receivable CONTROL
+         balance is a LIABILITY (money the hotel holds), not a negative asset.
+         The backend publishes a corrected, still-balanced presentation; the
+         legacy rows remain in the payload for other consumers. We render the
+         corrected rows verbatim, with no browser arithmetic. */
+      var assets = sheet.presented_assets || sheet.assets || [];
+      var liabilities = sheet.presented_liabilities || sheet.liabilities || [];
+      var totalAssets = sheet.presented_total_assets != null ? sheet.presented_total_assets : sheet.total_assets;
+      var totalLiabilities = sheet.presented_total_liabilities != null ? sheet.presented_total_liabilities : sheet.total_liabilities;
+      var netAssets = sheet.presented_net_assets != null ? sheet.presented_net_assets : sheet.net_assets;
+      var balanced = sheet.presented_balanced != null ? sheet.presented_balanced : sheet.balanced;
+      var difference = sheet.presented_difference != null ? sheet.presented_difference : sheet.difference;
+      var guest = sheet.guest_position || {};
       var body = document.querySelector("[data-tbody=bs-sheet]");
       if (body) {
         var html = "<tr><td colspan=\"2\" style=\"font-weight:700;\">Assets</td></tr>";
-        (sheet.assets || []).forEach(function (r) {
+        assets.forEach(function (r) {
           html += bsRow(r.label || r.account_code, r.amount);
         });
-        html += bsRow("Total assets", sheet.total_assets, true);
+        html += bsRow("Total assets", totalAssets, true);
         html += "<tr><td colspan=\"2\" style=\"font-weight:700;\">Liabilities</td></tr>";
-        (sheet.liabilities || []).forEach(function (r) { html += bsRow(r.label || r.account_code, r.amount); });
-        html += bsRow("Total liabilities", sheet.total_liabilities, true);
+        liabilities.forEach(function (r) { html += bsRow(r.label || r.account_code, r.amount); });
+        html += bsRow("Total liabilities", totalLiabilities, true);
         /* BATCH 01 TASK 5: the Equity section is not presented. Owner capital,
            drawings and opening balances remain posted in the ledger and remain
            inside this statement's arithmetic — they are shown as NET ASSETS
@@ -2137,7 +2247,15 @@
            equity, so the statement stays true and still balances. */
         html += "<tr><td colspan=\"2\" style=\"font-weight:700;\">Net position</td></tr>";
         html += bsRow("Current earnings (revenue − expenses, not yet closed)", sheet.current_earnings);
-        html += bsRow("Net assets (total assets − total liabilities)", sheet.net_assets, true);
+        html += bsRow("Net assets (total assets − total liabilities)", netAssets, true);
+        /* Separate, non-netted guest classifications (audit evidence). */
+        html += "<tr><td colspan=\"2\" style=\"font-weight:700;\">Guest balance classifications</td></tr>";
+        html += bsRow("Guest receivables (debit folio balances)", guest.gross_guest_receivables);
+        html += bsRow("Unpaid bills", guest.unpaid_bills && guest.unpaid_bills.amount);
+        html += bsRow("Partially paid bills", guest.partially_paid && guest.partially_paid.amount);
+        html += bsRow("Guest credit / advances (liability)", guest.guest_advances);
+        html += bsRow("Refunded (posted REFUND transactions)", guest.refunded_total != null ? guest.refunded_total : (guest.refunded && guest.refunded.amount));
+        html += bsRow("Signed AR control balance (audit only, not a receivable)", guest.net_receivable_control);
         body.innerHTML = html;
       }
       /* The guest-receivable roll and its credit-normal disclosure are
@@ -2146,12 +2264,13 @@
          Other assets, and no replacement figure is shown. */
       var asofEl = document.querySelector("[data-bs=asof]"); if (asofEl) asofEl.textContent = sheet.as_of ? ("as of " + sheet.as_of) : "";
       var recon = document.querySelector("[data-bs=recon]");
-      if (recon) recon.textContent = sheet.balanced ? "The balance sheet balances against the ledger." : ("WARNING: imbalance of " + moneyCell(sheet.difference) + " — investigate before relying on this statement.");
+      if (recon) recon.textContent = balanced ? "The balance sheet balances against the ledger. Guest credit is presented as a liability." : ("WARNING: imbalance of " + moneyCell(difference) + " — investigate before relying on this statement.");
       var presentationNote = document.querySelector("[data-bs=presentation-note]");
       if (presentationNote) {
         presentationNote.textContent = ((sheet.presentation || {}).equity_note || "") + " " +
           ((sheet.presentation || {}).withheld_note || "") + " " +
-          ((sheet.presentation || {}).withheld_asset_note || "");
+          ((sheet.presentation || {}).withheld_asset_note || "") + " " +
+          (sheet.presentation_note || "");
       }
     } catch (err) {
       JONE.ui.toast((err && err.message) || "The financial statements could not be loaded.", "error");
@@ -2635,6 +2754,12 @@
     }).join("");
   }
 
+  /* Accounting audit repair: human labels for the server's balance
+     classifications. A credit balance is an advance, not a refund. */
+  var CLASS_LABELS={
+    UNPAID_BILL:"Unpaid bill", PARTIALLY_PAID:"Partially paid", FULLY_PAID:"Fully paid",
+    GUEST_CREDIT:"Guest credit / advance", REFUNDED:"Refunded", CANCELLED:"Cancelled"
+  };
   var loaders={
     pnl:function(){
       var tb=$("[data-tbody=x-pnl]"), p=period();
@@ -2655,9 +2780,9 @@
       },function(e){ fail(tb,2,e); });
     },
     ar:function(){
-      var b=$("[data-tbody=x-ar-buckets]"), it=$("[data-tbody=x-ar-items]"), p=period();
+      var b=$("[data-tbody=x-ar-buckets]"), it=$("[data-tbody=x-ar-items]"), cl=$("[data-tbody=x-ar-classes]"), p=period();
       if(!b||!it) return;
-      b.innerHTML=empty(3,"Loading…"); it.innerHTML="";
+      b.innerHTML=empty(3,"Loading…"); it.innerHTML=""; if(cl) cl.innerHTML=empty(3,"Loading…");
       return get(EP.financeArAging,{as_of:p.to}).then(function(d){
         /* The guest-receivable ROLL (the aggregate position cards and the
            control-account reconciliation) is withdrawn from this page: the
@@ -2665,6 +2790,18 @@
            not be produced reliably as a statement figure. The per-folio
            worksheet below remains, and the endpoint still reports the same
            data for diagnosis. */
+        /* ACCOUNTING AUDIT REPAIR: the backend now separates the true
+           classifications. A credit balance is GUEST_CREDIT, never REFUNDED
+           and never a negative receivable. Only a posted REFUND transaction
+           makes a folio REFUNDED. These are server values, not JS arithmetic. */
+        if(cl){
+          var cls=d.classification||{}, order=["UNPAID_BILL","PARTIALLY_PAID","FULLY_PAID","GUEST_CREDIT","REFUNDED","CANCELLED"];
+          var hasClasses=Object.keys(cls).length>0;
+          cl.innerHTML=hasClasses?order.map(function(key){
+            var row=cls[key]||{};
+            return '<tr><td>'+esc(CLASS_LABELS[key]||key)+'</td><td class="num">'+esc(row.folios==null?"—":row.folios)+'</td><td class="num">'+esc(money(row.amount))+'</td></tr>';
+          }).join(""):empty(3,"No classification data returned");
+        }
         var bk=d.buckets||[];
         b.innerHTML=(bk.length?bk.map(function(x){
           return '<tr><td>'+esc(x.label||x.key)+'</td><td class="num">'+esc(x.count||0)+'</td><td class="num">'+esc(money(x.total))+'</td></tr>';
@@ -2679,10 +2816,11 @@
             '<td class="num">'+esc(money(x.payments_allocated))+'</td>'+
             '<td class="num">'+esc(money(x.discounts))+'</td>'+
             '<td class="num">'+esc(money(x.refunds))+'</td>'+
+            '<td class="cell-nowrap">'+esc(CLASS_LABELS[x.balance_classification]||String(x.settlement_state||"—").replace(/_/g," ").toLowerCase())+'</td>'+
             '<td class="num">'+esc(x.age_days==null?"—":x.age_days)+'</td>'+
             '<td class="num">'+esc(money(x.balance_due))+'</td>'+
             '<td class="num">'+esc(money(x.credit_balance))+'</td></tr>';
-        }).join(""):empty(11,"No guest balances outstanding");
+        }).join(""):empty(12,"No guest balances outstanding");
       },function(e){ fail(b,3,e); });
     },
 
