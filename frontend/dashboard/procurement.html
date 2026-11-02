@@ -750,6 +750,8 @@ async function viewOrder(reference){
       '<div><dt>Supplier</dt><dd>'+JONE.esc(order.supplier_name)+'</dd></div>'+
       '<div><dt>Delivery location</dt><dd>'+JONE.esc(order.delivery_location_code)+'</dd></div>'+
       '<div><dt>Status</dt><dd>'+JONE.dashboard.statusPill(order.status)+'</dd></div>'+
+      '<div><dt>Payment status</dt><dd>'+JONE.dashboard.statusPill(order.payment_status||order.payment_progress||"—")+'</dd></div>'+
+      '<div><dt>Receipt status</dt><dd>'+JONE.dashboard.statusPill(order.receipt_status||order.receipt_progress||"—")+'</dd></div>'+
       '<div><dt>Next step</dt><dd data-proc-next-step>'+JONE.esc(nextStep(order)||"—")+'</dd></div>'+
       '<div><dt>Goods received</dt><dd>'+JONE.esc(RECEIPT_PROGRESS[order.receipt_progress]||"—")+'</dd></div>'+
       '<div><dt>Supplier payment</dt><dd>'+JONE.esc(PAYMENT_PROGRESS[order.payment_progress]||"—")+'</dd></div>'+
@@ -911,10 +913,11 @@ function paymentHistoryHtml(order){
       '<td class="num cell-nowrap">'+JONE.esc(money(payment.amount,order.currency))+'</td>'+
       '<td class="cell-clamp">'+JONE.esc(payment.reference||"—")+'</td>'+
       '<td class="cell-clamp">'+(payment.evidence_url?'<a href="'+JONE.esc(payment.evidence_url)+'" target="_blank" rel="noopener">Receipt / invoice</a>':"—")+'</td>'+
-      '<td class="hide-sm cell-clamp">'+JONE.esc(payment.uploaded_by_email||"—")+'</td></tr>';
+      '<td class="hide-sm cell-clamp">'+JONE.esc(payment.uploaded_by_email||"—")+'</td>'+
+      '<td class="cell-clamp"><span class="cell-sub">'+JONE.esc(payment.accounting_posting_status||"—")+'</span>'+(payment.finance_expense_reference?'<div class="caption">'+JONE.esc(payment.finance_expense_reference)+'</div>':"")+'</td></tr>';
   }).join("");
   return '<details open style="margin-top:.75rem"><summary>Payments to this supplier ('+payments.length+')</summary>'+
-    '<div class="table-wrap" style="margin-top:.5rem"><table class="table table-receipt"><thead><tr><th>Paid on</th><th>Method</th><th>Amount</th><th>Reference</th><th>Evidence</th><th class="hide-sm">Recorded by</th></tr></thead><tbody>'+
+    '<div class="table-wrap" style="margin-top:.5rem"><table class="table table-receipt"><thead><tr><th>Paid on</th><th>Method</th><th>Amount</th><th>Reference</th><th>Evidence</th><th class="hide-sm">Recorded by</th><th>Accounting status</th></tr></thead><tbody>'+
     rows+'</tbody></table></div></details>';
 }
 
@@ -928,7 +931,7 @@ async function recordPayment(reference,known){
   var result=await JONE.dashboard.formModal({title:"Record supplier payment · "+reference,submitText:"Record payment",wide:true,multipart:true,
     onRender:function(panel){
       var note=document.createElement("p");note.className="hint";note.style.margin="0.75rem 1.25rem 0";
-      note.textContent="This records the money paid on the purchase order itself (the procurement record). It does not post to the finance ledger: Accounting records the supplier payable and its settlement through Expenses.";
+      note.textContent="This records the money paid on the purchase order itself and creates one controlled Accounting handover (or mirrors an executed settlement). It does not post to the finance ledger by itself: the Accountant prepares and submits, an authorised approver decides, and Finance posts exactly once.";
       panel.appendChild(note);
     },
     fields:[

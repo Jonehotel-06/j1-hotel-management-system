@@ -29,6 +29,10 @@ urlpatterns = [
     path("stock-counts/<str:reference>/submit/", views.StockCountSubmitView.as_view(), name="stock-count-submit"),
     path("stock-counts/<str:reference>/approve/", views.StockCountApproveView.as_view(), name="stock-count-approve"),
     path("issues/", views.StockIssueView.as_view(), name="issues"),
+    path(
+        "manual-ingredient-issues/",
+        views.ManualIngredientIssueListCreateView.as_view(), name="manual-ingredient-issues",
+    ),
     path("opening-stock/", views.StockOpeningView.as_view(), name="opening-stock"),
     path("returns/", views.StockReturnView.as_view(), name="returns"),
     path("transfers/", views.StockTransferView.as_view(), name="transfers"),

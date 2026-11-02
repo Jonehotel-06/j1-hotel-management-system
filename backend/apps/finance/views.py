@@ -24,7 +24,9 @@ from .serializers import (
     ApprovalReviewSerializer,
     CashDropSerializer,
     CashSessionSerializer,
+    ExpenseAccountingPrepareSerializer,
     ExpenseCreateSerializer,
+    ExpenseHandoverCreateSerializer,
     ExpenseSettlementSerializer,
     JournalCreateSerializer,
     ExpenseDetailSerializer,
@@ -50,7 +52,9 @@ from .services.cash_session_service import review_cash_variance
 from .services.expense_service import (
     attach_expense_payment_evidence,
     create_expense,
+    create_expense_handover,
     post_expense,
+    prepare_expense_for_approval,
     review_expense,
     settle_expense_payment,
     submit_expense,
@@ -204,6 +208,20 @@ class FinancialSummaryReportView(APIView):
         return success_response(data)
 
 
+@extend_schema(tags=["Admin · Finance"], summary="Posted-ledger reconciliation checks")
+class FinancialReconciliationView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "reports.financial.view"
+
+    def get(self, request):
+        data = financial_summary(
+            start_date=_parse_query_date(request.query_params.get("start"), "start"),
+            end_date=_parse_query_date(request.query_params.get("end"), "end"),
+            currency=request.query_params.get("currency", "NGN"),
+        )
+        return success_response(data["reconciliation"])
+
+
 @extend_schema(tags=["Admin · Finance"], summary="Get one immutable financial transaction")
 class FinancialTransactionDetailView(APIView):
     permission_classes = [HasCapability]
@@ -317,6 +335,70 @@ def _expense_queryset(*, detail=False):
     return queryset
 
 
+@extend_schema(tags=["Admin · Finance"], summary="Create a Store Keeper expense handover")
+class ExpenseHandoverCreateView(APIView):
+    permission_classes = [HasCapability]
+    required_capabilities = ("expense.request", "expense.manage")
+    require_any_capability = True
+
+    def post(self, request):
+        serializer = ExpenseHandoverCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        purchase_order = None
+        if reference := data.get("purchase_order_reference"):
+            from apps.inventory.models import PurchaseOrder
+
+            purchase_order = PurchaseOrder.objects.filter(reference=reference).first()
+            if purchase_order is None:
+                raise NotFound("Purchase order not found.")
+        expense, created = create_expense_handover(
+            actor=request.user,
+            category=data["category"],
+            amount=data["amount"],
+            incurred_on=data.get("incurred_on"),
+            currency=data.get("currency", "NGN"),
+            payee=data.get("payee", ""),
+            supplier_reference=data.get("supplier_reference", ""),
+            description=data.get("description", ""),
+            notes=data.get("notes", ""),
+            purchase_order=purchase_order,
+            workflow_origin=Expense.WorkflowOrigin.STOREKEEPER,
+            idempotency_key=f"expense-handover:{request.user.pk}:{data['idempotency_key']}",
+            metadata={"source": "STOREKEEPER_HANDOVER", "ledger_effect": "none"},
+        )
+        if created:
+            log_action(
+                actor=request.user, action="EXPENSE_HANDOVER_CREATED", instance=expense,
+                summary=f"Store Keeper handover {expense.reference} created as DRAFT",
+                metadata={"reference": expense.reference, "amount": str(expense.amount)},
+            )
+        return success_response(
+            ExpenseDetailSerializer(_expense_or_404(request, expense.reference, detail=True)).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+@extend_schema(tags=["Admin · Finance"], summary="Accountant prepares a handover for approval")
+class ExpenseAccountingPrepareView(APIView):
+    permission_classes = [HasCapability]
+    required_capability = "expense.manage"
+
+    def patch(self, request, reference):
+        expense = _expense_or_404(request, reference, detail=True)
+        serializer = ExpenseAccountingPrepareSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        expense = prepare_expense_for_approval(
+            expense=expense, actor=request.user, **serializer.validated_data
+        )
+        log_action(
+            actor=request.user, action="EXPENSE_HANDOVER_PREPARED", instance=expense,
+            summary=f"Expense handover {expense.reference} prepared for independent approval",
+            metadata={"reference": expense.reference},
+        )
+        return success_response(ExpenseDetailSerializer(expense).data)
+
+
 def _expense_or_404(request, reference, *, detail=False):
     expense = _expense_queryset(detail=detail).filter(reference=reference).first()
     if expense is None:
@@ -350,6 +432,14 @@ class ExpenseListCreateView(APIView):
             queryset = queryset.filter(status=status_value)
         if category := request.query_params.get("category"):
             queryset = queryset.filter(category__iexact=category)
+        if request.query_params.get("queue") == "handover":
+            queryset = queryset.filter(
+                workflow_origin__in=(
+                    Expense.WorkflowOrigin.STOREKEEPER,
+                    Expense.WorkflowOrigin.PROCUREMENT_PAYMENT,
+                ),
+                status=Expense.Status.DRAFT,
+            )
         start = _parse_query_date(request.query_params.get("start"), "start")
         end = _parse_query_date(request.query_params.get("end"), "end")
         if start:

@@ -312,7 +312,7 @@ class SupplierPaymentVisibilityTests(BaseAPITestCase):
         with CaptureQueriesContext(connection) as captured:
             financial_summary(start_date=today, end_date=today, currency="NGN")
         count = len(captured.captured_queries)
-        self.assertLessEqual(count, 9, f"financial_summary issued {count} statements, budget is 9")
+        self.assertLessEqual(count, 15, f"financial_summary issued {count} statements, budget is 15 (including fixed reconciliation aggregates)")
 
     def test_every_reported_measure_documents_its_own_definition(self):
         definitions = self.summary()["supplier_payments"]["definitions"]

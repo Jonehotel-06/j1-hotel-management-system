@@ -36,6 +36,65 @@ class ServiceRequestListSerializer(serializers.ModelSerializer):
     housekeeping_task_reference = serializers.CharField(source="housekeeping_task.reference", read_only=True, allow_null=True)
     maintenance_work_order_reference = serializers.CharField(source="maintenance_work_order.reference", read_only=True, allow_null=True)
     pos_order_reference = serializers.CharField(source="pos_order.reference", read_only=True, allow_null=True)
+    pos_order_details = serializers.SerializerMethodField()
+
+    def get_pos_order_details(self, obj):
+        order = getattr(obj, "pos_order", None)
+        if order is None:
+            return None
+        fulfilment = (order.metadata or {}).get("fulfilment") or {}
+        context = (order.metadata or {}).get("service_context") or {}
+        created_by = order.created_by
+        charge = order.charge_transaction if order.charge_transaction_id else None
+        lines = [
+            {
+                "item_name": line.item_name,
+                "item_sku": line.item_sku,
+                "quantity": line.quantity,
+                "unit_price": str(line.unit_price),
+                "line_total": str(line.line_total),
+                "notes": line.notes,
+            }
+            for line in order.lines.all()
+        ]
+        tenders = [
+            {
+                "reference": tender.reference,
+                "method": tender.method,
+                "status": tender.status,
+                "amount": str(tender.amount),
+                "captured_at": tender.captured_at.isoformat() if tender.captured_at else None,
+                "external_reference": tender.external_reference,
+            }
+            for tender in order.tenders.all()
+        ]
+        captured = sum(
+            (tender.amount for tender in order.tenders.all() if tender.status == "CAPTURED"),
+            Decimal("0.00"),
+        )
+        return {
+            "reference": order.reference,
+            "status": order.status,
+            "mode": order.mode,
+            "currency": order.currency,
+            "subtotal": str(order.subtotal),
+            "total_amount": str(order.total_amount),
+            "net_total": str(order.net_total),
+            "settlement_status": order.settlement_status,
+            "delivered_at": order.delivered_at.isoformat() if order.delivered_at else None,
+            "lines": lines,
+            "tenders": tenders,
+            "amount_captured": str(captured),
+            "payment_basis": fulfilment.get("payment_basis") or ("ROOM_FOLIO" if order.mode == "ROOM_SERVICE" else "DIRECT_TENDER"),
+            "folio_reference": str(getattr(order.folio, "reference", "") or "") if order.folio_id else "",
+            "charge_transaction_reference": str(getattr(charge, "reference", "") or ""),
+            "served_by_name": str(fulfilment.get("served_by_name") or getattr(created_by, "full_name", "") or ""),
+            "served_by_email": str(fulfilment.get("served_by_email") or getattr(created_by, "email", "") or ""),
+            "served_at": fulfilment.get("served_at") or (order.delivered_at.isoformat() if order.delivered_at else None),
+            "created_by_name": str(context.get("created_by_name") or getattr(created_by, "full_name", "") or ""),
+            "created_by_email": str(context.get("created_by_email") or getattr(created_by, "email", "") or ""),
+            "service_request_reference": context.get("service_request_reference") or obj.reference,
+        }
 
     class Meta:
         model = ServiceRequest
@@ -44,7 +103,7 @@ class ServiceRequestListSerializer(serializers.ModelSerializer):
             "qr_link_reference", "category", "priority", "channel", "status", "owner_team", "assigned_to_name",
             "assigned_to_email", "summary", "due_at",
             "acknowledged_at", "resolved_at", "closed_at", "housekeeping_task_reference",
-            "maintenance_work_order_reference", "pos_order_reference", "created_at", "updated_at",
+            "maintenance_work_order_reference", "pos_order_reference", "pos_order_details", "created_at", "updated_at",
         ]
         read_only_fields = fields
 

@@ -104,7 +104,7 @@ class DepartmentRoleModelTests(BaseAPITestCase):
             frozenset({
                 "procurement.manage", "staff.profile.manage", "staff.view", "staff.manage",
                 "shift.manage", "attendance.clock", "attendance.manage", "leave.request",
-                "payroll.view", "payroll.manage",
+                "inventory.manage", "expense.request",
             }),
         )
         for forbidden_approval in ("procurement.approve", "payroll.approve", "leave.approve", "expense.approve"):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import secrets
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -19,7 +20,7 @@ from apps.core.utils import hotel_today
 from ..models import (
     GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderPayment,
     StockBalance, StockBalanceAdjustment, StockConsumptionRequest, StockConsumptionRequestEvent, StockCount, StockCountEvent,
-    StockCountLine, StockDepartment, StockItem, StockLocation, StockMovement, StockRecipe,
+    StockCountLine, StockDepartment, StockIssueBatch, StockItem, StockLocation, StockMovement, StockRecipe,
     StockRecipeLine, Supplier,
 )
 
@@ -52,6 +53,16 @@ def _quantity(value, *, field="quantity", positive=False):
         raise ValidationError({field: "Quantity must be greater than zero."})
     if not positive and amount == Decimal("0.0000"):
         raise ValidationError({field: "Quantity delta cannot be zero."})
+    return amount
+
+
+def _nonnegative_quantity(value, *, field="quantity"):
+    try:
+        amount = Decimal(str(value if value not in (None, "") else 0)).quantize(QTY, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValidationError({field: "Enter a valid quantity to four decimal places."}) from exc
+    if amount < Decimal("0.0000"):
+        raise ValidationError({field: "Quantity cannot be negative."})
     return amount
 
 
@@ -135,7 +146,8 @@ def _locked_balance(*, item, location):
 def record_stock_movement(
     *, item, location, movement_type, quantity_delta, source_key, actor=None,
     unit_cost=None, source_reference="", notes="", metadata=None, allow_negative=False,
-    department="", recipient="", automated=False,
+    department="", recipient="", automated=False, menu_item=None, preparation_batch=None,
+    issue_method="",
 ) -> tuple[StockMovement, bool]:
     """Append an immutable movement and update the locked balance projection.
 
@@ -153,6 +165,8 @@ def record_stock_movement(
     """
     if movement_type not in StockMovement.Type.values:
         raise ValidationError({"type": "Invalid stock movement type."})
+    if issue_method and issue_method not in StockMovement.IssueMethod.values:
+        raise ValidationError({"issue_method": "Invalid stock consumption method."})
     source_key = str(source_key or "").strip()
     if not source_key:
         raise ValidationError("A stable stock movement source key is required.")
@@ -180,6 +194,8 @@ def record_stock_movement(
                     currency=item.currency.upper(), source_reference=(source_reference or "")[:120],
                     notes=(notes or "")[:500], department=_department(department),
                     recipient=str(recipient or "").strip()[:120],
+                    menu_item=menu_item, preparation_batch=preparation_batch,
+                    issue_method=issue_method or "",
                     metadata=dict(metadata or {}), actor=actor,
                 )
             break
@@ -212,6 +228,7 @@ def _department(value, *, field="department"):
 def issue_stock(
     *, item, location, quantity, actor, source_key, notes="", source_reference="",
     movement_type=StockMovement.Type.ISSUE, department="", recipient="",
+    menu_item=None, preparation_batch=None, issue_method="", metadata=None,
 ):
     """Issue stock out of a store to a department, with custody evidence.
 
@@ -242,8 +259,157 @@ def issue_stock(
     return record_stock_movement(
         item=item, location=location, movement_type=movement_type, quantity_delta=-quantity,
         source_key=source_key, actor=actor, source_reference=source_reference, notes=notes,
-        department=department, recipient=recipient,
+        department=department, recipient=recipient, menu_item=menu_item,
+        preparation_batch=preparation_batch, issue_method=issue_method,
+        metadata=metadata,
     )
+
+
+@transaction.atomic
+def create_manual_ingredient_issue(
+    *, menu_item_id, location_id, department, recipient, preparation_on=None,
+    batch_reference="", notes="", lines, actor, idempotency_key,
+) -> tuple[StockIssueBatch, bool]:
+    """One Store Keeper preparation batch: one dish, many ingredients.
+
+    A batch is an append-only hand-over record. Every line becomes one immutable
+    ISSUE movement from the chosen location with the dish, preparation date,
+    receiving employee, department, unit conversion evidence and batch link.
+    A stable scoped key makes a lost reply / double submit idempotent; the same
+    key with different details is refused. Only ingredients explicitly marked
+    MANUAL may be used, so automatic POS recipe consumption cannot double-count.
+    """
+    from apps.pos.models import MenuItem
+
+    assert_can_record_stock(actor, action="record a manual ingredient issue")
+    key = scoped_key(
+        prefix="manual-ingredient-issue",
+        scope=f"staff:{getattr(actor, 'pk', 'system')}",
+        raw_key=idempotency_key,
+    )
+    if key is None:
+        raise ValidationError({"idempotency_key": "A stable manual-issue key is required."})
+    existing = StockIssueBatch.objects.select_for_update().filter(source_key=key).first()
+
+    menu_item = MenuItem.objects.filter(pk=menu_item_id, is_active=True).first()
+    if menu_item is None:
+        raise ValidationError({"menu_item_id": "Choose an active existing POS dish."})
+    location = StockLocation.objects.select_for_update().filter(pk=location_id, is_active=True).first()
+    if location is None:
+        raise ValidationError({"location_id": "Choose an active stock location."})
+    department = _department(department)
+    recipient = str(recipient or "").strip()[:120]
+    if not recipient:
+        raise ValidationError({"recipient": "Name the kitchen employee receiving the ingredients."})
+    preparation_on = preparation_on or hotel_today()
+    if preparation_on > hotel_today():
+        raise ValidationError({"preparation_on": "A preparation date cannot be in the future."})
+    batch_reference = str(batch_reference or "").strip()[:64]
+    notes = str(notes or "")[:2000]
+
+    raw_lines = list(lines or ())
+    if not 1 <= len(raw_lines) <= 100:
+        raise ValidationError({"lines": "A manual issue needs between 1 and 100 ingredient lines."})
+    item_ids = []
+    for raw in raw_lines:
+        try:
+            item_ids.append(int(raw["item_id"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValidationError({"lines": "Every ingredient line needs item_id."}) from exc
+    if len(set(item_ids)) != len(item_ids):
+        raise ValidationError({"lines": "An ingredient may appear once per batch."})
+    items = {
+        item.pk: item
+        for item in StockItem.objects.select_for_update().filter(pk__in=item_ids, is_active=True)
+    }
+    if len(items) != len(item_ids):
+        raise ValidationError({"lines": "One or more stock items are inactive or missing."})
+
+    fingerprint = _manual_issue_fingerprint(
+        menu_item_id=menu_item.pk, location_id=location.pk, department=department,
+        recipient=recipient, preparation_on=preparation_on,
+        batch_reference=batch_reference, notes=notes, raw_lines=raw_lines,
+    )
+    if existing is not None:
+        if existing.payload_fingerprint != fingerprint:
+            raise ValidationError({"idempotency_key": "This issue key was already used for different ingredients."})
+        return existing, False
+
+    normalized = []
+    for raw in raw_lines:
+        item = items[int(raw["item_id"])]
+        if item.stock_consumption_mode != StockItem.ConsumptionMode.MANUAL:
+            raise ValidationError({
+                "lines": f"{item.sku} is not marked for manual ingredient issue. Change its active consumption route first."
+            })
+        base_quantity, evidence = resolve_entered_quantity(
+            raw["quantity"], item=item, unit=raw.get("unit") or "",
+            conversion_factor=raw.get("conversion_factor"),
+            allow_declared_pack_size=True,
+        )
+        normalized.append((item, base_quantity, evidence, str(raw.get("notes") or "")[:500]))
+
+    try:
+        with transaction.atomic():
+            batch = StockIssueBatch.objects.create(
+                reference=_reference("MIB"), source_key=key, menu_item=menu_item,
+                preparation_on=preparation_on, batch_reference=batch_reference,
+                location=location, department=department, recipient=recipient,
+                consumption_method=StockIssueBatch.ConsumptionMethod.MANUAL,
+                notes=notes, payload_fingerprint=fingerprint, created_by=actor,
+            )
+    except IntegrityError:
+        existing = StockIssueBatch.objects.select_for_update().filter(source_key=key).first()
+        if existing is not None:
+            if existing.payload_fingerprint != fingerprint:
+                raise ValidationError({"idempotency_key": "This issue key was already used for different ingredients."})
+            return existing, False
+        raise
+
+    for item, base_quantity, evidence, line_notes in normalized:
+        metadata = {
+            "source": "MANUAL_INGREDIENT_ISSUE",
+            "consumption_method": StockIssueBatch.ConsumptionMethod.MANUAL,
+            "dish_sku": menu_item.sku,
+            "dish_name": menu_item.name,
+            "preparation_on": preparation_on.isoformat(),
+            "batch_reference": batch.batch_reference or batch.reference,
+            "stock_issue_batch": batch.reference,
+            "automatic_recipe_suppressed": True,
+            **evidence,
+        }
+        issue_stock(
+            item=item, location=location, quantity=base_quantity, actor=actor,
+            source_key=f"manual-ingredient-issue:{batch.reference}:{item.pk}",
+            source_reference=(batch.batch_reference or batch.reference)[:120],
+            notes=line_notes or f"Manual issue for {menu_item.name} prepared on {preparation_on.isoformat()}",
+            movement_type=StockMovement.Type.ISSUE, department=department,
+            recipient=recipient, menu_item=menu_item, preparation_batch=batch,
+            issue_method=StockMovement.IssueMethod.MANUAL, metadata=metadata,
+        )
+    return batch, True
+
+
+def _manual_issue_fingerprint(*, menu_item_id, location_id, department, recipient,
+                              preparation_on, batch_reference, notes, raw_lines):
+    canonical_lines = []
+    for raw in raw_lines:
+        canonical_lines.append({
+            "item_id": str(raw.get("item_id") or ""),
+            "quantity": str(raw.get("quantity") or ""),
+            "unit": str(raw.get("unit") or ""),
+            "conversion_factor": str(raw.get("conversion_factor") or ""),
+            "notes": str(raw.get("notes") or ""),
+        })
+    payload = {
+        "menu_item_id": str(menu_item_id), "location_id": str(location_id),
+        "department": department, "recipient": recipient,
+        "preparation_on": preparation_on.isoformat(), "batch_reference": batch_reference,
+        "notes": notes, "lines": sorted(canonical_lines, key=lambda row: row["item_id"]),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
 
 
 @transaction.atomic
@@ -577,6 +743,38 @@ def _validate_accounting_settlement_link(*, po, reference, amount):
         })
 
 
+def _update_po_payment_status(po) -> str:
+    total, paid = po.total_amount, po.total_paid
+    if paid <= Decimal("0.00"):
+        status = PurchaseOrder.PaymentStatus.UNPAID
+    elif paid >= total:
+        status = PurchaseOrder.PaymentStatus.PAID
+    else:
+        status = PurchaseOrder.PaymentStatus.PARTIALLY_PAID
+    po.payment_status = status
+    return status
+
+
+def _update_po_receipt_status(po) -> str:
+    lines = list(po.lines.all())
+    if not lines:
+        status = PurchaseOrder.ReceiptStatus.NOT_RECEIVED
+    else:
+        delivered = lambda line: (
+            Decimal(line.quantity_received or 0)
+            + Decimal(line.quantity_damaged or 0)
+            + Decimal(line.quantity_rejected or 0)
+        )
+        if all(delivered(line) >= Decimal(line.quantity_ordered or 0) for line in lines):
+            status = PurchaseOrder.ReceiptStatus.RECEIVED
+        elif any(delivered(line) > Decimal("0.0000") for line in lines):
+            status = PurchaseOrder.ReceiptStatus.PARTIALLY_RECEIVED
+        else:
+            status = PurchaseOrder.ReceiptStatus.NOT_RECEIVED
+    po.receipt_status = status
+    return status
+
+
 @transaction.atomic
 def record_purchase_order_payment(
     *, purchase_order, actor, method, amount=None, reference="",
@@ -669,12 +867,23 @@ def record_purchase_order_payment(
         payment.evidence_uploaded_at = timezone.now()
     payment.save()
 
+    # A Procurement payment is evidence, not a financial posting. Link it to
+    # one controlled Finance handover / mirrored settlement, or flag it for
+    # review. Posting exactly once remains Finance-owned and approval-bound.
+    from apps.finance.services.procurement_payment_posting_service import (
+        reconcile_procurement_payment_with_accounting,
+    )
+    reconcile_procurement_payment_with_accounting(payment=payment, actor=actor)
+
     # total_paid queries all persisted rows, including the payment just saved.
+    _update_po_payment_status(po)
     if po.total_paid >= total:
         po.status = PurchaseOrder.Status.PAID
         po.paid_at = timezone.now()
         po.paid_by = actor
-        po.save(update_fields=["status", "paid_at", "paid_by", "updated_at"])
+        po.save(update_fields=["status", "payment_status", "paid_at", "paid_by", "updated_at"])
+    else:
+        po.save(update_fields=["payment_status", "updated_at"])
     return payment
 
 
@@ -817,9 +1026,16 @@ def _validate_receipt_retry(existing, *, po, raw_lines, received_on, supplier_de
         if line is None or line_id in seen:
             raise mismatch
         seen.add(line_id)
-        quantity = _quantity(raw.get("quantity_received"), field="quantity_received", positive=True)
+        quantity = _nonnegative_quantity(raw.get("quantity_received"), field="quantity_received")
+        damaged = _nonnegative_quantity(raw.get("quantity_damaged", 0), field="quantity_damaged")
+        rejected = _nonnegative_quantity(raw.get("quantity_rejected", 0), field="quantity_rejected")
         unit_cost = _cost(raw.get("unit_cost", line.purchase_order_line.unit_cost))
-        if quantity != line.quantity_received or unit_cost != line.unit_cost:
+        if (
+            quantity != Decimal(line.quantity_received or 0)
+            or damaged != Decimal(line.quantity_damaged or 0)
+            or rejected != Decimal(line.quantity_rejected or 0)
+            or unit_cost != line.unit_cost
+        ):
             raise mismatch
     if received_on is not None and existing.received_on != received_on:
         raise mismatch
@@ -853,11 +1069,22 @@ def receive_goods(*, purchase_order, receipt_lines, actor, source_key, received_
     if len(po_lines) != len(line_ids): raise ValidationError({"lines": "One or more purchase-order lines do not belong to this order."})
     normalized=[]
     for raw, line_id in zip(raw_lines, line_ids):
-        po_line=po_lines[line_id]; qty=_quantity(raw.get("quantity_received"), field="quantity_received", positive=True)
-        if Decimal(po_line.quantity_received) + qty > Decimal(po_line.quantity_ordered):
+        po_line=po_lines[line_id]
+        qty = _nonnegative_quantity(raw.get("quantity_received"), field="quantity_received")
+        damaged = _nonnegative_quantity(raw.get("quantity_damaged", 0), field="quantity_damaged")
+        rejected = _nonnegative_quantity(raw.get("quantity_rejected", 0), field="quantity_rejected")
+        delivered = qty + damaged + rejected
+        if delivered <= Decimal("0.0000"):
+            raise ValidationError({"lines": f"Record accepted, damaged or rejected quantity for {po_line.item_sku}."})
+        already_delivered = (
+            Decimal(po_line.quantity_received or 0)
+            + Decimal(po_line.quantity_damaged or 0)
+            + Decimal(po_line.quantity_rejected or 0)
+        )
+        if already_delivered + delivered > Decimal(po_line.quantity_ordered):
             raise ValidationError({"lines": f"Receipt exceeds remaining quantity for {po_line.item_sku}."})
         unit_cost = _cost(raw.get("unit_cost", po_line.unit_cost))
-        normalized.append((po_line, qty, unit_cost))
+        normalized.append((po_line, qty, damaged, rejected, unit_cost))
     for _ in range(8):
         try:
             with transaction.atomic():
@@ -874,18 +1101,31 @@ def receive_goods(*, purchase_order, receipt_lines, actor, source_key, received_
                                         supplier_delivery_reference=supplier_delivery_reference, notes=notes)
                 return existing, False
     else: raise ValidationError("Could not allocate a unique goods-receipt reference; please retry.")
-    for po_line, qty, unit_cost in normalized:
-        movement, _ = record_stock_movement(
-            item=po_line.item, location=po.delivery_location, movement_type=StockMovement.Type.RECEIPT,
-            quantity_delta=qty, source_key=f"goods-receipt:{receipt.reference}:{po_line.pk}", actor=actor,
-            unit_cost=unit_cost, source_reference=receipt.reference, notes=f"Goods receipt {receipt.reference}",
-            metadata={"purchase_order": po.reference, "purchase_order_line_id": po_line.pk},
+    for po_line, qty, damaged, rejected, unit_cost in normalized:
+        movement = None
+        if qty > Decimal("0.0000"):
+            movement, _ = record_stock_movement(
+                item=po_line.item, location=po.delivery_location, movement_type=StockMovement.Type.RECEIPT,
+                quantity_delta=qty, source_key=f"goods-receipt:{receipt.reference}:{po_line.pk}", actor=actor,
+                unit_cost=unit_cost, source_reference=receipt.reference, notes=f"Goods receipt {receipt.reference}",
+                metadata={"purchase_order": po.reference, "purchase_order_line_id": po_line.pk,
+                          "quantity_damaged": str(damaged), "quantity_rejected": str(rejected)},
+            )
+        GoodsReceiptLine.objects.create(
+            goods_receipt=receipt, purchase_order_line=po_line, item=po_line.item,
+            quantity_received=qty, quantity_damaged=damaged, quantity_rejected=rejected,
+            unit_cost=unit_cost, stock_movement=movement,
         )
-        GoodsReceiptLine.objects.create(goods_receipt=receipt, purchase_order_line=po_line, item=po_line.item,
-                                        quantity_received=qty, unit_cost=unit_cost, stock_movement=movement)
-        po_line.quantity_received = (Decimal(po_line.quantity_received) + qty).quantize(QTY)
-        po_line.save(update_fields=["quantity_received"])
-    all_received = not PurchaseOrderLine.objects.filter(purchase_order=po, quantity_received__lt=F("quantity_ordered")).exists()
+        po_line.quantity_received = (Decimal(po_line.quantity_received or 0) + qty).quantize(QTY)
+        po_line.quantity_damaged = (Decimal(po_line.quantity_damaged or 0) + damaged).quantize(QTY)
+        po_line.quantity_rejected = (Decimal(po_line.quantity_rejected or 0) + rejected).quantize(QTY)
+        po_line.save(update_fields=["quantity_received", "quantity_damaged", "quantity_rejected"])
+    all_received = not (
+        PurchaseOrderLine.objects.filter(purchase_order=po)
+        .annotate(delivered=F("quantity_received") + F("quantity_damaged") + F("quantity_rejected"))
+        .filter(delivered__lt=F("quantity_ordered"))
+        .exists()
+    )
     # Payment and physical receipt are independent. Preserve an actually paid
     # order's status when advance-paid stock arrives, including partial arrivals.
     if po.paid_at is not None and po.total_paid >= po.total_amount:
@@ -894,7 +1134,8 @@ def receive_goods(*, purchase_order, receipt_lines, actor, source_key, received_
         po.status = PurchaseOrder.Status.RECEIVED
     else:
         po.status = PurchaseOrder.Status.PARTIALLY_RECEIVED
-    po.save(update_fields=["status", "updated_at"])
+    _update_po_receipt_status(po)
+    po.save(update_fields=["status", "receipt_status", "updated_at"])
     return receipt, True
 
 
@@ -1301,21 +1542,29 @@ def _active_recipe_snapshots(menu_item_ids):
         # defensively makes an old imported duplicate deterministic.
         if key in snapshots:
             continue
+        recipe_lines = list(recipe.lines.all())
+        components = [
+            {
+                "item_id": line.item_id,
+                "item_sku": line.item.sku,
+                "quantity_per_menu_unit": str(line.quantity_per_menu_unit),
+            }
+            for line in recipe_lines
+            if line.item.stock_consumption_mode == StockItem.ConsumptionMode.AUTOMATIC
+        ]
+        manual_suppressed = len(components) != len(recipe_lines)
+        tracking_mode = recipe.tracking_mode
+        if tracking_mode == StockRecipe.TrackingMode.COMPONENTS and not components and manual_suppressed:
+            tracking_mode = StockRecipe.TrackingMode.NO_STOCK
         snapshots[key] = {
             "recipe_reference": recipe.reference,
             "recipe_version": recipe.version,
             "menu_item_id": recipe.menu_item_id,
             "location_id": recipe.location_id,
             "location_code": recipe.location.code,
-            "tracking_mode": recipe.tracking_mode,
-            "components": [
-                {
-                    "item_id": line.item_id,
-                    "item_sku": line.item.sku,
-                    "quantity_per_menu_unit": str(line.quantity_per_menu_unit),
-                }
-                for line in recipe.lines.all()
-            ],
+            "tracking_mode": tracking_mode,
+            "manual_components_suppressed": manual_suppressed,
+            "components": components,
         }
     missing_ids = [mid for mid in ids if str(mid) not in snapshots]
     if missing_ids:
@@ -1340,6 +1589,7 @@ def _direct_sale_snapshots(menu_item_ids):
     candidates = (
         StockItem.objects.filter(
             is_active=True,
+            stock_consumption_mode=StockItem.ConsumptionMode.AUTOMATIC,
             direct_sale_menu_item_id__in=ids,
             direct_sale_location__isnull=False,
             direct_sale_location__is_active=True,

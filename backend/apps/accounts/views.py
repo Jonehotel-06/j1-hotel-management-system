@@ -31,6 +31,7 @@ from apps.core.serializers import EmptySerializer
 
 from .capabilities import capability_codes_for_user
 from .desktop_policy import (
+    desktop_key_override_for_unusable_ip_pin,
     front_desk_desktop_ip_allowed,
     front_desk_workstation_missing,
     request_client_ip,
@@ -231,9 +232,11 @@ def _refuse_staff_refresh_outside_desk(request):
     # the desktop at sign-in (key, or registered address) keeps its session
     # alive from that same desktop. A shift that began at the desk must not be
     # killed mid-shift just because this header is missing on a refresh.
-    desktop, _method = resolve_receptionist_desktop(request)
+    desktop, desktop_method = resolve_receptionist_desktop(request)
     if desktop is not None:
-        if front_desk_desktop_ip_allowed(request):
+        if front_desk_desktop_ip_allowed(request) or desktop_key_override_for_unusable_ip_pin(
+            request, desktop_method
+        ):
             return None
         logger.warning("Staff session refresh refused: user_id=%s role=%s reason=front_desk_ip_mismatch", user.pk, user.role)
         log_action(

@@ -185,34 +185,21 @@ def build_dashboard(user):
             data["ledger_month"] = None
             data["ledger_month_error"] = "Month-to-date financial summary could not be loaded."
 
-        today_revenue = (
-            Payment.objects.filter(
-                status=Payment.Status.SUCCESS, paid_at__gte=today_start, paid_at__lt=tomorrow_start
-            ).aggregate(total=Sum("amount"))["total"]
+        # No legacy Payment + Booking financial fallback. Those projections are
+        # operational activity only; posted FinancialLine is the sole KPI basis.
+        data["reconciliation"] = (
+            (data.get("ledger_month") or {}).get("reconciliation")
+            or (data.get("ledger") or {}).get("reconciliation")
         )
-        month_revenue = (
-            Payment.objects.filter(status=Payment.Status.SUCCESS, paid_at__gte=month_start_at)
-            .aggregate(total=Sum("amount"))["total"]
-        )
-        outstanding = (
-            Booking.objects.filter(
-                status__in=(Booking.Status.CONFIRMED, Booking.Status.CHECKED_IN)
-            )
-            .annotate(balance=F("total_amount") - F("amount_paid"))
-            .filter(balance__gt=0)
-            .aggregate(total=Sum("balance"), count=Count("id"))
-        )
+        data["financial_basis"] = {
+            "source": "posted_immutable_financial_lines",
+            "legacy_payment_booking_fallback_used": False,
+        }
         recent_payments = (
             Payment.objects.select_related("booking")
             .filter(status=Payment.Status.SUCCESS)
             .order_by("-paid_at")[:7]
         )
-        data["revenue"] = {
-            "today": _money_or_zero(today_revenue),
-            "this_month": _money_or_zero(month_revenue),
-            "outstanding_total": _money_or_zero(outstanding["total"]),
-            "outstanding_bookings": outstanding["count"],
-        }
         data["recent_payments"] = [
             {
                 "reference": p.reference,

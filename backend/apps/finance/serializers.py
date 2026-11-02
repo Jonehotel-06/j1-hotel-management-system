@@ -152,6 +152,7 @@ class ExpenseListSerializer(serializers.ModelSerializer):
     approved_by_email = serializers.EmailField(source="approved_by.email", read_only=True, allow_null=True)
     posted_by_email = serializers.EmailField(source="posted_by.email", read_only=True, allow_null=True)
     paid_by_email = serializers.EmailField(source="paid_by.email", read_only=True, allow_null=True)
+    prepared_by_email = serializers.EmailField(source="prepared_by.email", read_only=True, allow_null=True)
     settlement_reference = serializers.CharField(source="settlement_transaction.reference", read_only=True, allow_null=True)
     payment_receipt_file_url = serializers.SerializerMethodField()
     receipt_file_url = serializers.SerializerMethodField()
@@ -181,7 +182,7 @@ class ExpenseListSerializer(serializers.ModelSerializer):
             "payee", "department", "supplier_reference", "description", "receipt_url", "receipt_file_url", "requested_by_email", "approved_by_email", "approved_at",
             "approval_reference", "cash_session_reference", "financial_reference", "posted_by_email", "posted_at", "created_at",
             "paid_at", "paid_by_email", "payment_reference", "payment_receipt_url", "payment_receipt_file_url", "settlement_reference",
-            "purchase_order", "payment_requests",
+            "purchase_order", "payment_requests", "workflow_origin", "prepared_by_email", "prepared_at",
         ]
         read_only_fields = fields
 
@@ -378,3 +379,33 @@ class ReconciliationCheckReviewReadSerializer(serializers.ModelSerializer):
             "decision", "note", "actor_email", "snapshot", "created_at",
         ]
         read_only_fields = fields
+
+
+class ExpenseHandoverCreateSerializer(serializers.Serializer):
+    """Store Keeper / Procurement authority is intentionally narrow."""
+
+    category = serializers.CharField(max_length=120)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
+    currency = serializers.CharField(required=False, default="NGN", min_length=3, max_length=3)
+    incurred_on = serializers.DateField(required=False)
+    payee = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    supplier_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    description = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+    purchase_order_reference = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    idempotency_key = serializers.CharField(max_length=128)
+
+
+class ExpenseAccountingPrepareSerializer(serializers.Serializer):
+    """Accountant preparation; amount, status and posting fields are absent."""
+
+    category = serializers.CharField(required=False, max_length=120)
+    payee = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    department = serializers.CharField(required=False, allow_blank=True, max_length=80)
+    supplier_reference = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    description = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+    accounting_class = serializers.ChoiceField(choices=Expense.AccountingClass.choices, required=False)
+    payment_method = serializers.ChoiceField(choices=Expense.PaymentMethod.choices, required=False)
+    incurred_on = serializers.DateField(required=False)
+    receipt_url = serializers.URLField(required=False, allow_blank=True, max_length=200)

@@ -187,6 +187,34 @@ def expense_approval_counts(*, start_date: date, end_date: date) -> dict:
     )
 
 
+def unposted_procurement_payment_visibility(*, currency: str) -> dict:
+    """Operational payments that have not been mirrored or posted in Finance.
+
+    These rows are evidence that money left the hotel. They are deliberately
+    excluded from every posted expense/disbursement amount; adding them here
+    would double-count money once the controlled handover is approved/posted.
+    """
+    from apps.inventory.models import PurchaseOrderPayment
+
+    settled = (
+        PurchaseOrderPayment.AccountingPostingStatus.MIRRORED,
+        PurchaseOrderPayment.AccountingPostingStatus.POSTED,
+    )
+    pending = PurchaseOrderPayment.objects.filter(purchase_order__currency=currency).exclude(
+        accounting_posting_status__in=settled
+    )
+    aggregate = pending.aggregate(count=Count("pk"), amount=Sum("amount", default=ZERO))
+    return {
+        "count": int(aggregate["count"] or 0),
+        "amount": money(_amount(aggregate["amount"])),
+        "added_to_posted_totals": False,
+        "note": (
+            "Procurement payments are operational evidence. A Finance handover, approved expense "
+            "or mirrored executed settlement is the only route into posted financial figures."
+        ),
+    }
+
+
 def supplier_payment_visibility(
     *, totals: dict, start_date: date, end_date: date, currency: str,
     goods_receipts_value: Decimal = ZERO, goods_receipts_count: int = 0,
@@ -215,6 +243,7 @@ def supplier_payment_visibility(
     opening = opening_payables_balance(before=start_date, currency=currency)
     outstanding = opening + payables_raised - payables_settled
     approvals = expense_approval_counts(start_date=start_date, end_date=end_date)
+    unposted = unposted_procurement_payment_visibility(currency=currency)
 
     return {
         "goods_receipts_value": money(_amount(goods_receipts_value)),
@@ -238,6 +267,9 @@ def supplier_payment_visibility(
             "actually used and stamps the expense paid — the payable settles exactly once and the obligation is "
             "never expensed a second time."
         ),
+        # A Procurement payment that has no controlled Finance record is an
+        # exception to investigate, NOT a fabricated second posting.
+        "unposted_procurement_payments": unposted,
         # COGS is not derivable from posted ledger evidence: reported as
         # unavailable rather than invented.
         "cost_of_goods_sold": None,

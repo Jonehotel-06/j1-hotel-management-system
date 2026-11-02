@@ -449,3 +449,18 @@ def register_desktop_ip(workstation: Workstation, value) -> str:
     workstation.desktop_ip_registered_at = timezone.now() if cleaned else None
     return cleaned
 
+
+def desktop_key_override_for_unusable_ip_pin(request, method: str) -> bool:
+    """Allow an admin-issued desktop key past an impossible saved IP pin.
+
+    A dynamically assigned public ISP address is expected. The durable identity
+    is the hashed, admin-issued ``X-JONE-Desktop-Key``; it remains subject to
+    workstation activation/revocation and staff credentials. The legacy
+    ``HotelSettings.front_desk_desktop_ip`` pin still applies everywhere it can
+    work. It is ignored only when the request arrived from a public address and
+    EVERY saved network is private/shared/loopback infrastructure that no public
+    browser can match. Arbitrary forwarded headers are still never trusted.
+    """
+    if method != DESKTOP_BY_KEY:
+        return False
+    return configured_front_desk_desktop_cannot_match(request_client_ip(request))

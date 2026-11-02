@@ -32,6 +32,8 @@ CAPABILITY_DEFINITIONS = (
     ("cash_session.open", "Open cash sessions", "Cashier", "Open the user's permitted cash session."),
     ("cash_session.close", "Close cash sessions", "Cashier", "Close the user's permitted cash session."),
     ("expense.manage", "Manage expenses", "Finance", "Create, submit, and post permitted expense records."),
+    ("expense.request", "Request an expense handover", "Finance",
+     "Create a DRAFT Store Keeper / Procurement expense handover only. Does not approve, post or execute payment."),
     ("expense.approve", "Approve expenses", "Finance", "Independently approve or reject controlled expense requests."),
     ("pos.order.manage", "Manage general POS orders", "POS", "Manage permitted room-service, restaurant, takeaway, and order records."),
     ("pos.menu.manage", "Manage all POS menus", "POS", "Create and manage every POS menu category, item, and modifier."),
@@ -137,7 +139,8 @@ ROLE_CAPABILITY_CODES = {
         "maintenance.work_order.manage", "guest_request.manage", "attendance.clock", "leave.request",
     }),
     "INVENTORY_CLERK": frozenset({
-        "inventory.manage", "inventory.record", "procurement.manage", "attendance.clock", "leave.request",
+        "inventory.manage", "inventory.record", "procurement.manage", "expense.request",
+        "attendance.clock", "leave.request",
     }),
     "FRONT_DESK_SUPERVISOR": frozenset({
         "booking.read", "booking.manage", "stay.check_in", "stay.check_out", "folio.view", "folio.charge.post",
@@ -150,7 +153,7 @@ ROLE_CAPABILITY_CODES = {
         "account.view", "booking.read", "booking.manage", "stay.check_in", "stay.check_out", "folio.view",
         "folio.charge.post", "finance.controls.manage", "payment.read", "payment.capture", "payment.receipt.send",
         "payment.refund.request", "payment.refund.approve", "cash_session.open", "cash_session.close",
-        "expense.manage", "expense.approve",
+        "expense.manage", "expense.approve", "expense.request",
         "pos.order.manage", "pos.menu.manage", "restaurant.menu.manage", "restaurant.order.manage", "restaurant.table.manage",
         "bar.order.manage", "bar.menu.manage", "pos.return.record", "pos.return.refund",
         "kitchen.queue.view", "kitchen.ticket.manage", "guest_request.manage",
@@ -246,12 +249,13 @@ ROLE_CAPABILITY_CODES = {
         # Task 09: stock visibility only. Recording stock items, opening stock,
         # counts and adjustments belongs to the Store Keeper, Admin and General
         # Manager — this role administers procurement and staff records.
-        "inventory.manage",
+        "inventory.manage", "expense.request",
     }),
     # Task 09: the Store Keeper is the hotel's stock custodian, so they keep the
     # full inventory workspace AND stock-recording authority.
     "STOREKEEPER": frozenset({
-        "inventory.manage", "inventory.record", "procurement.manage", "attendance.clock", "leave.request",
+        "inventory.manage", "inventory.record", "procurement.manage", "expense.request",
+        "attendance.clock", "leave.request",
     }),
     "PORTER": frozenset({"guest_request.manage", "attendance.clock", "leave.request"}),
     "KITCHEN_ASSISTANT": frozenset({"kitchen.queue.view", "kitchen.ticket.manage", "attendance.clock", "leave.request"}),

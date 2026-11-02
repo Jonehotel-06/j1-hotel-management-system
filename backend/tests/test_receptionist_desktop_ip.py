@@ -520,15 +520,23 @@ class UnusableSavedBindingTests(BaseAPITestCase):
         self.key = issue_desktop_key(desk)
         desk.save()
 
-    def test_the_refusal_names_the_unusable_saved_value(self):
+    def test_an_admin_issued_key_overrides_an_unusable_saved_binding(self):
         response = self.client.post(
             LOGIN_URL,
             {"email": self.receptionist.email, "password": PASSWORD},
             REMOTE_ADDR=self.DESK, **{DESKTOP_HEADER: self.key},
         )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()["success"])
+
+    def test_a_desk_without_a_key_still_names_the_unusable_saved_value(self):
+        response = self.client.post(
+            LOGIN_URL,
+            {"email": self.receptionist.email, "password": PASSWORD},
+            REMOTE_ADDR=self.DESK,
+        )
         self.assertEqual(response.status_code, 403, response.content)
         errors = response.json()["errors"]
-        self.assertEqual(errors["reason"], "front_desk_ip_mismatch")
         self.assertTrue(errors["configured_address_unusable"])
         self.assertEqual(errors["configured_front_desk_address"], self.SAVED_PROXY)
         # The visitor itself is a real public address, so it is NOT flagged.

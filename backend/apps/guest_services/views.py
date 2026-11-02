@@ -68,8 +68,9 @@ def _page(view, request, queryset, serializer):
 
 def _staff_base_queryset(actor, *, detail=False):
     queryset = service_request_queryset_for_staff(actor).select_related(
-        "guest", "stay", "room", "qr_link", "assigned_to", "created_by", "pos_order"
-    )
+        "guest", "stay", "room", "qr_link", "assigned_to", "created_by", "pos_order",
+        "pos_order__created_by", "pos_order__folio", "pos_order__charge_transaction",
+    ).prefetch_related("pos_order__lines", "pos_order__tenders")
     if detail:
         queryset = queryset.prefetch_related(
             Prefetch("events", queryset=ServiceRequestEvent.objects.select_related("actor").order_by("created_at", "pk"))

@@ -17,6 +17,7 @@ from apps.core.storage import absolute_media_url
 
 from .capabilities import capability_codes_for_user, has_capability
 from .desktop_policy import (
+    desktop_key_override_for_unusable_ip_pin,
     front_desk_desktop_ip_allowed,
     front_desk_workstation_missing,
     request_client_ip,
@@ -130,7 +131,9 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
                     unusable_saved_addresses=unusable,
                     front_desk_workstation_missing=front_desk_workstation_missing(),
                 )
-            if not front_desk_desktop_ip_allowed(request):
+            if not front_desk_desktop_ip_allowed(request) and not desktop_key_override_for_unusable_ip_pin(
+                request, desktop_method
+            ):
                 log_staff_sign_in_rejected(
                     self.user, request, reason="front_desk_ip_mismatch",
                     client_ip=request_client_ip(request),

@@ -339,6 +339,7 @@
     inventoryProcessPendingConsumption: "/api/admin/inventory/consumption-requests/process-pending/",
     stockCounts:                  "/api/admin/inventory/stock-counts/",
     inventoryIssues:              "/api/admin/inventory/issues/",
+    inventoryManualIssues:        "/api/admin/inventory/manual-ingredient-issues/",
     inventoryOpeningStock:        "/api/admin/inventory/opening-stock/",
     inventoryReturns:             "/api/admin/inventory/returns/",
     inventoryTransfers:           "/api/admin/inventory/transfers/",
@@ -375,8 +376,10 @@
        (apps/finance/urls.py) — a missing key used to produce requests ending
        in "/undefined" and permanently blank accounting panels (D1). */
     financeSummary:      "/api/admin/finance/reports/summary/",
+    financeReconciliation: "/api/admin/finance/reports/reconciliation/",
     financeTransactions: "/api/admin/finance/transactions/",   // immutable posted ledger headers
     financeExpenses:     "/api/admin/finance/expenses/",       // controlled expense drafts/submissions
+    financeExpenseHandovers: "/api/admin/finance/expenses/handover/", // DRAFT-only Store Keeper handover
     financeNightAudit:   "/api/admin/finance/reports/night-audit/",
     financeBalanceSheet: "/api/admin/finance/reports/balance-sheet/",
     financeCashFlow:     "/api/admin/finance/reports/cash-flow/",

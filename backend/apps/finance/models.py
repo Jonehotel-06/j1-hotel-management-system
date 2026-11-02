@@ -548,6 +548,11 @@ class Expense(TimeStampedModel):
         OPERATING = "OPERATING", "Operating expense"
         INVENTORY = "INVENTORY", "Inventory asset"
 
+    class WorkflowOrigin(models.TextChoices):
+        DIRECT = "DIRECT", "Finance entered directly"
+        STOREKEEPER = "STOREKEEPER", "Store Keeper handover"
+        PROCUREMENT_PAYMENT = "PROCUREMENT_PAYMENT", "Procurement payment handover"
+
     reference = models.CharField(max_length=64, unique=True, db_index=True)
     idempotency_key = models.CharField(max_length=180, null=True, blank=True, unique=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True)
@@ -569,6 +574,18 @@ class Expense(TimeStampedModel):
     #: ``payment_receipt_file`` (below) is the later proof that the supplier was
     #: actually paid; this one is the document the expense was recorded from.
     receipt_file = models.FileField(upload_to="expense_receipts/%Y/%m/", null=True, blank=True)
+    #: A handover is created by an operational requester with the narrow
+    #: ``expense.request`` capability, but MUST be prepared and submitted by an
+    #: Accountant and independently approved before it can post money. Existing
+    #: rows are DIRECT, so the current workflow is unchanged.
+    workflow_origin = models.CharField(
+        max_length=24, choices=WorkflowOrigin.choices, default=WorkflowOrigin.DIRECT, db_index=True
+    )
+    prepared_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="expenses_prepared",
+    )
+    prepared_at = models.DateTimeField(null=True, blank=True)
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="expenses_requested"
     )
@@ -653,6 +670,7 @@ class ExpenseEvent(models.Model):
 
     class Type(models.TextChoices):
         CREATED = "CREATED", "Created"
+        PREPARED = "PREPARED", "Prepared by Accountant"
         SUBMITTED = "SUBMITTED", "Submitted"
         APPROVED = "APPROVED", "Approved"
         REJECTED = "REJECTED", "Rejected"

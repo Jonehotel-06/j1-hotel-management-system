@@ -103,6 +103,10 @@ class StockItem(TimeStampedModel):
         CONSUMABLE = "CONSUMABLE", "Operational consumable"
         REUSABLE_ASSET = "REUSABLE_ASSET", "Reusable asset"
 
+    class ConsumptionMode(models.TextChoices):
+        AUTOMATIC = "AUTOMATIC", "Automatic POS recipe / direct-sale deduction"
+        MANUAL = "MANUAL", "Manual Store Keeper ingredient issue"
+
     sku = models.CharField(max_length=80, unique=True, db_index=True)
     name = models.CharField(max_length=255)
     category = models.CharField(max_length=120, blank=True, default="", db_index=True)
@@ -118,6 +122,14 @@ class StockItem(TimeStampedModel):
     #: authorised user classifies it.
     item_type = models.CharField(
         max_length=24, choices=ItemType.choices, default=ItemType.CONSUMABLE, db_index=True
+    )
+    #: The ACTIVE stock-consumption route. AUTOMATIC preserves every existing
+    #: recipe/direct-sale workflow. MANUAL is an explicit Store Keeper decision:
+    #: automatic POS recipe deductions for this ingredient are suppressed so a
+    #: dish cannot be deducted twice. Recipes and historical data are retained.
+    stock_consumption_mode = models.CharField(
+        max_length=12, choices=ConsumptionMode.choices,
+        default=ConsumptionMode.AUTOMATIC, db_index=True,
     )
     base_unit = models.CharField(max_length=30, default="UNIT")
     # Optional supplier packaging, recorded so staff can receive stock the way
@@ -213,6 +225,10 @@ class StockBalance(TimeStampedModel):
 
 class StockMovement(models.Model):
     """Append-only signed quantity movement. No mutable source-of-truth quantity exists."""
+    class IssueMethod(models.TextChoices):
+        AUTOMATIC = "AUTOMATIC", "Automatic POS consumption"
+        MANUAL = "MANUAL", "Manual Store Keeper issue"
+
     class Type(models.TextChoices):
         OPENING = "OPENING", "Opening balance"
         RECEIPT = "RECEIPT", "Goods receipt"
@@ -250,6 +266,20 @@ class StockMovement(models.Model):
     # transfers and adjustments, which are not department hand-overs.
     department = models.CharField(max_length=24, choices=StockDepartment.choices, blank=True, default="", db_index=True)
     recipient = models.CharField(max_length=120, blank=True, default="")
+    #: Structured dish / preparation-batch evidence for a manual ingredient
+    #: issue. Nullable so every historical movement and every automated POS
+    #: movement keeps its original meaning. Free text is never the only link.
+    menu_item = models.ForeignKey(
+        "pos.MenuItem", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="stock_movements",
+    )
+    preparation_batch = models.ForeignKey(
+        "StockIssueBatch", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="movements",
+    )
+    issue_method = models.CharField(
+        max_length=12, choices=IssueMethod.choices, blank=True, default="", db_index=True
+    )
     metadata = models.JSONField(default=dict, blank=True)
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="stock_movements")
 
@@ -283,11 +313,33 @@ class PurchaseOrder(TimeStampedModel):
         PAID = "PAID", "Paid"
         CANCELLED = "CANCELLED", "Cancelled"
 
+    class PaymentStatus(models.TextChoices):
+        UNPAID = "UNPAID", "Unpaid"
+        PARTIALLY_PAID = "PARTIALLY_PAID", "Partially paid"
+        PAID = "PAID", "Paid"
+
+    class ReceiptStatus(models.TextChoices):
+        NOT_RECEIVED = "NOT_RECEIVED", "Not received"
+        PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED", "Partially received"
+        RECEIVED = "RECEIVED", "Fully received"
+        REJECTED = "REJECTED", "Rejected / cancelled"
+
     reference = models.CharField(max_length=64, unique=True, db_index=True)
     idempotency_key = models.CharField(max_length=160, null=True, blank=True, unique=True)
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_orders")
     delivery_location = models.ForeignKey(StockLocation, on_delete=models.PROTECT, related_name="purchase_orders")
     status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    #: ``status`` is retained as the legacy workflow label. These two fields are
+    #: the independent questions the hotel actually asks: has money been paid,
+    #: and has physical stock arrived? A PO paid in advance is NOT fully received.
+    payment_status = models.CharField(
+        max_length=16, choices=PaymentStatus.choices,
+        default=PaymentStatus.UNPAID, db_index=True,
+    )
+    receipt_status = models.CharField(
+        max_length=20, choices=ReceiptStatus.choices,
+        default=ReceiptStatus.NOT_RECEIVED, db_index=True,
+    )
     currency = models.CharField(max_length=3, default="NGN")
     supplier_reference = models.CharField(max_length=120, blank=True, default="")
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="purchase_orders_requested")
@@ -365,6 +417,8 @@ class PurchaseOrderLine(models.Model):
     item_name = models.CharField(max_length=255)
     quantity_ordered = models.DecimalField(max_digits=14, decimal_places=4, validators=[POSITIVE])
     quantity_received = models.DecimalField(max_digits=14, decimal_places=4, default=ZERO, validators=[MinValueValidator(ZERO)])
+    quantity_damaged = models.DecimalField(max_digits=14, decimal_places=4, default=ZERO, validators=[MinValueValidator(ZERO)])
+    quantity_rejected = models.DecimalField(max_digits=14, decimal_places=4, default=ZERO, validators=[MinValueValidator(ZERO)])
     unit_cost = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(ZERO)])
     notes = models.CharField(max_length=500, blank=True, default="")
 
@@ -399,9 +453,17 @@ class GoodsReceiptLine(models.Model):
     goods_receipt = models.ForeignKey(GoodsReceipt, on_delete=models.PROTECT, related_name="lines")
     purchase_order_line = models.ForeignKey(PurchaseOrderLine, null=True, blank=True, on_delete=models.PROTECT, related_name="receipt_lines")
     item = models.ForeignKey(StockItem, on_delete=models.PROTECT, related_name="goods_receipt_lines")
-    quantity_received = models.DecimalField(max_digits=14, decimal_places=4, validators=[POSITIVE])
+    quantity_received = models.DecimalField(max_digits=14, decimal_places=4, default=ZERO, validators=[MinValueValidator(ZERO)])
+    quantity_damaged = models.DecimalField(max_digits=14, decimal_places=4, default=ZERO, validators=[MinValueValidator(ZERO)])
+    quantity_rejected = models.DecimalField(max_digits=14, decimal_places=4, default=ZERO, validators=[MinValueValidator(ZERO)])
     unit_cost = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(ZERO)])
-    stock_movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="goods_receipt_line")
+    #: Null only for a line with zero ACCEPTED quantity (all damaged/rejected).
+    #: Damaged/rejected goods are evidence against the supplier order but never
+    #: enter stock and never create a stock movement.
+    stock_movement = models.OneToOneField(
+        StockMovement, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="goods_receipt_line",
+    )
 
     class Meta:
         ordering = ["pk"]
@@ -422,6 +484,13 @@ class PurchaseOrderPayment(TimeStampedModel):
         CARD = "CARD", "Card / terminal"
         CHEQUE = "CHEQUE", "Cheque"
         CASH = "CASH", "Cash"
+
+    class AccountingPostingStatus(models.TextChoices):
+        NOT_POSTED = "NOT_POSTED", "Not yet handed to Accounting"
+        HANDED_TO_ACCOUNTING = "HANDED_TO_ACCOUNTING", "Awaiting Accountant review / approval"
+        MIRRORED = "MIRRORED", "Mirrors an executed Accounting settlement"
+        POSTED = "POSTED", "Posted in the finance ledger"
+        REQUIRES_REVIEW = "REQUIRES_REVIEW", "Accounting review required"
 
     purchase_order = models.ForeignKey(
         PurchaseOrder, on_delete=models.PROTECT, related_name="payments"
@@ -447,6 +516,16 @@ class PurchaseOrderPayment(TimeStampedModel):
     #: workflow and is not claimed to match any ledger settlement.
     accounting_settlement_reference = models.CharField(
         max_length=64, blank=True, default="", db_index=True,
+    )
+    #: One controlled Finance handover per procurement payment. These are
+    #: traceability references, not a second financial posting. A mirrored
+    #: settlement points at the already-executed SupplierPaymentRequest; a
+    #: handover points at one DRAFT Expense that must still be approved/posted.
+    finance_expense_reference = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    finance_transaction_reference = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    accounting_posting_status = models.CharField(
+        max_length=24, choices=AccountingPostingStatus.choices,
+        default=AccountingPostingStatus.NOT_POSTED, db_index=True,
     )
     evidence_uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
@@ -694,3 +773,57 @@ class StockBalanceAdjustment(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("Stock balance adjustments are append-only and cannot be deleted.")
+
+class StockIssueBatch(TimeStampedModel):
+    """One Store Keeper preparation batch: one dish, many ingredients, one issue.
+
+    A batch groups every ingredient used to prepare one existing POS dish on a
+    preparation date. Each line becomes its own immutable StockMovement from the
+    selected location, carrying the dish, batch, employee, department, unit and
+    conversion evidence. This is deliberately independent of StockRecipe: the
+    current operation is a manual physical issue, not an automatic recipe BOM.
+    """
+
+    class ConsumptionMethod(models.TextChoices):
+        MANUAL = "MANUAL", "Manual Store Keeper ingredient issue"
+
+    reference = models.CharField(max_length=64, unique=True, db_index=True)
+    source_key = models.CharField(max_length=180, unique=True)
+    menu_item = models.ForeignKey(
+        "pos.MenuItem", on_delete=models.PROTECT, related_name="manual_issue_batches"
+    )
+    preparation_on = models.DateField(default=hotel_today, db_index=True)
+    batch_reference = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    location = models.ForeignKey(
+        StockLocation, on_delete=models.PROTECT, related_name="manual_issue_batches"
+    )
+    department = models.CharField(max_length=24, choices=StockDepartment.choices, db_index=True)
+    recipient = models.CharField(max_length=120)
+    consumption_method = models.CharField(
+        max_length=12, choices=ConsumptionMethod.choices,
+        default=ConsumptionMethod.MANUAL, db_index=True,
+    )
+    notes = models.TextField(blank=True, default="")
+    payload_fingerprint = models.CharField(max_length=64)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="manual_issue_batches_created",
+    )
+
+    class Meta:
+        ordering = ["-preparation_on", "-created_at", "-pk"]
+        indexes = [
+            models.Index(fields=["menu_item", "-preparation_on"]),
+            models.Index(fields=["batch_reference", "-preparation_on"]),
+        ]
+
+    def __str__(self):
+        return f"{self.reference} · {self.menu_item} · {self.batch_reference or self.preparation_on}"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Manual ingredient-issue batches are append-only; record a new batch instead.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Manual ingredient-issue batches are append-only and cannot be deleted.")

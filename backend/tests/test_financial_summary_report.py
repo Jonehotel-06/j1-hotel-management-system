@@ -114,9 +114,10 @@ class FinancialSummaryReportTests(BaseAPITestCase):
         # Every supplier-payment measure itself rides inside the existing
         # conditional aggregate (see settlement_measure_filters), so the block
         # added exactly two statements and did not multiply the per-measure
-        # query count. This number is a tight budget, not an observation:
-        # raising it needs a new documented aggregate here.
-        with self.assertNumQueries(9):  # +2: expense-by-account roll-up and the posted-expense detail (batch 01 task 2)
+        # query count. The controlled reconciliation layer adds fixed AR and
+        # unposted-payment aggregates. This number is a tight budget, not an
+        # observation: raising it needs a new documented aggregate here.
+        with self.assertNumQueries(15):  # +8: reconciliation report, AR control/folio aggregates and unposted-payment visibility
             report = financial_summary(start_date=self.today, end_date=self.today)
 
         self.assertEqual(report["basis"], "posted_immutable_ledger_business_date")

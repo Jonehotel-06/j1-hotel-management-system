@@ -86,6 +86,7 @@ def request_approval(
     metadata=None,
     expires_at=None,
     policy: FinancialControlPolicy | None = None,
+    force_review: bool = False,
 ):
     """Create or return a source-key-idempotent approval request with a policy snapshot."""
     if request_type not in ApprovalRequest.Type.values:
@@ -101,7 +102,7 @@ def request_approval(
 
     policy = policy or active_control_policy()
     amount = Decimal(str(amount)).quantize(Decimal("0.01"))
-    if not requires_manager_approval(request_type=request_type, amount=amount, policy=policy):
+    if not force_review and not requires_manager_approval(request_type=request_type, amount=amount, policy=policy):
         raise ValidationError("This action is below the configured manager-approval threshold.")
     approval = ApprovalRequest.objects.create(
         reference=generate_finance_reference("APR"),

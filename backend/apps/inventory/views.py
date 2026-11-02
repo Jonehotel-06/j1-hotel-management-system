@@ -21,10 +21,12 @@ from apps.core.responses import success_response
 
 from .models import (
     GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, StockBalance, StockBalanceAdjustment,
-    StockConsumptionRequest, StockCount, StockItem, StockLocation, StockMovement, StockRecipe, Supplier,
+    StockConsumptionRequest, StockCount, StockItem, StockLocation, StockMovement, StockRecipe,
+    StockIssueBatch, Supplier,
 )
 from .serializers import (
-    GoodsReceiptCreateSerializer, GoodsReceiptSerializer, IssueStockSerializer, OpeningStockSerializer,
+    GoodsReceiptCreateSerializer, GoodsReceiptSerializer, IssueStockSerializer,
+    ManualIngredientIssueCreateSerializer, OpeningStockSerializer,
     ProcurementItemLookupSerializer, ProcurementLocationLookupSerializer,
     PurchaseOrderAccountingSerializer, PurchaseOrderCreateSerializer, PurchaseOrderDecisionSerializer,
     PurchaseOrderDetailSerializer, PurchaseOrderListSerializer,
@@ -35,7 +37,8 @@ from .serializers import (
     StockCountCreateSerializer, StockCountSerializer, StockCountSubmitSerializer, StockItemSerializer,
     InventoryMenuItemDirectorySerializer,
     ProductProfitabilityRowSerializer, ProductProfitabilitySummarySerializer,
-    StockLocationSerializer, StockMovementSerializer, StockRecipeCreateSerializer, StockRecipeSerializer,
+    StockIssueBatchSerializer, StockLocationSerializer, StockMovementSerializer,
+    StockRecipeCreateSerializer, StockRecipeSerializer,
     SupplierSerializer, TransferStockSerializer,
 )
 from .services.valuation_service import (
@@ -43,7 +46,8 @@ from .services.valuation_service import (
 )
 from .services.inventory_service import (
     adjust_stock_balance, approve_purchase_order, approve_stock_count, attach_purchase_order_receipt,
-    cancel_purchase_order, canonical_unit, convert_stock_quantity, create_purchase_order, create_stock_recipe,
+    cancel_purchase_order, canonical_unit, convert_stock_quantity, create_manual_ingredient_issue,
+    create_purchase_order, create_stock_recipe,
     issue_stock, mark_purchase_order_ordered, process_pending_pos_consumption, process_pos_stock_consumption,
     receive_goods, record_opening_stock, record_purchase_order_payment, record_stock_return,
     reject_purchase_order, replenish_stock_item, resolve_entered_quantity, retire_stock_recipe,
@@ -503,7 +507,9 @@ class StockItemReplenishView(StockRecordingMixin, APIView):
 class StockMovementListView(APIView):
     permission_classes = [HasCapability]; required_capability = "inventory.manage"
     def get(self, request):
-        queryset=StockMovement.objects.select_related("item", "location", "actor").order_by("-occurred_at", "-pk")
+        queryset=StockMovement.objects.select_related(
+            "item", "location", "actor", "menu_item", "preparation_batch"
+        ).order_by("-occurred_at", "-pk")
         if item_id:=request.query_params.get("item_id"): queryset=queryset.filter(item_id=item_id)
         if location_id:=request.query_params.get("location_id"): queryset=queryset.filter(location_id=location_id)
         if movement_type:=request.query_params.get("type"): queryset=queryset.filter(type=movement_type)
@@ -527,6 +533,53 @@ class StockMovementListView(APIView):
             _, upper = hotel_date_bounds(end_date, end_date)
             queryset = queryset.filter(occurred_at__lt=upper)
         return _page(self, request, queryset, StockMovementSerializer)
+
+
+@extend_schema(tags=["Admin · Inventory"], summary="List or record manual dish ingredient issues")
+class ManualIngredientIssueListCreateView(StockRecordingMixin, APIView):
+    permission_classes = [HasCapability]
+    required_capability = "inventory.manage"
+
+    def get(self, request):
+        queryset = StockIssueBatch.objects.select_related(
+            "menu_item", "location", "created_by"
+        ).prefetch_related("movements__item", "movements__location").order_by(
+            "-preparation_on", "-created_at", "-pk"
+        )
+        if menu_item_id := request.query_params.get("menu_item_id"):
+            queryset = queryset.filter(menu_item_id=menu_item_id)
+        if batch_reference := request.query_params.get("batch_reference"):
+            queryset = queryset.filter(batch_reference__icontains=batch_reference)
+        return _page(self, request, queryset, StockIssueBatchSerializer)
+
+    def post(self, request):
+        serializer = ManualIngredientIssueCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        batch, created = create_manual_ingredient_issue(
+            menu_item_id=data["menu_item_id"], location_id=data["location_id"],
+            department=data["department"], recipient=data["recipient"],
+            preparation_on=data.get("preparation_on"), batch_reference=data.get("batch_reference", ""),
+            notes=data.get("notes", ""), lines=data["lines"], actor=request.user,
+            idempotency_key=data["idempotency_key"],
+        )
+        if created:
+            log_action(
+                actor=request.user, action="MANUAL_INGREDIENT_ISSUE_CREATED", instance=batch,
+                summary=f"Manual ingredient issue {batch.reference} recorded for {batch.menu_item.name}",
+                metadata={
+                    "reference": batch.reference, "dish_sku": batch.menu_item.sku,
+                    "preparation_on": batch.preparation_on.isoformat(),
+                    "line_count": batch.movements.count(),
+                },
+            )
+        batch = StockIssueBatch.objects.select_related(
+            "menu_item", "location", "created_by"
+        ).prefetch_related("movements__item", "movements__location").get(pk=batch.pk)
+        return success_response(
+            StockIssueBatchSerializer(batch).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
 
 def _recipe_or_404(reference):

@@ -18,6 +18,7 @@ from apps.core.utils import money
 from ..models import FinancialLine, FinancialTransaction
 from . import accounting
 from .payment_visibility import settlement_measure_filters, supplier_payment_visibility
+from .financial_reconciliation_service import build_reconciliation
 
 ZERO = Decimal("0.00")
 CHARGE_TYPES = (
@@ -719,7 +720,7 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
     # money returned to guests less money actually disbursed. It is a MOVEMENT for
     # the period, unlike `outstanding_supplier_payables`, which is a balance.
     net_cash_movement = collections - refunds - _amount(payments["total_cash_disbursements"])
-    return {
+    result = {
         "basis": "posted_immutable_ledger_business_date",
         "definitions": {
             "recognized_revenue": "Credits less reversal debits to REVENUE.* in the period (earned, not collected).",
@@ -784,6 +785,13 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
         "by_department": by_department,
         "by_day": serialized_days,
     }
+    from .guest_receivables_service import guest_receivables
+
+    receivables = guest_receivables(
+        as_of=end_date, currency=currency, limit=1, include_settled=False
+    )
+    result["reconciliation"] = build_reconciliation(summary=result, receivables=receivables)
+    return result
 
 
 MEASURE_LABELS = (

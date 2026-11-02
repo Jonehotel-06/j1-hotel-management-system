@@ -38,10 +38,12 @@ class RoleGateTests(StaffBase):
         self.auth(self.receptionist)
         data = self.client.get("/api/admin/dashboard/").json()["data"]
         self.assertNotIn("revenue", data)
+        self.assertNotIn("financial_basis", data)
         self.assertIn("rooms", data)
         self.auth(self.manager)
         data = self.client.get("/api/admin/dashboard/").json()["data"]
-        self.assertIn("revenue", data)
+        self.assertNotIn("revenue", data)
+        self.assertIn("financial_basis", data)
 
     def test_reports_require_manager_or_admin(self):
         params = {"start_date": self.today.isoformat(), "end_date": self.today.isoformat()}
@@ -333,8 +335,11 @@ class DashboardDataTests(StaffBase):
         self.assertEqual(data["today"]["arrivals"], 1)
         self.assertEqual(data["rooms"]["total"], 2)
         self.assertGreaterEqual(len(data["recent_bookings"]), 1)
-        self.assertIn("revenue", data)
-        self.assertEqual(data["revenue"]["today"], "15000.00")
+        self.assertNotIn("revenue", data)
+        self.assertIn("financial_basis", data)
+        self.assertEqual(data["financial_basis"]["source"], "posted_immutable_financial_lines")
+        self.assertFalse(data["financial_basis"]["legacy_payment_booking_fallback_used"])
+        self.assertIn("reconciliation", data)
 
     def test_health_endpoint(self):
         response = self.client.get("/api/health/")

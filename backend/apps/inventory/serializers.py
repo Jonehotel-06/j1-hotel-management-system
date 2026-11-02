@@ -8,7 +8,7 @@ from apps.pos.models import MenuItem
 from .models import (
     GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderPayment,
     StockBalance, StockBalanceAdjustment, StockConsumptionRequest, StockCount, StockCountLine,
-    StockDepartment, StockItem, StockLocation, StockMovement, StockRecipe, StockRecipeLine, Supplier,
+    StockDepartment, StockIssueBatch, StockItem, StockLocation, StockMovement, StockRecipe, StockRecipeLine, Supplier,
 )
 from .services.inventory_service import canonical_unit, is_container_unit, unit_label
 
@@ -109,6 +109,9 @@ class StockItemSerializer(serializers.ModelSerializer):
     # consumable / reusable asset). The label is additive so a screen never has
     # to reproduce the choice list.
     item_type_label = serializers.CharField(source="get_item_type_display", read_only=True)
+    stock_consumption_mode_label = serializers.CharField(
+        source="get_stock_consumption_mode_display", read_only=True
+    )
     # The unit the balance is counted in, spelled out for humans ("Kilograms
     # (kg)"). Additive and read-only: the stored token is unchanged, and no
     # screen has to keep its own copy of the label table.
@@ -143,6 +146,7 @@ class StockItemSerializer(serializers.ModelSerializer):
         model = StockItem
         fields = [
             "id", "sku", "name", "category", "barcode", "item_type", "item_type_label", "base_unit",
+            "stock_consumption_mode", "stock_consumption_mode_label",
             "base_unit_label", "pack_conversion_available", "units_per_pack",
             "pack_price", "pack_cost", "reorder_level", "standard_cost", "currency",
             "preferred_supplier", "preferred_supplier_name", "is_active", "notes",
@@ -151,7 +155,8 @@ class StockItemSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
         read_only_fields = [
-            "id", "pack_cost", "item_type_label", "base_unit_label", "pack_conversion_available",
+            "id", "pack_cost", "item_type_label", "stock_consumption_mode_label",
+            "base_unit_label", "pack_conversion_available",
             "direct_sale_menu_item_name", "direct_sale_menu_item_sku",
             "direct_sale_location_code", "direct_sale_configured", "created_at", "updated_at",
         ]
@@ -368,6 +373,11 @@ class StockMovementSerializer(serializers.ModelSerializer):
     actor_email = serializers.EmailField(source="actor.email", read_only=True, allow_null=True)
     department_label = serializers.SerializerMethodField()
     base_unit_label = serializers.SerializerMethodField()
+    menu_item_name = serializers.SerializerMethodField()
+    menu_item_sku = serializers.SerializerMethodField()
+    preparation_batch_reference = serializers.SerializerMethodField()
+    batch_reference = serializers.SerializerMethodField()
+    preparation_on = serializers.SerializerMethodField()
 
     class Meta:
         model = StockMovement
@@ -375,12 +385,33 @@ class StockMovementSerializer(serializers.ModelSerializer):
             "reference", "item_sku", "item_name", "item_type", "base_unit", "base_unit_label", "location_code",
             "type", "quantity_delta", "unit_cost", "currency", "occurred_at", "source_reference", "notes",
             "department", "department_label", "recipient", "actor_email", "metadata",
+            "issue_method", "menu_item_name", "menu_item_sku", "preparation_batch_reference",
+            "batch_reference", "preparation_on",
         ]
         read_only_fields = fields
 
     def get_base_unit_label(self, obj):
         # The movement stores the quantity in the ITEM's base unit.
         return unit_label(obj.item.base_unit)
+
+    def get_menu_item_name(self, obj):
+        return obj.menu_item.name if obj.menu_item_id else ""
+
+    def get_menu_item_sku(self, obj):
+        return obj.menu_item.sku if obj.menu_item_id else ""
+
+    def get_preparation_batch_reference(self, obj):
+        return obj.preparation_batch.reference if obj.preparation_batch_id else ""
+
+    def get_batch_reference(self, obj):
+        if not obj.preparation_batch_id:
+            return ""
+        return obj.preparation_batch.batch_reference or obj.preparation_batch.reference
+
+    def get_preparation_on(self, obj):
+        if not obj.preparation_batch_id:
+            return ""
+        return obj.preparation_batch.preparation_on.isoformat()
 
     def get_department_label(self, obj):
         if not obj.department:
@@ -474,12 +505,14 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
     base_unit_label = serializers.SerializerMethodField()
     units_per_pack = serializers.DecimalField(source="item.units_per_pack", max_digits=10, decimal_places=2, read_only=True, allow_null=True)
     quantity_outstanding = serializers.SerializerMethodField()
+    quantity_missing = serializers.SerializerMethodField()
 
     class Meta:
         model = PurchaseOrderLine
         fields = [
             "id", "item", "item_sku", "item_name", "base_unit", "base_unit_label", "units_per_pack",
-            "quantity_ordered", "quantity_received", "quantity_outstanding", "unit_cost", "notes",
+            "quantity_ordered", "quantity_received", "quantity_damaged", "quantity_rejected",
+            "quantity_outstanding", "quantity_missing", "unit_cost", "notes",
         ]
         read_only_fields = fields
 
@@ -487,9 +520,22 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
         # The ordered quantity is expressed in the ITEM's base unit.
         return unit_label(obj.item.base_unit)
 
+    def _delivered(self, obj):
+        return sum(
+            (
+                Decimal(getattr(obj, "quantity_received", 0) or 0),
+                Decimal(getattr(obj, "quantity_damaged", 0) or 0),
+                Decimal(getattr(obj, "quantity_rejected", 0) or 0),
+            ),
+            Decimal("0.0000"),
+        )
+
     def get_quantity_outstanding(self, obj):
-        outstanding = (obj.quantity_ordered or Decimal("0.0000")) - (obj.quantity_received or Decimal("0.0000"))
+        outstanding = (obj.quantity_ordered or Decimal("0.0000")) - self._delivered(obj)
         return str(outstanding if outstanding > 0 else Decimal("0.0000"))
+
+    def get_quantity_missing(self, obj):
+        return self.get_quantity_outstanding(obj)
 
 
 class PurchaseOrderPaymentSerializer(serializers.ModelSerializer):
@@ -503,7 +549,8 @@ class PurchaseOrderPaymentSerializer(serializers.ModelSerializer):
         fields = [
             "id", "amount", "method", "reference", "paid_on",
             "evidence_url", "evidence_uploaded_at", "uploaded_by_email",
-            "notes", "accounting_settlement_reference", "created_at",
+            "notes", "accounting_settlement_reference", "finance_expense_reference",
+            "finance_transaction_reference", "accounting_posting_status", "created_at",
         ]
         read_only_fields = fields
 
@@ -561,7 +608,7 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
         model = PurchaseOrder
         fields = [
             "reference", "supplier", "supplier_name", "delivery_location", "delivery_location_code",
-            "status", "currency", "supplier_reference",
+            "status", "payment_status", "receipt_status", "currency", "supplier_reference",
             "requested_by_email", "approved_by_email", "approved_at", "ordered_at", "expected_on", "line_count",
             "payment_reference", "approval_receipt_url", "approval_receipt_uploaded_at",
             "total_amount", "total_paid", "outstanding_amount", "receipt_progress", "payment_progress",
@@ -586,10 +633,15 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
 
     def get_receipt_progress(self, obj):
         lines = list(obj.lines.all())
-        received = [Decimal(line.quantity_received or 0) for line in lines]
-        if not lines or not any(value > 0 for value in received):
+        delivered = [
+            Decimal(getattr(line, "quantity_received", 0) or 0)
+            + Decimal(getattr(line, "quantity_damaged", 0) or 0)
+            + Decimal(getattr(line, "quantity_rejected", 0) or 0)
+            for line in lines
+        ]
+        if not lines or not any(value > 0 for value in delivered):
             return "NOT_RECEIVED"
-        if all(Decimal(line.quantity_received or 0) >= Decimal(line.quantity_ordered or 0) for line in lines):
+        if all(value >= Decimal(line.quantity_ordered or 0) for value, line in zip(delivered, lines)):
             return "RECEIVED"
         return "PARTIALLY_RECEIVED"
 
@@ -704,7 +756,18 @@ class PurchaseOrderUpdateSerializer(serializers.Serializer):
 
 class GoodsReceiptInputLineSerializer(serializers.Serializer):
     purchase_order_line_id = serializers.IntegerField(min_value=1)
-    quantity_received = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
+    quantity_received = serializers.DecimalField(
+        max_digits=14, decimal_places=4, min_value=Decimal("0.0000"),
+        default=Decimal("0.0000"),
+    )
+    quantity_damaged = serializers.DecimalField(
+        max_digits=14, decimal_places=4, min_value=Decimal("0.0000"),
+        default=Decimal("0.0000"), required=False,
+    )
+    quantity_rejected = serializers.DecimalField(
+        max_digits=14, decimal_places=4, min_value=Decimal("0.0000"),
+        default=Decimal("0.0000"), required=False,
+    )
     unit_cost = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, required=False)
 
 
@@ -715,19 +778,40 @@ class GoodsReceiptCreateSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True, max_length=5000)
     lines = GoodsReceiptInputLineSerializer(many=True, min_length=1, max_length=200)
 
+    def validate(self, attrs):
+        lines = attrs.get("lines") or []
+        if not any(
+            sum(
+                (Decimal(line.get(name) or 0) for name in
+                 ("quantity_received", "quantity_damaged", "quantity_rejected")),
+                Decimal("0.0000"),
+            ) > Decimal("0.0000")
+            for line in lines
+        ):
+            raise serializers.ValidationError({
+                "lines": "Record at least one accepted, damaged or rejected quantity."
+            })
+        return attrs
+
 
 class GoodsReceiptLineSerializer(serializers.ModelSerializer):
     item_sku = serializers.CharField(source="item.sku", read_only=True)
     item_name = serializers.CharField(source="item.name", read_only=True)
     base_unit = serializers.CharField(source="item.base_unit", read_only=True)
     currency = serializers.CharField(source="goods_receipt.purchase_order.currency", read_only=True, allow_null=True)
-    movement_reference = serializers.CharField(source="stock_movement.reference", read_only=True)
+    movement_reference = serializers.SerializerMethodField()
+
     class Meta:
         model = GoodsReceiptLine
         fields = [
-            "id", "item_sku", "item_name", "base_unit", "currency", "quantity_received", "unit_cost", "movement_reference",
+            "id", "purchase_order_line_id", "item_sku", "item_name", "base_unit", "currency",
+            "quantity_received", "quantity_damaged", "quantity_rejected", "unit_cost",
+            "movement_reference",
         ]
         read_only_fields = fields
+
+    def get_movement_reference(self, obj):
+        return obj.stock_movement.reference if obj.stock_movement_id else ""
 
 
 class GoodsReceiptSerializer(serializers.ModelSerializer):
@@ -991,3 +1075,50 @@ class ReorderContextSerializer(serializers.Serializer):
     default_location_id = serializers.IntegerField(read_only=True, allow_null=True)
     last_receipt = serializers.DictField(read_only=True, allow_null=True)
     open_purchase_order_quantity = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
+
+
+class ManualIngredientIssueLineSerializer(serializers.Serializer):
+    item_id = serializers.IntegerField(min_value=1)
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
+    unit = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    conversion_factor = serializers.DecimalField(
+        max_digits=14, decimal_places=4, min_value=Decimal("0.0001"),
+        required=False, allow_null=True,
+    )
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
+class ManualIngredientIssueCreateSerializer(serializers.Serializer):
+    """One Store Keeper preparation batch for one dish and many ingredients."""
+
+    menu_item_id = serializers.IntegerField(min_value=1)
+    location_id = serializers.IntegerField(min_value=1)
+    department = serializers.ChoiceField(choices=StockDepartment.choices)
+    recipient = serializers.CharField(max_length=120, trim_whitespace=True)
+    preparation_on = serializers.DateField(required=False)
+    batch_reference = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+    lines = ManualIngredientIssueLineSerializer(many=True, min_length=1, max_length=100)
+    idempotency_key = serializers.CharField(max_length=128)
+
+
+class StockIssueBatchSerializer(serializers.ModelSerializer):
+    menu_item_name = serializers.CharField(source="menu_item.name", read_only=True)
+    menu_item_sku = serializers.CharField(source="menu_item.sku", read_only=True)
+    location_code = serializers.CharField(source="location.code", read_only=True)
+    created_by_email = serializers.EmailField(source="created_by.email", read_only=True, allow_null=True)
+    department_label = serializers.SerializerMethodField()
+    movements = StockMovementSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = StockIssueBatch
+        fields = [
+            "reference", "menu_item_id", "menu_item_sku", "menu_item_name",
+            "location_id", "location_code", "preparation_on", "batch_reference",
+            "department", "department_label", "recipient", "consumption_method",
+            "notes", "created_by_email", "created_at", "movements",
+        ]
+        read_only_fields = fields
+
+    def get_department_label(self, obj):
+        return dict(StockDepartment.choices).get(obj.department, obj.department)

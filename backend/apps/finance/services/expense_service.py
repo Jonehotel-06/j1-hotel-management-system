@@ -115,29 +115,43 @@ def create_expense(
 
 @transaction.atomic
 def submit_expense(*, expense: Expense, actor) -> Expense:
-    """Freeze a draft and create policy-bound approval evidence when required."""
+    """Freeze a draft and create policy-bound approval evidence when required.
+
+    A Store Keeper / Procurement handover is DRAFT-only authority. Only an
+    Accountant with ``expense.manage`` may submit it, and it ALWAYS goes through
+    independent approval regardless of the monetary threshold.
+    """
     expense = Expense.objects.select_for_update().select_related("requested_by", "approval_request").get(pk=expense.pk)
-    if expense.requested_by_id != actor.pk:
+    is_handover = expense.workflow_origin != Expense.WorkflowOrigin.DIRECT
+    if expense.requested_by_id != actor.pk and not (is_handover and has_capability(actor, "expense.manage")):
         raise PermissionDenied("Only the expense requester may submit this draft.")
     if expense.status in {Expense.Status.SUBMITTED, Expense.Status.APPROVED, Expense.Status.POSTED}:
         return expense
     if expense.status != Expense.Status.DRAFT:
         raise ValidationError(f"Expense cannot submit from {expense.status}.")
+    if is_handover and not has_capability(actor, "expense.manage"):
+        raise PermissionDenied("A Store Keeper handover must be prepared and submitted by an Accountant.")
     policy = active_control_policy()
-    requires_review = requires_manager_approval(request_type=ApprovalRequest.Type.EXPENSE, amount=expense.amount, policy=policy)
+    requires_review = is_handover or requires_manager_approval(request_type=ApprovalRequest.Type.EXPENSE, amount=expense.amount, policy=policy)
     if requires_review:
         approval, _ = request_approval(
             request_type=ApprovalRequest.Type.EXPENSE, amount=expense.amount, requester=actor,
             request_key=f"expense-approval:{expense.reference}", source_reference=expense.reference,
             currency=expense.currency, reason=expense.description or expense.category,
             metadata={"expense_id": expense.pk, "expense_reference": expense.reference, "payment_method": expense.payment_method},
-            policy=policy,
+            policy=policy, force_review=is_handover,
         )
         expense.approval_request = approval
         expense.status = Expense.Status.SUBMITTED
-        expense.save(update_fields=["approval_request", "status", "updated_at"])
+        update_fields = ["approval_request", "status", "updated_at"]
+        if is_handover and not expense.prepared_by_id:
+            expense.prepared_by = actor
+            expense.prepared_at = timezone.now()
+            update_fields.extend(["prepared_by", "prepared_at"])
+        expense.save(update_fields=update_fields)
         _event(expense=expense, event_type=ExpenseEvent.Type.SUBMITTED, actor=actor,
-               details={"approval_reference": approval.reference, "policy_id": policy.pk})
+               details={"approval_reference": approval.reference, "policy_id": policy.pk,
+                        "workflow_origin": expense.workflow_origin, "forced_review": is_handover})
     else:
         expense.status = Expense.Status.APPROVED
         expense.approved_by = actor
@@ -501,3 +515,119 @@ def settle_expense_payment(
                     "supplier_payment_request": approved_request.reference if approved_request else "",
                     "authority": "APPROVED_PAYMENT_REQUEST" if approved_request else "APPROVER_DIRECT"})
     return expense, created
+
+
+@transaction.atomic
+def create_expense_handover(
+    *, actor, category, amount, incurred_on=None,
+    payment_method=Expense.PaymentMethod.PAYABLE,
+    accounting_class=Expense.AccountingClass.OPERATING,
+    currency="NGN", payee="", supplier_reference="", description="",
+    notes="", purchase_order=None, workflow_origin=Expense.WorkflowOrigin.STOREKEEPER,
+    idempotency_key=None, metadata=None,
+) -> tuple[Expense, bool]:
+    """Create ONE idempotent DRAFT handover, with no ledger posting.
+
+    ``expense.request`` is deliberately narrower than ``expense.manage``: this
+    function cannot set status, approve, post, settle, or attach a cash drawer.
+    The Accountant must prepare/submit, an authorised approver must decide, and
+    ``post_expense`` remains the only route to a financial transaction.
+    """
+    if not (has_capability(actor, "expense.request") or has_capability(actor, "expense.manage")):
+        raise PermissionDenied("This user cannot create an expense handover.")
+    if workflow_origin not in Expense.WorkflowOrigin.values or workflow_origin == Expense.WorkflowOrigin.DIRECT:
+        raise ValidationError({"workflow_origin": "A controlled handover origin is required."})
+    if payment_method not in Expense.PaymentMethod.values:
+        raise ValidationError({"payment_method": "Invalid expense payment method."})
+    if accounting_class not in Expense.AccountingClass.values:
+        raise ValidationError({"accounting_class": "Invalid expense accounting class."})
+    key = str(idempotency_key or "").strip()
+    if not key:
+        raise ValidationError({"idempotency_key": "An expense handover idempotency key is required."})
+    existing = Expense.objects.select_for_update().filter(idempotency_key=key).first()
+    if existing:
+        return existing, False
+
+    category = str(category or "").strip()
+    if not category:
+        raise ValidationError({"category": "An expense category is required."})
+    amount = _money(amount)
+    currency = str(currency or "NGN").upper()
+    if len(currency) != 3 or not currency.isalpha():
+        raise ValidationError({"currency": "Use a three-letter ISO currency code."})
+    incurred_on = incurred_on or hotel_today()
+    if incurred_on > hotel_today():
+        raise ValidationError({"incurred_on": "An expense cannot be incurred in the future."})
+
+    expense = None
+    for _ in range(8):
+        try:
+            with transaction.atomic():
+                expense = Expense.objects.create(
+                    reference=generate_finance_reference("EXP"), idempotency_key=key,
+                    status=Expense.Status.DRAFT, category=category[:120], amount=amount,
+                    currency=currency, incurred_on=incurred_on, payment_method=payment_method,
+                    accounting_class=accounting_class, payee=str(payee or "")[:255],
+                    supplier_reference=str(supplier_reference or "")[:120],
+                    description=description or "", notes=notes or "", requested_by=actor,
+                    purchase_order=purchase_order, workflow_origin=workflow_origin,
+                    metadata=dict(metadata or {}),
+                )
+            break
+        except IntegrityError:
+            existing = Expense.objects.select_for_update().filter(idempotency_key=key).first()
+            if existing:
+                return existing, False
+    else:
+        raise ValidationError("Could not allocate a unique expense reference; please retry.")
+    _event(
+        expense=expense, event_type=ExpenseEvent.Type.CREATED, actor=actor,
+        details={
+            "workflow_origin": workflow_origin, "amount": str(amount),
+            "payment_method": payment_method, "accounting_class": accounting_class,
+            "purchase_order": expense.purchase_order.reference if expense.purchase_order_id else "",
+            "ledger_effect": "none", "status": Expense.Status.DRAFT,
+        },
+    )
+    return expense, True
+
+
+@transaction.atomic
+def prepare_expense_for_approval(*, expense: Expense, actor, **fields) -> Expense:
+    """Accountant-only preparation of a DRAFT handover before submission.
+
+    Amount, status and posting evidence are intentionally not writable from
+    this endpoint. The preparation identity and event are append-only evidence.
+    """
+    if not has_capability(actor, "expense.manage"):
+        raise PermissionDenied("Only Finance staff can prepare an expense handover.")
+    expense = Expense.objects.select_for_update().get(pk=expense.pk)
+    if expense.workflow_origin == Expense.WorkflowOrigin.DIRECT:
+        raise ValidationError("Only Store Keeper / Procurement handovers can be prepared through this endpoint.")
+    if expense.status != Expense.Status.DRAFT:
+        raise ValidationError("Only a DRAFT handover can be prepared.")
+    allowed = {
+        "category", "payee", "department", "supplier_reference", "description",
+        "accounting_class", "payment_method", "incurred_on", "notes",
+        "receipt_url",
+    }
+    changed = []
+    for name, value in fields.items():
+        if name not in allowed or value is None:
+            continue
+        if name == "accounting_class" and value not in Expense.AccountingClass.values:
+            raise ValidationError({"accounting_class": "Invalid expense accounting class."})
+        if name == "payment_method" and value not in Expense.PaymentMethod.values:
+            raise ValidationError({"payment_method": "Invalid expense payment method."})
+        if name == "incurred_on" and value > hotel_today():
+            raise ValidationError({"incurred_on": "An expense cannot be incurred in the future."})
+        setattr(expense, name, value)
+        changed.append(name)
+    expense.prepared_by = actor
+    expense.prepared_at = timezone.now()
+    expense.save(update_fields=changed + ["prepared_by", "prepared_at", "updated_at"])
+    _event(
+        expense=expense, event_type=ExpenseEvent.Type.PREPARED, actor=actor,
+        details={"changed_fields": changed, "ledger_effect": "none"},
+    )
+    return expense

@@ -32,6 +32,28 @@ def _normalise_table_label(value: str) -> str:
     return " ".join(str(value or "").split()).casefold()
 
 
+def _order_metadata(*, actor, service_request, is_portal_order, stock_rules):
+    """Non-financial workflow evidence for a service request's POS order.
+
+    Money remains on the immutable ledger and tender records; this metadata only
+    answers the operational questions "who created/served it?" and "which guest
+    request was it?"
+    """
+    metadata = {
+        "service_context": {
+            "source": "GUEST_SERVICE_REQUEST" if service_request is not None else "STAFF_POS",
+            "service_request_reference": str(getattr(service_request, "reference", "") or ""),
+            "created_by_id": getattr(actor, "pk", None),
+            "created_by_email": str(getattr(actor, "email", "") or ""),
+            "created_by_name": str(getattr(actor, "full_name", "") or ""),
+            "created_at": timezone.now().isoformat(),
+        }
+    }
+    if is_portal_order:
+        metadata["portal_stock_rules"] = _portal_stock_snapshot(stock_rules)
+    return metadata
+
+
 def _money(value, *, field="amount", positive=False) -> Decimal:
     try:
         amount = Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP)
@@ -607,7 +629,12 @@ def create_order(
         tax_amount=tax_amount,
         total_amount=total_amount,
         created_by=actor,
-        metadata={"portal_stock_rules": _portal_stock_snapshot(stock_rules)} if is_portal_order else {},
+        metadata=_order_metadata(
+            actor=actor,
+            service_request=qr_request,
+            is_portal_order=is_portal_order,
+            stock_rules=stock_rules,
+        ),
     )
     PosOrderLine.objects.bulk_create(
         [
@@ -954,7 +981,18 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
             ticket.save(update_fields=["status", "started_at", "assigned_to", "ready_at", "updated_at"])
         event_type = PosOrderEvent.Type.READY
     elif target_status == PosOrder.Status.DELIVERED:
-        _post_order_charge(order=order, actor=actor)
+        charge = _post_order_charge(order=order, actor=actor)
+        metadata = dict(order.metadata or {})
+        metadata["fulfilment"] = {
+            "served_by_id": getattr(actor, "pk", None),
+            "served_by_email": str(getattr(actor, "email", "") or ""),
+            "served_by_name": str(getattr(actor, "full_name", "") or ""),
+            "served_at": now.isoformat(),
+            "charge_transaction_reference": str(getattr(charge, "reference", "") or ""),
+            "folio_reference": str(getattr(order.folio, "reference", "") or "") if order.folio_id else "",
+            "payment_basis": "ROOM_FOLIO" if order.mode == PosOrder.Mode.ROOM_SERVICE else "DIRECT_TENDER",
+        }
+        order.metadata = metadata
         if ticket is not None:
             if not ticket.started_at:
                 ticket.started_at = now
@@ -975,7 +1013,7 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
     order.status = target_status
     update_fields = ["status", "updated_at"]
     if target_status == PosOrder.Status.DELIVERED:
-        update_fields.append("delivered_at")
+        update_fields.extend(["delivered_at", "metadata"])
     if target_status == PosOrder.Status.CANCELLED:
         update_fields.append("cancelled_at")
     order.save(update_fields=update_fields)

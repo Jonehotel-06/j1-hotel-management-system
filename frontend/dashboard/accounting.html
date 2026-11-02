@@ -538,7 +538,9 @@
     { label:"Other cash disbursements", key:"supplier_payments.other_cash_disbursements" },
     { label:"Total cash disbursed", key:"supplier_payments.total_cash_disbursements" },
     { label:"Supplier payables raised", key:"supplier_payments.supplier_payables_raised" },
-    { label:"Outstanding supplier payables", key:"supplier_payments.outstanding_supplier_payables" }
+    { label:"Outstanding supplier payables", key:"supplier_payments.outstanding_supplier_payables" },
+    /* Workflow exception only. Explicitly NOT included in posted ledger money. */
+    { label:"Unposted Procurement payments (exception only)", key:"supplier_payments.unposted_procurement_payments.amount" }
   ];
 
   function setKpi(name,val){
@@ -720,7 +722,8 @@
       payablesNote.textContent+=" Outstanding now: "+formatMoney(supplier.outstanding_supplier_payables,currency)+".";
     }
     if(financeBasis){
-      financeBasis.textContent="Posted immutable ledger · Business date · "+currency+" · "+String(latest.financial.ledger_transactions||0)+" ledger transaction"+((latest.financial.ledger_transactions||0)===1?"":"s");
+      var recon=latest.financial.reconciliation||{};
+      financeBasis.textContent="Posted immutable ledger · Business date · "+currency+" · "+String(latest.financial.ledger_transactions||0)+" ledger transaction"+((latest.financial.ledger_transactions||0)===1?"":"s")+" · Reconciliation: "+(recon.status||"—")+" ("+((recon.checks||[]).length)+" checks, "+((recon.exceptions||[]).length)+" workflow exceptions)";
     }
     if(dt){
       var depts=latest.financial.by_department||[];
