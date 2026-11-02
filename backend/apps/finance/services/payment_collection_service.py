@@ -229,8 +229,10 @@ def apply_payment_to_folio(
             "booking_reference": payment.booking.booking_reference,
         },
         currency=payment.currency,
-        business_date=(payment.paid_at.date() if payment.paid_at else None),
-        occurred_at=payment.paid_at,
+        # Allocation is a separate event from collection. Dating it at the
+        # prepayment time credits receivables before the charge existed and
+        # misstates historical statements. Let the ledger stamp this event at
+        # the time of allocation; the collection retains the payment date.
         lines=[
             {
                 "account_code": accounting.GUEST_DEPOSITS,

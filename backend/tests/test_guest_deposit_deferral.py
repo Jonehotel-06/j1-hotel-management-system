@@ -254,3 +254,29 @@ class GuestDepositDeferralTests(BaseAPITestCase):
             allocation_capacity(folio=folio, settles=FolioPosting.Settles.ACCOMMODATION),
             Decimal("0.00"),
         )
+
+    def test_allocation_is_not_backdated_to_the_prepayment(self):
+        # The allocation happens after the charge, not when the deposit was
+        # collected. Backdating it makes an earlier balance sheet credit-normal.
+        prepayment = Payment.objects.create(
+            booking=self.booking, user=self.manager, reference="J1P-EARLIER-DEPOSIT",
+            provider=Payment.Provider.BANK_TRANSFER, amount=Decimal("100000.00"),
+            currency="NGN", status=Payment.Status.SUCCESS,
+            paid_at=timezone.now() - timedelta(days=5),
+        )
+        collection, _ = ensure_payment_collection(payment=prepayment, actor=self.manager)
+        self.assertLess(collection.business_date, self.today - timedelta(days=1))
+        self._bridge()
+        self._post_night(self.today - timedelta(days=1))
+        allocation = PaymentAllocation.objects.get(payment=prepayment)
+        self.assertEqual(allocation.transaction.business_date, self.today)
+        earlier = FinancialLine.objects.filter(
+            account_code=accounting.ACCOUNTS_RECEIVABLE,
+            transaction__status=FinancialTransaction.Status.POSTED,
+            transaction__business_date__lt=self.today,
+        )
+        self.assertEqual(
+            sum((line.amount if line.direction == FinancialLine.Direction.DEBIT else -line.amount
+                 for line in earlier), Decimal("0.00")),
+            Decimal("100000.00"),
+        )
