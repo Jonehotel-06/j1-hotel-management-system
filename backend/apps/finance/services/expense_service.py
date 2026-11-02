@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import hashlib
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
@@ -10,7 +11,7 @@ from django.utils import timezone
 from apps.accounts.capabilities import has_capability
 from apps.core.utils import hotel_today
 
-from ..models import ApprovalRequest, CashMovement, CashSession, Expense, ExpenseEvent, FinancialLine, FinancialTransaction
+from ..models import ApprovalRequest, CashMovement, CashSession, Expense, ExpenseEvent, FinancialLine, FinancialTransaction, SupplierSettlement
 from . import accounting
 from .approval_service import _review_approval, active_control_policy, request_approval, requires_manager_approval
 from .ledger_service import create_posted_transaction
@@ -24,8 +25,8 @@ def _money(value, *, field="amount") -> Decimal:
         amount = Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP)
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise ValidationError({field: "Enter a valid two-decimal amount."}) from exc
-    if amount <= Decimal("0.00"):
-        raise ValidationError({field: "Amount must be greater than zero."})
+    if not amount.is_finite() or amount <= Decimal("0.00"):
+        raise ValidationError({field: "Amount must be finite and greater than zero."})
     return amount
 
 
@@ -344,144 +345,118 @@ def attach_expense_payment_evidence(
 
 @transaction.atomic
 def settle_expense_payment(
-    *, expense: Expense, actor, method, payment_reference="",
-    cash_session=None, receipt_url="", receipt_file=None, paid_on=None,
-    amount=None, payment_request=None,
+    *, expense, actor, method, payment_reference="", cash_session=None,
+    receipt_url="", receipt_file=None, paid_on=None, amount=None,
+    payment_request=None, idempotency_key=None,
 ) -> tuple[Expense, bool]:
-    """Record that a posted on-account (PAYABLE) expense has now been PAID.
+    """Settle one real instalment of a posted payable without duplicating it.
 
-    Posting a PAYABLE expense raises the liability (Dr expense / Cr accounts
-    payable) without moving money. This settlement posts the second half —
-    Dr accounts payable / Cr the tender actually used — exactly once, and
-    stamps the expense paid so every screen (expense status, payables
-    visibility, outstanding balances) agrees. A receipt (URL or uploaded
-    file) is optional evidence; a bank/card payment reference is required
-    for BANK_TRANSFER and CARD settlements.
-
-    Authority (accounting-agent repair)
-    -----------------------------------
-    This service moves money out of the hotel, so it is no longer reachable by
-    ``expense.manage`` alone — that capability is also held by cashiers and
-    waiters, which let the person who recorded a supplier bill pay it in the
-    same session with no second pair of eyes. A caller must now be either
-
-    * an ``expense.approve`` holder (an authority that already exists for
-      releasing payable money), or
-    * executing an APPROVED ``SupplierPaymentRequest`` (see
-      ``supplier_payment_service``), which carries its own independent
-      maker-checker decision.
-
-    ``amount`` is optional and defaults to the whole outstanding payable; an
-    amount that is not the full balance is refused because the ledger records
-    one settlement per payable. Passing ``payment_request`` is how the payment
-    request workflow reaches this code; it is validated here again rather than
-    trusted from the caller.
+    Legacy full settlements remain readable. New instalments each have an
+    immutable source-keyed settlement and journal. Only the final instalment
+    sets the legacy paid/settlement fields. Both the expense and any approved
+    request are locked while capacity and authority are checked.
     """
     if not has_capability(actor, "expense.manage"):
         raise PermissionDenied("This user cannot record supplier payments.")
     expense = Expense.objects.select_for_update().get(pk=expense.pk)
-    if expense.settlement_transaction_id or expense.paid_at:
-        return expense, False
     approved_request = None
     if payment_request is not None:
-        # Re-validate the authorising request against THIS expense inside the
-        # locked transaction: an approved request for a different payable, a
-        # rejected/cancelled request, or a request whose amount does not match
-        # must never discharge this liability.
         from ..models import SupplierPaymentRequest
-
-        candidate = SupplierPaymentRequest.objects.select_for_update().get(pk=payment_request.pk)
-        if candidate.expense_id != expense.pk:
-            raise ValidationError("That payment request belongs to a different payable.")
-        if candidate.status != SupplierPaymentRequest.Status.APPROVED:
-            raise ValidationError(
-                f"Payment request {candidate.reference} is {candidate.status}; only an approved "
-                "request can be executed."
-            )
-        approved_request = candidate
+        approved_request = SupplierPaymentRequest.objects.select_for_update().get(pk=payment_request.pk)
+        if approved_request.expense_id != expense.pk or approved_request.status != SupplierPaymentRequest.Status.APPROVED:
+            raise ValidationError("The approved payment request must belong to this payable.")
     if not has_capability(actor, "expense.approve") and approved_request is None:
-        raise PermissionDenied(
-            "Recording a supplier payment needs an approved payment request. Ask an accounts "
-            "manager to approve it, then execute the approved request."
-        )
-    if expense.status != Expense.Status.POSTED:
-        raise ValidationError("Only a posted expense can be marked as paid.")
-    if expense.payment_method != Expense.PaymentMethod.PAYABLE:
-        raise ValidationError(
-            "This expense was settled at posting time; only on-account (accounts payable) expenses need a later payment record."
-        )
-    method = str(method or "").upper()
-    if method not in {
-        Expense.PaymentMethod.BANK_TRANSFER, Expense.PaymentMethod.CARD, Expense.PaymentMethod.CASH,
-    }:
-        raise ValidationError({"method": "Choose how the supplier was actually paid: BANK_TRANSFER, CARD, or CASH."})
-    # Server-authoritative amount. The payable balance is the ceiling, whatever
-    # the caller sent; a payment that is not the full balance is refused because
-    # one settlement posting per payable is what the ledger supports.
-    outstanding = Decimal(expense.amount).quantize(CENT)
-    if amount is None:
-        amount = outstanding
-    try:
-        amount = Decimal(str(amount)).quantize(CENT, rounding=ROUND_HALF_UP)
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise ValidationError({"amount": "Enter a valid two-decimal amount."}) from exc
-    if amount <= Decimal("0.00"):
-        raise ValidationError({"amount": "Enter a payment amount greater than zero."})
-    if amount > outstanding:
-        raise ValidationError({
-            "amount": (
-                f"The payment cannot exceed the outstanding balance of {outstanding} "
-                f"{expense.currency}."
-            )
-        })
-    if amount != outstanding:
-        raise ValidationError({
-            "amount": (
-                f"This payable is settled in one payment of {outstanding} {expense.currency}. Partial "
-                "settlement of an on-account expense is not supported by the current ledger design."
-            )
-        })
-    if approved_request is not None and Decimal(approved_request.amount).quantize(CENT) != amount:
-        raise ValidationError({
-            "amount": "The approved payment request covers a different amount than this settlement.",
-        })
-    payment_reference = str(payment_reference or "").strip()[:160]
-    if method in {Expense.PaymentMethod.BANK_TRANSFER, Expense.PaymentMethod.CARD} and not payment_reference:
+        raise PermissionDenied("Recording a supplier payment needs an approved payment request.")
+    if expense.status != Expense.Status.POSTED or expense.payment_method != Expense.PaymentMethod.PAYABLE:
+        raise ValidationError("Only a posted on-account expense can be settled.")
+
+    method = str(method or "").strip().upper()
+    if method not in {Expense.PaymentMethod.CASH, Expense.PaymentMethod.BANK_TRANSFER, Expense.PaymentMethod.CARD}:
+        raise ValidationError({"method": "Choose CASH, BANK_TRANSFER or CARD."})
+    reference = str(payment_reference or "").strip()[:160]
+    if method != Expense.PaymentMethod.CASH and not reference:
         raise ValidationError({"payment_reference": "Enter the bank/card payment reference."})
+    supplied_key = str(idempotency_key or "").strip()
+    if len(supplied_key) > 120:
+        raise ValidationError({"idempotency_key": "Use at most 120 characters."})
+    ref_key = hashlib.sha256(reference.casefold().encode("utf-8")).hexdigest() if reference and method != Expense.PaymentMethod.CASH else None
+    if approved_request:
+        key = f"supplier-request:{approved_request.reference}"
+    elif supplied_key:
+        digest = hashlib.sha256(f"{expense.reference}:{supplied_key}".encode("utf-8")).hexdigest()
+        key = f"expense-settlement:{digest}"
+    elif ref_key:
+        key = f"supplier-reference:{ref_key}"
+    else:
+        key = f"expense-settlement:{expense.reference}"
+
+    existing = SupplierSettlement.objects.select_for_update().filter(idempotency_key=key).first()
+    if existing:
+        requested_amount = existing.amount if amount is None else _money(amount)
+        if (existing.expense_id != expense.pk or existing.method != method or
+                existing.payment_reference != reference or existing.amount != requested_amount or
+                (paid_on is not None and existing.paid_on != paid_on) or
+                (receipt_url and existing.receipt_url != str(receipt_url)[:200]) or
+                (method == Expense.PaymentMethod.CASH and cash_session is not None and not
+                 existing.transaction.cash_movements.filter(cash_session=cash_session, type=CashMovement.Type.PAID_OUT).exists()) or
+                (approved_request and existing.payment_request_id != approved_request.pk)):
+            raise ValidationError({"idempotency_key": "This payment key was already used for different details."})
+        return expense, False
+    if ref_key and SupplierSettlement.objects.filter(external_reference_key=ref_key).exists():
+        raise ValidationError({"payment_reference": "This payment reference has already been recorded."})
+    if reference and Expense.objects.filter(payment_reference__iexact=reference).exclude(pk=expense.pk).exists():
+        raise ValidationError({"payment_reference": "This reference is already used by a historical expense."})
+
+    from .supplier_payment_service import payable_balance
+    outstanding = payable_balance(expense)
+    if outstanding <= Decimal("0.00"):
+        # Preserve the existing endpoint's harmless repeat response for
+        # historical fully paid rows, without posting a second journal.
+        if expense.paid_at or expense.settlement_transaction_id:
+            return expense, False
+        raise ValidationError("This payable has no outstanding balance.")
+    amount = _money(outstanding if amount is None else amount)
+    if amount > outstanding:
+        raise ValidationError({"amount": f"Payment exceeds the outstanding balance of {outstanding} {expense.currency}."})
+    if method == Expense.PaymentMethod.CASH and amount < outstanding and not (supplied_key or approved_request):
+        raise ValidationError({"idempotency_key": "A unique key is required for a partial cash payment."})
+    if approved_request and Decimal(approved_request.amount).quantize(CENT) != amount:
+        raise ValidationError({"amount": "The approved payment request covers a different amount."})
     paid_on = paid_on or hotel_today()
     if paid_on > hotel_today():
         raise ValidationError({"paid_on": "A supplier payment cannot be dated in the future."})
+    if receipt_file is not None:
+        from apps.core.validators import validate_document_upload
+        validate_document_upload(receipt_file)
+
     session = None
     if method == Expense.PaymentMethod.CASH:
-        if expense.currency != "NGN":
-            raise ValidationError("Cash supplier payments currently require NGN currency.")
-        if cash_session is None:
-            raise ValidationError({"cash_session_reference": "Cash supplier payments require your open cash session."})
+        if expense.currency != "NGN" or cash_session is None:
+            raise ValidationError({"cash_session_reference": "An NGN cash payment requires an open cash session."})
         session = CashSession.objects.select_for_update().get(pk=cash_session.pk)
-        if session.status != CashSession.Status.OPEN:
-            raise ValidationError({"cash_session_reference": "Cash supplier payments require an open cash session."})
-        if session.cashier_id != actor.pk:
-            raise PermissionDenied("Cash supplier payments must be recorded by the assigned cashier.")
-        if Decimal(session.expected_cash) < Decimal(amount):
+        if session.status != CashSession.Status.OPEN or session.cashier_id != actor.pk:
+            raise PermissionDenied("Cash payment requires the acting cashier's open session.")
+        if Decimal(session.expected_cash) < amount:
             raise ValidationError("Cash payment exceeds the drawer's expected cash.")
     elif cash_session is not None:
-        raise ValidationError({"cash_session_reference": "A cash session is only valid for CASH payments."})
+        raise ValidationError({"cash_session_reference": "A cash session is only valid for cash."})
 
     settlement_account = {
         Expense.PaymentMethod.CASH: accounting.CASH_ON_HAND,
         Expense.PaymentMethod.BANK_TRANSFER: accounting.BANK_CLEARING,
         Expense.PaymentMethod.CARD: accounting.CARD_CLEARING,
     }[method]
-    transaction, created = create_posted_transaction(
+    journal_key = f"supplier-settlement:{hashlib.sha256(key.encode()).hexdigest()}"
+    journal, created = create_posted_transaction(
         transaction_type=FinancialTransaction.Type.EXPENSE,
-        source_key=f"expense-settlement:{expense.reference}", idempotency_key=f"expense-settlement:{expense.reference}",
-        actor=actor, source_reference=expense.reference, external_reference=payment_reference or expense.supplier_reference,
+        source_key=journal_key, idempotency_key=journal_key, actor=actor,
+        source_reference=expense.reference, external_reference=reference or expense.supplier_reference,
         narrative=f"Supplier payment for expense {expense.reference}: {expense.payee or expense.category}",
         currency=expense.currency, business_date=paid_on,
-        metadata={
-            "expense_settlement": True, "expense_id": expense.pk, "expense_reference": expense.reference,
-            "accounting_class": expense.accounting_class, "settlement_method": method,
-        },
+        metadata={"expense_settlement": True, "expense_id": expense.pk,
+                  "expense_reference": expense.reference, "accounting_class": expense.accounting_class,
+                  "settlement_method": method, "supplier_payment_request": getattr(approved_request, "reference", ""),
+                  "client_idempotency_key": supplied_key},
         lines=[
             {"account_code": accounting.ACCOUNTS_PAYABLE, "direction": FinancialLine.Direction.DEBIT,
              "amount": amount, "description": f"Settle payable {expense.reference}"},
@@ -489,32 +464,43 @@ def settle_expense_payment(
              "amount": amount, "description": f"Paid supplier for {expense.reference}"},
         ],
     )
-    if session is not None and created:
+    if not created:
+        raise ValidationError("A journal exists without matching settlement evidence; investigate before retrying.")
+    try:
+        with transaction.atomic():
+            SupplierSettlement.objects.create(
+                expense=expense, transaction=journal, payment_request=approved_request,
+                idempotency_key=key, external_reference_key=ref_key, payment_reference=reference,
+                method=method, amount=amount, currency=expense.currency, paid_on=paid_on,
+                paid_by=actor, receipt_url=str(receipt_url or "")[:200], receipt_file=receipt_file,
+            )
+    except IntegrityError as exc:
+        raise ValidationError({"payment_reference": "This payment or reference was recorded concurrently; review before retrying."}) from exc
+    if session is not None:
         CashMovement.objects.create(
-            cash_session=session, transaction=transaction, type=CashMovement.Type.PAID_OUT,
+            cash_session=session, transaction=journal, type=CashMovement.Type.PAID_OUT,
             amount=amount, currency=expense.currency, actor=actor, source_reference=expense.reference,
             notes=f"Supplier payment {expense.reference}"[:500],
             metadata={"expense_id": expense.pk, "expense_reference": expense.reference, "settlement": True},
         )
-        session.expected_cash = (Decimal(session.expected_cash) - Decimal(amount)).quantize(CENT)
+        session.expected_cash = (Decimal(session.expected_cash) - amount).quantize(CENT)
         session.save(update_fields=["expected_cash", "updated_at"])
-    # Posted expenses are immutable through save(); settlement evidence is
-    # written with one controlled update, guarded by the settlement check
-    # above, so concurrent retries converge instead of double-paying.
-    updates = {
-        "paid_at": timezone.now(), "paid_by": actor, "payment_reference": payment_reference,
-        "payment_receipt_url": str(receipt_url or "")[:200], "settlement_transaction": transaction,
-    }
-    if receipt_file is not None:
-        updates["payment_receipt_file"] = receipt_file
-    Expense.objects.filter(pk=expense.pk, settlement_transaction__isnull=True).update(**updates)
+    remaining = (outstanding - amount).quantize(CENT)
+    if remaining == Decimal("0.00"):
+        updates = {"paid_at": timezone.now(), "paid_by": actor, "payment_reference": reference,
+                   "payment_receipt_url": str(receipt_url or "")[:200], "settlement_transaction": journal}
+        if receipt_file is not None:
+            # The uploaded file was saved on the immutable instalment above;
+            # reuse its storage name, rather than saving it twice.
+            updates["payment_receipt_file"] = SupplierSettlement.objects.get(transaction=journal).receipt_file.name
+        Expense.objects.filter(pk=expense.pk, settlement_transaction__isnull=True).update(**updates)
     expense.refresh_from_db()
     _event(expense=expense, event_type=ExpenseEvent.Type.PAID, actor=actor,
-           details={"settlement_transaction": transaction.reference, "method": method,
-                    "payment_reference": payment_reference, "amount": str(amount),
-                    "supplier_payment_request": approved_request.reference if approved_request else "",
+           details={"settlement_transaction": journal.reference, "method": method,
+                    "payment_reference": reference, "amount": str(amount), "remaining": str(remaining),
+                    "supplier_payment_request": getattr(approved_request, "reference", ""),
                     "authority": "APPROVED_PAYMENT_REQUEST" if approved_request else "APPROVER_DIRECT"})
-    return expense, created
+    return expense, True
 
 
 @transaction.atomic

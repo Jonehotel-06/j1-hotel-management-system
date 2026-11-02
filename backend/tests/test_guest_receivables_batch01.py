@@ -410,6 +410,27 @@ class FolioBalanceCorrectnessTests(GuestReceivableScenarioTests):
     same reconciliation proof.
     """
 
+    def _legacy_nonposted_charge(self, *, folio, amount, status):
+        """Construct legacy unposted evidence without mutating a posted journal."""
+        from django.db import connection
+        transaction = FinancialTransaction.objects.create(
+            type=FinancialTransaction.Type.OTHER_CHARGE, status=FinancialTransaction.Status.DRAFT,
+            source_key=f"legacy-nonposted-{status}", business_date=self.today, currency="NGN")
+        line = FinancialLine.objects.create(transaction=transaction, folio=folio,
+            account_code=accounting.ACCOUNTS_RECEIVABLE, direction="DEBIT", amount=Decimal(amount))
+        FinancialLine.objects.create(transaction=transaction,
+            account_code=accounting.OTHER_OPERATING_REVENUE, direction="CREDIT", amount=Decimal(amount))
+        FolioPosting.objects.create(folio=folio, transaction=transaction, line=line,
+            kind=FolioPosting.Kind.CHARGE, effect=FolioPosting.Effect.DEBIT,
+            amount=Decimal(amount), currency="NGN", business_date=self.today)
+        if status == FinancialTransaction.Status.VOIDED:
+            # Fixture-only raw SQL simulates a pre-existing VOIDED record. The
+            # application API deliberately disallows this status transition.
+            table = connection.ops.quote_name(FinancialTransaction._meta.db_table)
+            with connection.cursor() as cursor:
+                cursor.execute(f"UPDATE {table} SET status = %s WHERE id = %s", [status, transaction.pk])
+        return transaction
+
     def test_a_draft_charge_is_not_a_debt_yet(self):
         """An unapproved DRAFT transaction used to move the guest's balance."""
         from apps.finance.services.folio_service import folio_balance_queryset
@@ -418,11 +439,8 @@ class FolioBalanceCorrectnessTests(GuestReceivableScenarioTests):
         folio = self._folio(guest)
         self._post(kind="DEBIT", folio=folio, amount="9000.00",
                    transaction_type=FinancialTransaction.Type.OTHER_CHARGE)
-        draft = self._post(kind="DEBIT", folio=folio, amount="5000.00",
-                           transaction_type=FinancialTransaction.Type.OTHER_CHARGE)
-        FinancialTransaction.objects.filter(pk=draft.pk).update(
-            status=FinancialTransaction.Status.DRAFT
-        )
+        self._legacy_nonposted_charge(folio=folio, amount="5000.00",
+                                      status=FinancialTransaction.Status.DRAFT)
 
         annotated = folio_balance_queryset().get(pk=folio.pk)
         self.assertEqual(annotated.balance, Decimal("9000.00"))
@@ -443,11 +461,8 @@ class FolioBalanceCorrectnessTests(GuestReceivableScenarioTests):
         folio = self._folio(guest)
         self._post(kind="DEBIT", folio=folio, amount="7500.00",
                    transaction_type=FinancialTransaction.Type.OTHER_CHARGE)
-        voided = self._post(kind="DEBIT", folio=folio, amount="2500.00",
-                            transaction_type=FinancialTransaction.Type.OTHER_CHARGE)
-        FinancialTransaction.objects.filter(pk=voided.pk).update(
-            status=FinancialTransaction.Status.VOIDED
-        )
+        self._legacy_nonposted_charge(folio=folio, amount="2500.00",
+                                      status=FinancialTransaction.Status.VOIDED)
 
         self.assertEqual(
             folio_balance_queryset().get(pk=folio.pk).balance, Decimal("7500.00")

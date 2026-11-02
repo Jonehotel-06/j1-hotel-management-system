@@ -7,10 +7,11 @@ cash/bank collection distinct from a guest-balance application.
 """
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+import hashlib
 
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -22,7 +23,7 @@ from apps.payments.services.payment_service import (
 
 from ..models import (
     FinancialEvent, FinancialLine, FinancialTransaction, Folio, FolioPosting, PaymentAllocation,
-    RefundApplication,
+    RefundApplication, GuestCollectionKey, CashMovement,
 )
 from . import accounting
 from .ledger_service import LedgerIntegrityError, create_posted_transaction
@@ -541,6 +542,8 @@ def settle_outstanding_balance(
     request=None,
     include_unbilled=True,
     cash_session_reference="",
+    idempotency_key="",
+    external_reference="",
 ):
     """Collect money at the desk for the guest's FULL bill and show it on the folio.
 
@@ -579,6 +582,46 @@ def settle_outstanding_balance(
     booking = (
         Booking.objects.select_for_update().select_related("guest", "room_type").get(pk=booking.pk)
     )
+    if not (has_capability(actor, "booking.manage") and has_capability(actor, "payment.capture")):
+        raise PermissionDenied("Booking management and payment capture are required.")
+    provider = str(provider or "").strip().upper()
+    if provider not in {Payment.Provider.CASH, Payment.Provider.POS, Payment.Provider.BANK_TRANSFER}:
+        raise ValidationError({"provider": "Choose a permitted offline payment method."})
+    try:
+        received = Decimal(str(amount)).quantize(Decimal("0.01"))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValidationError({"amount": "Enter a valid money amount."}) from exc
+    if not received.is_finite() or received <= Decimal("0.00"):
+        raise ValidationError({"amount": "Enter the amount the guest actually handed over."})
+    raw_key = str(idempotency_key or "").strip()
+    external_reference = str(external_reference or "").strip()
+    if len(external_reference) > 160:
+        raise ValidationError({"external_reference": "Use at most 160 characters."})
+    if len(raw_key) > 128:
+        raise ValidationError({"idempotency_key": "Use at most 128 characters."})
+    key = f"guest-collection:{actor.pk}:{raw_key}" if raw_key else ""
+    fingerprint = {"amount": str(received), "provider": provider, "notes": str(notes or ""),
+                   "include_unbilled": bool(include_unbilled), "cash_session_reference": str(cash_session_reference or ""),
+                   "external_reference": external_reference}
+    if key:
+        prior = GuestCollectionKey.objects.select_for_update().select_related("payment").filter(key=key).first()
+        if prior:
+            if prior.booking_id != booking.pk or prior.fingerprint != fingerprint:
+                raise ValidationError({"idempotency_key": "This key was already used for different collection details."})
+            return prior.payment, {**prior.breakdown, "replayed": True}
+        if provider != Payment.Provider.CASH and not external_reference:
+            raise ValidationError({"external_reference": "Enter the actual POS/bank payment reference."})
+        if provider == Payment.Provider.CASH and not cash_session_reference:
+            raise ValidationError({"cash_session_reference": "An idempotent cash collection requires your open cash session."})
+        if provider != Payment.Provider.CASH and cash_session_reference:
+            raise ValidationError({"cash_session_reference": "A cash session is only valid for cash."})
+    reference_key = (hashlib.sha256(external_reference.casefold().encode()).hexdigest()
+                     if key and provider != Payment.Provider.CASH and external_reference else None)
+    if reference_key and (GuestCollectionKey.objects.filter(external_reference_key=reference_key).exists()
+                          or Payment.objects.filter(transaction_id__iexact=external_reference).exclude(transaction_id="").exists()
+                          or Payment.objects.filter(reference__iexact=external_reference).exists()):
+        raise ValidationError({"external_reference": "This payment reference has already been recorded."})
+
     booking_service.refresh_expired_pending(booking)
     if booking.status not in (
         Booking.Status.PENDING,
@@ -589,12 +632,11 @@ def settle_outstanding_balance(
             f"A booking with status {booking.get_status_display()} cannot take a desk payment."
         )
 
-    provider = str(provider or "").upper()
-    if provider not in Payment.Provider.values:
-        raise ValidationError({"provider": "Choose how the guest paid."})
     # Cash needs the acting cashier's own open drawer (same rule as every other
     # cash collection in the system), so the count reconciles at close.
     session = _validate_cash_session(cash_session_reference, actor) if cash_session_reference else None
+    if key and session is not None and booking.currency != "NGN":
+        raise ValidationError({"cash_session_reference": "This cash session only supports NGN collections."})
 
     try:
         stay = booking.stay
@@ -647,12 +689,11 @@ def settle_outstanding_balance(
     stay_due = max(Decimal(booking.amount_due or Decimal("0.00")), Decimal("0.00"))
     folio_due = max(Decimal(booking_folio_charge_balance(booking=booking)), Decimal("0.00"))
     bill_total = (stay_due + folio_due).quantize(Decimal("0.01"))
-    received = Decimal(str(amount)).quantize(Decimal("0.01"))
-    if received <= Decimal("0.00"):
-        raise ValidationError({"amount": "Enter the amount the guest actually handed over."})
-    if bill_total <= Decimal("0.00"):
+    # Preserve the old unkeyed contract; overpayments and new advances require
+    # an explicit stable idempotency key and real external reference/session.
+    if bill_total <= Decimal("0.00") and not key:
         raise PaymentAlreadyCompletedError()
-    if received > bill_total:
+    if received > bill_total and not key:
         raise ValidationError(
             {
                 "amount": (
@@ -685,10 +726,17 @@ def settle_outstanding_balance(
             "stay_balance_before_payment": money_plain(stay_due),
             "billed_requests": billed_requests,
             "cash_session_reference": getattr(session, "reference", ""),
+            "external_payment_reference": external_reference,
         },
     )
     # Gross tender collection first (Dr cash/bank/card clearing, Cr guest deposits).
-    ensure_payment_collection(payment=payment, actor=actor)
+    collection, created = ensure_payment_collection(payment=payment, actor=actor)
+    if session is not None and provider == Payment.Provider.CASH and created:
+        CashMovement.objects.create(cash_session=session, transaction=collection,
+            type=CashMovement.Type.COLLECTION, amount=received, currency=booking.currency,
+            actor=actor, source_reference=payment.reference, notes="Guest desk collection")
+        session.expected_cash = (Decimal(session.expected_cash) + received).quantize(Decimal("0.01"))
+        session.save(update_fields=["expected_cash", "updated_at"])
 
     # The folio part lands on the folio immediately — this is the money the
     # guest disputed at the gate, so it must stop being "outstanding" the second
@@ -704,7 +752,8 @@ def settle_outstanding_balance(
             settles=FolioPosting.Settles.FOLIO_CHARGES,
         )
 
-    stay_part = (received - folio_part).quantize(Decimal("0.01"))
+    stay_part = min(received - folio_part, stay_due).quantize(Decimal("0.01"))
+    unapplied = (received - folio_part - stay_part).quantize(Decimal("0.01"))
     if stay_part > Decimal("0.00"):
         booking_service.register_successful_payment(booking, stay_part, request=request)
 
@@ -721,6 +770,8 @@ def settle_outstanding_balance(
             "provider": provider,
             "folio_portion": money_plain(folio_part),
             "stay_portion": money_plain(stay_part),
+            "unapplied_advance": money_plain(unapplied),
+            "external_payment_reference": external_reference,
             "billed_requests": billed_requests,
         },
         request=request,
@@ -729,14 +780,24 @@ def settle_outstanding_balance(
             f"({received:.2f} {booking.currency}; folio {folio_part:.2f})"
         ),
     )
-    return payment, {
+    breakdown = {
         "stay_balance_before": money_plain(stay_due),
         "folio_balance_before": money_plain(folio_due),
         "bill_total_before": money_plain(bill_total),
         "folio_portion": money_plain(folio_part),
         "stay_portion": money_plain(stay_part),
+        "unapplied_advance": money_plain(unapplied),
         "billed_requests": billed_requests,
     }
+    if key:
+        try:
+            with transaction.atomic():
+                GuestCollectionKey.objects.create(key=key, booking=booking, payment=payment, actor=actor,
+                                                  external_reference=external_reference, external_reference_key=reference_key,
+                                                  fingerprint=fingerprint, breakdown=breakdown)
+        except IntegrityError as exc:
+            raise ValidationError({"idempotency_key": "A collection or payment reference was recorded concurrently; review before retrying."}) from exc
+    return payment, breakdown
 
 
 def money_plain(value) -> str:

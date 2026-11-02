@@ -86,6 +86,7 @@
       </div>
     </header>
     <main class="dash-content">
+      <p class="caption" style="margin:0 0 1rem;"><a href="accounting-ledger.html">Open the new ledger reporting preview →</a> · Historical reconciliation is required before cutover.</p>
 
 <section class="panel" aria-label="Reporting period">
   <div class="filter-bar">
@@ -783,7 +784,8 @@
     if (awaitsSettlement) {
       /* On-account bill: the payment has NOT happened, so recording it here
          releases the payable (Dr accounts payable / Cr the tender used). */
-      html += "<button class=\"btn btn-sm btn-accent\" type=\"button\" data-expense-settle=\"" + reference + "\">Record supplier payment</button>";
+      if (CAN.approveExpense) html += "<button class=\"btn btn-sm btn-accent\" type=\"button\" data-expense-settle=\"" + reference + "\">Record supplier payment</button>";
+      else if (CAN.manageExpenses) html += "<button class=\"btn btn-sm btn-accent\" type=\"button\" data-supplier-payment-propose=\"" + reference + "\">Propose payment</button>";
     } else if (row.status === "POSTED") {
       /* Money already left (bank transfer / cash / card) or the on-account bill
          is already settled: there is no posting left to make, but the transfer
@@ -1074,10 +1076,22 @@
 
   function expenseDetailHtml(detail, currency) {
     var events = Array.isArray(detail.events) ? detail.events : [];
-    var paid = !!EXPENSE_STATUS_PAID[detail.status];
-    var commitment = paid
-      ? '<p class="caption">Money has moved for this expense. It cannot be paid a second time; a further payment would need its own controlled record.</p>'
-      : '<p class="caption">Recorded, but no money has left the hotel for it yet.</p>';
+    var isPayable = detail.status === "POSTED" && detail.payment_method === "PAYABLE";
+    var partiallyPaid = isPayable && !detail.paid_at && Number(detail.paid_amount || 0) > 0;
+    var paid = !!EXPENSE_STATUS_PAID[detail.status] && (!isPayable || !!detail.paid_at);
+    var commitment = partiallyPaid
+      ? '<p class="caption">Part of this payable has been paid; the remaining balance is still owed.</p>'
+      : (paid
+        ? '<p class="caption">Money has moved for this expense. It cannot be paid a second time; a further payment would need its own controlled record.</p>'
+        : '<p class="caption">Recorded, but no money has left the hotel for it yet.</p>');
+    var instalments = Array.isArray(detail.payment_records) ? detail.payment_records : [];
+    var paymentHistory = instalments.length ? '<h4 class="detail-section-title">Supplier payments recorded</h4>' +
+      instalments.map(function(item){
+        var evidence = item.receipt_file_url || item.receipt_url;
+        return '<p>' + JONE.esc(item.paid_on || "—") + ' · ' + JONE.esc(moneyCell(item.amount, currency)) +
+          ' · ' + JONE.esc(item.method || "—") + ' · ' + JONE.esc(item.payment_reference || item.transaction_reference || "—") +
+          (evidence ? ' · <a href="' + JONE.esc(evidence) + '" target="_blank" rel="noopener noreferrer">Payment evidence</a>' : '') + '</p>';
+      }).join("") : "";
     /* Every piece of evidence on the record is reachable: the supplier's own
        document, and the transfer receipt (file and/or link) filed against the
        payment. An expense with none of them says so. */
@@ -1103,6 +1117,8 @@
       : '<p class="caption">No audit events recorded for this expense.</p>';
     return '<div class="profile-grid">' +
       expenseDetailRow("Amount", JONE.esc(moneyCell(detail.amount, currency)), { numeric: true }) +
+      (isPayable && detail.paid_amount != null ? expenseDetailRow("Paid so far", JONE.esc(moneyCell(detail.paid_amount, currency)), { numeric: true }) : "") +
+      (isPayable && detail.outstanding_amount != null ? expenseDetailRow("Outstanding", JONE.esc(moneyCell(detail.outstanding_amount, currency)), { numeric: true }) : "") +
       expenseDetailRow("Currency", expenseDetailText(detail.currency)) +
       expenseDetailRow("Status", JONE.dashboard.statusPill(detail.status)) +
       expenseDetailRow("Category", expenseDetailText(detail.category)) +
@@ -1127,11 +1143,12 @@
                treats the money as out, so there is no later payment to record —
                only the receipt to file. Saying "\u2014" here read as "unpaid". */
             ? ("Paid at posting — " + expenseDetailText(detail.payment_method) + " (no separate supplier payment to record)")
-            : (detail.payment_method === "PAYABLE" && detail.status === "POSTED" ? "Not yet paid — on account" : "\u2014"))) +
+            : (partiallyPaid ? "Partially paid — balance remains on account" :
+               (detail.payment_method === "PAYABLE" && detail.status === "POSTED" ? "Not yet paid — on account" : "\u2014")))) +
       expenseDetailRow("Payment reference", expenseDetailText(detail.payment_reference)) +
       expenseDetailRow("Settlement transaction", expenseDetailText(detail.settlement_reference)) +
       expenseDetailRow("Created", detail.created_at ? JONE.esc(JONE.formatDateTime(detail.created_at)) : "\u2014") +
-      '</div>' + commitment +
+      '</div>' + commitment + paymentHistory +
       (detail.description ? '<h4 class="detail-section-title">Description</h4><p>' + JONE.esc(detail.description) + '</p>' : "") +
       (detail.notes ? '<h4 class="detail-section-title">Notes</h4><p>' + JONE.esc(detail.notes) + '</p>' : "") +
       '<h4 class="detail-section-title">Attachment</h4><p>' + attachment + '</p>' +
@@ -1262,7 +1279,7 @@
     });
     payables.innerHTML=rows.length?rows.map(function(row){
       return "<tr><td class=\"cell-nowrap\">"+JONE.esc(row.reference||"—")+"</td><td class=\"cell-clamp\">"+JONE.esc(row.payee||"—")+"</td>"+
-        "<td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.amount))+"</td>"+
+        "<td class=\"cell-nowrap\">"+JONE.esc(row.status||"—")+"</td><td class=\"num cell-nowrap\">"+JONE.esc(moneyCell(row.outstanding_amount != null ? row.outstanding_amount : row.amount))+"</td>"+
         "<td class=\"cell-nowrap\"><div class=\"row-actions\">"+
         (row.status==="POSTED"
           ? (CAN.approveExpense
@@ -1655,23 +1672,25 @@
     });
   }
   async function proposeSupplierPayment(expenseReference){
+    var proposalKey = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : String(Date.now());
     var result = await JONE.dashboard.formModal({
       title: "Propose supplier payment · " + expenseReference, submitText: "Propose payment", wide: true,
       fields: [
         { name: "method", label: "How will the supplier be paid?", type: "select", required: true, options: [
           { value: "BANK_TRANSFER", label: "Bank transfer" }, { value: "CARD", label: "Card / terminal" },
           { value: "CASH", label: "Cash from an open drawer" } ] },
+        { name: "amount", label: "Amount to pay now (optional)", type: "number", step: "0.01",
+          help: "Enter a partial payment, or leave blank to request the full outstanding balance." },
         { name: "payment_reference", label: "Bank/card reference", type: "text", maxLength: 160,
-          help: "Required for bank and card payments. The payable is settled in full in one payment." },
+          help: "Required for bank and card payments. Enter the actual payment reference." },
         { name: "paid_on", label: "Payment date", type: "date", dataAllowPast: true },
         { name: "notes", label: "Note for the approver (optional)", type: "text", maxLength: 2000 }
       ],
       onSubmit: async function (values){
-        var key = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : String(Date.now());
         var created = await window.API.post(window.APP_CONFIG.API_ENDPOINTS.financeSupplierPayments, {
-          expense_reference: expenseReference, method: values.method,
+          expense_reference: expenseReference, method: values.method, amount: values.amount || null,
           payment_reference: values.payment_reference || "", paid_on: values.paid_on || null,
-          notes: values.notes || "", idempotency_key: key
+          notes: values.notes || "", idempotency_key: proposalKey
         });
         var reference = created && created.data && created.data.reference;
         if (!reference) throw new Error("The payment request was not created.");
@@ -2017,7 +2036,7 @@
      expense is stamped paid, and payables visibility agrees everywhere. */
   async function settleExpense(reference) {
     var result = await JONE.dashboard.formModal({
-      title: "Record supplier payment · " + reference, submitText: "Mark as paid", wide: true, multipart: true,
+      title: "Record supplier payment · " + reference, submitText: "Pay remaining balance", wide: true, multipart: true,
       fields: [
         { name: "method", label: "How was the supplier paid?", type: "select", required: true, options: [
           { value: "BANK_TRANSFER", label: "Bank transfer" }, { value: "CARD", label: "Card / terminal" },
@@ -2044,7 +2063,7 @@
         return { message: "Supplier payment recorded." };
       }
     });
-    if (result) { JONE.ui.toast("Supplier paid. The expense, payables and cash positions now show it as paid.", "success"); load(); }
+    if (result) { JONE.ui.toast("Payment recorded. Review the payable balance and payment history.", "success"); load(); }
   }
 
   /* ---------------- Supplier transfer receipt ----------------

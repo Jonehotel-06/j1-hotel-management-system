@@ -1,10 +1,17 @@
 from django.urls import path
 
-from . import views
+from . import views, rebuild_views
 
 app_name = "finance"
 
 urlpatterns = [
+    # Additive, explicitly reconciliation-gated preview; existing APIs stay intact.
+    path("rebuild/accounts/", rebuild_views.AccountsView.as_view(), name="rebuild-accounts"),
+    path("rebuild/accounts/create/", rebuild_views.AccountCreateView.as_view(), name="rebuild-account-create"),
+    path("rebuild/accounts/<str:code>/", rebuild_views.AccountUpdateView.as_view(), name="rebuild-account-update"),
+    path("rebuild/overview/", rebuild_views.OverviewView.as_view(), name="rebuild-overview"),
+    path("rebuild/reports/<str:report>/", rebuild_views.LedgerReportView.as_view(), name="rebuild-report"),
+    path("rebuild/journals/<str:reference>/reverse/", rebuild_views.ReverseManualJournalView.as_view(), name="rebuild-journal-reverse"),
     path("folios/", views.FolioListView.as_view(), name="folios"),
     path("folios/<str:reference>/", views.FolioDetailView.as_view(), name="folio-detail"),
     path("folios/<str:reference>/postings/", views.FolioPostingListView.as_view(), name="folio-postings"),

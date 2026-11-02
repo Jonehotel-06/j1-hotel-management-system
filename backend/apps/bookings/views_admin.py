@@ -721,6 +721,8 @@ class AdminBookingSettleBalanceView(APIView):
             request=request,
             include_unbilled=data.get("include_unbilled", True),
             cash_session_reference=data.get("cash_session_reference", ""),
+            idempotency_key=data.get("idempotency_key", ""),
+            external_reference=data.get("external_reference", ""),
         )
         booking.refresh_from_db()
         payload = PaymentSerializer(payment).data

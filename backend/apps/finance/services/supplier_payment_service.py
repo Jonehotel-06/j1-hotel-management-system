@@ -76,17 +76,15 @@ TERMINAL_STATUSES = (
 
 
 def payable_balance(expense: Expense) -> Decimal:
-    """The amount still owed on one payable document.
-
-    The existing design allows exactly one settlement transaction per expense
-    (``Expense.settlement_transaction`` is a OneToOne), so a payable is either
-    unpaid in full or settled in full. Nothing here invents a part-paid state:
-    an amount that is not the full outstanding balance is refused with an
-    explanation instead of being silently rounded up to the payable.
-    """
-    if getattr(expense, "settlement_transaction_id", None) or expense.paid_at:
+    """Outstanding amount after posted instalments; legacy final payments remain paid."""
+    if expense.settlement_transaction_id or expense.paid_at:
         return ZERO
-    return Decimal(expense.amount).quantize(CENT)
+    from django.db.models import Sum
+    from ..models import SupplierSettlement
+    settled = SupplierSettlement.objects.filter(
+        expense=expense, transaction__status="POSTED"
+    ).aggregate(total=Sum("amount"))["total"] or ZERO
+    return (Decimal(expense.amount) - Decimal(settled)).quantize(CENT)
 
 
 def _dec(value, *, field="amount") -> Decimal:
@@ -129,6 +127,11 @@ def propose_supplier_payment(
         raise ValidationError({"idempotency_key": "A payment-request idempotency key is required."})
     existing = SupplierPaymentRequest.objects.select_for_update().filter(idempotency_key=key).first()
     if existing:
+        if (existing.expense_id != expense.pk or existing.method != str(method or "").upper()
+                or existing.payment_reference != str(payment_reference or "").strip()[:160]
+                or (amount is not None and existing.amount != _dec(amount))
+                or (paid_on is not None and existing.paid_on != paid_on)):
+            raise ValidationError({"idempotency_key": "This key was already used for different payment details."})
         return existing, False
 
     expense = _settleable_expense(expense)
@@ -147,14 +150,6 @@ def propose_supplier_payment(
             "amount": (
                 f"The payment cannot exceed the outstanding payable balance of {outstanding} "
                 f"{expense.currency}."
-            )
-        })
-    if amount != outstanding:
-        raise ValidationError({
-            "amount": (
-                f"This payable is settled in one payment of {outstanding} {expense.currency}. Partial "
-                "settlement of an on-account expense is not supported by the current ledger design "
-                "(one settlement posting per payable), so pass the full balance."
             )
         })
     paid_on = paid_on or hotel_today()
@@ -319,7 +314,8 @@ def execute_supplier_payment(
     request.status = SupplierPaymentRequest.Status.EXECUTED
     request.executed_by = actor
     request.executed_at = timezone.now()
-    request.settlement_transaction = settled.settlement_transaction
+    from ..models import SupplierSettlement
+    request.settlement_transaction = SupplierSettlement.objects.select_related("transaction").get(payment_request=request).transaction
     request.save(update_fields=[
         "status", "executed_by", "executed_at", "settlement_transaction", "updated_at",
     ])

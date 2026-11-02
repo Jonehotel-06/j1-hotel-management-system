@@ -11,7 +11,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Iterable, Mapping
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.core.utils import hotel_today
@@ -32,8 +32,8 @@ def _money(value, *, label="amount") -> Decimal:
         amount = Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP)
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise LedgerIntegrityError({label: "A valid two-decimal money value is required."}) from exc
-    if amount <= Decimal("0.00"):
-        raise LedgerIntegrityError({label: "Amount must be greater than zero."})
+    if not amount.is_finite() or amount <= Decimal("0.00"):
+        raise LedgerIntegrityError({label: "Amount must be finite and greater than zero."})
     return amount
 
 
@@ -91,6 +91,25 @@ def _existing_idempotent_transaction(*, source_key=None, idempotency_key=None):
     return None
 
 
+def _validate_idempotent_replay(existing, *, transaction_type, currency, source_key, idempotency_key, lines):
+    """A reused key must identify the same money, not silently hide a conflict."""
+    if (existing.status != FinancialTransaction.Status.POSTED or existing.type != transaction_type
+            or existing.currency != (currency or "NGN").upper()
+            or (source_key and existing.source_key != source_key)
+            or (idempotency_key and existing.idempotency_key != idempotency_key)):
+        raise LedgerIntegrityError("This source or idempotency key is already used for a different transaction.")
+    requested = []
+    for line in lines:
+        if not isinstance(line, Mapping):
+            raise LedgerIntegrityError("Each line must be an object.")
+        folio = line.get("folio")
+        requested.append((str(line.get("account_code") or "").strip(), line.get("direction"),
+                          _money(line.get("amount")), getattr(folio, "pk", None)))
+    actual = list(existing.lines.order_by("pk").values_list("account_code", "direction", "amount", "folio_id"))
+    if requested != actual:
+        raise LedgerIntegrityError("This source or idempotency key is already used for different journal lines.")
+
+
 @transaction.atomic
 def post_existing_transaction(*, financial_transaction, actor=None) -> FinancialTransaction:
     """Validate and make a draft transaction immutable exactly once."""
@@ -110,6 +129,9 @@ def post_existing_transaction(*, financial_transaction, actor=None) -> Financial
     now = timezone.now()
     financial_transaction.status = FinancialTransaction.Status.POSTED
     financial_transaction.posted_at = now
+    # The model refuses direct status promotion; this marker is set only after
+    # the locked entry and its folio lines have been balanced and validated.
+    financial_transaction._validated_posting = True
     if actor and not financial_transaction.initiated_by_id:
         financial_transaction.initiated_by = actor
         financial_transaction.save(update_fields=["status", "posted_at", "initiated_by", "updated_at"])
@@ -156,34 +178,47 @@ def create_posted_transaction(
     """
     source_key = (source_key or "").strip() or None
     idempotency_key = (idempotency_key or "").strip() or None
+    normalized_lines = list(lines)
     existing = _existing_idempotent_transaction(
         source_key=source_key, idempotency_key=idempotency_key
     )
     if existing:
+        _validate_idempotent_replay(existing, transaction_type=transaction_type, currency=currency,
+                                    source_key=source_key, idempotency_key=idempotency_key, lines=normalized_lines)
         return existing, False
 
-    normalized_lines = list(lines)
     if not normalized_lines:
         raise LedgerIntegrityError("At least one debit and one credit line are required.")
 
-    financial_transaction = FinancialTransaction.objects.create(
-        reference=generate_finance_reference("FIN"),
-        type=transaction_type,
-        status=FinancialTransaction.Status.DRAFT,
-        business_date=business_date or hotel_today(),
-        occurred_at=occurred_at or timezone.now(),
-        currency=(currency or "NGN").upper(),
-        source_key=source_key,
-        idempotency_key=idempotency_key,
-        source_reference=(source_reference or "")[:120],
-        external_reference=(external_reference or "")[:160],
-        narrative=(narrative or "")[:500],
-        metadata=dict(metadata or {}),
-        initiated_by=actor,
-        approved_by=getattr(approval, "reviewer", None) if approval else None,
-        approved_at=getattr(approval, "reviewed_at", None) if approval else None,
-        reversal_of=reversal_of,
-    )
+    try:
+        # A savepoint lets a concurrent winner's unique key be read safely
+        # after the loser receives an IntegrityError.
+        with transaction.atomic():
+            financial_transaction = FinancialTransaction.objects.create(
+                reference=generate_finance_reference("FIN"),
+                type=transaction_type,
+                status=FinancialTransaction.Status.DRAFT,
+                business_date=business_date or hotel_today(),
+                occurred_at=occurred_at or timezone.now(),
+                currency=(currency or "NGN").upper(),
+                source_key=source_key,
+                idempotency_key=idempotency_key,
+                source_reference=(source_reference or "")[:120],
+                external_reference=(external_reference or "")[:160],
+                narrative=(narrative or "")[:500],
+                metadata=dict(metadata or {}),
+                initiated_by=actor,
+                approved_by=getattr(approval, "reviewer", None) if approval else None,
+                approved_at=getattr(approval, "reviewed_at", None) if approval else None,
+                reversal_of=reversal_of,
+            )
+    except IntegrityError:
+        existing = _existing_idempotent_transaction(source_key=source_key, idempotency_key=idempotency_key)
+        if existing is None:
+            raise
+        _validate_idempotent_replay(existing, transaction_type=transaction_type, currency=currency,
+                                    source_key=source_key, idempotency_key=idempotency_key, lines=normalized_lines)
+        return existing, False
     FinancialEvent.objects.create(
         transaction=financial_transaction,
         type=FinancialEvent.Type.CREATED,

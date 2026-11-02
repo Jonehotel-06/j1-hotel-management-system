@@ -98,7 +98,9 @@ test("the desk records the money received and the folio reflects it at once", ()
 });
 
 test("the settlement control is capability-gated and only offered when payable", () => {
-  assert.match(CHECKOUT, /if \(d\.can_settle\) \{/);
+  // A pending retry remains available even if the first request cleared the
+  // balance before its response was lost. Backend capability checks still apply.
+  assert.match(CHECKOUT, /if \(d\.can_settle \|\| pending\) \{/);
   assert.match(CHECKOUT, /data-settle-balance=/);
   assert.match(CHECKOUT, /d\.settle_blocked_reason/);
   assert.match(API, /settleBookingBalance/);

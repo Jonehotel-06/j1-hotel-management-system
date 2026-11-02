@@ -576,3 +576,5 @@ class SettleGuestBalanceSerializer(serializers.Serializer):
     include_unbilled = serializers.BooleanField(required=False, default=True)
     cash_session_reference = serializers.CharField(required=False, allow_blank=True, default="",
                                                    max_length=64)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, default="", max_length=128)
+    external_reference = serializers.CharField(required=False, allow_blank=True, default="", max_length=160)

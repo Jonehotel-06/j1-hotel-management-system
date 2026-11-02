@@ -174,6 +174,9 @@ class ExpenseListSerializer(serializers.ModelSerializer):
     #: distinguishable, which is why this is not folded into supplier_reference.
     purchase_order = serializers.CharField(source="purchase_order.reference", read_only=True, allow_null=True)
     payment_requests = serializers.SerializerMethodField()
+    paid_amount = serializers.SerializerMethodField()
+    outstanding_amount = serializers.SerializerMethodField()
+    payment_records = serializers.SerializerMethodField()
 
     class Meta:
         model = Expense
@@ -182,9 +185,34 @@ class ExpenseListSerializer(serializers.ModelSerializer):
             "payee", "department", "supplier_reference", "description", "receipt_url", "receipt_file_url", "requested_by_email", "approved_by_email", "approved_at",
             "approval_reference", "cash_session_reference", "financial_reference", "posted_by_email", "posted_at", "created_at",
             "paid_at", "paid_by_email", "payment_reference", "payment_receipt_url", "payment_receipt_file_url", "settlement_reference",
-            "purchase_order", "payment_requests", "workflow_origin", "prepared_by_email", "prepared_at",
+            "purchase_order", "payment_requests", "paid_amount", "outstanding_amount", "payment_records",
+            "workflow_origin", "prepared_by_email", "prepared_at",
         ]
         read_only_fields = fields
+
+    def _settled(self, obj):
+        if obj.status != Expense.Status.POSTED:
+            return Decimal("0.00")
+        if obj.paid_at or obj.settlement_transaction_id or obj.payment_method != Expense.PaymentMethod.PAYABLE:
+            return Decimal(obj.amount)
+        return sum((row.amount for row in obj.supplier_settlements.all()
+                    if row.transaction.status == FinancialTransaction.Status.POSTED), Decimal("0.00"))
+
+    def get_paid_amount(self, obj):
+        return str(self._settled(obj).quantize(Decimal("0.01")))
+
+    def get_outstanding_amount(self, obj):
+        if obj.status != Expense.Status.POSTED or obj.payment_method != Expense.PaymentMethod.PAYABLE:
+            return "0.00"
+        return str((Decimal(obj.amount) - self._settled(obj)).quantize(Decimal("0.01")))
+
+    def get_payment_records(self, obj):
+        return [{"transaction_reference": row.transaction.reference, "amount": str(row.amount),
+                 "payment_reference": row.payment_reference, "method": row.method,
+                 "paid_on": row.paid_on.isoformat(), "receipt_url": row.receipt_url,
+                 "receipt_file_url": row.receipt_file.url if row.receipt_file else None}
+                for row in obj.supplier_settlements.all()
+                if row.transaction.status == FinancialTransaction.Status.POSTED]
 
     def get_payment_requests(self, obj):
         """Open/closed supplier payment requests on this payable (ids only).
@@ -227,6 +255,8 @@ class JournalCreateSerializer(serializers.Serializer):
 
 class ExpenseSettlementSerializer(serializers.Serializer):
     method = serializers.ChoiceField(choices=[("BANK_TRANSFER", "Bank transfer"), ("CARD", "Card / terminal"), ("CASH", "Cash paid out")])
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"), required=False)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=120)
     payment_reference = serializers.CharField(required=False, allow_blank=True, max_length=160)
     cash_session_reference = serializers.CharField(required=False, allow_blank=True, max_length=64)
     receipt_url = serializers.URLField(required=False, allow_blank=True, max_length=200)

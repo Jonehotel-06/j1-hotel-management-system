@@ -149,19 +149,20 @@ class SupplierPaymentWorkflowTests(BaseAPITestCase):
         self.assertEqual(request.status, SupplierPaymentRequest.Status.SUBMITTED)
 
     # ---------------------------------------------------------- amount controls
-    def test_over_payment_and_partial_amounts_are_refused(self):
+    def test_over_payment_is_refused_and_partial_request_is_allowed(self):
         expense = self._posted_payable(amount="50000.00")
         self.auth(self.accountant)
         over = self._propose(expense, amount="50000.01", key="over")
         self.assertEqual(over.status_code, 400, over.content)
         self.assertIn("cannot exceed", str(over.content))
-        partial = self._propose(expense, amount="20000.00", key="partial")
-        self.assertEqual(partial.status_code, 400, partial.content)
-        self.assertIn("one payment", str(partial.content))
-        # A card/bank payment needs its reference.
-        missing_reference = self._propose(expense, key="no-ref", reference="")
+        # A card/bank payment needs its reference, even for a partial amount.
+        missing_reference = self._propose(expense, amount="20000.00", key="no-ref", reference="")
         self.assertEqual(missing_reference.status_code, 400, missing_reference.content)
         self.assertEqual(SupplierPaymentRequest.objects.count(), 0)
+        partial = self._propose(expense, amount="20000.00", key="partial")
+        self.assertEqual(partial.status_code, 201, partial.content)
+        self.assertEqual(Decimal(partial.json()["data"]["amount"]), Decimal("20000.00"))
+        self.assertEqual(SupplierPaymentRequest.objects.count(), 1)
 
     def test_a_second_request_for_the_same_payable_is_a_duplicate(self):
         expense = self._posted_payable()

@@ -88,6 +88,7 @@ def _live_payables(purchase_order):
     return list(
         Expense.objects.filter(purchase_order=purchase_order)
         .exclude(status__in=DEAD_PAYABLE_STATUSES)
+        .prefetch_related("supplier_settlements__transaction")
         .order_by("created_at", "pk")
     )
 
@@ -97,10 +98,13 @@ def purchase_order_payable_summary(purchase_order) -> dict:
     received = _received_value(purchase_order)
     payables = _live_payables(purchase_order)
     billed = sum((Decimal(expense.amount) for expense in payables), ZERO).quantize(CENT)
-    paid = sum(
-        (Decimal(expense.amount) for expense in payables if expense.settlement_transaction_id or expense.paid_at),
-        ZERO,
-    ).quantize(CENT)
+    def paid_amount(expense):
+        if expense.settlement_transaction_id or expense.paid_at:
+            return Decimal(expense.amount)
+        return sum((Decimal(row.amount) for row in expense.supplier_settlements.all()
+                    if row.transaction.status == "POSTED"), ZERO)
+
+    paid = sum((paid_amount(expense) for expense in payables), ZERO).quantize(CENT)
     return {
         "purchase_order": purchase_order.reference,
         "status": purchase_order.status,
@@ -115,6 +119,8 @@ def purchase_order_payable_summary(purchase_order) -> dict:
                 "reference": expense.reference,
                 "status": expense.status,
                 "amount": str(Decimal(expense.amount).quantize(CENT)),
+                "paid_amount": str(paid_amount(expense).quantize(CENT)),
+                "outstanding_amount": str((Decimal(expense.amount) - paid_amount(expense)).quantize(CENT)),
                 "payment_method": expense.payment_method,
                 "paid_at": expense.paid_at.isoformat() if expense.paid_at else None,
                 "payment_reference": expense.payment_reference,

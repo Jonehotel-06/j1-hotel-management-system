@@ -26,7 +26,7 @@ from apps.core.utils import hotel_today
 from apps.stays.models import Stay
 
 from ..models import FinancialTransaction
-from .accommodation_service import night_components, post_due_accommodation_charges_for_stay
+from .accommodation_service import occupied_night_components, post_due_accommodation_charges_for_stay
 
 ZERO = Decimal("0.00")
 DEFAULT_LIMIT = 200
@@ -126,7 +126,9 @@ def accommodation_night_gaps(*, through_date: date | None = None, stay_reference
         for night in nights:
             if f"accommodation:{stay.reference}:{night.isoformat()}" in posted_keys:
                 continue
-            night_net, night_tax, night_fee = night_components(booking, night)
+            (night_net, night_tax, night_fee), _rooms = occupied_night_components(stay, night)
+            if night_net + night_tax + night_fee <= ZERO:
+                continue
             net += night_net
             tax += night_tax
             fee += night_fee

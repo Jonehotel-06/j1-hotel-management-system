@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_DOWN
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 
 from apps.core.utils import hotel_today
 from apps.stays.models import Stay
@@ -58,6 +59,42 @@ def _night_components(booking, service_date: date) -> tuple[Decimal, Decimal, De
     )
 
 
+def occupied_night_components(stay, service_date: date):
+    """Return booking-night amounts for rooms actually checked in that night.
+
+    A booking's one price/discount/fee is allocated pro rata, with cent
+    residual assigned deterministically to the last booked room. Multi-room
+    recognition never assumes a room arrived. Existing single-room legacy
+    stays lacking per-room timestamps retain the prior compatibility path and
+    must be reconciled before cutover.
+    """
+    booking = stay.booking
+    components = _night_components(booking, service_date)
+    room_count = int(booking.number_of_rooms or 1)
+    assignments = list(booking.room_assignments.select_related("room").order_by("pk"))
+    if room_count <= 1 and not any(a.checked_in_at for a in assignments):
+        return components, []
+    if len(assignments) > room_count:
+        raise ValidationError("Room assignment count exceeds the booking quantity; review before recognition.")
+    occupancy = {row.booking_room_id: row for row in stay.stay_rooms.filter(booking_room__isnull=False)}
+    room_details = []
+    totals = [Decimal("0.00"), Decimal("0.00"), Decimal("0.00")]
+    for index, assignment in enumerate(assignments):
+        if assignment.checked_in_at is None:
+            continue
+        arrival = timezone.localtime(assignment.checked_in_at).date()
+        if arrival > service_date or not assignment.check_in <= service_date < assignment.check_out:
+            continue
+        stay_room = occupancy.get(assignment.pk)
+        if stay_room and stay_room.released_at and timezone.localtime(stay_room.released_at).date() <= service_date:
+            continue
+        shares = [_component_for_night(value, nights=room_count, night_index=index) for value in components]
+        totals = [left + right for left, right in zip(totals, shares)]
+        room_details.append({"booking_room_id": assignment.pk, "room_number": assignment.room.room_number,
+                             "net": str(shares[0]), "tax": str(shares[1]), "service_fee": str(shares[2])})
+    return tuple(totals), room_details
+
+
 @transaction.atomic
 def post_accommodation_charge_for_night(*, stay, service_date: date, actor=None):
     """Post one booked night exactly once after it has elapsed.
@@ -82,10 +119,11 @@ def post_accommodation_charge_for_night(*, stay, service_date: date, actor=None)
         raise ValidationError("Accommodation revenue can only be posted after the service night has elapsed.")
 
     folio, _ = get_or_create_main_folio_for_stay(stay=stay, actor=actor)
-    net_accommodation, tax, service_fee = _night_components(booking, service_date)
+    (net_accommodation, tax, service_fee), room_details = occupied_night_components(stay, service_date)
     total = (net_accommodation + tax + service_fee).quantize(CENT)
     if total <= Decimal("0.00"):
-        raise ValidationError("A nightly accommodation charge must be positive.")
+        # No occupied room on that night means no revenue and no receivable.
+        return None, False
 
     lines = [
         {
@@ -138,6 +176,7 @@ def post_accommodation_charge_for_night(*, stay, service_date: date, actor=None)
             "booking_reference": booking.booking_reference,
             "service_date": service_date.isoformat(),
             "night_index": (service_date - booking.check_in).days + 1,
+            "occupied_rooms": room_details,
         },
         currency=booking.currency,
         business_date=service_date,

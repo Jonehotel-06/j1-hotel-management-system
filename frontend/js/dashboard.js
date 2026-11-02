@@ -145,6 +145,7 @@
     "receipts.html": { roles: FINANCE },
     "receipt-details.html": { roles: FINANCE },
     "accounting.html": { roles: ["admin", "general_manager", "accountant"] },
+    "accounting-ledger.html": { roles: ["admin", "general_manager", "accountant"] },
     "payroll.html": { roles: ["admin", "general_manager", "accountant"] },
     "reports.html": { roles: MANAGEMENT },
     "approvals.html": { roles: ["admin", "general_manager", "accountant",

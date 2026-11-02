@@ -323,8 +323,12 @@ def _expense_queryset(*, detail=False):
         "posted_by",
         "approval_request",
         "financial_transaction",
+        "settlement_transaction",
+        "paid_by",
+        "prepared_by",
+        "purchase_order",
         "cash_session",
-    )
+    ).prefetch_related("supplier_payment_requests", "supplier_settlements__transaction")
     if detail:
         queryset = queryset.prefetch_related(
             Prefetch(
@@ -629,6 +633,8 @@ class ExpenseSettlePaymentView(APIView):
             receipt_url=data.get("receipt_url", ""),
             receipt_file=request.FILES.get("receipt"),
             paid_on=data.get("paid_on"),
+            amount=data.get("amount"),
+            idempotency_key=data.get("idempotency_key", ""),
         )
         if created:
             log_action(
@@ -641,9 +647,10 @@ class ExpenseSettlePaymentView(APIView):
             )
         return success_response(
             ExpenseDetailSerializer(_expense_or_404(request, expense.reference, detail=True)).data,
-            message="Supplier payment recorded; the expense is now marked paid."
+            message=("Supplier payment recorded; the payable is fully settled." if expense.paid_at
+                     else "Supplier instalment recorded; a balance remains.")
             if created
-            else "This expense was already marked paid.",
+            else "The existing payment was returned; no money was posted again.",
         )
 
 

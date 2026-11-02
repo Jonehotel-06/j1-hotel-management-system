@@ -49,7 +49,8 @@ ACCOUNT_CODES = {code for code, _label in CHART_OF_ACCOUNTS}
 
 
 def chart_of_accounts() -> list[dict]:
-    return [{"code": code, "label": label} for code, label in CHART_OF_ACCOUNTS]
+    from ..models import ChartAccount
+    return list(ChartAccount.objects.filter(is_active=True).order_by("code").values("code", "label"))
 
 
 def post_manual_journal(*, actor, lines, narrative, business_date=None, idempotency_key, source_reference=""):
@@ -63,12 +64,14 @@ def post_manual_journal(*, actor, lines, narrative, business_date=None, idempote
     business_date = business_date or hotel_today()
     if business_date > hotel_today():
         raise ValidationError({"business_date": "A journal cannot be dated in the future."})
+    from ..models import ChartAccount
+    active_codes = set(ChartAccount.objects.filter(is_active=True).values_list("code", flat=True))
     normalised = []
     total_debits = Decimal("0.00")
     total_credits = Decimal("0.00")
     for index, line in enumerate(lines or []):
         code = str(line.get("account_code") or "").strip()
-        if code not in ACCOUNT_CODES:
+        if code not in active_codes:
             raise ValidationError({"lines": f"Line {index + 1}: unknown account code."})
         direction = str(line.get("direction") or "").strip().upper()
         if direction not in {FinancialLine.Direction.DEBIT, FinancialLine.Direction.CREDIT}:

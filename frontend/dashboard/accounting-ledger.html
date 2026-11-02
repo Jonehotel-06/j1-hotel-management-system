@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <script>
+  /* Pre-paint theme (anti-flash): same stored/system theme as other staff pages. */
+  (function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Ledger preview | J-ONE Staff</title>
+  <meta name="theme-color" content="#373435">
+  <link rel="icon" href="../favicon/favicon-32.png">
+  <link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+  <link rel="manifest" href="/dashboard/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
+  <link rel="stylesheet" href="../css/main.css?v=1.1.24">
+  <link rel="stylesheet" href="../css/accounting-rebuild.css">
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" type="button" data-logout>Sign out</button></div>
+  </aside>
+  <div class="dash-main">
+    <header class="dash-topbar">
+      <div class="dash-topbar-left"><button class="btn-icon btn-outline dash-menu-toggle" aria-label="Open menu" data-icon="menu" data-size="22"></button><div class="dash-title" data-dash-title><h1>Accounting</h1></div></div>
+      <div class="dash-topbar-right"><div class="dash-topbar-actions" data-topbar-actions></div><button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false"><span class="icon-moon" data-icon="moon" data-size="18"></span><span class="icon-sun" data-icon="sun" data-size="18"></span></button></div>
+    </header>
+    <main class="dash-content ledger-app">
+      <div class="ledger-breadcrumb"><a href="accounting.html">Accounting workspace</a><span aria-hidden="true">/</span><span>Ledger preview</span></div>
+      <section class="ledger-hero">
+        <div><div class="ledger-eyebrow"><span class="ledger-dot"></span> FINANCE WORKSPACE</div><h2>A clearer view of your ledger.</h2><p>Earned revenue, obligations and cash — kept distinct, with every figure sourced from posted journal lines.</p></div>
+        <a class="ledger-return" href="accounting.html">Open existing workflows <span aria-hidden="true">↗</span></a>
+      </section>
+      <div class="ledger-alert" role="status"><strong>Reconciliation required.</strong> This is a preview, not an approved source of truth. Historical records, bank balances and provider settlements must be reconciled before cutover.</div>
+      <section class="ledger-filter" aria-label="Reporting period">
+        <div class="ledger-filter-heading"><span class="ledger-kicker">REPORTING PERIOD</span><strong>Choose your dates</strong><small>Amounts shown in NGN</small></div>
+        <div class="ledger-fields"><label>From<input id="ledger-start" type="date"></label><label>To<input id="ledger-end" type="date"></label><button type="button" id="ledger-apply">Apply period</button></div>
+        <div class="ledger-shortcuts" aria-label="Quick periods"><button type="button" data-period="today">Today</button><button type="button" data-period="week">Last 7 days</button><button type="button" data-period="month" aria-pressed="true">This month</button></div>
+      </section>
+      <div class="ledger-section-title"><div><span class="ledger-kicker">AT A GLANCE</span><h2>Financial overview</h2></div><span class="ledger-caption">Period flows · closing balances</span></div>
+      <section class="ledger-cards" id="ledger-cards" aria-busy="true" aria-label="Financial overview">
+        <a class="ledger-card" href="#ledger-report" data-open-report="profit-loss"><span>Earned revenue</span><strong data-metric="earned_revenue" class="ledger-skeleton">—</strong><small>Net of contra revenue ↗</small></a>
+        <a class="ledger-card" href="#ledger-report" data-open-report="profit-loss"><span>Total expenses</span><strong data-metric="expenses" class="ledger-skeleton">—</strong><small>Accrued expense ↗</small></a>
+        <a class="ledger-card ledger-card-accent" href="#ledger-report" data-open-report="profit-loss"><span>Net profit / loss</span><strong data-metric="net_profit" class="ledger-skeleton">—</strong><small>For the selected period ↗</small></a>
+        <a class="ledger-card" href="#ledger-report" data-open-report="cash-bank"><span>Cash at hand</span><strong data-metric="cash_balance" class="ledger-skeleton">—</strong><small>Ledger balance ↗</small></a>
+        <a class="ledger-card" href="#ledger-report" data-open-report="cash-bank"><span>Bank clearing</span><strong data-metric="bank_total" class="ledger-skeleton">—</strong><small>Not bank-statement verified ↗</small></a>
+        <a class="ledger-card" href="accounting.html#ar-aging"><span>Guest receivables</span><strong data-metric="guest_receivables_control" class="ledger-skeleton">—</strong><small>Control account ↗</small></a>
+        <a class="ledger-card" href="#ledger-report" data-open-report="balance-sheet"><span>Guest advances</span><strong data-metric="guest_advances_control" class="ledger-skeleton">—</strong><small>Liability, not revenue ↗</small></a>
+        <a class="ledger-card" href="accounting.html#purchase-orders"><span>Supplier payables</span><strong data-metric="supplier_payables_control" class="ledger-skeleton">—</strong><small>Control account ↗</small></a>
+        <a class="ledger-card" href="#ledger-report" data-open-report="balance-sheet"><span>Other obligations</span><strong data-metric="other_obligations" class="ledger-skeleton">—</strong><small>Other posted liabilities ↗</small></a>
+        <a class="ledger-card" href="#ledger-report" data-open-report="cash-bank"><span>POS clearing</span><strong data-metric="pos_clearing" class="ledger-skeleton">—</strong><small>Settlement receivable ↗</small></a>
+        <a class="ledger-card" href="#ledger-report" data-open-report="cash-bank"><span>Paystack clearing</span><strong data-metric="paystack_clearing" class="ledger-skeleton">—</strong><small>Historic mapping may differ ↗</small></a>
+      </section>
+      <div id="ledger-warning" class="ledger-warning" aria-live="polite"></div>
+      <section class="ledger-report" id="ledger-report" aria-label="Detailed financial report">
+        <div class="ledger-report-head"><div><span class="ledger-kicker">FOLLOW THE NUMBERS</span><h2>Detailed reports</h2><p>Review the underlying account movements and export the same server-generated figures.</p></div><div class="ledger-exports"><button type="button" data-export="csv">CSV</button><button type="button" data-export="xlsx">Excel</button><button type="button" data-export="pdf">PDF</button></div></div>
+        <div class="ledger-report-controls"><label>Report<select id="ledger-report-type" aria-label="Select financial report"><option value="profit-loss">Profit and loss</option><option value="balance-sheet">Balance sheet</option><option value="trial-balance">Trial balance</option><option value="cash-bank">Cash and clearing</option><option value="general-ledger">General ledger</option></select></label><label id="ledger-account-wrap" hidden>Account<select id="ledger-account" aria-label="Select ledger account"></select></label><button type="button" id="ledger-load-report">View report</button></div>
+        <div id="ledger-report-totals" class="ledger-totals"></div>
+        <p id="ledger-report-status" class="ledger-report-status" role="status">Loading report…</p>
+        <div class="table-wrap ledger-table-wrap"><table class="ledger-table"><thead id="ledger-table-head"></thead><tbody id="ledger-table-body"></tbody></table></div>
+        <div class="ledger-pages"><button type="button" id="ledger-prev" disabled>Previous</button><span id="ledger-page-label"></span><button type="button" id="ledger-next" disabled>Next</button></div>
+      </section>
+      <section class="ledger-workflows"><div><span class="ledger-kicker">OPERATIONS</span><h2>Keep working in the existing workspace</h2><p>Supplier approvals, expenses, guest folios and reconciliation remain available in the current interface.</p></div><a href="accounting.html">Open accounting workspace →</a></section>
+      <p class="ledger-footnote">Preview uses posted ledger lines only. Unmapped accounts, incomplete migration and operational-source differences require review.</p>
+    </main>
+  </div>
+</div>
+<script src="../js/runtime-config.js?v=1.1.24"></script><script src="../js/config.js?v=1.1.24"></script><script src="../js/utils.js?v=1.1.24"></script><script src="../js/icons.js?v=1.1.24"></script><script src="../js/api.js?v=1.1.24"></script><script src="../js/theme.js?v=1.1.24"></script><script src="../js/ui.js?v=1.1.24"></script><script src="../js/auth.js?v=1.1.24"></script><script src="../js/hotel-data.js?v=1.1.24"></script><script src="../js/navigation.js?v=1.1.24"></script><script src="../js/dashboard.js?v=1.1.24"></script><script src="../js/table-fit.js?v=1.1.24"></script>
+<script>JONE.ui.initChrome(); window.__ledgerAllowed = JONE.dashboard.boot(["admin", "general_manager", "accountant"]);</script>
+<script src="../js/accounting-rebuild.js"></script><script src="../js/pwa.js?v=1.1.24"></script>
+</body>
+</html>

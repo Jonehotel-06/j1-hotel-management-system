@@ -117,8 +117,45 @@ class Folio(TimeStampedModel):
         return f"{self.reference} · {self.get_status_display()}"
 
 
+class LedgerTransactionQuerySet(models.QuerySet):
+    """Guard common ORM shortcuts which bypass model save/delete hooks."""
+    def update(self, **kwargs):
+        if self.filter(status__in=["POSTED", "VOIDED"]).exists():
+            raise ValidationError("Posted financial transactions are immutable; post a reversal instead.")
+        if "status" in kwargs and kwargs["status"] != "DRAFT":
+            raise ValidationError("Posting status may only be changed by the validated ledger service.")
+        return super().update(**kwargs)
+
+    def delete(self):
+        raise ValidationError("Financial evidence is append-only and cannot be deleted.")
+
+    def bulk_create(self, objs, *args, **kwargs):
+        objs = list(objs)
+        if any(obj.status != "DRAFT" for obj in objs):
+            raise ValidationError("Posted transactions must be created by the validated ledger service.")
+        return super().bulk_create(objs, *args, **kwargs)
+
+    def bulk_update(self, objs, fields, *args, **kwargs):
+        raise ValidationError("Bulk updates of financial transactions are not allowed.")
+
+
+class LedgerLineQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        raise ValidationError("Financial lines are append-only; create a reversal instead.")
+
+    def delete(self):
+        raise ValidationError("Financial evidence is append-only and cannot be deleted.")
+
+    def bulk_create(self, objs, *args, **kwargs):
+        raise ValidationError("Financial lines must be created by the validated posting service.")
+
+    def bulk_update(self, objs, fields, *args, **kwargs):
+        raise ValidationError("Financial lines are append-only; create a reversal instead.")
+
+
 class FinancialTransaction(TimeStampedModel, ImmutableFinancialModel):
     """Balanced journal header. Posted transactions must never be edited."""
+    objects = LedgerTransactionQuerySet.as_manager()
 
     class Type(models.TextChoices):
         ACCOMMODATION_CHARGE = "ACCOMMODATION_CHARGE", "Accommodation charge"
@@ -189,6 +226,10 @@ class FinancialTransaction(TimeStampedModel, ImmutableFinancialModel):
             prior = type(self).objects.filter(pk=self.pk).values("status").first()
             if prior and prior["status"] in {self.Status.POSTED, self.Status.VOIDED}:
                 raise ValidationError("Posted financial transactions are immutable; post a reversal instead.")
+            if prior and self.status != prior["status"] and not getattr(self, "_validated_posting", False):
+                raise ValidationError("Posting status may only be changed by the validated ledger service.")
+        elif self.status != self.Status.DRAFT:
+            raise ValidationError("New financial transactions must begin as drafts.")
         return super().save(*args, **kwargs)
 
     def __str__(self):
@@ -197,6 +238,7 @@ class FinancialTransaction(TimeStampedModel, ImmutableFinancialModel):
 
 class FinancialLine(ImmutableFinancialModel):
     """A debit or credit within one balanced financial transaction."""
+    objects = LedgerLineQuerySet.as_manager()
 
     class Direction(models.TextChoices):
         DEBIT = "DEBIT", "Debit"
@@ -888,3 +930,137 @@ class ReconciliationCheckReview(ImmutableFinancialModel):
 
     def __str__(self):
         return f"{self.check_type} · {self.object_reference} · {self.decision}"
+
+
+class ChartAccount(TimeStampedModel):
+    """Registry for stable ledger codes; adding an account never creates money.
+
+    FinancialLine keeps its historic string code for compatibility. A code's
+    identity and classification cannot be changed after creation: that would
+    silently reinterpret posted evidence. Unknown historic codes remain in the
+    ledger and are surfaced by the rebuild reconciliation command.
+    """
+
+    class Kind(models.TextChoices):
+        ASSET = "ASSET", "Asset"
+        LIABILITY = "LIABILITY", "Liability"
+        EQUITY = "EQUITY", "Equity"
+        REVENUE = "REVENUE", "Revenue"
+        CONTRA_REVENUE = "CONTRA_REVENUE", "Contra revenue"
+        EXPENSE = "EXPENSE", "Expense"
+
+    code = models.CharField(max_length=64, unique=True)
+    label = models.CharField(max_length=160)
+    kind = models.CharField(max_length=16, choices=Kind.choices, db_index=True)
+    # Nullable unique purpose prevents two control accounts for the same job.
+    purpose = models.CharField(max_length=80, null=True, blank=True, unique=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    is_system = models.BooleanField(default=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="chart_accounts_created",
+    )
+
+    class Meta:
+        ordering = ["code"]
+        indexes = [models.Index(fields=["kind", "is_active"])]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            prior = type(self).objects.filter(pk=self.pk).values("code", "kind", "purpose", "is_system", "is_active").first()
+            if prior and any(prior[name] != getattr(self, name) for name in ("code", "kind", "purpose", "is_system")):
+                raise ValidationError("Account identity and classification cannot be changed; create a new account.")
+            if prior and prior["is_system"] and not self.is_active:
+                raise ValidationError("A system control account cannot be disabled.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Accounts cannot be deleted; deactivate a non-system account instead.")
+
+    def __str__(self):
+        return f"{self.code} · {self.label}"
+
+
+class SupplierSettlement(ImmutableFinancialModel):
+    """One actual supplier disbursement against a posted payable.
+
+    The legacy Expense.settlement_transaction remains the final-payment marker;
+    instalments and their exact posted journals are stored here. Legacy rows
+    are not copied or altered merely to populate this table.
+    """
+    expense = models.ForeignKey(Expense, on_delete=models.PROTECT, related_name="supplier_settlements")
+    transaction = models.OneToOneField(FinancialTransaction, on_delete=models.PROTECT, related_name="supplier_settlement")
+    payment_request = models.OneToOneField(
+        SupplierPaymentRequest, null=True, blank=True, on_delete=models.PROTECT, related_name="settlement"
+    )
+    idempotency_key = models.CharField(max_length=180, unique=True)
+    # Hash of a normalized non-cash external reference; NULL permits multiple
+    # cash receipts while enforcing uniqueness on MySQL and SQLite alike.
+    external_reference_key = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    payment_reference = models.CharField(max_length=160, blank=True, default="")
+    method = models.CharField(max_length=20, choices=Expense.PaymentMethod.choices)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, validators=[POSITIVE_MONEY])
+    currency = models.CharField(max_length=3, default="NGN")
+    paid_on = models.DateField(db_index=True)
+    paid_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="supplier_settlements_paid")
+    receipt_url = models.URLField(blank=True, default="")
+    receipt_file = models.FileField(upload_to="finance_receipts/%Y/%m/", null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["paid_on", "pk"]
+        indexes = [models.Index(fields=["expense", "paid_on"])]
+        constraints = [models.CheckConstraint(condition=Q(amount__gt=0), name="supplier_settlement_positive")]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Supplier settlements are immutable; use a controlled reversal.")
+        return super().save(*args, **kwargs)
+
+
+class AccountingMigrationRun(TimeStampedModel):
+    """Traceable staging reconciliation run; it never marks production ready."""
+    reference = models.CharField(max_length=64, unique=True)
+    source_revision = models.CharField(max_length=64, blank=True, default="")
+    database_vendor = models.CharField(max_length=32)
+    started_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT)
+    summary = models.JSONField(default=dict)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+
+class AccountingMigrationException(ImmutableFinancialModel):
+    """Preserve a source reference and explanation where classification is unsafe."""
+    run = models.ForeignKey(AccountingMigrationRun, on_delete=models.PROTECT, related_name="exceptions")
+    source_model = models.CharField(max_length=100)
+    source_id = models.CharField(max_length=100)
+    source_reference = models.CharField(max_length=160, blank=True, default="")
+    reason = models.CharField(max_length=120)
+    snapshot = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["run", "source_model", "source_id", "reason"], name="acct_migration_exception_unique")]
+        indexes = [models.Index(fields=["source_model", "source_id"])]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Migration exceptions are immutable; record a new reconciliation run.")
+        return super().save(*args, **kwargs)
+
+
+class GuestCollectionKey(ImmutableFinancialModel):
+    """Idempotency evidence for a desk collection; never an extra ledger entry."""
+    key = models.CharField(max_length=180, unique=True)
+    external_reference = models.CharField(max_length=160, blank=True, default="")
+    external_reference_key = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    booking = models.ForeignKey("bookings.Booking", on_delete=models.PROTECT, related_name="finance_collection_keys")
+    payment = models.OneToOneField("payments.Payment", on_delete=models.PROTECT, related_name="finance_collection_key")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="guest_collection_keys")
+    fingerprint = models.JSONField(default=dict)
+    breakdown = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Collection keys are immutable.")
+        return super().save(*args, **kwargs)

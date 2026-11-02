@@ -38,8 +38,8 @@ def _create_stay(*, booking, assignments, actor, checked_in_at, bridge_reason=""
             stay=stay,
             room=assignment.room,
             booking_room=assignment,
-            assigned_at=checked_in_at,
-            actual_check_in_at=checked_in_at,
+            assigned_at=assignment.checked_in_at or checked_in_at,
+            actual_check_in_at=assignment.checked_in_at or checked_in_at,
             assigned_by=actor,
             assignment_reason=bridge_reason or "Booking check-in",
         )
@@ -123,8 +123,8 @@ def _ensure_stay_rooms(*, stay, assignments, actor, checked_in_at):
                 stay=stay,
                 room=assignment.room,
                 booking_room=assignment,
-                assigned_at=checked_in_at,
-                actual_check_in_at=checked_in_at,
+                assigned_at=assignment.checked_in_at or checked_in_at,
+                actual_check_in_at=assignment.checked_in_at or checked_in_at,
                 assigned_by=actor,
                 assignment_reason="Additional room checked in",
             )
@@ -136,7 +136,7 @@ def _ensure_stay_rooms(*, stay, assignments, actor, checked_in_at):
         StayEvent.objects.create(
             stay=stay,
             type=StayEvent.Type.ROOM_ASSIGNED,
-            occurred_at=checked_in_at,
+            occurred_at=stay_room.actual_check_in_at,
             actor=actor,
             details={
                 "room_number": stay_room.room.room_number,
