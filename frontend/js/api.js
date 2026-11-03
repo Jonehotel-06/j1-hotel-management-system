@@ -1022,7 +1022,9 @@ const API = (() => {
     return get(`${base}/returns/`, { params, ...opts });
   }
   function previewPosOrderReturn(reference, opts = {}) {
-    return posReturnAction(reference, "return-preview", {}, opts);
+    const base = POS_ORDERS_EP();
+    if (!base) throw notConfigured("posOrders");
+    return get(`${base}/${encodeURIComponent(reference)}/return-preview/`, opts);
   }
   function recordPosOrderReturn(reference, payload, opts = {}) {
     return posReturnAction(reference, "returns", payload, opts);

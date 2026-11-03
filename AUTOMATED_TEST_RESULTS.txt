@@ -1,0 +1,64 @@
+Django check: PASS (0 issues). Migrations on isolated SQLite: PASS. makemigrations --check: PASS.
+Policy tests:
+Using existing test database for alias 'default'...
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.015s
+
+OK
+Preserving test database for alias 'default'...
+Found 4 test(s).
+System check identified no issues (0 silenced).
+Relevant backend integration suite:
+..................
+----------------------------------------------------------------------
+Ran 116 tests in 83.030s
+
+OK
+Preserving test database for alias 'default'...
+Found 116 test(s).
+System check identified no issues (0 silenced).
+Stock validation suite:
+ERROR: test_simultaneous_orders_cannot_oversell_shared_ingredients (tests.test_pos_room_service_availability.AvailabilityConcurrencyTests.test_simultaneous_orders_cannot_oversell_shared_ingredients)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/work/backend/tests/test_pos_room_service_availability.py", line 393, in setUp
+    setUpAvailabilityFixtures(self)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/user/work/backend/tests/test_pos_room_service_availability.py", line 76, in setUpAvailabilityFixtures
+    record_opening_stock(
+    ~~~~~~~~~~~~~~~~~~~~^
+        item=case.malt_stock, location=case.bar_store, quantity=Decimal("12.0000"),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        actor=case.manager, idempotency_key="av-opening-malt",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/contextlib.py", line 85, in inner
+    return func(*args, **kwds)
+  File "/home/user/work/backend/apps/inventory/services/inventory_service.py", line 2609, in record_opening_stock
+    assert_can_record_stock(actor, action="record stock in the inventory ledger")
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/work/backend/apps/inventory/services/inventory_service.py", line 128, in assert_can_record_stock
+    raise PermissionDenied(f"You do not have permission to {action}. {STOCK_RECORDING_REFUSAL}")
+rest_framework.exceptions.PermissionDenied: You do not have permission to record stock in the inventory ledger. Only the Store Keeper, the Administrator or the General Manager can record stock manually.
+
+----------------------------------------------------------------------
+Ran 49 tests in 19.235s
+
+FAILED (errors=1)
+Preserving test database for alias 'default'...
+Found 49 test(s).
+System check identified no issues (0 silenced).
+Frontend suite:
+  ...
+1..24
+# tests 24
+# suites 0
+# pass 24
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 187.834628
+Initial baseline incorrect test module names produced 2 import errors (see earlier report); corrected names in relevant suite.
