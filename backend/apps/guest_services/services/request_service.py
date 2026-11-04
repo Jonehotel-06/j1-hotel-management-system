@@ -51,31 +51,11 @@ for _role in MAINTENANCE_WORKER_ROLES:
 del _role
 _TERMINAL_STATUSES = {ServiceRequest.Status.CLOSED, ServiceRequest.Status.CANCELLED}
 _ALLOWED_TRANSITIONS = {
-    ServiceRequest.Status.OPEN: {
-        ServiceRequest.Status.ACKNOWLEDGED,
-        ServiceRequest.Status.IN_PROGRESS,
-        ServiceRequest.Status.ESCALATED,
-        ServiceRequest.Status.CANCELLED,
-    },
-    ServiceRequest.Status.ACKNOWLEDGED: {
-        ServiceRequest.Status.IN_PROGRESS,
-        ServiceRequest.Status.ESCALATED,
-        ServiceRequest.Status.CANCELLED,
-    },
-    ServiceRequest.Status.IN_PROGRESS: {
-        ServiceRequest.Status.RESOLVED,
-        ServiceRequest.Status.ESCALATED,
-    },
-    ServiceRequest.Status.ESCALATED: {
-        ServiceRequest.Status.ACKNOWLEDGED,
-        ServiceRequest.Status.IN_PROGRESS,
-        ServiceRequest.Status.RESOLVED,
-        ServiceRequest.Status.CANCELLED,
-    },
-    ServiceRequest.Status.RESOLVED: {
-        ServiceRequest.Status.CLOSED,
-        ServiceRequest.Status.IN_PROGRESS,
-    },
+    ServiceRequest.Status.OPEN: {ServiceRequest.Status.ACKNOWLEDGED, ServiceRequest.Status.RESOLVED},
+    ServiceRequest.Status.ACKNOWLEDGED: {ServiceRequest.Status.RESOLVED},
+    ServiceRequest.Status.IN_PROGRESS: {ServiceRequest.Status.RESOLVED},
+    ServiceRequest.Status.ESCALATED: {ServiceRequest.Status.ACKNOWLEDGED, ServiceRequest.Status.RESOLVED},
+    ServiceRequest.Status.RESOLVED: {ServiceRequest.Status.CLOSED},
 }
 
 
@@ -190,6 +170,8 @@ def create_service_request(
     """Create a request with a stable retry key and immutable creation event."""
     if category not in ServiceRequest.Category.values:
         raise ValidationError({"category": "Invalid service-request category."})
+    if category in {ServiceRequest.Category.ROOM_SERVICE, ServiceRequest.Category.FOOD_BEVERAGE} and getattr(assigned_to, "role", None) == User.Role.RECEPTIONIST:
+        raise PermissionDenied("Receptionists cannot be assigned guest food/drink orders.")
     if priority not in ServiceRequest.Priority.values:
         raise ValidationError({"priority": "Invalid service-request priority."})
     if channel not in ServiceRequest.Channel.values:
@@ -299,6 +281,9 @@ def assign_service_request(*, service_request, actor, assigned_to=None, owner_te
     if request.status in _TERMINAL_STATUSES:
         raise ValidationError("A closed or cancelled request cannot be reassigned.")
     _validate_assignee(assigned_to)
+    if request.category in {ServiceRequest.Category.ROOM_SERVICE, ServiceRequest.Category.FOOD_BEVERAGE}:
+        if actor.role == User.Role.RECEPTIONIST or getattr(assigned_to, "role", None) == User.Role.RECEPTIONIST:
+            raise PermissionDenied("Receptionists cannot assign themselves or dispatch guest food/drink orders.")
     if owner_team and owner_team not in ServiceRequest.OwnerTeam.values:
         raise ValidationError({"owner_team": "Invalid owner team."})
     if due_at is not None and due_at <= timezone.now():
@@ -334,30 +319,8 @@ def assign_service_request(*, service_request, actor, assigned_to=None, owner_te
 
 @transaction.atomic
 def claim_service_request(*, service_request, actor):
-    """Let an eligible housekeeping/maintenance worker claim an unassigned task."""
-    _lock_linked_portal_context(service_request)
-    request = ServiceRequest.objects.select_for_update().get(pk=service_request.pk)
-    if request.status in _TERMINAL_STATUSES:
-        raise ValidationError("A closed or cancelled request cannot be claimed.")
-    if request.assigned_to_id:
-        if request.assigned_to_id == actor.pk:
-            return request
-        raise ValidationError("This request is already assigned to another staff user.")
-    if _can_dispatch(actor):
-        return assign_service_request(service_request=request, actor=actor, assigned_to=actor)
-    if request.owner_team not in _TEAMS_FOR_ROLE.get(actor.role, set()):
-        raise PermissionDenied("This unassigned request is not in the caller's permitted team queue.")
-    _validate_assignee(actor)
-    request.assigned_to = actor
-    request.save(update_fields=["assigned_to", "updated_at"])
-    _create_event(
-        request=request,
-        event_type=ServiceRequestEvent.Type.ASSIGNED,
-        actor=actor,
-        guest_visible=False,
-        details={"assigned_to_id": actor.pk, "assigned_to": actor.full_name, "claimed": True},
-    )
-    return request
+    """Retired guest-request action; department task claiming is unaffected."""
+    raise ValidationError("Claim is retired for Guest Requests; use authorized department dispatch.")
 
 
 @transaction.atomic
@@ -366,6 +329,8 @@ def transition_service_request(*, service_request, target_status: str, actor, no
     target_status = str(target_status or "").upper()
     if target_status not in ServiceRequest.Status.values:
         raise ValidationError({"status": "Invalid service-request status."})
+    if target_status in {ServiceRequest.Status.IN_PROGRESS, ServiceRequest.Status.ESCALATED, ServiceRequest.Status.CANCELLED}:
+        raise ValidationError({"status": "This transition is retired for Guest Requests. Use the department fulfilment workflow."})
     # Match POS and checkout lock order. A staff cancellation must never leave
     # a live linked draft behind.
     _lock_linked_portal_context(service_request)
@@ -377,6 +342,10 @@ def transition_service_request(*, service_request, target_status: str, actor, no
         if order is not None and (order.metadata or {}).get("portal_stock_rules") is None:
             order = None
     request = ServiceRequest.objects.select_for_update().get(pk=service_request.pk)
+    if request.category in {ServiceRequest.Category.ROOM_SERVICE, ServiceRequest.Category.FOOD_BEVERAGE} and target_status in {
+        ServiceRequest.Status.RESOLVED, ServiceRequest.Status.CLOSED,
+    }:
+        raise PermissionDenied("Only the authenticated ordering guest may confirm receipt of food/drink requests.")
     if target_status == request.status:
         return request
     if target_status not in _ALLOWED_TRANSITIONS.get(request.status, set()):
@@ -462,50 +431,8 @@ def add_service_request_comment(*, service_request, message, actor=None, actor_l
 
 @transaction.atomic
 def cancel_service_request_by_guest(*, service_request, portal_email, note=""):
-    """Cancel a not-yet-worked request and its linked guest POS draft atomically."""
-    from apps.pos.models import PosOrder
-    from apps.portal.eligibility import active_stay_rooms_for_email
-
-    # Lock booking -> stay -> POS -> request, matching checkout and delivery.
-    _lock_linked_portal_context(service_request)
-    order = PosOrder.objects.select_for_update().filter(service_request_id=service_request.pk).first()
-    request = ServiceRequest.objects.select_for_update().select_related("guest").get(pk=service_request.pk)
-    email = str(portal_email or "").strip().lower()
-    contact = str(getattr(request.guest, "email", "") or "").strip().lower()
-    if email not in {contact, str(request.portal_email or "").strip().lower()} or not email:
-        raise PermissionDenied("This request does not belong to the verified portal guest.")
-    if request.room_id and not active_stay_rooms_for_email(email).filter(stay_id=request.stay_id, room_id=request.room_id).exists():
-        raise PermissionDenied("This request is no longer associated with your active room.")
-    if request.status == ServiceRequest.Status.CANCELLED:
-        return request
-    if request.status not in {ServiceRequest.Status.OPEN, ServiceRequest.Status.ACKNOWLEDGED}:
-        raise ValidationError("Only open or acknowledged requests can be cancelled by the guest.")
-    if order is not None and (order.metadata or {}).get("portal_stock_rules") is not None:
-        if order.charge_transaction_id or order.status not in {PosOrder.Status.DRAFT, PosOrder.Status.SUBMITTED, PosOrder.Status.CANCELLED}:
-            raise ValidationError("This order is already being prepared or charged. Please contact staff.")
-        if order.status != PosOrder.Status.CANCELLED:
-            from apps.pos.services.order_service import transition_order
-            transition_order(order=order, target_status=PosOrder.Status.CANCELLED, actor=None)
-            request.refresh_from_db()
-            if request.status == ServiceRequest.Status.CANCELLED:
-                if note:
-                    _create_event(request=request, event_type=ServiceRequestEvent.Type.COMMENT,
-                                  actor_label="Guest", message=note, guest_visible=True)
-                return request
-    previous_status = request.status
-    request.status = ServiceRequest.Status.CANCELLED
-    request.closed_at = timezone.now()
-    request.save(update_fields=["status", "closed_at", "updated_at"])
-    _create_event(
-        request=request,
-        event_type=ServiceRequestEvent.Type.CANCELLED,
-        actor_label="Guest",
-        message=note,
-        guest_visible=True,
-        previous_status=previous_status,
-        new_status=ServiceRequest.Status.CANCELLED,
-    )
-    return request
+    """Guest Request cancellation is retired; contact the department for changes."""
+    raise ValidationError("Cancellation is not available in the Guest Requests workflow.")
 
 
 def service_request_queryset_for_staff(actor):

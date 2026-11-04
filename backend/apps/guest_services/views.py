@@ -546,6 +546,18 @@ class PortalServiceRequestListCreateView(_PortalServiceRequestBase):
 
 
 @extend_schema(tags=["Guest Portal · Requests"], summary="Read one owned request and guest-visible updates")
+class PortalServiceRequestConfirmDeliveryView(APIView):
+    authentication_classes = [PortalSessionAuthentication]
+    permission_classes = [HasPortalSession]
+
+    def post(self, request, reference):
+        from .services.delivery_service import confirm_guest_receipt
+        current = _portal_request_or_404(email=request.portal_session.email, reference=reference)
+        confirm_guest_receipt(service_request=current, portal_session=request.portal_session)
+        updated = _portal_request_or_404(email=request.portal_session.email, reference=reference, detail=True)
+        return success_response(PortalServiceRequestDetailSerializer(updated).data, message="Receipt confirmed; payment status is unchanged.")
+
+
 class PortalServiceRequestDetailView(_PortalServiceRequestBase):
     def get(self, request, reference):
         return success_response(PortalServiceRequestDetailSerializer(

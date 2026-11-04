@@ -96,7 +96,7 @@ class GuestServiceTests(BaseAPITestCase):
             401,
         )
 
-    def test_team_worker_can_claim_and_progress_own_queue_but_cannot_view_other_team(self):
+    def test_worker_claim_is_retired_but_dispatch_and_team_scope_remain(self):
         house_request, _ = create_service_request(
             guest=self.guest, stay=self.stay, room=self.room,
             category=ServiceRequest.Category.HOUSEKEEPING,
@@ -129,7 +129,9 @@ class GuestServiceTests(BaseAPITestCase):
             404,
         )
         claimed = self.client.post(f"/api/admin/service-requests/{house_request.reference}/claim/", {}, format="json")
-        self.assertEqual(claimed.status_code, 200, claimed.content)
+        self.assertEqual(claimed.status_code, 400, claimed.content)
+        from apps.guest_services.services.request_service import assign_service_request
+        assign_service_request(service_request=house_request, actor=self.manager, assigned_to=self.housekeeper)
         self.assertEqual(
             self.client.post(
                 f"/api/admin/service-requests/{house_request.reference}/status/",
@@ -144,7 +146,7 @@ class GuestServiceTests(BaseAPITestCase):
             request=house_request, type=ServiceRequestEvent.Type.ACKNOWLEDGED, guest_visible=True
         ).exists())
 
-    def test_alias_role_workers_see_and_claim_their_own_team_queue(self):
+    def test_alias_role_workers_see_and_receive_dispatch_for_their_team(self):
         """HOUSEKEEPER / MAINTENANCE_TECHNICIAN are worker roles, not strangers.
 
         The team map was keyed on the canonical spellings only, so an account
@@ -181,7 +183,10 @@ class GuestServiceTests(BaseAPITestCase):
         self.assertIn(maintenance_request.reference, references)
         self.assertNotIn(food_request.reference, references)
         claimed = self.client.post(f"/api/admin/service-requests/{house_request.reference}/claim/", {}, format="json")
-        self.assertEqual(claimed.status_code, 200, claimed.content)
+        self.assertEqual(claimed.status_code, 400, claimed.content)
+        self.auth(self.manager)
+        from apps.guest_services.services.request_service import assign_service_request
+        assign_service_request(service_request=house_request, actor=self.manager, assigned_to=housekeeper_alias)
         house_request.refresh_from_db()
         self.assertEqual(house_request.assigned_to_id, housekeeper_alias.pk)
 
@@ -192,7 +197,8 @@ class GuestServiceTests(BaseAPITestCase):
         self.assertIn(maintenance_request.reference, references)
         self.assertNotIn(house_request.reference, references)
         claimed = self.client.post(f"/api/admin/service-requests/{maintenance_request.reference}/claim/", {}, format="json")
-        self.assertEqual(claimed.status_code, 200, claimed.content)
+        self.assertEqual(claimed.status_code, 400, claimed.content)
+        assign_service_request(service_request=maintenance_request, actor=self.manager, assigned_to=technician_alias)
         maintenance_request.refresh_from_db()
         self.assertEqual(maintenance_request.assigned_to_id, technician_alias.pk)
 
@@ -227,7 +233,7 @@ class GuestServiceTests(BaseAPITestCase):
             401,
         )
 
-    def test_guest_can_cancel_open_request_but_not_an_in_progress_request(self):
+    def test_guest_request_cancel_is_retired_for_open_and_acknowledged_requests(self):
         token = self._portal_token()
         service_request, _ = create_service_request(
             guest=self.guest, stay=self.stay, room=self.room,
@@ -239,9 +245,9 @@ class GuestServiceTests(BaseAPITestCase):
             f"/api/portal/requests/{service_request.reference}/cancel/", {"note": "No longer needed"},
             format="json", HTTP_X_PORTAL_SESSION=token,
         )
-        self.assertEqual(cancelled.status_code, 200, cancelled.content)
+        self.assertEqual(cancelled.status_code, 400, cancelled.content)
         service_request.refresh_from_db()
-        self.assertEqual(service_request.status, ServiceRequest.Status.CANCELLED)
+        self.assertEqual(service_request.status, ServiceRequest.Status.OPEN)
         in_progress, _ = create_service_request(
             guest=self.guest, stay=self.stay, room=self.room,
             category=ServiceRequest.Category.GENERAL,
@@ -250,7 +256,7 @@ class GuestServiceTests(BaseAPITestCase):
         )
         from apps.guest_services.services.request_service import transition_service_request
         transition_service_request(
-            service_request=in_progress, target_status=ServiceRequest.Status.IN_PROGRESS, actor=self.manager
+            service_request=in_progress, target_status=ServiceRequest.Status.ACKNOWLEDGED, actor=self.manager
         )
         blocked = self.client.post(
             f"/api/portal/requests/{in_progress.reference}/cancel/", {}, format="json", HTTP_X_PORTAL_SESSION=token,

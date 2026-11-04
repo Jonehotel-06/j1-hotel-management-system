@@ -2532,7 +2532,9 @@ def restock_returned_pos_items(
             "nothing is restocked. Resolve the order's inventory hand-off first."
         )
 
-    snapshots = _active_recipe_snapshots([line.menu_item_id for line in lines.values()])
+    # Restore exactly what the original delivery consumed, not today's recipe
+    # or direct-sale configuration (which management may have changed since).
+    snapshots = dict((hand_off.payload or {}).get("recipe_snapshot") or {})
     aggregates = {}
     per_line = {line_id: Decimal("0.0000") for line_id in line_quantities}
     unresolved = []
@@ -2548,7 +2550,9 @@ def restock_returned_pos_items(
         if not components:
             unresolved.append(line.item_sku or line.item_name)
             continue
-        target_location_id = location.pk if location is not None else snapshot.get("location_id")
+        target_location_id = snapshot.get("location_id")
+        if location is not None and location.pk != target_location_id:
+            raise ValidationError("Return stock must go to its original fulfilment location. Record any later transfer separately.")
         for component in components:
             try:
                 item_id = int(component["item_id"])

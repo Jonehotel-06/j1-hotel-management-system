@@ -144,7 +144,7 @@ class GuestPortalRoomOrderTests(BaseAPITestCase):
         repeat = self.client.post(f"/api/admin/pos/orders/{order.reference}/status/", {"status": "DELIVERED"}, format="json")
         self.assertEqual(repeat.status_code, 200, repeat.content)
         order.refresh_from_db(); req.refresh_from_db()
-        self.assertEqual(req.status, "RESOLVED")
+        self.assertEqual(req.status, "ACKNOWLEDGED")
         self.assertIsNotNone(order.charge_transaction_id)
         self.assertEqual(FinancialTransaction.objects.filter(type="POS_CHARGE", source_reference=order.reference).count(), 1)
         self.assertEqual(FolioPosting.objects.filter(folio=order.folio, source_reference=order.reference, kind="CHARGE").count(), 1)
@@ -178,7 +178,9 @@ class GuestPortalRoomOrderTests(BaseAPITestCase):
         self.assertIn("identical", str(duplicate.content).lower())
         self.assertEqual(PosOrder.objects.count(), 1)
         cancelled = self.client.post(f"/api/portal/requests/{req.reference}/cancel/", {}, format="json", HTTP_X_PORTAL_SESSION=self.token)
-        self.assertEqual(cancelled.status_code, 200, cancelled.content)
+        self.assertEqual(cancelled.status_code, 400, cancelled.content)
+        from apps.pos.services.order_service import transition_order
+        transition_order(order=req.pos_order, target_status="CANCELLED", actor=self.waiter)
         again = self.post_order(self.payload(key="different-key"))
         self.assertEqual(again.status_code, 201, again.content)
         self.assertEqual(PosOrder.objects.count(), 2)  # historical cancelled order remains
@@ -281,45 +283,37 @@ class GuestPortalRoomOrderTests(BaseAPITestCase):
         self.assertEqual(items[self.drink.pk]["available_quantity"], 2)
         self.assertNotIn("PO-MALT", str(again.content))
 
-    def test_guest_cancellation_cancels_draft_and_releases_commitment(self):
+    def test_guest_request_cancellation_is_retired_but_staff_can_release_commitment(self):
         req, _ = self.create_order(self.payload(lines=[self.line(quantity=5)]))
+        cancelled = self.client.post(f"/api/portal/requests/{req.reference}/cancel/", {}, format="json", HTTP_X_PORTAL_SESSION=self.token)
+        self.assertEqual(cancelled.status_code, 400, cancelled.content)
         self.assertEqual(open_pos_order_demand({(self.malt.pk, self.bar.pk)})[(self.malt.pk, self.bar.pk)], Decimal("5"))
-        cancelled = self.client.post(f"/api/portal/requests/{req.reference}/cancel/", {"note": "Changed mind"}, format="json", HTTP_X_PORTAL_SESSION=self.token)
-        self.assertEqual(cancelled.status_code, 200, cancelled.content)
-        req.refresh_from_db(); order = req.pos_order; order.refresh_from_db()
-        self.assertEqual((req.status, order.status), ("CANCELLED", "CANCELLED"))
-        self.assertEqual(open_pos_order_demand({(self.malt.pk, self.bar.pk)}), {})
-        self.assertFalse(order.charge_transaction_id)
-        self.assertEqual(PosOrderEvent.objects.filter(order=order, type="CANCELLED").count(), 1)
-        self.assertEqual(ServiceRequestEvent.objects.filter(request=req, type="CANCELLED").count(), 1)
+        from apps.pos.services.order_service import transition_order
+        order=transition_order(order=req.pos_order, target_status="CANCELLED", actor=self.waiter)
+        req.refresh_from_db()
+        self.assertEqual((req.status,order.status),("CLOSED","CANCELLED"))
+        self.assertFalse(open_pos_order_demand({(self.malt.pk,self.bar.pk)}))
+        self.assertIsNone(order.charge_transaction_id)
+        self.assertEqual(PosOrderEvent.objects.filter(order=order,type="CANCELLED").count(),1)
 
-    def test_guest_can_cancel_submitted_but_not_preparing_order(self):
+    def test_guest_cannot_cancel_submitted_or_preparing_requests(self):
+        from apps.pos.services.order_service import submit_order,transition_order
         req, _ = self.create_order()
-        order = req.pos_order
-        self.auth(self.waiter)
-        self.assertEqual(self.client.post(f"/api/admin/pos/orders/{order.reference}/submit/", {}, format="json").status_code, 200)
-        self.unauth()
-        cancel = self.client.post(f"/api/portal/requests/{req.reference}/cancel/", {}, format="json", HTTP_X_PORTAL_SESSION=self.token)
-        self.assertEqual(cancel.status_code, 200, cancel.content)
-        order.refresh_from_db(); self.assertEqual(order.status, "CANCELLED")
-        self.assertEqual(order.kitchen_ticket.status, "CANCELLED")
-
-        req2, _ = self.create_order(self.payload(key="new-after-cancel"))
-        order2 = req2.pos_order
-        self.auth(self.waiter)
-        self.client.post(f"/api/admin/pos/orders/{order2.reference}/submit/", {}, format="json")
-        self.client.post(f"/api/admin/pos/orders/{order2.reference}/status/", {"status": "PREPARING"}, format="json")
-        self.unauth()
-        refused = self.client.post(f"/api/portal/requests/{req2.reference}/cancel/", {}, format="json", HTTP_X_PORTAL_SESSION=self.token)
-        self.assertEqual(refused.status_code, 400, refused.content)
-        order2.refresh_from_db(); self.assertEqual(order2.status, "PREPARING")
+        submit_order(order=req.pos_order,actor=self.waiter)
+        for target in ["SUBMITTED","PREPARING"]:
+            if target=="PREPARING":transition_order(order=req.pos_order,target_status=target,actor=self.waiter)
+            response=self.client.post(f"/api/portal/requests/{req.reference}/cancel/",{},format="json",HTTP_X_PORTAL_SESSION=self.token)
+            self.assertEqual(response.status_code,400,response.content)
+            self.assertEqual(PosOrder.objects.get(pk=req.pos_order.pk).status,target)
+        transition_order(order=req.pos_order,target_status="CANCELLED",actor=self.waiter)
+        self.assertFalse(open_pos_order_demand({(self.malt.pk,self.bar.pk)}))
 
     def test_staff_pos_cancellation_synchronizes_request(self):
         req, _ = self.create_order(); order = req.pos_order
         self.auth(self.waiter)
         cancelled = self.client.post(f"/api/admin/pos/orders/{order.reference}/status/", {"status": "CANCELLED"}, format="json")
         self.assertEqual(cancelled.status_code, 200, cancelled.content)
-        req.refresh_from_db(); self.assertEqual(req.status, "CANCELLED")
+        req.refresh_from_db(); self.assertEqual(req.status, "CLOSED")
         self.assertFalse(order.charge_transaction_id)
 
     def test_checkout_billing_cannot_charge_undelivered_guest_order(self):
@@ -474,7 +468,7 @@ class GuestPortalRoomOrderTests(BaseAPITestCase):
         self.assertEqual(cancelled.status_code, 200, cancelled.content)
         order.refresh_from_db(); req.refresh_from_db()
         self.assertEqual(order.status, PosOrder.Status.CANCELLED)
-        self.assertEqual(req.status, ServiceRequest.Status.CANCELLED)
+        self.assertEqual(req.status, ServiceRequest.Status.CLOSED)
         self.assertIsNone(order.charge_transaction_id)
         self.assertFalse(open_pos_order_demand({(self.malt.pk, self.bar.pk)}))
 
@@ -485,8 +479,8 @@ class GuestPortalRoomOrderTests(BaseAPITestCase):
         req, _ = self.create_order(self.payload(key="occupant-order"), token)
         self.assertEqual(req.occupant.email, occupant_email)
         cancel = self.client.post(f"/api/portal/requests/{req.reference}/cancel/", {}, format="json", HTTP_X_PORTAL_SESSION=token)
-        self.assertEqual(cancel.status_code, 200, cancel.content)
-        req.refresh_from_db(); self.assertEqual(req.status, "CANCELLED")
+        self.assertEqual(cancel.status_code, 400, cancel.content)
+        req.refresh_from_db(); self.assertEqual(req.status, "OPEN")
 
     def test_atomic_rollback_and_safe_unexpected_error(self):
         with mock.patch("apps.guest_services.services.portal_order_service.create_order", side_effect=RuntimeError("PRIVATE_INTERNAL_FAILURE")):
@@ -553,14 +547,18 @@ class GuestPortalRoomOrderTests(BaseAPITestCase):
         rejected = self.post_order(self.payload(lines=[self.line(dish)], key="b05-new-draft"))
         self.assertEqual(rejected.status_code, 400, rejected.content)
 
-    def test_batch05_guest_cancel_releases_submitted_portions(self):
+    def test_batch05_retired_guest_cancel_cannot_release_stock_but_staff_pos_can(self):
         from apps.pos.services.order_service import submit_order
         from apps.guest_services.services.request_service import cancel_service_request_by_guest
         dish = MenuItem.objects.create(category=self.restaurant, name="White rice", sku="B05-PORTAL-WHITE", base_price="1000", portion_tracking=True, prepared_portions=5)
         req, _ = self.create_order(self.payload(lines=[self.line(dish, 2)]))
         submit_order(order=req.pos_order, actor=self.waiter)
-        cancel_service_request_by_guest(service_request=req, portal_email=self.guest.email)
-        cancel_service_request_by_guest(service_request=req, portal_email=self.guest.email)
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            cancel_service_request_by_guest(service_request=req, portal_email=self.guest.email)
+        from apps.pos.services.order_service import transition_order
+        transition_order(order=req.pos_order, target_status="CANCELLED", actor=self.waiter)
+        transition_order(order=req.pos_order, target_status="CANCELLED", actor=self.waiter)
         dish.refresh_from_db()
         self.assertEqual(dish.prepared_portions, 5)
         self.assertEqual(PosOrder.objects.get(pk=req.pos_order.pk).status, "CANCELLED")
@@ -795,7 +793,7 @@ class ConcurrentPortalOrderTests(TransactionTestCase):
         self.assertEqual(sum(result.endswith(":rejected") for result in results), 1, results)
         order.refresh_from_db(); req.refresh_from_db()
         if order.status == "DELIVERED":
-            self.assertEqual(req.status, "RESOLVED")
+            self.assertEqual(req.status, "ACKNOWLEDGED")
             self.assertEqual(FinancialTransaction.objects.filter(type="POS_CHARGE").count(), 1)
             self.assertEqual(StockMovement.objects.filter(type="POS_CONSUMPTION").count(), 1)
             self.assertEqual(StockBalance.objects.get(item=self.ingredient, location=self.location).quantity_on_hand, Decimal("3"))

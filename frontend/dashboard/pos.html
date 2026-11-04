@@ -135,7 +135,7 @@
             <form id="pos-create-form" novalidate>
               <div class="hint" data-pos-service-request hidden role="status" style="margin-bottom:.8rem;"></div>
               <div class="form-grid fg-2">
-                <div class="field"><label class="field-label" for="pos-mode">Order mode</label><select class="select" id="pos-mode" required><option value="ROOM_SERVICE">Room service</option><option value="RESTAURANT">Restaurant / dine in</option><option value="BAR">Bar</option><option value="TAKEAWAY">Takeaway</option></select></div>
+                <div class="field"><label class="field-label" for="pos-unfinished">Unfinished orders</label><div style="display:flex;gap:.5rem;flex-wrap:wrap;"><select class="select" id="pos-unfinished" aria-label="Unfinished order"></select><button class="btn btn-sm btn-outline" type="button" id="pos-new-unfinished">New order</button></div><p class="caption">Each cart keeps its own mode, guest/table, category and items. Saved in this staff browser session.</p></div><div class="field"><label class="field-label" for="pos-mode">Order mode</label><select class="select" id="pos-mode" required><option value="ROOM_SERVICE">Room service</option><option value="RESTAURANT">Restaurant / dine in</option><option value="BAR">Bar</option><option value="TAKEAWAY">Takeaway</option></select></div>
                 <div class="field" data-pos-direct-guest hidden><label class="field-label" for="pos-guest">Guest / customer</label><input class="input" id="pos-guest" maxlength="200" placeholder="Walk-in guest (optional)"></div>
                 <div class="field" data-pos-bar-table hidden><label class="field-label" for="pos-table">Bar table</label><select class="select" id="pos-table"><option value="">Pickup · no table</option></select><div class="hint">Choose the bar table the order belongs to. Only registered, active tables can be picked; leave it on Pickup for a walk-in at the bar.</div></div>
                 <div class="field" data-pos-restaurant-table-session hidden><label class="field-label" for="pos-table-session">Open restaurant table session</label><select class="select" id="pos-table-session"><option value="">Choose an open table session</option></select><div class="hint" data-pos-selected-session-hint>Select a session, or open a new one in Restaurant tables.</div></div>
@@ -254,6 +254,7 @@
 <script src="../js/barcode-scanner.js?v=1.1.24"></script>
 <script src="../js/thermal-receipt.js?v=1.1.24"></script>
 <script src="../js/kitchen-food.js?v=1.1.24"></script>
+<script src="../js/pos-drafts.js"></script>
 <script>
 JONE.ui.initChrome();
 var __posAllowed=JONE.dashboard.boot(["admin","general_manager","waiter","chef","kitchen_assistant"]);
@@ -274,10 +275,36 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   var returnsBody=document.querySelector("[data-tbody=pos-returns]");
   var categoryBody=document.querySelector("[data-tbody=pos-menu-categories]");
   var menuItemBody=document.querySelector("[data-tbody=pos-menu-items]");
+  var draftBook=null,activeDraft=null,restoringDraft=false,submittingDraft=false,pendingCategory="";
   var state={page:1,menu:[],itemsById:{},cart:[],selectedStay:null,orderKey:newKey(),orderKeyContent:"",drawer:null,menuArea:null,menuRequest:0,restaurantTables:[],tableSessions:[],selectedTableSession:null,openTableSessionKey:newKey(),serviceRequestReference:serviceRequestReference,serviceRequest:null,
     returnsPage:1,returnableOrders:[],returns:[],returnKey:newKey(),
     categoryPage:1,itemPage:1,categories:[],menuItems:[],categoryKey:newKey()};
 
+  function saveActiveDraft(){
+    if(!draftBook||!activeDraft||restoringDraft)return;
+    var fields={};["pos-guest","pos-table","pos-delivery","pos-stay-search"].forEach(function(id){fields[id]=document.getElementById(id).value;});
+    try{draftBook.save({id:activeDraft,staffId:draftBook.staffId,mode:mode(),cart:state.cart,fields:fields,selectedStay:state.selectedStay,selectedTableSession:state.selectedTableSession,orderKey:state.orderKey,orderKeyContent:state.orderKeyContent,category:pendingCategory||document.getElementById("pos-category").value,serviceRequestReference:state.serviceRequestReference,serviceRequest:state.serviceRequest});renderDraftChoices();}
+    catch(err){setCreateError("Your cart is in memory but could not be saved: "+err.message);}
+  }
+  function renderDraftChoices(){
+    if(!draftBook)return;var select=document.getElementById("pos-unfinished");
+    select.innerHTML=draftBook.rows.map(function(row,index){var count=(row.cart||[]).reduce(function(n,line){return n+Number(line.quantity||0);},0);return '<option value="'+JONE.esc(row.id)+'">'+(index+1)+' · '+JONE.esc(label(row.mode))+' · '+count+' item(s)'+(row.selectedStay?' · '+JONE.esc(row.selectedStay.guest_name||row.selectedStay.reference):'')+'</option>';}).join('');select.value=activeDraft||"";
+  }
+  function restoreDraft(row){
+    restoringDraft=true;activeDraft=row.id;state.cart=row.cart||[];state.selectedStay=row.selectedStay||null;state.selectedTableSession=row.selectedTableSession||null;state.orderKey=row.orderKey;state.orderKeyContent=row.orderKeyContent||"";state.serviceRequestReference=row.serviceRequestReference||"";state.serviceRequest=row.serviceRequest||null;
+    Object.keys(row.fields||{}).forEach(function(id){var el=document.getElementById(id);if(el)el.value=row.fields[id];});
+    document.getElementById("pos-mode").value=row.mode;pendingCategory=row.category||"";
+    selectedStayLabel.textContent=state.selectedStay?'Selected: '+(state.selectedStay.guest_name||state.selectedStay.reference):'No in-house guest selected.';
+    stayResults.innerHTML="";state.menuArea=null;updateMode();renderRestaurantSessions();renderCart();renderDraftChoices();restoringDraft=false;
+  }
+  function switchDraft(id){if(submittingDraft){document.getElementById("pos-unfinished").value=activeDraft;return;}saveActiveDraft();restoreDraft(draftBook.select(id));}
+  function newDraft(){if(submittingDraft||!draftBook)return;saveActiveDraft();restoreDraft(draftBook.create(mode()));}
+  function initializeDrafts(){
+    var user=window.Auth&&window.Auth.state&&window.Auth.state.user;
+    if(!user||!user.id||!window.JONE.PosDraftBook)return;
+    try{draftBook=new JONE.PosDraftBook(window.sessionStorage,user.id,newKey);var saved=draftBook.rows.find(function(row){return row.id===draftBook.active&&allowedModes().includes(row.mode);});if(serviceRequestReference){saved=draftBook.create(mode());saved.serviceRequestReference=serviceRequestReference;}restoreDraft(saved||draftBook.create(mode()));}
+    catch(err){setCreateError("Unfinished order storage is unavailable: "+err.message);}
+  }
   function endpoint(name){ return window.APP_CONFIG&&window.APP_CONFIG.API_ENDPOINTS&&window.APP_CONFIG.API_ENDPOINTS[name]; }
   function listItems(res){ return window.API.normalizeList(res.data,res.pagination).items||[]; }
   function newKey(){
@@ -373,6 +400,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   }
   function cartTotal(){return state.cart.reduce(function(sum,line){return sum+lineUnitPrice(line)*Number(line.quantity||0);},0);}
   function renderCart(){
+    saveActiveDraft();
     if(!cartEl)return;
     if(!state.cart.length){cartEl.innerHTML='<div class="empty-state" style="margin-top:.8rem;"><span data-icon="utensils" data-size="26"></span><h3>No items yet</h3><p>Add menu items before creating the draft.</p></div>';JONE.icons.inject(cartEl);return;}
     var currency=(state.cart[0]&&state.cart[0].currency)||"NGN";
@@ -517,7 +545,8 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     category.innerHTML=state.menu.length?state.menu.map(function(group){return '<option value="'+JONE.esc(group.id)+'">'+JONE.esc(group.name)+'</option>';}).join(''):'<option value="">No available menu items</option>';
     category.disabled=!state.menu.length;
     if(previousCategory&&state.menu.some(function(group){return String(group.id)===previousCategory;}))category.value=previousCategory;
-    renderItemChoices(previousItem);
+    if(pendingCategory&&state.menu.some(function(group){return String(group.id)===String(pendingCategory);}))category.value=pendingCategory;
+    pendingCategory="";renderItemChoices(previousItem);
   }
   async function loadMenu(area,silent){
     var params=area?{area:area}:{};
@@ -526,7 +555,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       var res=await window.API.get(endpoint("posMenu"),{params:params});
       if(requestId!==state.menuRequest)return;
       var nextMenu=res.data||[];
-      if(JSON.stringify(nextMenu)===JSON.stringify(state.menu))return true;
+      if(JSON.stringify(nextMenu)===JSON.stringify(state.menu)){if(pendingCategory)renderMenu();return true;}
       var selectedItem=document.getElementById("pos-item").value;
       var selectedModifiers=Array.from(document.querySelectorAll("[data-pos-modifier]:checked")).map(function(input){return input.value;});
       state.menu=nextMenu;renderMenu();
@@ -666,7 +695,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     document.querySelectorAll("[data-pos-restaurant-table-session]").forEach(function(el){el.hidden=!restaurant;});
     document.querySelectorAll("[data-pos-delivery]").forEach(function(el){el.hidden=takeaway;});
     document.getElementById("pos-delivery").placeholder=room?"Room / delivery note":restaurant?"Service note (optional)":bar?"Bar pickup / service note":"Pickup note (optional)";
-    var area=room?"":bar?"BAR":"RESTAURANT";
+    var area=(room||takeaway)?"":bar?"BAR":"RESTAURANT";
     if(state.menuArea!==area){state.menuArea=area;loadMenu(area);}
   }
   function renderStayResults(rows){
@@ -689,7 +718,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     var rows=stayResults._rows||[];
     state.selectedStay=rows.find(function(row){return String(row.id)===String(id);})||null;
     selectedStayLabel.textContent=state.selectedStay?'Selected: '+state.selectedStay.guest_name+' · '+((state.selectedStay.room_numbers||[]).join(", ")||state.selectedStay.reference):'No in-house guest selected.';
-    renderStayResults(rows);
+    renderStayResults(rows);saveActiveDraft();
   }
 
   /* Live per-item stock verification: the figures embedded in the loaded menu
@@ -1058,8 +1087,16 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(result){state.menuArea=null;updateMode();}
   }
 
-  document.getElementById("pos-mode").addEventListener("change",updateMode);
-  document.getElementById("pos-category").addEventListener("change",renderItemChoices);
+  document.getElementById("pos-mode").addEventListener("change",function(){
+    if(!draftBook){updateMode();return;}
+    var requested=mode();document.getElementById("pos-mode").value=draftBook.get(activeDraft).mode;saveActiveDraft();
+    var existing=draftBook.rows.find(function(row){return row.mode===requested&&row.id!==activeDraft;});restoreDraft(existing?draftBook.select(existing.id):draftBook.create(requested));
+  });
+  document.getElementById("pos-unfinished").addEventListener("change",function(){switchDraft(this.value);});
+  document.getElementById("pos-new-unfinished").addEventListener("click",newDraft);
+  document.getElementById("pos-create-form").addEventListener("input",function(event){if(["pos-guest","pos-table","pos-delivery","pos-stay-search"].includes(event.target.id))saveActiveDraft();});
+  window.addEventListener("pagehide",saveActiveDraft);
+  document.getElementById("pos-category").addEventListener("change",function(){renderItemChoices();saveActiveDraft();});
   document.getElementById("pos-item").addEventListener("change",function(){renderModifiers();renderItemStockHint();});
   document.getElementById("pos-add-line").addEventListener("click",addCartLine);
   document.getElementById("pos-find-stay").addEventListener("click",findStays);
@@ -1080,8 +1117,8 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     if(state.serviceRequest){payload.service_request_reference=state.serviceRequest.reference;if(mode()==="BAR")payload.table_number=state.serviceRequest.table_number;}
     var orderContent=JSON.stringify(payload);
     if(state.orderKeyContent!==orderContent){state.orderKey=newKey();state.orderKeyContent=orderContent;}
-    payload.idempotency_key=state.orderKey;
-    try{var res=await window.API.create("posOrders",payload);var order=res.data||{};setCreateError("");JONE.ui.toast(state.serviceRequest?"POS draft "+(order.reference||"created")+" linked to request "+state.serviceRequest.reference+". Review it before submission.":"POS draft "+(order.reference||"created")+" created. Submit it when the order is final.","success");state.cart=[];state.selectedStay=null;state.orderKey=newKey();if(state.serviceRequestReference){state.serviceRequestReference="";state.serviceRequest=null;showServiceRequestNotice("");var cleanUrl=new URL(window.location.href);cleanUrl.searchParams.delete("service_request");window.history.replaceState(null,document.title,cleanUrl.pathname+cleanUrl.search+cleanUrl.hash);}selectedStayLabel.textContent="No in-house guest selected.";stayResults.innerHTML="";document.getElementById("pos-create-form").reset();document.getElementById("pos-mode").value=allowedModes()[0]||"";renderRestaurantSessions();state.menuArea=null;state.orderKeyContent="";updateMode();renderCart();loadOrders();loadRestaurantSessions(true);loadRestaurantTables(true);}
+    payload.idempotency_key=state.orderKey;saveActiveDraft();submittingDraft=true;document.getElementById("pos-mode").disabled=true;
+    try{var res=await window.API.create("posOrders",payload);var order=res.data||{};setCreateError("");if(draftBook){draftBook.remove(activeDraft);activeDraft=null;}JONE.ui.toast(state.serviceRequest?"POS draft "+(order.reference||"created")+" linked to request "+state.serviceRequest.reference+". Review it before submission.":"POS draft "+(order.reference||"created")+" created. Submit it when the order is final.","success");state.cart=[];state.selectedStay=null;state.orderKey=newKey();if(state.serviceRequestReference){state.serviceRequestReference="";state.serviceRequest=null;showServiceRequestNotice("");var cleanUrl=new URL(window.location.href);cleanUrl.searchParams.delete("service_request");window.history.replaceState(null,document.title,cleanUrl.pathname+cleanUrl.search+cleanUrl.hash);}selectedStayLabel.textContent="No in-house guest selected.";stayResults.innerHTML="";document.getElementById("pos-create-form").reset();document.getElementById("pos-mode").value=allowedModes()[0]||"";renderRestaurantSessions();state.menuArea=null;state.orderKeyContent="";updateMode();if(draftBook){var next=draftBook.rows[0];restoreDraft(next?draftBook.select(next.id):draftBook.create(mode()));}renderCart();loadOrders();loadRestaurantSessions(true);loadRestaurantTables(true);}
     catch(err){
       // The cart is deliberately preserved: the operator can correct the problem
       // and press Create draft again. The same idempotency key is reused while
@@ -1098,7 +1135,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       if(err&&err.code==="POS_STOCK_CONFLICT")loadMenu(state.menuArea);
       reportCreateFailure(message);
     }
-    finally{JONE.releaseGuard(button);}
+    finally{submittingDraft=false;document.getElementById("pos-mode").disabled=false;JONE.releaseGuard(button);}
   });
   document.getElementById("pos-apply").addEventListener("click",function(){loadOrders(1);});
   document.getElementById("pos-search").addEventListener("input",JONE.debounce(function(){loadOrders(1);},300));
@@ -1531,7 +1568,7 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   window.addEventListener&&window.addEventListener("pagehide",function(){if(scannerHandle)scannerHandle.destroy();},{once:true});
 
   function startWorkspace(){
-    applyAccess();updateMode();renderCart();
+    applyAccess();if(!draftBook&&allowedModes().length)initializeDrafts();updateMode();renderCart();
     if(allowedModes().length)loadOrders(1);
     if(hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter'])){loadRestaurantTables();loadRestaurantSessions();}
     if(state.serviceRequestReference)loadServiceRequestContext();

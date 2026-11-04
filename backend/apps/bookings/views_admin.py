@@ -302,6 +302,7 @@ class AdminBookingConfirmView(_BookingActionView):
 
 @extend_schema(tags=["Admin · Bookings"], summary="Staff-cancel a booking")
 class AdminBookingCancelView(_BookingActionView):
+    permission_classes = [IsManagerOrAdmin]
     def perform(self, booking, request, data):
         booking = booking_service.cancel_booking(
             booking, reason=data.get("reason", ""), by_user=request.user, staff=True, request=request

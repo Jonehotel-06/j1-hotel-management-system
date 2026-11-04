@@ -180,9 +180,8 @@ class AdminBookingCreateSerializer(serializers.Serializer):
     # People staying in the additional rooms (same contract as the public
     # booking form). Optional and only meaningful when rooms > 1.
     room_guests = RoomGuestInputSerializer(many=True, required=False, default=list)
-    # Optional exact physical room ("Room 203") the receptionist promised.
-    # Advisory: availability is re-verified server-side and an equivalent room
-    # of the same type may be assigned instead (reported as room_substitution).
+    # Exact physical room promised by staff. Walk-in selections cannot be substituted.
+    # Optional for legacy API clients and ordinary phone reservations.
     room_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
 
     def validate_room_type(self, value):

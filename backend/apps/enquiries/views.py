@@ -153,7 +153,7 @@ class _CancellationActionView(APIView):
             "related_booking", "related_booking__guest", "related_booking__room_type",
             "related_payment", "processed_by",
         ).prefetch_related("refunds").get(pk=enquiry.pk)
-        return success_response(EnquiryAdminSerializer(enquiry).data, message=self.success_message)
+        return success_response(EnquiryAdminSerializer(enquiry, context={"request": request}).data, message=self.success_message)
 
 
 @extend_schema(tags=["Admin · Enquiries"], summary="Mark a cancellation request under review")
@@ -169,6 +169,7 @@ class CancellationReviewView(_CancellationActionView):
 
 @extend_schema(tags=["Admin · Enquiries"], summary="Approve a cancellation request and cancel its booking")
 class CancellationApproveView(_CancellationActionView):
+    permission_classes = [IsManagerOrAdmin]
     success_message = "Cancellation approved and booking cancelled. Refund is not complete until provider confirmation."
 
     def perform(self, pk, request, data):
@@ -186,6 +187,7 @@ class CancellationApproveView(_CancellationActionView):
 
 @extend_schema(tags=["Admin · Enquiries"], summary="Reject a cancellation request")
 class CancellationRejectView(_CancellationActionView):
+    permission_classes = [IsManagerOrAdmin]
     success_message = "Cancellation request rejected."
 
     def perform(self, pk, request, data):
@@ -246,7 +248,7 @@ class CancellationProcessRefundView(APIView):
                     "paystack_refund_reference": refund.paystack_refund_reference,
                     "paystack_transaction_reference": refund.paystack_transaction_reference,
                 },
-                "cancellation_request": EnquiryAdminSerializer(enquiry).data,
+                "cancellation_request": EnquiryAdminSerializer(enquiry, context={"request": request}).data,
             },
             message="Refund request submitted. Awaiting Paystack confirmation.",
             status=status.HTTP_202_ACCEPTED,

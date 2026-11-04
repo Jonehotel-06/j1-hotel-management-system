@@ -199,7 +199,9 @@ test("portal integrates the cart and displays order status without storing porta
   assert.match(page, /JONE\.portalOrder\.mount/);
   assert.match(page, /cart\.add\(item\)/);
   assert.match(page, /orderDetailHtml\(request\.pos_order\)/);
-  assert.match(page, /row\.pos_order\.can_cancel/);
+  assert.match(page, /row\.can_confirm_delivery/);
+  assert.match(page, /confirm-delivery/);
+  assert.doesNotMatch(page, /data-portal-request-cancel/);
   assert.doesNotMatch(script, /localStorage|sessionStorage|document\.cookie/);
   assert.doesNotMatch(script, /\/api\/|localhost|127\.0\.0\.1/);
 });

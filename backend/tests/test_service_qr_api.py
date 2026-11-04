@@ -150,7 +150,9 @@ class ServiceQRApiTests(BaseAPITestCase):
         claimed = self.client.post(
             f"/api/admin/service-requests/{service_request.reference}/claim/", {}, format="json"
         )
-        self.assertEqual(claimed.status_code, 200, claimed.content)
+        self.assertEqual(claimed.status_code, 400, claimed.content)
+        from apps.guest_services.services.request_service import assign_service_request
+        assign_service_request(service_request=service_request, actor=self.manager, assigned_to=self.waiter)
         updated = self.client.post(
             f"/api/admin/service-requests/{service_request.reference}/status/",
             {"status": "ACKNOWLEDGED", "note": "A server is on the way."},

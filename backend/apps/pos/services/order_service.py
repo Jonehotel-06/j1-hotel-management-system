@@ -581,8 +581,12 @@ def create_order(
 
     if mode == PosOrder.Mode.BAR:
         service_areas = {MenuCategory.ServiceArea.BAR}
-    elif mode == PosOrder.Mode.ROOM_SERVICE:
+    elif mode in {PosOrder.Mode.ROOM_SERVICE, PosOrder.Mode.TAKEAWAY}:
         service_areas = {MenuCategory.ServiceArea.RESTAURANT, MenuCategory.ServiceArea.BAR}
+        if mode == PosOrder.Mode.TAKEAWAY and actor is not None:
+            from apps.accounts.capabilities import has_capability
+            if not (has_capability(actor, "pos.order.manage") or has_capability(actor, "bar.order.manage")):
+                service_areas.discard(MenuCategory.ServiceArea.BAR)
     else:
         service_areas = {MenuCategory.ServiceArea.RESTAURANT}
     # Lock every menu item in a stable order before snapshotting lines. This
@@ -730,15 +734,16 @@ def _sync_portal_request(request, order, actor, target):
     elif target in {PosOrder.Status.PREPARING, PosOrder.Status.READY} and previous in {
         ServiceRequest.Status.OPEN, ServiceRequest.Status.ACKNOWLEDGED, ServiceRequest.Status.ESCALATED,
     }:
-        next_status = ServiceRequest.Status.IN_PROGRESS
+        next_status = ServiceRequest.Status.ACKNOWLEDGED
     elif target == PosOrder.Status.DELIVERED and previous not in {
         ServiceRequest.Status.RESOLVED, ServiceRequest.Status.CLOSED, ServiceRequest.Status.CANCELLED,
     }:
-        next_status = ServiceRequest.Status.RESOLVED
+        # Physical fulfilment is NOT the guest's receipt confirmation.
+        next_status = ServiceRequest.Status.ACKNOWLEDGED
     elif target == PosOrder.Status.CANCELLED and previous not in {
         ServiceRequest.Status.RESOLVED, ServiceRequest.Status.CLOSED, ServiceRequest.Status.CANCELLED,
     }:
-        next_status = ServiceRequest.Status.CANCELLED
+        next_status = ServiceRequest.Status.CLOSED
     if next_status is None:
         return
     now = timezone.now()
@@ -750,7 +755,7 @@ def _sync_portal_request(request, order, actor, target):
     elif next_status == ServiceRequest.Status.RESOLVED:
         request.resolved_at = now
         fields.append("resolved_at")
-    elif next_status == ServiceRequest.Status.CANCELLED:
+    elif next_status in {ServiceRequest.Status.CANCELLED, ServiceRequest.Status.CLOSED}:
         request.closed_at = now
         fields.append("closed_at")
     request.save(update_fields=fields)
@@ -804,7 +809,8 @@ def submit_order(*, order, actor, priority=0) -> PosOrder:
     order.status = PosOrder.Status.SUBMITTED
     order.submitted_at = now
     order.save(update_fields=["status", "submitted_at", "updated_at"])
-    station = KitchenTicket.Station.BAR if order.mode == PosOrder.Mode.BAR else KitchenTicket.Station.KITCHEN
+    areas = set(order.lines.values_list("menu_item__category__service_area", flat=True))
+    station = KitchenTicket.Station.BAR if order.mode == PosOrder.Mode.BAR or areas == {MenuCategory.ServiceArea.BAR} else KitchenTicket.Station.KITCHEN
     KitchenTicket.objects.create(order=order, station=station, priority=max(0, int(priority or 0)), notes=order.notes)
     PosOrderEvent.objects.create(order=order, type=PosOrderEvent.Type.SUBMITTED, actor=actor)
     _sync_portal_request(portal_request, order, actor, PosOrder.Status.SUBMITTED)
@@ -928,6 +934,8 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
     target_status = str(target_status or "").upper()
     _lock_portal_stay_before_order(order, require_active=target_status != PosOrder.Status.CANCELLED)
     order = PosOrder.objects.select_for_update().get(pk=order.pk)
+    if getattr(actor, "role", None) == "RECEPTIONIST" and (order.service_request_id or order.mode == PosOrder.Mode.ROOM_SERVICE):
+        raise PermissionDenied("Receptionists cannot fulfil or confirm guest food/drink orders.")
     if target_status == order.status:
         return order
     allowed = {

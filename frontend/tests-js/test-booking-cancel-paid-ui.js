@@ -5,10 +5,10 @@
    the reason on hover, and the money route becomes the cancellation / refund
    workflow in Enquiries (which records the refund against the payment).
 
-   What is NOT changed: the booking-cancel capability itself, the confirm dialog,
-   and the API call it makes (API.staffCancelBooking). Only the paid case changes.
-
-   The backend authority is untouched — this proves the screen the desk sees.
+   Latest role repair: only management sees direct cancellation. These tests
+   preserve the paid-booking safeguards for authorized managers and verify the
+   control is absent for receptionists. API/service authorization is tested in
+   backend tests.test_latest_control_repairs.
 
    Run from /frontend: node --test tests-js/test-booking-cancel-paid-ui.js */
 "use strict";
@@ -48,10 +48,11 @@ function cancelStub() {
   return el;
 }
 
-function runSync(booking) {
+function runSync(booking, management = true) {
   const cancel = cancelStub();
   const ctx = {
     book: booking,
+    window: { Auth: { hasAnyRole: () => management } },
     document: { querySelector: (sel) => (sel === "[data-bd-cancel]" ? cancel : null) },
     JONE: { formatNaira: (n) => "NGN " + Number(n).toLocaleString("en-NG", { minimumFractionDigits: 2 }) },
   };
@@ -77,7 +78,7 @@ test("the direct cancel is kept, but closed once money is recorded", () => {
 
 test("the terminal booking statuses still hide the cancel entirely", () => {
   assert.match(SYNC_ACTIONS,
-    /\(st==="CANCELLED"\|\|st==="CHECKED_OUT"\|\|st==="EXPIRED"\|\|st==="NO_SHOW"\) \? "none" : ""/);
+    /st==="CANCELLED"\|\|st==="CHECKED_OUT"\|\|st==="EXPIRED"\|\|st==="NO_SHOW"\) \? "none" : ""/);
 });
 
 test("a disabled cancel explains itself instead of doing nothing", () => {
@@ -125,4 +126,9 @@ test("recording a payment closes the control immediately; a refunded booking sta
 test("a checked-out booking hides the control and never leaves a stale reason", () => {
   const cancel = runSync({ status: "CHECKED_OUT", amount_paid: 2500, payment_status: "PAID" });
   assert.equal(cancel.style.display, "none");
+});
+
+test("receptionists never see direct booking cancellation, even when unpaid", () => {
+  const cancel = runSync({status:"CONFIRMED",amount_paid:0,payment_status:"UNPAID"}, false);
+  assert.equal(cancel.style.display,"none");
 });

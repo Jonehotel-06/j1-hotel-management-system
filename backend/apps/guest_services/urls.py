@@ -37,4 +37,5 @@ portal_urlpatterns = [
     path("<str:reference>/", views.PortalServiceRequestDetailView.as_view(), name="portal-request-detail"),
     path("<str:reference>/comments/", views.PortalServiceRequestCommentView.as_view(), name="portal-request-comments"),
     path("<str:reference>/cancel/", views.PortalServiceRequestCancelView.as_view(), name="portal-request-cancel"),
+    path("<str:reference>/confirm-delivery/", views.PortalServiceRequestConfirmDeliveryView.as_view(), name="portal-request-confirm-delivery"),
 ]

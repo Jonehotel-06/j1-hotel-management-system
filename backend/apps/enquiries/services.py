@@ -14,7 +14,8 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+from apps.core.permissions import MANAGER_ROLES
 
 from apps.audit.services import log_action
 from apps.bookings.models import Booking
@@ -361,9 +362,23 @@ def _latest_refundable_payment(booking, requested_reference=""):
     )
 
 
+def _require_cancellation_manager(user):
+    if not user or not user.is_active or user.role not in MANAGER_ROLES:
+        raise PermissionDenied("Only authorized management may decide cancellation requests.")
+
+
+def _require_pending_decision(enquiry):
+    if enquiry.cancellation_status not in {
+        Enquiry.CancellationStatus.NEW, Enquiry.CancellationStatus.UNDER_REVIEW,
+    }:
+        raise ValidationError("This cancellation request has already been decided.")
+
+
 @transaction.atomic
 def approve_cancellation(enquiry_id, *, staff_user, notes="", resolution="", request=None):
+    _require_cancellation_manager(staff_user)
     enquiry = _require_cancellation_enquiry(enquiry_id)
+    _require_pending_decision(enquiry)
     booking = enquiry.related_booking
     if booking is None:
         raise ValidationError({"booking_reference": ["No local booking could be resolved for this request."]})
@@ -488,7 +503,11 @@ def _queue_cancellation_approved_email(enquiry, booking, policy, payment):
 
 @transaction.atomic
 def reject_cancellation(enquiry_id, *, staff_user, notes="", resolution="", request=None):
+    _require_cancellation_manager(staff_user)
+    if not str(resolution or notes or "").strip():
+        raise ValidationError({"resolution": ["Provide the reason for rejecting this cancellation request."]})
     enquiry = _require_cancellation_enquiry(enquiry_id)
+    _require_pending_decision(enquiry)
     previous = enquiry.cancellation_status
     enquiry.cancellation_status = Enquiry.CancellationStatus.REJECTED
     enquiry.status = Enquiry.Status.RESOLVED

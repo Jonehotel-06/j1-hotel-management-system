@@ -2,7 +2,7 @@
 from django.db.models import Prefetch, Q
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.views import APIView
 
 from apps.accounts.capabilities import has_capability
@@ -517,6 +517,19 @@ class AttendanceRecordListView(APIView):
             queryset = queryset.filter(staff_id=staff_id)
         if status_value := request.query_params.get("status"): queryset = queryset.filter(status=status_value)
         if business_date := request.query_params.get("business_date"): queryset = queryset.filter(business_date=business_date)
+        for param, lookup in (("date_from", "business_date__gte"), ("date_to", "business_date__lte")):
+            if value := request.query_params.get(param):
+                try:
+                    from datetime import date
+                    parsed = date.fromisoformat(value)
+                except (ValueError, TypeError):
+                    raise ValidationError({param: "Use YYYY-MM-DD."})
+                queryset = queryset.filter(**{lookup: parsed})
+        if search := request.query_params.get("search", "").strip():
+            queryset = queryset.filter(
+                Q(staff__first_name__icontains=search) | Q(staff__last_name__icontains=search)
+                | Q(staff__email__icontains=search) | Q(reference__icontains=search)
+            )
         # Item F: the personal clock controls ask for the caller's OPEN record
         # explicitly (open=true). The Clock in control is then disabled from the
         # server's own state — including a record opened at the terminal by a

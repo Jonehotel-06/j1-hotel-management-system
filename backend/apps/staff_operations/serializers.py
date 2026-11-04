@@ -447,6 +447,18 @@ class AttendanceEventSerializer(serializers.ModelSerializer):
 
 
 class AttendanceRecordListSerializer(serializers.ModelSerializer):
+    arrival_classification = serializers.SerializerMethodField()
+    late_minutes = serializers.SerializerMethodField()
+
+    def get_late_minutes(self, obj):
+        if not obj.shift_id or not obj.shift.planned_start_at:
+            return None
+        return max(0, int((obj.clock_in_at - obj.shift.planned_start_at).total_seconds() // 60))
+
+    def get_arrival_classification(self, obj):
+        minutes = self.get_late_minutes(obj)
+        return "UNSCHEDULED" if minutes is None else "LATE" if minutes > 0 else "ON_TIME"
+
     staff_email = serializers.EmailField(source="staff.email", read_only=True)
     staff_name = serializers.CharField(source="staff.full_name", read_only=True)
     shift_reference = serializers.CharField(source="shift.reference", read_only=True, allow_null=True)
@@ -454,7 +466,7 @@ class AttendanceRecordListSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendanceRecord
         fields = [
-            "reference", "staff", "staff_email", "staff_name", "shift_reference", "business_date", "status",
+            "reference", "staff", "staff_email", "staff_name", "shift_reference", "business_date", "status", "arrival_classification", "late_minutes",
             "clock_in_at", "clock_out_at", "active_break_started_at", "accumulated_break_minutes", "worked_minutes", "last_event_at",
         ]
         read_only_fields = fields

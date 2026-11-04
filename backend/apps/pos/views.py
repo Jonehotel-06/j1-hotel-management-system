@@ -406,7 +406,7 @@ class PosBarcodeLookupView(APIView):
             _ensure_order_mode(request.user, mode)
             if mode == PosOrder.Mode.BAR:
                 service_areas = {MenuCategory.ServiceArea.BAR}
-            elif mode == PosOrder.Mode.ROOM_SERVICE:
+            elif mode in {PosOrder.Mode.ROOM_SERVICE, PosOrder.Mode.TAKEAWAY}:
                 service_areas = {MenuCategory.ServiceArea.RESTAURANT, MenuCategory.ServiceArea.BAR}
             else:
                 service_areas = {MenuCategory.ServiceArea.RESTAURANT}

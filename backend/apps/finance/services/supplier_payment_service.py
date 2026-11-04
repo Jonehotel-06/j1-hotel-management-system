@@ -232,38 +232,28 @@ def submit_supplier_payment(*, request: SupplierPaymentRequest, actor) -> Suppli
         raise ValidationError("The payable balance changed. Cancel this request and propose it again.")
 
     policy = active_control_policy()
-    requires_review = requires_manager_approval(
-        request_type=ApprovalRequest.Type.SUPPLIER_PAYMENT, amount=request.amount, policy=policy,
+    # Supplier disbursements always require the existing independent management
+    # review, including amounts below the configured expense threshold.
+    approval, _ = request_approval(
+        request_type=ApprovalRequest.Type.SUPPLIER_PAYMENT,
+        amount=request.amount,
+        requester=actor,
+        request_key=f"supplier-payment:{request.reference}",
+        source_reference=expense.reference,
+        currency=request.currency,
+        reason=f"Supplier payment for {expense.reference} ({expense.payee or expense.category})",
+        metadata={
+            "supplier_payment_request": request.reference,
+            "expense_reference": expense.reference,
+            "method": request.method,
+            "payment_reference": request.payment_reference,
+        },
+        policy=policy,
+        force_review=True,
     )
-    if requires_review:
-        approval, _ = request_approval(
-            request_type=ApprovalRequest.Type.SUPPLIER_PAYMENT,
-            amount=request.amount,
-            requester=actor,
-            request_key=f"supplier-payment:{request.reference}",
-            source_reference=expense.reference,
-            currency=request.currency,
-            reason=f"Supplier payment for {expense.reference} ({expense.payee or expense.category})",
-            metadata={
-                "supplier_payment_request": request.reference,
-                "expense_reference": expense.reference,
-                "method": request.method,
-                "payment_reference": request.payment_reference,
-            },
-            policy=policy,
-        )
-        request.approval_request = approval
-        request.status = SupplierPaymentRequest.Status.SUBMITTED
-        request.save(update_fields=["approval_request", "status", "updated_at"])
-    else:
-        # Below the configured threshold the hotel's policy needs no second
-        # signature, exactly as it does for an expense submission. The request
-        # still moves through APPROVED so the audit trail has one shape.
-        request.status = SupplierPaymentRequest.Status.APPROVED
-        request.reviewed_by = actor
-        request.reviewed_at = timezone.now()
-        request.review_note = "Auto-approved under the active finance control policy (below threshold)."
-        request.save(update_fields=["status", "reviewed_by", "reviewed_at", "review_note", "updated_at"])
+    request.approval_request = approval
+    request.status = SupplierPaymentRequest.Status.SUBMITTED
+    request.save(update_fields=["approval_request", "status", "updated_at"])
     return request
 
 

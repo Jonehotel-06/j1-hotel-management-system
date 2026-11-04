@@ -38,6 +38,9 @@ WHAT IT DELIBERATELY DOES NOT DO
 """
 from __future__ import annotations
 
+import hashlib
+import json
+
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable, Mapping
 
@@ -60,11 +63,10 @@ from ..models import PosOrder, PosOrderEvent, PosOrderReturn, PosOrderReturnLine
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")
 
-#: Order modes that may record an unopened-item return. The owner asked for the
-#: bar bottle workflow; a restaurant bottle of wine is the same physical event,
-#: so RESTAURANT is allowed too, while a room-service tray that has already been
-#: delivered to a guest room is not a bar-stock return.
-RETURNABLE_MODES = frozenset({PosOrder.Mode.BAR, PosOrder.Mode.RESTAURANT})
+# Direct sales and active guest-folio bottles share the same return evidence.
+# Room-service returns credit the open folio; guest-payment refunds remain a
+# separate controlled guest refund workflow, never an invented direct tender.
+RETURNABLE_MODES = frozenset({PosOrder.Mode.BAR, PosOrder.Mode.RESTAURANT, PosOrder.Mode.ROOM_SERVICE})
 #: Only a delivered/served order has physically consumed stock, so only a
 #: delivered order can have unopened items handed back.
 RETURNABLE_STATUSES = frozenset({PosOrder.Status.DELIVERED})
@@ -174,12 +176,9 @@ def return_preview(order) -> dict:
     if not isinstance(order, PosOrder):
         order = PosOrder.objects.get(pk=order.pk)
     already = returned_quantity_map(order)
-    returned_lines = {
-        row.order_line_id: row
-        for row in PosOrderReturnLine.objects.filter(return_record__order=order)
-    }
     already_amount_by_line: dict[int, Decimal] = {}
-    for line_id, row in returned_lines.items():
+    for row in PosOrderReturnLine.objects.filter(return_record__order=order):
+        line_id = row.order_line_id
         already_amount_by_line[line_id] = already_amount_by_line.get(line_id, ZERO) + _money(row.line_net_amount)
     paid = captured_total(order)
     lines = []
@@ -438,6 +437,25 @@ def _settle_refund(*, record, order, actor, method: str, cash_session=None, prov
     return financial_transaction
 
 
+def _return_request_fingerprint(*, lines, reason, notes, refund_method,
+                                cash_session, restock_location, received_by):
+    try:
+        normalized = sorted(
+            (int(row.get("order_line_id", row.get("line_id"))),
+             int(row.get("quantity_returned", row.get("quantity")))) for row in lines
+        )
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValidationError({"lines": "Each return line needs integer identifiers and quantities."}) from exc
+    payload = {
+        "lines": normalized, "reason": reason, "notes": notes,
+        "refund_method": str(refund_method or "").strip().upper(),
+        "cash_session": getattr(cash_session, "pk", None),
+        "restock_location": getattr(restock_location, "pk", None),
+        "received_by": str(received_by or "").strip()[:120],
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
 @transaction.atomic
 def record_unopened_return(
     *,
@@ -458,8 +476,9 @@ def record_unopened_return(
     Returns ``(return_record, created)``. A repeated request with the same
     ``idempotency_key`` returns the original record and changes nothing.
     """
-    if actor is None or not getattr(actor, "is_authenticated", False):
-        raise PermissionDenied("An authenticated staff member must record the return.")
+    from apps.accounts.capabilities import has_capability
+    if not has_capability(actor, "pos.return.record"):
+        raise PermissionDenied("This user cannot record unopened-item returns.")
     reason = str(reason or "").strip()
     if len(reason) > 255:
         raise ValidationError({"reason": "Keep the reason under 255 characters."})
@@ -469,6 +488,13 @@ def record_unopened_return(
     if refund_method not in PosOrderReturn.RefundMethod.values:
         raise ValidationError({"refund_method": "Choose a valid refund method."})
 
+    lines = list(lines or ())
+    request_fingerprint = _return_request_fingerprint(
+        lines=lines, reason=reason, notes=notes,
+        refund_method=refund_method, cash_session=cash_session, restock_location=restock_location, received_by=received_by,
+    )
+    from .order_service import _lock_portal_stay_before_order
+    _lock_portal_stay_before_order(order, require_active=False)
     order = (
         PosOrder.objects.select_for_update()
         .select_related("folio", "charge_transaction", "stay", "created_by")
@@ -481,8 +507,22 @@ def record_unopened_return(
                 raise ValidationError(
                     {"idempotency_key": "This key was already used for a different order's return."}
                 )
+            try:
+                requested = sorted((int(row.get("order_line_id", row.get("line_id"))), int(row.get("quantity_returned", row.get("quantity")))) for row in lines)
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise ValidationError({"lines": "Each return line needs integer identifiers and quantities."}) from exc
+            recorded = sorted(existing.lines.values_list("order_line_id", "quantity_returned"))
+            saved_fingerprint = (existing.metadata or {}).get("request_fingerprint")
+            if saved_fingerprint and saved_fingerprint != request_fingerprint:
+                raise ValidationError({"idempotency_key": "This key was already used for different return details."})
+            if requested != recorded or reason != existing.reason or notes != existing.notes:
+                raise ValidationError({"idempotency_key": "This key was already used for different return details."})
             return existing, False
     _validate_datestamp(order)
+    if order.mode == PosOrder.Mode.ROOM_SERVICE:
+        folio = Folio.objects.select_for_update().get(pk=order.folio_id)
+        if folio.status != Folio.Status.OPEN:
+            raise ValidationError("The guest folio is closed. Use the controlled guest refund workflow.")
 
     raw_lines = []
     for raw in lines or ():
@@ -548,6 +588,7 @@ def record_unopened_return(
         recorded_by=actor,
         received_by=str(received_by or "")[:120],
         metadata={
+            "request_fingerprint": request_fingerprint,
             "mode": order.mode,
             "settlement_status_before": order.settlement_status,
             "lines": [
@@ -660,13 +701,7 @@ def _route_refund(*, record, order, actor, refund_due: Decimal, refund_method: s
     from apps.accounts.capabilities import has_capability
 
     record.refund_method = refund_method or PosOrderReturn.RefundMethod.NONE
-    try:
-        approval_needed = requires_manager_approval(request_type="REFUND", amount=refund_due)
-    except ValidationError:
-        # No effective control policy configured in this database: fall back to
-        # the stricter reading and require the approval capability instead of
-        # silently paying money out.
-        approval_needed = True
+    approval_needed = requires_manager_approval(request_type="REFUND", amount=refund_due)
     if approval_needed:
         approval, _created = request_approval(
             request_type="REFUND",
@@ -719,6 +754,9 @@ def confirm_return_refund(
     an open drawer that actually holds the amount.
     """
     from apps.finance.models import ApprovalRequest
+    from apps.accounts.capabilities import has_capability
+    if not has_capability(actor, "pos.return.refund"):
+        raise PermissionDenied("This user cannot process return refunds.")
 
     record = PosOrderReturn.objects.select_for_update().select_related("order").get(pk=record.pk)
     if record.refund_status == PosOrderReturn.RefundStatus.COMPLETED:
@@ -726,7 +764,7 @@ def confirm_return_refund(
     order = PosOrder.objects.select_for_update().select_related("folio").get(pk=record.order_id)
     if _money(record.refund_due) <= ZERO:
         raise ValidationError("This return has no refundable balance.")
-    if record.approval_id and record.refund_status == PosOrderReturn.RefundStatus.AWAITING_APPROVAL:
+    if record.approval_id:
         approval = ApprovalRequest.objects.filter(pk=record.approval_id).first()
         if approval is None or approval.status != ApprovalRequest.Status.APPROVED:
             raise ValidationError(

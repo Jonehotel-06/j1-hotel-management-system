@@ -347,10 +347,17 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
                 "That room is not available for the selected dates. "
                 "Please choose another room."
             )
+        if is_staff and source == Booking.Source.WALK_IN and requested_room.status == Room.Status.OCCUPIED:
+            raise RoomUnavailableError("The selected physical room is occupied. Choose another room; no substitute was assigned.")
         if requested_room in free_rooms:
             # Happy path: the exact room the guest clicked is still free.
             free_rooms = [requested_room] + [r for r in free_rooms if r.pk != requested_room.pk]
         else:
+            if is_staff and source == Booking.Source.WALK_IN:
+                raise RoomUnavailableError(
+                    f"Room {requested_room.room_number} is no longer available for the selected dates. "
+                    "Choose another physical room; no substitute was assigned."
+                )
             substitute = availability.find_substitute_room(
                 room_type=room_type,
                 check_in=check_in,
@@ -827,6 +834,10 @@ def cancel_booking(
             "Online self-cancellation is no longer available. Please submit a Cancellation / Refund Request from the Contact page."
         )
 
+    from django.core.exceptions import PermissionDenied
+    from apps.core.permissions import MANAGER_ROLES
+    if not by_user or not by_user.is_active or by_user.role not in MANAGER_ROLES:
+        raise PermissionDenied("Only authorized management may cancel a reservation; receptionists may submit a request.")
     booking = Booking.objects.select_for_update().select_related("guest", "guest__user", "room_type").get(pk=booking.pk)
     booking = refresh_expired_pending(booking)
     if booking.status == Booking.Status.CANCELLED:

@@ -440,7 +440,7 @@
       else checkin.style.display="none";
     }
     if(cancel){
-      cancel.style.display = (st==="CANCELLED"||st==="CHECKED_OUT"||st==="EXPIRED"||st==="NO_SHOW") ? "none" : "";
+      cancel.style.display = (!(window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager","general_manager"]))||st==="CANCELLED"||st==="CHECKED_OUT"||st==="EXPIRED"||st==="NO_SHOW") ? "none" : "";
       /* Reported: a booking that has already taken the guest's money still
          offered a plain "Cancel". Cancelling it would leave recorded money with
          nothing to refund against, so the control is no longer usable once a

@@ -39,7 +39,12 @@ def active_control_policy(*, on_date: date | None = None) -> FinancialControlPol
         .first()
     )
     if policy is None:
-        raise ValidationError("No active financial control policy is configured.")
+        raise ValidationError(
+            "No active financial control policy is configured. An authorized administrator "
+            "must review Finance control policies, activation and effective dates. "
+            "For an empty policy table only, run initialize_financial_policy or apply "
+            "finance migration 0022. No money has been released."
+        )
     return policy
 
 
@@ -54,7 +59,10 @@ def approval_threshold(policy: FinancialControlPolicy, request_type: str) -> Dec
 def requires_manager_approval(*, request_type: str, amount, policy=None) -> bool:
     """Return true when a positive sensitive amount meets its policy threshold."""
     policy = policy or active_control_policy()
-    amount = Decimal(str(amount)).quantize(Decimal("0.01"))
+    amount = Decimal(str(amount))
+    if not amount.is_finite():
+        raise ValidationError("A sensitive monetary amount must be finite.")
+    amount = amount.quantize(Decimal("0.01"))
     if amount <= Decimal("0.00"):
         raise ValidationError("A sensitive monetary action must have a positive amount.")
     return amount >= approval_threshold(policy, request_type)
@@ -102,6 +110,8 @@ def request_approval(
 
     policy = policy or active_control_policy()
     amount = Decimal(str(amount)).quantize(Decimal("0.01"))
+    if not amount.is_finite() or amount <= Decimal("0.00"):
+        raise ValidationError("A sensitive monetary action must have a finite positive amount.")
     if not force_review and not requires_manager_approval(request_type=request_type, amount=amount, policy=policy):
         raise ValidationError("This action is below the configured manager-approval threshold.")
     approval = ApprovalRequest.objects.create(

@@ -117,6 +117,18 @@ class ServiceRequestDetailSerializer(ServiceRequestListSerializer):
 
 
 class PortalServiceRequestListSerializer(serializers.ModelSerializer):
+    delivery_confirmed_at = serializers.SerializerMethodField()
+    can_confirm_delivery = serializers.SerializerMethodField()
+
+    def get_delivery_confirmed_at(self, obj):
+        return (obj.metadata.get("guest_delivery_confirmation") or {}).get("confirmed_at")
+
+    def get_can_confirm_delivery(self, obj):
+        if self.get_delivery_confirmed_at(obj) or obj.status in {"CLOSED", "CANCELLED"}:
+            return False
+        order = getattr(obj, "pos_order", None)
+        return order.status == "DELIVERED" if order else obj.status == "ACKNOWLEDGED"
+
     # The portal may show only the guest-facing snapshot, never SKUs, stock
     # components, internal notes, or financial transaction identifiers.
     pos_order = serializers.SerializerMethodField()
@@ -128,6 +140,7 @@ class PortalServiceRequestListSerializer(serializers.ModelSerializer):
         fields = [
             "reference", "stay_reference", "room_number", "category", "priority", "status", "summary",
             "due_at", "acknowledged_at", "resolved_at", "closed_at", "created_at", "updated_at", "pos_order",
+            "delivery_confirmed_at", "can_confirm_delivery",
         ]
         read_only_fields = fields
 

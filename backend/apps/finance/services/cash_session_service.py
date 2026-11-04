@@ -180,9 +180,11 @@ def close_cash_session(*, cash_session, cashier, counted_cash, notes="") -> Cash
         raise ValidationError(f"Cash session cannot close from {session.status}.")
     counted_cash = _amount(counted_cash)
     variance = (counted_cash - session.expected_cash).quantize(CENT)
-    policy = active_control_policy()
-    threshold = Decimal(policy.cash_variance_manager_approval_threshold).quantize(CENT)
-    needs_review = abs(variance) >= threshold if threshold > Decimal("0.00") else variance != Decimal("0.00")
+    needs_review = False
+    if variance != Decimal("0.00"):
+        policy = active_control_policy()
+        threshold = Decimal(policy.cash_variance_manager_approval_threshold).quantize(CENT)
+        needs_review = abs(variance) >= threshold if threshold > Decimal("0.00") else True
     session.counted_cash = counted_cash
     session.variance = variance
     session.closed_at = timezone.now()

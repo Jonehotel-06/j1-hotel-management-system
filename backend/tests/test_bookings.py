@@ -1,3 +1,4 @@
+from apps.accounts.models import User
 # tests/test_bookings.py
 """BOOKING ENGINE tests: creation, double-booking protection, validation,
 cancellation, expiration, guest record isolation (IDOR)."""
@@ -92,7 +93,7 @@ class BookingFlowTests(BaseAPITestCase):
     def test_double_booking_allowed_after_staff_cancellation(self):
         first = self._create(rooms=2)
         reference = first.json()["data"]["booking_reference"]
-        staff = make_staff("cancel-desk@staff.dev")
+        staff = make_staff("cancel-manager@staff.dev", role=User.Role.GENERAL_MANAGER)
         self.auth(staff)
         cancel = self.client.post(f"/api/admin/bookings/{reference}/cancel/", {"reason": "Changed plans"})
         self.assertEqual(cancel.status_code, 200, cancel.json())

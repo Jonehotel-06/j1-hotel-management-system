@@ -247,6 +247,7 @@
   async function action(name){
     if(!current||!current.id) return; clearErr();
     var notes=document.getElementById("enq-notes").value;
+    if(name==="reject_cancellation"&&!String(notes||"").trim()){ showErr("Enter the reason for rejecting this cancellation request in Notes."); return; }
     var payload={ notes:notes, resolution:notes };
     var warning="";
     if(name==="approve_cancellation") warning="Approve this request and cancel the linked booking? Refunds are separate and must be processed only when due.";

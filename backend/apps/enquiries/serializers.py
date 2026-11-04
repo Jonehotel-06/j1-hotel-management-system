@@ -254,13 +254,17 @@ class EnquiryAdminSerializer(serializers.ModelSerializer):
     def get_actions(self, obj) -> list[str]:
         if obj.enquiry_type != Enquiry.EnquiryType.CANCELLATION:
             return []
+        from apps.core.permissions import MANAGER_ROLES
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        manager = bool(user and user.is_active and user.role in MANAGER_ROLES)
         actions = []
         if obj.cancellation_status == Enquiry.CancellationStatus.NEW:
             actions.append("review")
-        if obj.cancellation_status in (Enquiry.CancellationStatus.NEW, Enquiry.CancellationStatus.UNDER_REVIEW):
+        if manager and obj.cancellation_status in (Enquiry.CancellationStatus.NEW, Enquiry.CancellationStatus.UNDER_REVIEW):
             actions.extend(["approve_cancellation", "reject_cancellation"])
         if (
-            obj.cancellation_status in (Enquiry.CancellationStatus.CANCELLED, Enquiry.CancellationStatus.REFUND_FAILED)
+            manager and obj.cancellation_status in (Enquiry.CancellationStatus.CANCELLED, Enquiry.CancellationStatus.REFUND_FAILED)
             and obj.refund_status in (Enquiry.RefundStatus.DUE, Enquiry.RefundStatus.FAILED, Enquiry.RefundStatus.NEEDS_ATTENTION)
             and obj.related_payment_id
         ):
