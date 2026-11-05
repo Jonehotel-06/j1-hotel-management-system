@@ -345,8 +345,12 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
   function canRecordReturns(){return hasCapability("pos.return.record",["admin","general_manager","waiter"]);}
   function canRefundReturns(){return hasCapability("pos.return.refund",["admin","general_manager","waiter"]);}
   function canTender(){return hasCapability("payment.capture",["admin","general_manager","accountant","receptionist","waiter"]);}
-  function canOpenCash(){return hasCapability("cash_session.open",["admin","general_manager","waiter","accountant"]);}
-  function canCloseCash(){return hasCapability("cash_session.close",["admin","general_manager","waiter","accountant"]);}
+  /* Drawer access must match who actually stands at the till: the front desk
+     opens and closes its own drawer exactly as a waiter does. Without these
+     roles a desk user saw no Open/Close controls at all before capabilities
+     finished loading. */
+  function canOpenCash(){return hasCapability("cash_session.open",["admin","general_manager","waiter","accountant","receptionist","front_desk_supervisor"]);}
+  function canCloseCash(){return hasCapability("cash_session.close",["admin","general_manager","waiter","accountant","receptionist","front_desk_supervisor"]);}
   function applyAccess(){
     var modes=allowedModes();
     var createMode=document.getElementById("pos-mode");
@@ -596,11 +600,11 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     var select=document.getElementById("pos-table-session"),target=document.querySelector("[data-pos-table-sessions]"),hint=document.querySelector("[data-pos-selected-session-hint]");
     var rows=state.tableSessions||[];
     if(state.selectedTableSession&&!rows.some(function(row){return row.reference===state.selectedTableSession;}))state.selectedTableSession=null;
-    if(select){select.innerHTML='<option value="">'+(rows.length?'Choose an open table session':'No open table sessions')+'</option>'+rows.map(function(session){return '<option value="'+JONE.esc(session.reference)+'">'+JONE.esc(session.table_code)+' · '+JONE.esc(session.covers)+' cover'+(session.covers===1?'':'s')+' · '+JONE.esc(session.order_count)+' order(s)</option>';}).join('');select.disabled=!rows.length;select.value=state.selectedTableSession||'';}
+    if(select){select.innerHTML='<option value="">'+(rows.length?'Choose an open table session':'No open table sessions')+'</option>'+rows.map(function(session){return '<option value="'+JONE.esc(session.reference)+'">'+JONE.esc(session.table_code)+' · '+JONE.esc(session.covers)+' cover'+(Number(session.covers||0)===1?'':'s')+' · '+Number(session.order_count||0)+' order(s)</option>';}).join('');select.disabled=!rows.length;select.value=state.selectedTableSession||'';}
     var selected=rows.find(function(row){return row.reference===state.selectedTableSession;});
     if(hint)hint.textContent=selected?'Selected '+selected.table_code+' · '+selected.covers+' cover(s). New restaurant orders will join this service session.':'Select an open session, or open a new one in Restaurant tables.';
     if(!target)return;
-    target.innerHTML=rows.length?rows.map(function(session){var selectedNow=session.reference===state.selectedTableSession;var detail=session.order_count+' order(s) · '+session.active_order_count+' in progress · '+session.unpaid_order_count+' unpaid · '+JONE.esc(money(session.total_ordered_amount,'NGN'))+' ordered';var transfer=hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter'])?'<button type="button" class="btn btn-sm btn-outline" data-pos-transfer-table-session="'+JONE.esc(session.reference)+'">Transfer table</button>':'';return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(session.table_code)+(session.table_name?' · '+JONE.esc(session.table_name):'')+'</strong><span class="badge">'+JONE.esc(session.covers)+' covers</span></div><p>'+JONE.esc(session.table_section||'Main dining')+' · opened '+JONE.esc(session.opened_at?JONE.formatDateTime(session.opened_at):'—')+'<br>'+JONE.esc(detail)+'</p><div class="pos-action-stack" style="margin-top:.55rem;"><button type="button" class="btn btn-sm '+(selectedNow?'':'btn-outline')+'" data-pos-select-table-session="'+JONE.esc(session.reference)+'">'+(selectedNow?'Selected for order':'Use this table')+'</button>'+transfer+'<button type="button" class="btn btn-sm btn-outline" data-pos-close-table-session="'+JONE.esc(session.reference)+'">Close session</button></div></div>';}).join(''):'<div class="empty-state"><h3>No open table sessions</h3><p>Choose a registered table and open a service session to begin dine-in orders.</p></div>';
+    target.innerHTML=rows.length?rows.map(function(session){var selectedNow=session.reference===state.selectedTableSession;var detail=Number(session.order_count||0)+' order(s) · '+Number(session.active_order_count||0)+' in progress · '+Number(session.unpaid_order_count||0)+' unpaid · '+JONE.esc(money(session.net_ordered_amount!=null?session.net_ordered_amount:session.total_ordered_amount,'NGN'))+' ordered';var transfer=hasCapability('restaurant.order.manage',['admin','manager','general_manager','restaurant_manager','waiter'])?'<button type="button" class="btn btn-sm btn-outline" data-pos-transfer-table-session="'+JONE.esc(session.reference)+'">Transfer table</button>':'';return '<div class="pos-ticket"><div class="pos-summary"><strong>'+JONE.esc(session.table_code)+(session.table_name?' · '+JONE.esc(session.table_name):'')+'</strong><span class="badge">'+JONE.esc(session.covers)+' covers</span></div><p>'+JONE.esc(session.table_section||'Main dining')+' · opened '+JONE.esc(session.opened_at?JONE.formatDateTime(session.opened_at):'—')+'<br>'+JONE.esc(detail)+'</p><div class="pos-action-stack" style="margin-top:.55rem;"><button type="button" class="btn btn-sm '+(selectedNow?'':'btn-outline')+'" data-pos-select-table-session="'+JONE.esc(session.reference)+'">'+(selectedNow?'Selected for order':'Use this table')+'</button>'+transfer+'<button type="button" class="btn btn-sm btn-outline" data-pos-close-table-session="'+JONE.esc(session.reference)+'">Close session</button></div></div>';}).join(''):'<div class="empty-state"><h3>No open table sessions</h3><p>Choose a registered table and open a service session to begin dine-in orders.</p></div>';
   }
   function selectRestaurantTableSession(reference){state.selectedTableSession=(state.tableSessions||[]).some(function(row){return row.reference===reference;})?reference:null;renderRestaurantSessions();}
   async function loadRestaurantTables(silent){
@@ -904,28 +908,39 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
     }catch(err){state.drawer=null;drawer.textContent=(err&&err.message)||"Drawer status could not be loaded.";document.querySelector("[data-pos-close-drawer]").disabled=true;var dropErr=document.querySelector("[data-pos-drop-cash]");if(dropErr)dropErr.disabled=true;}
   }
 
-  async function printThermalReceipt(reference){
-    if(!window.JONE||!JONE.ThermalReceipt){JONE.ui.toast("Thermal receipt module unavailable.","error");return;}
-    var orderRes;try{orderRes=await window.API.getOne("posOrders",reference);}catch(err){JONE.ui.toast((err&&err.message)||"Order could not be loaded.","error");return;}
-    var order=orderRes.data||{};
-    if(order.status!=="DELIVERED"||order.mode==="ROOM_SERVICE"||order.settlement_status!=="PAID") { JONE.ui.toast("A paid receipt is available only after the backend confirms full payment.","warning"); return; }
-    var widthResult=await JONE.dashboard.formModal({title:"Thermal receipt · "+JONE.esc(reference),submitText:"Print",fields:[{name:"width",label:"Paper width",type:"select",required:true,value:JONE.ThermalReceipt.getWidth(),options:[{value:"80",label:"80 mm thermal roll"},{value:"58",label:"58 mm thermal roll"}]}],onSubmit:async function(values){JONE.ThermalReceipt.setWidth(values.width);return{message:"Preparing receipt…"};}});
-    if(!widthResult)return;
-    var width=JONE.ThermalReceipt.getWidth();
-    // Re-read payment state after the modal: concurrent reversals must not
-    // leave a stale paid receipt action printable.
-    try{orderRes=await window.API.getOne("posOrders",reference);order=orderRes.data||{};}catch(err){JONE.ui.toast((err&&err.message)||"Payment status could not be confirmed.","error");return;}
-    if(order.status!=="DELIVERED"||order.mode==="ROOM_SERVICE"||order.settlement_status!=="PAID"){JONE.ui.toast("Payment is no longer confirmed; receipt printing was stopped.","warning");return;}
+  /* ======================================================================
+     THERMAL RECEIPT
+     One receipt for every way a POS order can be paid.
+
+     A direct sale is paid by captured tenders on the order itself. A ROOM
+     SERVICE order is never paid at the POS: its charge is posted to the
+     guest's folio and settled with the room. That used to make the receipt
+     button refuse room-service orders outright, so the one charge a guest most
+     often asks for a paper trail of could not be printed at all.
+
+     The decision of what may be printed comes FROM THE SERVER
+     (``payment_basis`` / ``receipt_printable`` / ``receipt_blocked_reason``),
+     derived from the frozen ledger evidence. The browser does not decide
+     whether money was received, and the receipt states the basis it was given
+     rather than inventing a payment method.
+     ====================================================================== */
+  function receiptBlockedMessage(reason){
+    return reason||"A paid receipt is available only after the backend confirms full payment.";
+  }
+  function thermalReceiptPayload(order,width){
     var capturedTenders=(order.tenders||[]).filter(function(t){return t.status==="CAPTURED";});
     var capturedAmount=capturedTenders.reduce(function(total,t){return total+Number(t.amount||0);},0);
-    if(!capturedTenders.length){JONE.ui.toast("No captured tender is recorded for this order; ask Finance to reconcile before printing.","error");return;}
-    var receiptBalance=tenderBalance(order);
-    if(capturedAmount+0.0001<receiptBalance.net||receiptBalance.outstanding>0){JONE.ui.toast("Captured payment records do not cover the charge now due ("+money(receiptBalance.net,receiptBalance.currency)+"); ask Finance to reconcile before printing.","error");return;}
-    var tender=capturedTenders[capturedTenders.length-1];
-    var receipt={
+    var isFolio=order.payment_basis==="ROOM_FOLIO";
+    var tender=capturedTenders[capturedTenders.length-1]||null;
+    var net=Number(order.net_total!=null?order.net_total:order.total_amount||0);
+    return {
       hotel:{name:"J-ONE HOTEL & LODGE",address:"Plot 566 Mgbowo Street, off Ezike Street, Enugu State",phone:"+234 803 211 2874"},
       reference:order.reference,
       issued_at:order.delivered_at||order.created_at||new Date().toISOString(),
+      /* A folio charge has no till cashier; say who served it instead of
+         attributing the charge to a cashier who took no money. */
+      staff_label:isFolio?"Served by":"Cashier",
+      staff_name:(order.created_by_name||"")||(order.created_by_display||""),
       cashier:(order.created_by_email||order.created_by||""),
       workstation:(window.APP_CONFIG&&window.APP_CONFIG.STORAGE&&window.APP_CONFIG.STORAGE.TERMINAL&&window.localStorage.getItem(window.APP_CONFIG.STORAGE.TERMINAL))||"",
       mode:order.mode,
@@ -933,24 +948,71 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
       subtotal:order.subtotal,
       discount:order.discount_amount||0,
       tax:order.tax_amount||0,
-      total:receiptBalance.net,
-      paid:capturedAmount,
-      change:Math.max(0,capturedAmount-receiptBalance.net),
-      balance_due:receiptBalance.outstanding,
-      payment_method:tender?tender.method:"",
-      payment_reference:tender?(tender.external_reference||""):""
+      total:net,
+      /* A folio charge is not paid by a tender at this till: show it as
+         charged to the room, not as "paid ₦0.00". */
+      paid:isFolio?net:capturedAmount,
+      change:isFolio?0:Math.max(0,capturedAmount-net),
+      balance_due:isFolio?0:Math.max(0,net-capturedAmount),
+      payment_method:isFolio?"Guest folio":(tender?label(tender.method):""),
+      payment_reference:isFolio?(order.folio_reference||""):(tender?(tender.external_reference||""):""),
+      settlement_basis:isFolio
+        ?("Room "+((order.delivery_location||"").replace(/^Room\s*/i,"")||"—")+" · charged to the folio")
+        :"Paid at the till",
+      note:isFolio
+        ?("Posted to folio "+(order.folio_reference||"—")+" and settled with the room. This is not a till receipt.")
+        :""
     };
-    JONE.ThermalReceipt.print(receipt,{width:width});
   }
+  async function printThermalReceipt(reference){
+    if(!window.JONE||!JONE.ThermalReceipt){JONE.ui.toast("Thermal receipt module unavailable.","error");return;}
+    var orderRes;
+    try{orderRes=await window.API.getOne("posOrders",reference);}
+    catch(err){JONE.ui.toast((err&&err.message)||"Order could not be loaded.","error");return;}
+    var order=orderRes.data||{};
+    if(!order.receipt_printable){JONE.ui.toast(receiptBlockedMessage(order.receipt_blocked_reason),"warning");return;}
+    var widthResult=await JONE.dashboard.formModal({title:"Thermal receipt · "+JONE.esc(reference),submitText:"Print",fields:[{name:"width",label:"Paper width",type:"select",required:true,value:JONE.ThermalReceipt.getWidth(),options:[{value:"80",label:"80 mm thermal roll"},{value:"58",label:"58 mm thermal roll"}]}],onSubmit:async function(values){JONE.ThermalReceipt.setWidth(values.width);return{message:"Preparing receipt…"};}});
+    if(!widthResult)return;
+    var width=JONE.ThermalReceipt.getWidth();
+    // Re-read after the modal: a concurrent return or reversal must never
+    // leave a stale paid receipt printable.
+    try{orderRes=await window.API.getOne("posOrders",reference);order=orderRes.data||{};}
+    catch(err){JONE.ui.toast((err&&err.message)||"Payment status could not be confirmed.","error");return;}
+    if(!order.receipt_printable){JONE.ui.toast(order.receipt_blocked_reason||"Payment is no longer confirmed; receipt printing was stopped.","warning");return;}
+    JONE.ThermalReceipt.print(thermalReceiptPayload(order,width),{width:width});
+  }
+  /* The order detail modal is also the "payment confirmed" moment: after a
+     tender is captured the operator lands here and must be able to hand the
+     guest a receipt without hunting for another screen. The Print action is
+     offered only when the SERVER says a paid receipt exists, and it prints
+     through the same 58 mm / 80 mm picker as every other receipt. */
   async function viewOrder(reference){
-    var body=JONE.el("div",{class:"loading-skeleton",textContent:"Loading order…"});JONE.ui.modal.open({title:"POS order "+reference,body:body,size:"modal-lg"});
+    var body=JONE.el("div",{class:"loading-skeleton",textContent:"Loading order…"});
+    var printBtn=JONE.el("button",{class:"btn btn-sm btn-outline",type:"button"});
+    printBtn.innerHTML='<span data-icon="printer" data-size="15"></span> Print receipt';
+    printBtn.hidden=true;
+    var footer=JONE.el("div",{},printBtn);
+    JONE.ui.modal.open({title:"POS order "+reference,body:body,size:"modal-lg",footer:footer});
+    printBtn.addEventListener("click",function(){ printThermalReceipt(reference); });
     try{
       var res=await window.API.getOne("posOrders",reference);var order=res.data||{};
       var lines=(order.lines||[]).map(function(line){return '<tr><td>'+JONE.esc(line.item_name)+'</td><td class="num">'+JONE.esc(line.quantity)+'</td><td class="num">'+JONE.esc(money(line.line_total,order.currency))+'</td></tr>';}).join('')||'<tr><td colspan="3">No lines</td></tr>';
       var events=(order.events||[]).map(function(event){return '<li><strong>'+JONE.esc(label(event.type))+'</strong> · '+JONE.esc(event.occurred_at?JONE.formatDateTime(event.occurred_at):"—")+(event.actor_email?' · '+JONE.esc(event.actor_email):'')+'</li>';}).join('')||'<li>No events recorded.</li>';
       var tenders=(order.tenders||[]).map(function(tender){return '<li>'+JONE.esc(label(tender.method))+' · '+JONE.esc(money(tender.amount,tender.currency))+' · '+JONE.esc(label(tender.status))+'</li>';}).join('')||'<li>No direct tenders recorded.</li>';
-      body.innerHTML='<dl class="profile-grid"><div><dt>Status</dt><dd>'+JONE.dashboard.statusPill(order.status)+'</dd></div><div><dt>Settlement</dt><dd>'+JONE.dashboard.statusPill(order.settlement_status)+'</dd></div><div><dt>Total</dt><dd>'+JONE.esc(money(order.total_amount,order.currency))+'</dd></div><div><dt>Table / session</dt><dd>'+JONE.esc(order.table_session_code||order.table_number||'—')+(order.table_session_reference?' · '+JONE.esc(order.table_session_reference):'')+'</dd></div><div><dt>Ledger charge</dt><dd>'+JONE.esc(order.charge_financial_reference||"Not posted")+'</dd></div></dl><h4 style="margin:1rem 0 .5rem;">Order lines</h4><div class="table-wrap"><table class="table"><thead><tr><th>Item</th><th>Qty</th><th>Total</th></tr></thead><tbody>'+lines+'</tbody></table></div><h4 style="margin:1rem 0 .5rem;">Tenders</h4><ul>'+tenders+'</ul><h4 style="margin:1rem 0 .5rem;">Timeline</h4><ul>'+events+'</ul>';
+      var basis=order.payment_basis==="ROOM_FOLIO"
+        ?'<p class="caption" data-pos-receipt-basis>Charged to folio '+JONE.esc(order.folio_reference||"—")+' · settled with the room.</p>'
+        :'';
+      body.innerHTML='<dl class="profile-grid"><div><dt>Status</dt><dd>'+JONE.dashboard.statusPill(order.status)+'</dd></div><div><dt>Settlement</dt><dd>'+JONE.dashboard.statusPill(order.settlement_status)+'</dd></div><div><dt>Total</dt><dd>'+JONE.esc(money(order.total_amount,order.currency))+'</dd></div><div><dt>Table / session</dt><dd>'+JONE.esc(order.table_session_code||order.table_number||'—')+(order.table_session_reference?' · '+JONE.esc(order.table_session_reference):'')+'</dd></div><div><dt>Ledger charge</dt><dd>'+JONE.esc(order.charge_financial_reference||"Not posted")+'</dd></div></dl>'+basis+'<h4 style="margin:1rem 0 .5rem;">Order lines</h4><div class="table-wrap"><table class="table"><thead><tr><th>Item</th><th>Qty</th><th>Total</th></tr></thead><tbody>'+lines+'</tbody></table></div><h4 style="margin:1rem 0 .5rem;">Tenders</h4><ul>'+tenders+'</ul><h4 style="margin:1rem 0 .5rem;">Timeline</h4><ul>'+events+'</ul>';
       JONE.icons.inject(body);
+      // The server decides; the button only reflects the answer. When it is
+      // blocked the reason is shown instead, so the operator knows what to fix.
+      if(order.receipt_printable){
+        printBtn.hidden=false;
+      }else{
+        printBtn.hidden=true;
+        var why=JONE.el("span",{class:"caption",textContent:receiptBlockedMessage(order.receipt_blocked_reason)});
+        footer.appendChild(why);
+      }
     }catch(err){body.innerHTML='<div class="empty-state"><h3>Order unavailable</h3><p>'+JONE.esc((err&&err.message)||"Please try again.")+'</p></div>';}
   }
   async function advanceOrder(reference,action,button,currentStatus){

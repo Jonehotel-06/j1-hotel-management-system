@@ -311,6 +311,19 @@
       );
     }
 
+    /* How the charge was settled. A room-service order is not paid at the till,
+       so a receipt that only says "Method: Guest folio" leaves the guest unsure
+       whether the hotel has actually been paid. Stating the basis makes the
+       document honest: a folio charge is settled with the room, and the note
+       below says it is not a till receipt. */
+    if (receipt.settlement_basis) {
+      wrapText("Settled: " + receipt.settlement_basis, chars).forEach(
+        function (line) {
+          lines.push(line);
+        }
+      );
+    }
+
     lines.push(rule(chars));
 
     /* Optional receipt-specific note (e.g. a gate-clearance statement). */

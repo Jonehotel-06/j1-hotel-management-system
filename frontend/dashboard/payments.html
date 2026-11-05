@@ -87,6 +87,17 @@
     </header>
     <main class="dash-content">
 
+<!-- The acting cashier's own drawer. Cash recorded from this screen must land
+     in an open session belonging to the person taking it, so the drawer has to
+     be openable here. -->
+<section class="panel" data-desk-cash-panel hidden>
+  <div class="panel-head">
+    <h2>Your cash drawer</h2>
+    <div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-desk-cash-refresh>Refresh</button></div>
+  </div>
+  <div class="panel-body" data-desk-cash-banner></div>
+</section>
+
 <section class="panel">
   <div class="filter-bar">
     <div class="field"><label class="field-label" for="p-q">Search</label><input class="input" id="p-q" placeholder="Reference, booking, guest"></div>
@@ -102,6 +113,11 @@
         <div class="field" style="min-width:200px;"><label class="field-label" for="rp-booking">Booking reference</label><input class="input" id="rp-booking" required placeholder="J1-…"></div>
         <div class="field" style="min-width:140px;"><label class="field-label" for="rp-amount">Amount (₦)</label><input class="input" id="rp-amount" type="number" min="100" step="0.01" required></div>
         <div class="field"><label class="field-label" for="rp-provider">Method</label><select class="select" id="rp-provider" required><option value="CASH">Cash</option><option value="POS">POS</option><option value="BANK_TRANSFER">Bank transfer</option></select></div>
+        <!-- Cash must name the drawer it went into; POS / transfer must name the
+             actual slip. Without these the server cannot apply the money to the
+             guest's folio charges, which is the whole point of the form. -->
+        <div class="field" id="rp-cash-field" style="min-width:210px;"><label class="field-label" for="rp-cash">Your cash session</label><input class="input" id="rp-cash" maxlength="64" autocomplete="off" data-desk-cash-prefill><small class="caption" data-desk-cash-hint></small></div>
+        <div class="field" id="rp-external-field" style="min-width:210px;" hidden><label class="field-label" for="rp-external">Terminal / bank reference</label><input class="input" id="rp-external" maxlength="160" autocomplete="off" placeholder="Slip number"></div>
         <div class="field" style="min-width:220px;"><label class="field-label" for="rp-notes">Notes</label><input class="input" id="rp-notes" placeholder="Optional"></div>
         <div class="field" style="align-self:flex-end;"><button class="btn btn-accent" type="submit">Record payment</button></div>
       </form>
@@ -275,6 +291,63 @@
     if(pre){ var el=document.getElementById("rp-booking"); if(el&&!el.value) el.value=pre; }
   })();
 
+  /* The desk's own drawer, and the cash / slip evidence the API requires.
+     ``idempotency_key`` is minted per attempt so a retry after a dropped
+     connection returns the payment already held instead of taking money twice. */
+  var DESK = window.JONE && window.JONE.dashboard && window.JONE.dashboard.deskCash;
+  var providerEl=document.getElementById("rp-provider");
+  var cashField=document.getElementById("rp-cash-field");
+  var cashEl=document.getElementById("rp-cash");
+  var externalField=document.getElementById("rp-external-field");
+  var externalEl=document.getElementById("rp-external");
+
+  /* Show only the evidence the chosen method needs, and fill the drawer from
+     the session the cashier actually has open rather than from typing. */
+  function syncEvidence(){
+    var isCash=!!providerEl&&providerEl.value==="CASH";
+    if(cashField) cashField.hidden=!isCash;
+    if(externalField) externalField.hidden=isCash;
+    if(isCash){
+      var session=DESK&&DESK.session&&DESK.session();
+      if(DESK&&cashEl) DESK.prefill(document);
+      var hint=document.querySelector("[data-desk-cash-hint]");
+      if(hint){
+        hint.textContent=session&&session.reference
+          ? "Your open drawer \u00b7 expected cash "+JONE.formatNaira(session.expected_cash||0)+"."
+          : "You have no open drawer. Open one in the panel above before taking cash.";
+      }
+    }
+  }
+  if(providerEl) providerEl.addEventListener("change",syncEvidence);
+
+  if(DESK){
+    (function mountDrawer(){
+      var panel=document.querySelector("[data-desk-cash-panel]");
+      var banner=document.querySelector("[data-desk-cash-banner]");
+      var refreshBtn=document.querySelector("[data-desk-cash-refresh]");
+      if(!panel||!banner) return;
+      var opts={note:"Cash recorded here is added to this drawer."};
+      function paint(){ DESK.renderBanner(banner,opts); syncEvidence(); }
+      function start(){
+        if(!DESK.canOpen()&&!DESK.canClose()){ panel.hidden=true; syncEvidence(); return; }
+        panel.hidden=false;
+        DESK.refresh().then(paint);
+        if(refreshBtn) refreshBtn.addEventListener("click",function(){ DESK.refresh().then(paint); });
+      }
+      if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){
+        window.Auth.loadCapabilities().then(start).catch(start);
+      } else start();
+    })();
+  }
+  syncEvidence();
+
+  function newIdempotencyKey(){
+    try{
+      if(window.crypto&&typeof window.crypto.randomUUID==="function") return "desk-"+window.crypto.randomUUID();
+    }catch(_){}
+    return "desk-"+Date.now()+"-"+Math.random().toString(36).slice(2,10);
+  }
+
   // Record an offline payment — POST /api/admin/payments/record/ (verified).
   // Success toast only AFTER the backend confirms.
   var form=document.getElementById("record-payment-form");
@@ -285,15 +358,41 @@
     if(!form.checkValidity()){ form.reportValidity(); return; }
     var btn=form.querySelector("[type=submit]");
     if(!JONE.guardSubmit(btn)) return;
+    var provider=providerEl?providerEl.value:"CASH";
+    var drawer=cashEl?cashEl.value.trim():"";
+    var slip=externalEl?externalEl.value.trim():"";
+    function fail(msg){
+      if(errBox){ errBox.textContent=msg; errBox.style.display="block"; }
+      JONE.ui.toast(msg,"error");
+      JONE.releaseGuard(btn);
+    }
+    if(provider==="CASH"&&!drawer){ return fail("Cash must go into your own open drawer. Open one in \u201CYour cash drawer\u201D above."); }
+    if(provider!=="CASH"&&!slip){ return fail("Enter the terminal or bank reference printed on the slip."); }
     try{
-      await window.API.recordPayment({
+      var result=await window.API.recordPayment({
         booking_reference: document.getElementById("rp-booking").value.trim(),
         amount: String(document.getElementById("rp-amount").value),
-        provider: document.getElementById("rp-provider").value,
-        notes: document.getElementById("rp-notes").value.trim()
+        provider: provider,
+        notes: document.getElementById("rp-notes").value.trim(),
+        cash_session_reference: provider==="CASH"?drawer:"",
+        external_reference: provider==="CASH"?"":slip,
+        include_unbilled: true,
+        idempotency_key: newIdempotencyKey()
       });
-      JONE.ui.toast("Payment recorded.","success");
+      var data=(result&&result.data)||{};
+      var folio=data.folio||{};
+      // A replay means the money was already in the ledger: say so plainly
+      // instead of telling the cashier a second payment was taken.
+      JONE.ui.toast(data.replayed?"This payment was already recorded \u2014 nothing was added twice.":"Payment recorded.","success");
+      if(folio&&Object.keys(folio).length){
+        var remaining=Number(folio.outstanding_balance||0);
+        JONE.ui.toast(remaining>0
+          ? "Still owed on this folio: "+JONE.formatNaira(remaining)+"."
+          : "This guest's folio is now fully settled.",
+          remaining>0?"info":"success");
+      }
       form.reset();
+      if(DESK) DESK.refresh().then(syncEvidence);
       load();
     }catch(err){
       var msg=(err&&err.message)||"The payment couldn't be recorded.";

@@ -87,6 +87,19 @@
     </header>
     <main class="dash-content">
 
+<!-- The front desk's own cash drawer. Cash collected at this desk (including
+     the folio settlement below) must go into the acting cashier's own open
+     session, so the drawer has to be visible and controllable HERE - asking a
+     receptionist to type a session reference, with no way to see whether one
+     exists, is why cash settlement never worked. -->
+<section class="panel" data-desk-cash-panel hidden>
+  <div class="panel-head">
+    <h2>Your cash drawer</h2>
+    <div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-desk-cash-refresh>Refresh</button></div>
+  </div>
+  <div class="panel-body" data-desk-cash-banner></div>
+</section>
+
 <section class="panel">
   <div class="panel-head">
     <h2>Check out</h2>
@@ -133,6 +146,27 @@
   JONE.ui.initChrome();
   JONE.dashboard.boot("receptionist");
   document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+
+  /* The front desk's own drawer panel. Mounted once capabilities resolve, so
+     the Open / Close actions only appear for an account allowed to use them. */
+  (function mountDeskCash(){
+    var panel = document.querySelector("[data-desk-cash-panel]");
+    var banner = document.querySelector("[data-desk-cash-banner]");
+    var refreshBtn = document.querySelector("[data-desk-cash-refresh]");
+    var cash = window.JONE && JONE.dashboard && JONE.dashboard.deskCash;
+    if (!panel || !banner || !cash) return;
+    var opts = { note: "Cash includes check-out settlement and laundry." };
+    function paint(){ cash.renderBanner(banner, opts); cash.prefill(document); }
+    function start(){
+      if (!cash.canOpen() && !cash.canClose()) { panel.hidden = true; return; }
+      panel.hidden = false;
+      cash.refresh().then(paint);
+      if (refreshBtn) refreshBtn.addEventListener("click", function(){ cash.refresh().then(paint); });
+    }
+    if (window.Auth && typeof window.Auth.loadCapabilities === "function") {
+      window.Auth.loadCapabilities().then(start).catch(start);
+    } else start();
+  })();
 
 (function(){
   "use strict";
@@ -429,7 +463,8 @@
               '<option value="BANK_TRANSFER">Bank transfer</option>' +
             "</select></div>" +
           '<div class="field"><label class="field-label" for="co-settle-drawer">Cash session reference (cash only)</label>' +
-            '<input class="input" id="co-settle-drawer" type="text" maxlength="64" placeholder="Your own open drawer" autocomplete="off"></div>' +
+            '<input class="input" id="co-settle-drawer" type="text" maxlength="64" placeholder="Your own open drawer" autocomplete="off" data-desk-cash-prefill>' +
+            '<p class="caption" data-desk-cash-hint style="margin:.3rem 0 0;"></p></div>' +
           '<div class="field"><label class="field-label" for="co-settle-external">POS / bank payment reference (required for non-cash)</label>' +
             '<input class="input" id="co-settle-external" type="text" maxlength="160" placeholder="Actual receipt or transfer reference" autocomplete="off"></div>' +
           '<p class="caption">An amount above the bill remains an unapplied guest advance; it is not revenue.</p>' +
@@ -457,6 +492,23 @@
     if (printBtn) printBtn.addEventListener("click", function(){ printGatePass(d); });
     var settleBtn = body.querySelector("[data-settle-balance]");
     if (settleBtn) settleBtn.addEventListener("click", function(){ recordSettlement(body, ref, d, booking, settleBtn); });
+    /* Fill the cash-session field from the drawer this cashier actually has
+       open, and say so when they have none. Typing a reference by hand is what
+       made cash settlement unusable at the desk. */
+    var cash = window.JONE && JONE.dashboard && JONE.dashboard.deskCash;
+    if (cash) {
+      var drawerEl = body.querySelector("#co-settle-drawer");
+      var hintEl = body.querySelector("[data-desk-cash-hint]");
+      cash.refresh().then(function(session){
+        if (drawerEl && session && session.reference) drawerEl.value = session.reference;
+        if (drawerEl) drawerEl.readOnly = !!(session && session.reference);
+        if (hintEl) {
+          hintEl.textContent = session && session.reference
+            ? "Your open drawer \u00b7 " + session.reference + " (expected cash " + JONE.formatNaira(session.expected_cash || 0) + ")."
+            : "You have no open drawer. Open one in \u201CYour cash drawer\u201D above before taking cash.";
+        }
+      });
+    }
   }
 
   /* Record the money received at the desk for the WHOLE bill (stay + the
@@ -477,7 +529,7 @@
       if (statusEl) statusEl.textContent = text;
     }
     if (!Number.isFinite(amount) || amount <= 0) { say("Enter the amount the guest actually handed over."); amountEl && amountEl.focus(); return; }
-    if (method === "CASH" && !drawer) { say("Cash must go into your own open drawer — enter its cash-session reference."); drawerEl && drawerEl.focus(); return; }
+    if (method === "CASH" && !drawer) { say("Cash must go into your own open drawer. Open one in \u201CYour cash drawer\u201D above, then record the payment."); drawerEl && drawerEl.focus(); return; }
     if (method !== "CASH" && drawer) { say("Remove the cash-session reference for a POS or bank transfer."); return; }
     if (method !== "CASH" && !external) { say("Enter the actual POS or bank payment reference."); externalEl && externalEl.focus(); return; }
     if (!settlementActor()) { say("The signed-in staff identity is unavailable; sign in again before recording payment."); return; }

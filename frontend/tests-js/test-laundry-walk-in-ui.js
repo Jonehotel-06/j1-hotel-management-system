@@ -200,8 +200,19 @@ test("recording a payment calls the settle action with the chosen method", () =>
 
 test("cash is refused without a drawer reference, mirroring the server rule", () => {
   const settle = LAUNDRY.slice(LAUNDRY.indexOf("async function settle(order)"), LAUNDRY.indexOf("rowsEl.addEventListener"));
-  assert.match(settle, /if\(method==="CASH"&&!session\) throw new Error\("Cash payments require your open cash-session reference\."\)/);
-  assert.match(settle, /if\(method!=="CASH"&&session\) throw new Error\("Remove the cash-session reference for a bank or card payment\."\)/);
+  // The refusal must still exist, and must point the cashier at the drawer they
+  // can actually open rather than at a reference they have to invent.
+  assert.match(settle, /if\(method==="CASH"&&!session\) throw new Error\("[^"]*open drawer[^"]*"\)/);
+  assert.match(settle, /if\(method!==\"CASH\"&&session\) throw new Error\(\"Remove the cash-session reference for a bank or card payment\.\"\)/);
+});
+
+test("the cash-session field is filled from the desk's own open drawer", () => {
+  const settle = LAUNDRY.slice(LAUNDRY.indexOf("async function settle(order)"), LAUNDRY.indexOf("rowsEl.addEventListener"));
+  // Prefilled from the server-side drawer, not typed by hand...
+  assert.match(LAUNDRY, /name:"cash_session_reference"[^\n]*value:cashReference\(\)/);
+  assert.match(LAUNDRY, /function cashReference\(\)\{[\s\S]{0,240}deskCash[\s\S]{0,140}requireReference\(\)/);
+  // ...and refreshed before the modal paints, so the prefill is current.
+  assert.match(settle, /if\(cash\) await cash\.refresh\(\);/);
 });
 
 test("the settle action is delegated so re-rendered rows keep working", () => {

@@ -1709,6 +1709,216 @@
   }
 
   /* ======================================================================
+     DESK CASH DRAWER — the acting cashier's OWN open CashSession.
+
+     Every cash collection in the system (check-out settlement, laundry, POS
+     tender) requires the reference of the session belonging to the person
+     taking the money. The front desk could not create one, and the only screen
+     that offered it was the POS console, so the receipt-holders were asked to
+     type a reference that did not exist.
+
+     This helper is the ONE place a desk page asks "what drawer do I have open?".
+     It reads the scoped list endpoint (a caller without financial reporting
+     only ever sees their own sessions, so no cross-cashier exposure), opens and
+     closes through the POS session endpoints, and paints a banner that states
+     the drawer, its expected cash, and the actions available.
+
+     Nothing here decides policy: capabilities gate the actions and the server
+     refuses anything it would refuse anyway.
+     ====================================================================== */
+  const deskCash = (function () {
+    let current = null;              // the cashier's own OPEN session, or null
+    let known = false;               // has a read completed at least once?
+    let loading = null;              // in-flight read, shared by concurrent callers
+
+    function ownEmail() {
+      const auth = window.Auth;
+      const user = (auth && auth.state && auth.state.user) || {};
+      return String(user.email || "").toLowerCase();
+    }
+
+    function normalise(row) {
+      if (!row) return null;
+      return {
+        reference: String(row.reference || ""),
+        status: String(row.status || ""),
+        expected_cash: row.expected_cash,
+        opening_float: row.opening_float,
+        business_date: row.business_date || "",
+        cashier_email: row.cashier_email || "",
+      };
+    }
+
+    function rowMatchesEmail(row) {
+      const email = ownEmail();
+      if (!email) return true;    // no identity yet: accept the scoped answer
+      return String(row.cashier_email || "").toLowerCase() === email;
+    }
+
+    /* Read the cashier's own open drawer. Safe to call repeatedly. */
+    function refresh() {
+      if (loading) return loading;
+      loading = window.API.list("financeCashSessions", { status: "OPEN", page_size: 100 })
+        .then((response) => {
+          const rows = (response && response.data) || [];
+          const mine = rows.filter(rowMatchesEmail);
+          current = normalise(mine[0] || null);
+          known = true;
+          return current;
+        })
+        .catch(() => {
+          // A failed read must never look like "no drawer": it clears the
+          // cached reference so nothing is collected against a stale one.
+          current = null;
+          known = false;
+          return null;
+        })
+        .finally(() => { loading = null; });
+      return loading;
+    }
+
+    function session() { return current; }
+    function hasLoaded() { return known; }
+
+    function canOpen() {
+      const auth = window.Auth;
+      return !!(auth && auth.hasCapability && auth.hasCapability("cash_session.open"));
+    }
+
+    function canClose() {
+      const auth = window.Auth;
+      return !!(auth && auth.hasCapability && auth.hasCapability("cash_session.close"));
+    }
+
+    /* The reference a cash collection must carry.
+       Empty string when there is no open drawer, so a caller can refuse the
+       collection instead of sending a blank reference the server will reject. */
+    function requireReference() {
+      return (current && current.reference) || "";
+    }
+
+    async function openDrawer(float) {
+      const amount = String(float == null || float === "" ? "" : float).trim();
+      const payload = amount ? { opening_float: amount } : {};
+      const response = await window.API.openPosCashSession(payload);
+      current = normalise((response && response.data) || null);
+      known = true;
+      return current;
+    }
+
+    async function closeDrawer(countedCash, notes) {
+      if (!current || !current.reference) throw new Error("There is no open drawer to close.");
+      const payload = {};
+      if (countedCash != null && countedCash !== "") payload.counted_cash = String(countedCash);
+      if (notes) payload.notes = String(notes);
+      const response = await window.API.closePosCashSession(current.reference, payload);
+      current = null;
+      known = true;
+      return (response && response.data) || null;
+    }
+
+    /* Paint the drawer banner into `host`. `opts.note` explains what cash on
+       THIS page is used for, so the requirement is not mysterious. */
+    function renderBanner(host, opts = {}) {
+      if (!host) return;
+      const session = current;
+      const note = opts.note ? JONE.esc(opts.note) : "";
+      if (session && session.reference) {
+        host.innerHTML =
+          '<div class="pos-summary" style="gap:.6rem;flex-wrap:wrap;">' +
+            '<span class="badge" data-desk-cash-state="open">Drawer open</span>' +
+            '<strong data-desk-cash-reference>' + JONE.esc(session.reference) + '</strong>' +
+            '<span class="caption">Expected cash ' + JONE.esc(money(session.expected_cash, "NGN") || "₦0.00") + '</span>' +
+          '</div>' +
+          (note ? '<p class="caption" style="margin:.35rem 0 0;">' + note + '</p>' : "") +
+          '<div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.6rem;">' +
+            (canClose() ? '<button class="btn btn-sm btn-outline" type="button" data-desk-cash-close>Close drawer</button>' : "") +
+          '</div>';
+        const closeBtn = host.querySelector("[data-desk-cash-close]");
+        if (closeBtn) closeBtn.addEventListener("click", () => promptClose(host, opts));
+        return;
+      }
+      // No open drawer.
+      host.innerHTML =
+        '<div class="pos-summary" style="gap:.6rem;flex-wrap:wrap;">' +
+          '<span class="badge" data-desk-cash-state="closed">No drawer open</span>' +
+        '</div>' +
+        '<p class="caption" style="margin:.35rem 0 0;">' +
+          (known
+            ? "Cash taken on this page must go into your own open drawer. Open one before recording a cash payment."
+            : "Drawer status could not be read. Refresh before taking cash.") +
+        '</p>' +
+        (note ? '<p class="caption" style="margin:.2rem 0 0;">' + note + '</p>' : "") +
+        '<div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.6rem;">' +
+          (canOpen() ? '<button class="btn btn-sm btn-accent" type="button" data-desk-cash-open>Open drawer</button>' : "") +
+        '</div>';
+      const openBtn = host.querySelector("[data-desk-cash-open]");
+      if (openBtn) openBtn.addEventListener("click", () => promptOpen(host, opts));
+    }
+
+    async function promptOpen(host, opts) {
+      const result = await formModal({
+        title: "Open your cash drawer",
+        submitText: "Open drawer",
+        fields: [{
+          name: "opening_float",
+          label: "Opening float (₦)",
+          type: "number",
+          required: true,
+          help: "The cash already in the drawer before any collection. The close count is compared against this plus everything taken.",
+        }],
+        onSubmit: async (values) => {
+          await openDrawer(values.opening_float);
+          return { message: "Drawer opened." };
+        },
+      });
+      if (result) { renderBanner(host, opts); JONE.ui.toast("Cash drawer opened.", "success"); }
+    }
+
+    async function promptClose(host, opts) {
+      const result = await formModal({
+        title: "Close your cash drawer",
+        submitText: "Close drawer",
+        fields: [
+          { name: "counted_cash", label: "Cash counted in the drawer (₦)", type: "number", required: true },
+          { name: "notes", label: "Notes (optional)", type: "textarea", rows: 2 },
+        ],
+        onSubmit: async (values) => {
+          const closed = await closeDrawer(values.counted_cash, values.notes);
+          const variance = Number((closed && closed.variance) || 0);
+          return {
+            message: variance === 0
+              ? "Drawer balanced and closed."
+              : "Drawer closed with a variance of " + (money(closed.variance, "NGN") || closed.variance) + ".",
+          };
+        },
+      });
+      if (result) { renderBanner(host, opts); refresh().then(() => renderBanner(host, opts)); }
+    }
+
+    /* Fill every [data-desk-cash-prefill] field on the page with the drawer
+       reference, so a cash form never asks the operator to type it. */
+    function prefill(root) {
+      const scope = root || document;
+      const reference = requireReference();
+      Array.prototype.forEach.call(scope.querySelectorAll("[data-desk-cash-prefill]"), (input) => {
+        if (reference) {
+          input.value = reference;
+          input.readOnly = true;
+        } else {
+          input.readOnly = false;
+        }
+      });
+      return reference;
+    }
+
+    return {
+      refresh, session, hasLoaded, canOpen, canClose,
+      requireReference, openDrawer, closeDrawer, renderBanner, prefill,
+    };
+  })();
+
+  /* ======================================================================
      PAYMENT MODAL — the focused "Record payment" dialog.
      Opened directly after a manual booking is created and from any booking
      row. It never reloads the surrounding list: it submits to
@@ -2302,6 +2512,7 @@
     // Operational components
     currentRole, hasRole, canManageRooms, canManageStaff, money,
     paymentModal, canRecordPayment, staffProfileModal, editStaffModal, roomTypeRoomsModal,
+    deskCash,
     guestProfileModal, paymentDetailPanel, openPanel, closePanel,
   };
 })();

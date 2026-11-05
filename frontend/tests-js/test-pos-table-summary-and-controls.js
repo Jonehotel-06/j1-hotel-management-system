@@ -33,8 +33,14 @@ test("the table register card shows the server's order count, ordered total and 
 
 test("the open table-session card shows the ordered total alongside the counts", () => {
   const render = POS.slice(POS.indexOf("function renderRestaurantSessions()"), POS.indexOf("function selectRestaurantTableSession("));
-  assert.match(render, /session\.unpaid_order_count\+' unpaid · '/, "the ordered total sits next to the existing counts");
-  assert.match(render, /JONE\.esc\(money\(session\.total_ordered_amount,'NGN'\)\)\+' ordered'/, "the session total is formatted in naira");
+  // Counts are coerced: an absent field used to render the literal "null
+  // order(s)", which read as a broken screen rather than an empty one.
+  assert.match(render, /Number\(session\.unpaid_order_count\|\|0\)\+' unpaid · '/, "the ordered total sits next to the existing counts");
+  assert.match(render, /Number\(session\.order_count\|\|0\)\+' order\(s\)/, "the order count never prints null");
+  // The figure shown is what is still owed on goods kept: the server's
+  // net_ordered_amount (total minus unopened-item returns), with the ordered
+  // total as the fallback for an older payload.
+  assert.match(render, /money\(session\.net_ordered_amount!=null\?session\.net_ordered_amount:session\.total_ordered_amount,'NGN'\)/, "the session total is formatted in naira");
 });
 
 test("table summaries refresh after every operation that can change them", () => {

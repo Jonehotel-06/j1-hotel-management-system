@@ -63,6 +63,13 @@
       <div class="dash-topbar-right"><div class="dash-topbar-actions" data-topbar-actions></div><button class="theme-toggle" type="button" aria-label="Toggle theme" aria-pressed="false"><span class="icon-moon" data-icon="moon" data-size="18"></span><span class="icon-sun" data-icon="sun" data-size="18"></span></button></div>
     </header>
     <main class="dash-content">
+      <!-- The desk's own cash drawer: a walk-in laundry payment in cash must go
+           into the acting cashier's own open session, so it has to be visible
+           and openable here rather than typed in as a reference. -->
+      <section class="panel" data-desk-cash-panel hidden>
+        <div class="panel-head"><h2>Your cash drawer</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-desk-cash-refresh>Refresh</button></div></div>
+        <div class="panel-body" data-desk-cash-banner></div>
+      </section>
       <section class="panel">
         <div class="panel-head"><h2>Laundry orders</h2><div class="panel-actions"><span class="caption" data-laundry-live>Connecting…</span><button class="btn btn-sm btn-outline" type="button" data-laundry-refresh>Refresh</button><button class="btn btn-sm" type="button" data-laundry-new><span data-icon="plus" data-size="15"></span> Receive laundry</button></div></div>
         <div class="filter-bar">
@@ -91,6 +98,21 @@
 JONE.ui.initChrome();
 var __laundryAllowed=JONE.dashboard.boot(["admin","general_manager","receptionist","housekeeping","porter","security"]);
 document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
+
+/* The desk's own drawer, mounted only for an account that may use it. */
+(function mountDeskCash(){
+  var panel=document.querySelector("[data-desk-cash-panel]"),banner=document.querySelector("[data-desk-cash-banner]"),refreshBtn=document.querySelector("[data-desk-cash-refresh]");
+  var cash=window.JONE&&window.JONE.dashboard&&window.JONE.dashboard.deskCash;
+  if(!panel||!banner||!cash)return;
+  var opts={note:"Cash laundry payments need this drawer."};
+  function paint(){cash.renderBanner(banner,opts);}
+  function start(){
+    if(!cash.canOpen()&&!cash.canClose()){panel.hidden=true;return;}
+    panel.hidden=false;cash.refresh().then(paint);
+    if(refreshBtn)refreshBtn.addEventListener("click",function(){cash.refresh().then(paint);});
+  }
+  if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.loadCapabilities().then(start).catch(start);}else start();
+})();
 (function(){
   if(!__laundryAllowed)return;
 
@@ -288,20 +310,28 @@ document.querySelector("[data-logout]")&&document.querySelector("[data-logout]")
      Walk-ins have no folio, so the money is taken at the desk. Cash must go
      into the cashier's own open drawer, exactly as it does everywhere else in
      the system, so the drawer count reconciles at close. */
+  /* The drawer this cashier actually has open, read from the server - never a
+     typed string. Empty when there is none, so the form can say so. */
+  function cashReference(){
+    var cash=window.JONE&&window.JONE.dashboard&&window.JONE.dashboard.deskCash;
+    return (cash&&cash.requireReference&&cash.requireReference())||"";
+  }
   async function settle(order){
+    var cash=window.JONE&&window.JONE.dashboard&&window.JONE.dashboard.deskCash;
+    if(cash) await cash.refresh();
     var result=await JONE.dashboard.formModal({title:"Record laundry payment \u00b7 "+order.reference,submitText:"Record payment",fields:[
       {name:"method",label:"How did the customer pay?",type:"select",required:true,options:[
         {value:"CASH",label:"Cash at reception"},
         {value:"BANK_TRANSFER",label:"Bank transfer"},
         {value:"CARD",label:"Card / terminal"}
       ],help:"The payment is posted to the ledger once, as laundry revenue."},
-      {name:"cash_session_reference",label:"Cash session reference (cash only)",type:"text",maxLength:64,help:"Your own open drawer. Required for cash, ignored for bank or card."},
+      {name:"cash_session_reference",label:"Cash session reference (cash only)",type:"text",maxLength:64,value:cashReference(),help:"Filled in from \u201CYour cash drawer\u201D above. Required for cash, ignored for bank or card."},
       {name:"external_reference",label:"Bank / card reference (optional)",type:"text",maxLength:120},
       {name:"notes",label:"Notes (optional)",type:"textarea",rows:2}
     ],values:{method:"CASH"},onSubmit:async function(values){
       var method=values.method;
       var session=String(values.cash_session_reference||"").trim();
-      if(method==="CASH"&&!session) throw new Error("Cash payments require your open cash-session reference.");
+      if(method==="CASH"&&!session) throw new Error("Cash payments require your own open drawer. Open one in \u201CYour cash drawer\u201D above, then record the payment.");
       if(method!=="CASH"&&session) throw new Error("Remove the cash-session reference for a bank or card payment.");
       await window.API.resourceAction("guestLaundry",order.reference,"settle",{
         method:method,cash_session_reference:session,
