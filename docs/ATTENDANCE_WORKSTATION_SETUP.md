@@ -117,7 +117,8 @@ so this matters on any host with a load balancer in front of Django:
 | Setting | Meaning | Default |
 |---|---|---|
 | `TRUSTED_PROXY_CIDRS` | Addresses whose *connection* may speak for a client | loopback + private ranges |
-| `TRUSTED_CLIENT_IP_HEADERS` | Single-value headers that host's edge writes with the client it saw | `true-client-ip,cf-connecting-ip` |
+| `TRUSTED_CLIENT_IP_HEADERS` | Single-value headers that host's edge writes with the client it saw | `true-client-ip,cf-connecting-ip,x-real-ip` |
+| `TRUST_PROXY_HEADERS_FROM_CLOUDFLARE` | Also trust the published Cloudflare edge ranges | **off** |
 
 A header is read **only** when the connection itself came from a trusted proxy,
 which is what stops a guest from nominating the desk's address. Leave both unset
@@ -152,6 +153,40 @@ curl -s https://<host>/api/auth/client-address/ -H "Authorization: Bearer <admin
 If `source` is `peer` on a host that has a proxy, the proxy's address is not in
 `TRUSTED_PROXY_CIDRS` — list it there, or every client looks like the proxy and
 no desk address can match.
+
+#### Behind Cloudflare → Northflank (this project's production)
+
+This topology is the case the defaults cannot cover: Cloudflare's edge reaches
+the Northflank container from a **public** Cloudflare address, so the connection
+never comes from a private proxy and the edge headers are ignored. The address
+reported is the ingress, it changes per request, and a desk registered from it
+never matches. Set one variable in the backend secret group:
+
+```bash
+TRUST_PROXY_HEADERS_FROM_CLOUDFLARE=1
+```
+
+It merges the published ranges (`cloudflare.com/ips-v4` + `/ips-v6`, listed as
+`CLOUDFLARE_NETWORKS` in `apps/core/client_ip.py`) into the trusted set; the
+private defaults stay, so an internal hop keeps working. Confirm with evidence
+rather than by guessing:
+
+```bash
+python manage.py client_ip_check                    # configuration + verdict
+python manage.py client_ip_check --simulate         # what a request resolves to
+python manage.py client_ip_check --simulate \
+    --peer 162.158.0.10 --cf-connecting-ip 102.89.33.7
+```
+
+The last line is the one that matters: with the option on it prints
+`client address 102.89.33.7` and `decided by cf-connecting-ip`. **Register that
+address** for the desk (section 2b). With the option off the same request prints
+the edge address and `decided by peer` — the exact symptom of a desk that
+"forgets" where it is.
+
+Leave the option off if the API is also reachable without Cloudflare: trusting a
+public proxy range is only safe when every request really does arrive through
+it.
 
 ## 3. Fingerprint hardware
 

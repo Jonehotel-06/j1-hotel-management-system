@@ -490,6 +490,26 @@ TRUSTED_PROXY_CIDRS = config(
     cast=Csv(),
 )
 
+# Opt-in: also trust the published Cloudflare edge ranges (cloudflare.com/ips-v4
+# and /ips-v6) when deciding whether a forwarding header may be believed.
+#
+# Needed when Cloudflare sits in front of a platform whose ingress reaches the
+# container from a PUBLIC address (this project: Cloudflare -> Northflank). The
+# private-range defaults above can never match such a peer, so the edge headers
+# are ignored, REMOTE_ADDR is the ingress address, and no desk or workstation
+# address can ever be enrolled or matched.
+#
+# OFF by default, deliberately: trusting a public proxy range is a statement
+# about how the deployment is actually wired. Turn it on only when every request
+# really does arrive through Cloudflare - otherwise a caller who can reach the
+# container directly could nominate its own address. Run
+# `python manage.py client_ip_check --simulate` to see what the server resolves
+# before and after flipping it, and see
+# docs/NORTHFLANK_CLOUDFLARE_NAMECHEAP_DEPLOYMENT.md for the recipe.
+TRUST_PROXY_HEADERS_FROM_CLOUDFLARE = config(
+    "TRUST_PROXY_HEADERS_FROM_CLOUDFLARE", default=False, cast=bool
+)
+
 # Single-value headers the deployment's edge rewrites with the client it saw.
 # Read ONLY when the connection arrived from a TRUSTED_PROXY_CIDRS address, and
 # preferred over X-Forwarded-For because a chain cannot be trusted from the

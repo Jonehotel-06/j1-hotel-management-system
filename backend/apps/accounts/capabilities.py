@@ -120,6 +120,12 @@ ROLE_CAPABILITY_CODES = {
     "RECEPTIONIST": frozenset({
         "booking.read", "booking.manage", "stay.check_in", "stay.check_out", "folio.view", "folio.charge.post",
         "payment.read", "payment.capture", "payment.receipt.send", "payment.refund.request",
+        # The front desk takes cash for check-out settlement, laundry and POS
+        # tenders, and every one of those paths requires the ACTING cashier's own
+        # open CashSession. Without these two codes the desk could not take a
+        # single cash payment. Scoped to the caller's OWN drawer by
+        # CashSessionListView and cash_session_service.
+        "cash_session.open", "cash_session.close",
         "guest_request.manage", "guest_request.assign", "housekeeping.task.manage", "housekeeping.task.assign",
         "maintenance.work_order.manage", "maintenance.work_order.assign", "attendance.clock", "leave.request",
     }),
@@ -145,6 +151,7 @@ ROLE_CAPABILITY_CODES = {
     "FRONT_DESK_SUPERVISOR": frozenset({
         "booking.read", "booking.manage", "stay.check_in", "stay.check_out", "folio.view", "folio.charge.post",
         "payment.read", "payment.capture", "payment.receipt.send", "payment.refund.request",
+        "cash_session.open", "cash_session.close",
         "guest_request.manage", "guest_request.assign",
         "housekeeping.task.manage", "housekeeping.task.assign", "maintenance.work_order.manage",
         "maintenance.work_order.assign", "attendance.clock", "attendance.manage", "leave.request",

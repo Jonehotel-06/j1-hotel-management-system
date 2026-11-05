@@ -234,8 +234,21 @@ class RebuildGuestTests(BaseAPITestCase):
         self.assertEqual(booking.amount_paid, Decimal("100000.00"))
         changed = {**payload, "amount": "21000.00"}
         self.assertEqual(self.client.post(url, changed, format="json").status_code, 400)
+        # The SAME slip with a NEW idempotency key is the lost-response retry:
+        # the browser minted a fresh key, but the money is the same transfer.
+        # It must return the payment already held - not refuse it (which sent
+        # the operator hunting for a duplicate that did not exist) and not post
+        # it again. Only the ledger count proves nothing was taken twice.
         repeated_ref = {**payload, "idempotency_key": "other-key"}
-        self.assertEqual(self.client.post(url, repeated_ref, format="json").status_code, 400)
+        replayed = self.client.post(url, repeated_ref, format="json")
+        self.assertEqual(replayed.status_code, 201, replayed.content)
+        self.assertEqual(replayed.json()["data"]["reference"], first.json()["data"]["reference"])
+        self.assertTrue(replayed.json()["data"]["replayed"])
+        self.assertEqual(Payment.objects.filter(booking=booking).count(), 1)
+        # A DIFFERENT amount on the same slip is still refused: that is what a
+        # genuine double entry looks like.
+        other_amount = {**repeated_ref, "idempotency_key": "third-key", "amount": "19000.00"}
+        self.assertEqual(self.client.post(url, other_amount, format="json").status_code, 400)
         self.assertEqual(Payment.objects.filter(booking=booking).count(), 1)
 
     def test_keyed_cash_requires_own_open_session_and_replay_adds_one_movement(self):

@@ -72,20 +72,31 @@ class ServiceRequestListSerializer(serializers.ModelSerializer):
             (tender.amount for tender in order.tenders.all() if tender.status == "CAPTURED"),
             Decimal("0.00"),
         )
+        # One authority for "may this receipt print": the same method the POS
+        # order detail uses, so a guest-request receipt can never disagree with
+        # the POS one about whether money was received.
+        from apps.pos.serializers import PosOrderDetailSerializer
+
+        basis, printable, blocked_reason = PosOrderDetailSerializer._receipt_state(order)
+        outstanding = order.net_total - captured
+        if outstanding < Decimal("0.00"):
+            outstanding = Decimal("0.00")
         return {
             "reference": order.reference,
             "status": order.status,
             "mode": order.mode,
             "currency": order.currency,
             "subtotal": str(order.subtotal),
+            "subtotal_amount": str(order.subtotal),
             "total_amount": str(order.total_amount),
             "net_total": str(order.net_total),
+            "outstanding_balance": str(outstanding.quantize(Decimal("0.01"))),
             "settlement_status": order.settlement_status,
             "delivered_at": order.delivered_at.isoformat() if order.delivered_at else None,
             "lines": lines,
             "tenders": tenders,
             "amount_captured": str(captured),
-            "payment_basis": fulfilment.get("payment_basis") or ("ROOM_FOLIO" if order.mode == "ROOM_SERVICE" else "DIRECT_TENDER"),
+            "payment_basis": basis,
             "folio_reference": str(getattr(order.folio, "reference", "") or "") if order.folio_id else "",
             "charge_transaction_reference": str(getattr(charge, "reference", "") or ""),
             "served_by_name": str(fulfilment.get("served_by_name") or getattr(created_by, "full_name", "") or ""),
@@ -94,6 +105,9 @@ class ServiceRequestListSerializer(serializers.ModelSerializer):
             "created_by_name": str(context.get("created_by_name") or getattr(created_by, "full_name", "") or ""),
             "created_by_email": str(context.get("created_by_email") or getattr(created_by, "email", "") or ""),
             "service_request_reference": context.get("service_request_reference") or obj.reference,
+            # Printed on the receipt and used to enable the Print button.
+            "receipt_printable": printable,
+            "receipt_blocked_reason": blocked_reason,
         }
 
     class Meta:

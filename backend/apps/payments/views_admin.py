@@ -134,6 +134,13 @@ class AdminRecordOfflinePaymentView(APIView):
             provider=data["provider"],
             notes=data.get("notes", ""),
             request=request,
+            # Whole-bill collection: when any of these is supplied the payment
+            # settles the folio charges as well as the stay, in one idempotent
+            # transaction. Omitting them keeps the historical stay-only call.
+            external_reference=data.get("external_reference", ""),
+            cash_session_reference=data.get("cash_session_reference", ""),
+            include_unbilled=data.get("include_unbilled", True),
+            idempotency_key=data.get("idempotency_key", ""),
         )
         # The payment modal must be able to refresh itself from THIS response
         # alone — no second round-trip and never a full bookings-table reload.
@@ -164,8 +171,27 @@ class AdminRecordOfflinePaymentView(APIView):
         }
         payload["receipt_reference"] = payment.reference
         payload["has_receipt"] = True
+        # State the remaining folio charges too, so the desk learns from THIS
+        # response whether the guest's requests are settled or still owed -
+        # without a second round-trip and without inferring it from the room.
+        try:
+            from apps.bookings.views_admin import _folio_clearance_payload
+
+            payload["folio"] = _folio_clearance_payload(booking, user=request.user)
+        except Exception:  # noqa: BLE001 - the payment is already recorded
+            payload["folio"] = {}
+        # A retry that arrives on the SAME terminal slip or bank reference is
+        # answered with the payment the hotel already holds - nothing is posted
+        # twice (the collection service reads the ledger under a row lock). Say
+        # so explicitly: "Payment recorded." on a replay would tell the cashier
+        # a second lot of money had been taken.
+        replayed = bool(getattr(payment, "_jone_replayed", False))
+        payload["replayed"] = replayed
         return success_response(
             payload,
-            message="Payment recorded.",
+            message=(
+                "This payment was already recorded - nothing was added twice."
+                if replayed else "Payment recorded."
+            ),
             status=status.HTTP_201_CREATED,
         )

@@ -6,6 +6,7 @@ billed yet — before printing a gate pass. Itemisation must come from the
 immutable folio postings and totals must agree with the audit-D4 helpers.
 """
 from datetime import timedelta
+from decimal import Decimal
 
 from apps.accounts.models import User
 from apps.bookings.models import Booking
@@ -346,3 +347,96 @@ class FolioClearanceTests(BaseAPITestCase):
         self.unauth()
         response = self.client.get(self.url)
         self.assertIn(response.status_code, (401, 403))
+
+    # ------------------------------------------------------------------
+    # Issues 5 & 6: collecting a folio balance on a fully-paid room, and the
+    # one-slip-one-collection rule. The fixtures here are exactly the reported
+    # case - the room was paid in full at booking, and the money still owed is
+    # for the guest's own requests.
+    # ------------------------------------------------------------------
+
+    def _record(self, payload, actor=None):
+        self.auth(actor or self.receptionist)
+        return self.client.post("/api/admin/payments/record/", payload, format="json")
+
+    def test_the_desk_can_collect_a_folio_balance_on_a_fully_paid_room(self):
+        """A paid room must not block money owed for the guest's requests."""
+        self._laundry("clear-collect-1")
+        due_before = Decimal(self._get()["amount_to_settle"])
+        self.assertGreater(due_before, Decimal("0.00"))
+
+        # The historical stay-only call still refuses, but now says WHY and how.
+        refused = self._record({
+            "booking_reference": self.booking.booking_reference,
+            "amount": str(due_before), "provider": "BANK_TRANSFER",
+        })
+        self.assertEqual(refused.status_code, 400, refused.content)
+        self.assertEqual(refused.json()["code"], "PAYMENT_FAILED")
+        # The refusal must state the debt and the way to clear it - that is the
+        # whole point: a bare "already fully paid" sent the desk in circles.
+        self.assertIn("still owed", refused.json()["message"])
+        self.assertIn(str(due_before), refused.json()["message"])
+        self.assertIn("cash drawer", refused.json()["message"])
+
+        paid = self._record({
+            "booking_reference": self.booking.booking_reference,
+            "amount": str(due_before),
+            "provider": "BANK_TRANSFER",
+            "external_reference": "GTB-DESK-CLEAR-0001",
+            "idempotency_key": "clear-collect-key-1",
+            "include_unbilled": True,
+        })
+        self.assertEqual(paid.status_code, 201, paid.content)
+        body = paid.json()["data"]
+        # The folio state comes back in the SAME response: no second round-trip.
+        self.assertEqual(body["folio"]["outstanding_balance"], "0.00")
+        self.assertFalse(body["replayed"])
+        # And the folio really moved: nothing left to settle, gate pass allowed.
+        settled = self._get()
+        self.assertEqual(settled["amount_to_settle"], "0.00")
+        self.assertTrue(settled["gate_pass_allowed"])
+
+    def test_one_bank_slip_replayed_returns_the_payment_already_held(self):
+        """The lost-response retry must not be mistaken for a double entry."""
+        self._laundry("clear-replay-1")
+        due = Decimal(self._get()["amount_to_settle"])
+        payload = {
+            "booking_reference": self.booking.booking_reference,
+            "amount": str(due), "provider": "BANK_TRANSFER",
+            "external_reference": "GTB-DESK-CLEAR-0002",
+            "idempotency_key": "clear-replay-key-1",
+        }
+        first = self._record(payload)
+        self.assertEqual(first.status_code, 201, first.content)
+
+        # Same slip, NEW key: this is what a browser does after a timeout.
+        replay = self._record({**payload, "idempotency_key": "clear-replay-key-2"})
+        self.assertEqual(replay.status_code, 201, replay.content)
+        self.assertEqual(
+            replay.json()["data"]["reference"], first.json()["data"]["reference"],
+        )
+        self.assertTrue(replay.json()["data"]["replayed"])
+        # The proof that nothing was taken twice.
+        self.assertEqual(Payment.objects.filter(booking=self.booking).count(), 1)
+
+    def test_the_same_slip_for_a_different_amount_is_still_refused(self):
+        """A genuine double entry still looks like one, and is blocked."""
+        self._laundry("clear-conflict-1")
+        due = Decimal(self._get()["amount_to_settle"])
+        first = self._record({
+            "booking_reference": self.booking.booking_reference,
+            "amount": str(due), "provider": "BANK_TRANSFER",
+            "external_reference": "GTB-DESK-CLEAR-0003",
+            "idempotency_key": "clear-conflict-key-1",
+        })
+        self.assertEqual(first.status_code, 201, first.content)
+
+        changed = self._record({
+            "booking_reference": self.booking.booking_reference,
+            "amount": str(due + Decimal("1000.00")), "provider": "BANK_TRANSFER",
+            "external_reference": "GTB-DESK-CLEAR-0003",
+            "idempotency_key": "clear-conflict-key-2",
+        })
+        self.assertEqual(changed.status_code, 400, changed.content)
+        self.assertIn("different amount or method", changed.content.decode())
+        self.assertEqual(Payment.objects.filter(booking=self.booking).count(), 1)

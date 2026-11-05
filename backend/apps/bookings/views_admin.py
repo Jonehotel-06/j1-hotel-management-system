@@ -732,9 +732,19 @@ class AdminBookingSettleBalanceView(APIView):
         payload["settlement"] = breakdown
         payload["recorded_by"] = getattr(request.user, "email", "")
         payload["folio"] = _folio_clearance_payload(booking, user=request.user)
+        # A retry on the same slip returns the payment already held rather than
+        # taking the money twice. Tell the desk that plainly - "applied to the
+        # folio" on a replay reads as a second collection.
+        replayed = bool((breakdown or {}).get("replayed")) or bool(
+            getattr(payment, "_jone_replayed", False)
+        )
+        payload["replayed"] = replayed
         return success_response(
             payload,
-            message="Payment recorded and applied to the folio.",
+            message=(
+                "This payment was already recorded - nothing was added twice."
+                if replayed else "Payment recorded and applied to the folio."
+            ),
             status=status.HTTP_201_CREATED,
         )
 

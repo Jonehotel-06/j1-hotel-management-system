@@ -531,6 +531,24 @@ def _validate_cash_session(reference, actor):
     return session
 
 
+def external_reference_key(*, booking, reference) -> str | None:
+    """The dedupe key for a terminal slip or bank reference, scoped to a booking.
+
+    A real transfer legitimately settles more than one folio, so the key must
+    never be global; the booking is part of it. ``None`` (no reference) means
+    there is nothing to dedupe on, and cash collections never carry one.
+
+    The value is hashed rather than stored raw because this column carries a
+    UNIQUE constraint: two references that differ only in case or surrounding
+    whitespace are the same money, and casefold() is what makes that true for
+    non-ASCII slips as well as plain ASCII ones.
+    """
+    raw = str(reference or "").strip().casefold()
+    if not raw or booking is None:
+        return None
+    return hashlib.sha256(f"{booking.pk}:{raw}".encode()).hexdigest()
+
+
 @transaction.atomic
 def settle_outstanding_balance(
     *,
@@ -600,6 +618,17 @@ def settle_outstanding_balance(
     if len(raw_key) > 128:
         raise ValidationError({"idempotency_key": "Use at most 128 characters."})
     key = f"guest-collection:{actor.pk}:{raw_key}" if raw_key else ""
+
+    def _replay(payment):
+        """Hand back the payment the hotel already holds, flagged as a replay.
+
+        The flag lives on the in-memory instance only (never persisted): it is
+        how the API, the receipt and the desk's toast all say "already
+        recorded, nothing was added" instead of claiming a second collection.
+        """
+        payment._jone_replayed = True  # noqa: SLF001 - transient response flag
+        return payment
+
     fingerprint = {"amount": str(received), "provider": provider, "notes": str(notes or ""),
                    "include_unbilled": bool(include_unbilled), "cash_session_reference": str(cash_session_reference or ""),
                    "external_reference": external_reference}
@@ -608,19 +637,70 @@ def settle_outstanding_balance(
         if prior:
             if prior.booking_id != booking.pk or prior.fingerprint != fingerprint:
                 raise ValidationError({"idempotency_key": "This key was already used for different collection details."})
-            return prior.payment, {**prior.breakdown, "replayed": True}
+            return _replay(prior.payment), {**prior.breakdown, "replayed": True}
         if provider != Payment.Provider.CASH and not external_reference:
             raise ValidationError({"external_reference": "Enter the actual POS/bank payment reference."})
         if provider == Payment.Provider.CASH and not cash_session_reference:
             raise ValidationError({"cash_session_reference": "An idempotent cash collection requires your open cash session."})
         if provider != Payment.Provider.CASH and cash_session_reference:
             raise ValidationError({"cash_session_reference": "A cash session is only valid for cash."})
-    reference_key = (hashlib.sha256(external_reference.casefold().encode()).hexdigest()
-                     if key and provider != Payment.Provider.CASH and external_reference else None)
-    if reference_key and (GuestCollectionKey.objects.filter(external_reference_key=reference_key).exists()
-                          or Payment.objects.filter(transaction_id__iexact=external_reference).exclude(transaction_id="").exists()
-                          or Payment.objects.filter(reference__iexact=external_reference).exists()):
-        raise ValidationError({"external_reference": "This payment reference has already been recorded."})
+    # ------------------------------------------------------------------
+    # External reference: the evidence the money moved.
+    #
+    # The original guard hashed the reference GLOBALLY and refused it if it had
+    # ever been seen. Three things were wrong with that:
+    #
+    #   * one real bank transfer legitimately settles several folios (a group
+    #     paying for two rooms, one transfer covering the room and the laundry),
+    #     so the second collection was refused with "already recorded";
+    #   * it is also the message an operator saw after a LOST RESPONSE: the
+    #     browser retries the same details, and was told to investigate a
+    #     duplicate instead of being handed the payment already recorded;
+    #   * it matched ``Payment.reference`` - the hotel's own ``J1P-…`` id - so a
+    #     terminal slip that happened to look like an internal reference was
+    #     refused, and the hash ignored the provider, so card slip ``1234`` and
+    #     bank reference ``1234`` collided.
+    #
+    # The rule now: a given (booking, provider, reference) is ONE collection.
+    # Replaying it returns the payment the hotel already holds; re-using it for
+    # a DIFFERENT amount on the same booking is still refused, because that is
+    # what a genuine double entry looks like.
+    # ------------------------------------------------------------------
+    reference_key = (
+        external_reference_key(booking=booking, reference=external_reference)
+        if provider != Payment.Provider.CASH else None
+    )
+    if reference_key:
+        prior_reference = (
+            GuestCollectionKey.objects.select_for_update()
+            .select_related("payment")
+            .filter(external_reference_key=reference_key)
+            .first()
+        )
+        if prior_reference is not None:
+            prior_provider = (
+                prior_reference.provider
+                or str(getattr(prior_reference.payment, "provider", "") or "")
+            ).upper()
+            same_collection = (
+                prior_reference.booking_id == booking.pk
+                and Decimal(prior_reference.payment.amount) == received
+                and prior_provider == provider
+            )
+            if same_collection:
+                # The money is already in the ledger: answer with it rather
+                # than telling the operator to investigate a duplicate that
+                # does not exist. Nothing is posted twice - this is a read.
+                return _replay(prior_reference.payment), {
+                    **prior_reference.breakdown, "replayed": True,
+                }
+            raise ValidationError({
+                "external_reference": (
+                    f"Payment reference {external_reference} is already recorded against "
+                    "this booking for a different amount or method. Check the records "
+                    "before recording another payment."
+                )
+            })
 
     booking_service.refresh_expired_pending(booking)
     if booking.status not in (
@@ -792,9 +872,13 @@ def settle_outstanding_balance(
     if key:
         try:
             with transaction.atomic():
-                GuestCollectionKey.objects.create(key=key, booking=booking, payment=payment, actor=actor,
-                                                  external_reference=external_reference, external_reference_key=reference_key,
-                                                  fingerprint=fingerprint, breakdown=breakdown)
+                GuestCollectionKey.objects.create(
+                    key=key, booking=booking, payment=payment, actor=actor,
+                    external_reference=external_reference,
+                    external_reference_key=reference_key,
+                    provider=provider,
+                    fingerprint=fingerprint, breakdown=breakdown,
+                )
         except IntegrityError as exc:
             raise ValidationError({"idempotency_key": "A collection or payment reference was recorded concurrently; review before retrying."}) from exc
     return payment, breakdown

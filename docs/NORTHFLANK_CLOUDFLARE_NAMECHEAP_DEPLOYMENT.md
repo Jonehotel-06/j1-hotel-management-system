@@ -110,6 +110,7 @@ python manage.py check --deploy --fail-level ERROR
 python manage.py check_database_charset
 python manage.py check_media_storage
 python manage.py check_payment_config --verify
+python manage.py client_ip_check --simulate
 python manage.py email_pipeline_check --publish
 python manage.py email_check
 ```
@@ -122,3 +123,38 @@ curl -fsS https://api.jonehotels.com/api/health/ready/
 curl -fsSI -H "Origin: https://jonehotels.com" https://api.jonehotels.com/api/rooms/
 curl -fsS https://jonehotels.com/version.json
 ```
+
+### 4.1 Confirm the real client address (front-desk sign-in depends on it)
+
+Operational staff may sign in only from the registered Front Desk desktop, so
+the address Django believes decides whether the desk works at all. Behind
+Cloudflare the connection reaches Northflank from a **public Cloudflare edge
+address**; the private-range defaults do not trust that, so the edge headers are
+ignored and `REMOTE_ADDR` (the ingress) is used instead — a value that changes
+per request and can never be registered.
+
+```bash
+# What does the server resolve today?
+python manage.py client_ip_check --simulate
+
+# Off (default): the address is the ingress, "decided by: peer".
+# Turn the option on in the secret group, redeploy, then:
+python manage.py client_ip_check --simulate \
+    --peer 162.158.0.10 --cf-connecting-ip 102.89.33.7
+# On: "client address 102.89.33.7", "decided by: cf-connecting-ip".
+```
+
+Set `TRUST_PROXY_HEADERS_FROM_CLOUDFLARE=1` in the `jone-backend-env` secret
+group (section 2.2). The setting **merges** the published Cloudflare ranges into
+`TRUSTED_PROXY_CIDRS`; it never removes the private defaults, so an internal
+hop keeps working. Leaving it off is the correct choice only when the API is
+reachable without passing through Cloudflare — otherwise a caller who can reach
+the container directly could nominate its own address.
+
+Once the command reports a usable address, register it: **Dashboard → Settings →
+Workstations** (or `POST /api/admin/accounts/workstations/`), which is the value
+the desk then signs in with.
+
+> The ranges are in `apps/core/client_ip.py` (`CLOUDFLARE_NETWORKS`), copied
+> from `https://www.cloudflare.com/ips-v4` and `/ips-v6`. Re-check that page
+> after a Cloudflare announcement; adding a range is a one-line change.

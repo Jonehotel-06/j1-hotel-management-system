@@ -2,8 +2,8 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Count, DecimalField, OuterRef, Prefetch, Q, Subquery, Sum, Value
-from django.db.models.functions import Coalesce
+from django.db.models import Count, DecimalField, IntegerField, OuterRef, Prefetch, Q, Subquery, Sum, Value
+from django.db.models.functions import Coalesce, Greatest
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import NotFound
@@ -118,53 +118,145 @@ def _table_session_captured_subquery():
     )
 
 
-def _table_summary_captured_subquery():
-    """Total captured tender amount across the orders of one table's sessions."""
-    return Subquery(
-        PosTender.objects.filter(
-            order__table_session__table=OuterRef("pk"),
-            order__status__in=table_service.COUNTED_ORDER_STATUSES,
-            status=PosTender.Status.CAPTURED,
-        )
-        .values("order__table_session__table")
-        .annotate(
-            captured=Coalesce(
-                Sum("amount"),
-                Value(Decimal("0.00")),
-                output_field=DecimalField(max_digits=14, decimal_places=2),
-            )
-        )
-        .values("captured")[:1]
+#: Money aggregates are Decimal(14,2); the surrounding annotations and the
+#: serializer both quantize to 2dp, so the wider field only avoids overflow.
+_TABLE_MONEY = DecimalField(max_digits=14, decimal_places=2)
+_ZERO = Value(Decimal("0.00"))
+
+
+def _table_order_scope(*, off_session: bool):
+    """Orders belonging to the outer table, split by how the table is recorded.
+
+    ``PosOrder`` has no ``table`` foreign key. A dine-in order reaches its table
+    two different ways, and BOTH count as that table's business:
+
+    * through an open session - ``table_session.table`` (the normal path), and
+    * with no session at all - ``table_session IS NULL`` and the table's CODE in
+      the free-text ``table_number`` (a walk-in seated without opening a
+      session, and a table-QR order accepted before the waiter opened one).
+
+    Only the first kind was ever counted, so a table with live orders could show
+    "0 orders / ₦0.00" and the waiter would take a second order for a bill that
+    already existed.
+    """
+    if off_session:
+        # ``code`` is unique per table, so matching on it cannot merge two
+        # tables. Case-insensitive because the value is free text.
+        return Q(table_session__isnull=True, table_number__iexact=OuterRef("code"))
+    return Q(table_session__table=OuterRef("pk"))
+
+
+def _table_money_subquery(field: str, *, off_session: bool):
+    """SUM(field) over the outer table's counted orders, as one scalar."""
+    queryset = PosOrder.objects.filter(
+        _table_order_scope(off_session=off_session),
+        status__in=table_service.COUNTED_ORDER_STATUSES,
     )
+    return Subquery(
+        queryset.annotate(value=Coalesce(Sum(field), _ZERO, output_field=_TABLE_MONEY))
+        .values("value")[:1],
+        output_field=_TABLE_MONEY,
+    )
+
+
+def _table_count_subquery(*, off_session: bool):
+    """COUNT of the outer table's orders, as one scalar."""
+    queryset = PosOrder.objects.filter(_table_order_scope(off_session=off_session))
+    return Subquery(
+        queryset.annotate(value=Count("pk")).values("value")[:1],
+        output_field=IntegerField(),
+    )
+
+
+def _table_guest_order_count_subquery(*, off_session: bool):
+    queryset = PosOrder.objects.filter(
+        _table_order_scope(off_session=off_session),
+        status__in=table_service.COUNTED_ORDER_STATUSES,
+    )
+    return Subquery(
+        queryset.annotate(value=Count("pk")).values("value")[:1],
+        output_field=IntegerField(),
+    )
+
+
+def _table_captured_subquery(*, off_session: bool):
+    """Captured tender money for the outer table, as one scalar."""
+    queryset = PosTender.objects.filter(
+        order__status__in=table_service.COUNTED_ORDER_STATUSES,
+        status=PosTender.Status.CAPTURED,
+    )
+    if off_session:
+        queryset = queryset.filter(
+            order__table_session__isnull=True, order__table_number__iexact=OuterRef("code"),
+        )
+    else:
+        queryset = queryset.filter(order__table_session__table=OuterRef("pk"))
+    return Subquery(
+        queryset.annotate(value=Coalesce(Sum("amount"), _ZERO, output_field=_TABLE_MONEY))
+        .values("value")[:1],
+        output_field=_TABLE_MONEY,
+    )
+
+
+def _combine(*values):
+    """Sum scalars, tolerating a missing subquery (None) as zero."""
+    total = Coalesce(values[0], _ZERO, output_field=_TABLE_MONEY)
+    for value in values[1:]:
+        total = total + Coalesce(value, _ZERO, output_field=_TABLE_MONEY)
+    return total
 
 
 def _table_summary_queryset():
     """Per-registered-table order/money summary.
 
-    Orders are counted through the table's sessions, so a transferred session and
-    its orders move with it to the destination table exactly once — there is no
-    double count and no reliance on free-text table labels. Cancelled and voided
-    orders are excluded from the guest-spend figures.
+    Everything is a correlated subquery rather than a join aggregate: two joins
+    (sessions and session-less orders) on the same queryset would multiply rows
+    and inflate every figure. Cancelled and voided orders are excluded from the
+    guest-spend figures, exactly as they are for session-backed orders.
+
+    A transferred session moves its orders to the destination table once - the
+    session's ``table`` is the only thing consulted, so nothing is counted twice.
     """
-    counted = Q(sessions__orders__status__in=table_service.COUNTED_ORDER_STATUSES)
     return RestaurantTable.objects.annotate(
-        guest_order_count=Count("sessions__orders", filter=counted, distinct=True),
-        total_ordered_amount=Coalesce(
-            Sum("sessions__orders__total_amount", filter=counted, output_field=DecimalField(max_digits=14, decimal_places=2)),
-            Value(Decimal("0.00")),
-            output_field=DecimalField(max_digits=14, decimal_places=2),
+        order_count=_combine_count(
+            _table_count_subquery(off_session=False),
+            _table_count_subquery(off_session=True),
         ),
-        returned_amount=Coalesce(
-            Sum("sessions__orders__returned_amount", filter=counted, output_field=DecimalField(max_digits=14, decimal_places=2)),
-            Value(Decimal("0.00")),
-            output_field=DecimalField(max_digits=14, decimal_places=2),
+        guest_order_count=_combine_count(
+            _table_guest_order_count_subquery(off_session=False),
+            _table_guest_order_count_subquery(off_session=True),
         ),
-        captured_amount=Coalesce(
-            _table_summary_captured_subquery(),
-            Value(Decimal("0.00")),
-            output_field=DecimalField(max_digits=14, decimal_places=2),
+        total_ordered_amount=_combine(
+            _table_money_subquery("total_amount", off_session=False),
+            _table_money_subquery("total_amount", off_session=True),
         ),
-    )
+        net_ordered_amount=Greatest(
+            _combine(
+                _table_money_subquery("total_amount", off_session=False),
+                _table_money_subquery("total_amount", off_session=True),
+            )
+            - _combine(
+                _table_money_subquery("returned_amount", off_session=False),
+                _table_money_subquery("returned_amount", off_session=True),
+            ),
+            _ZERO,
+        ),
+        returned_amount=_combine(
+            _table_money_subquery("returned_amount", off_session=False),
+            _table_money_subquery("returned_amount", off_session=True),
+        ),
+        captured_amount=_combine(
+            _table_captured_subquery(off_session=False),
+            _table_captured_subquery(off_session=True),
+        ),
+    ).order_by("section", "code", "pk")
+
+
+def _combine_count(*values):
+    total = Coalesce(values[0], Value(0), output_field=IntegerField())
+    for value in values[1:]:
+        total = total + Coalesce(value, Value(0), output_field=IntegerField())
+    return total
 
 
 def _table_session_queryset():

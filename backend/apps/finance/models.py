@@ -1052,7 +1052,15 @@ class GuestCollectionKey(ImmutableFinancialModel):
     """Idempotency evidence for a desk collection; never an extra ledger entry."""
     key = models.CharField(max_length=180, unique=True)
     external_reference = models.CharField(max_length=160, blank=True, default="")
+    #: The terminal slip / bank reference, scoped to this booking (see
+    #: ``payment_collection_service.external_reference_key``). It used to be
+    #: GLOBAL, which refused the second folio of a genuine one-transfer group
+    #: payment. NULL means "this collection carried no external reference"
+    #: (always true for cash); several NULLs do not collide under UNIQUE.
     external_reference_key = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    #: The provider the slip was paid through. Part of the dedupe identity, so
+    #: card slip ``1234`` and bank reference ``1234`` never collide.
+    provider = models.CharField(max_length=20, blank=True, default="")
     booking = models.ForeignKey("bookings.Booking", on_delete=models.PROTECT, related_name="finance_collection_keys")
     payment = models.OneToOneField("payments.Payment", on_delete=models.PROTECT, related_name="finance_collection_key")
     actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="guest_collection_keys")

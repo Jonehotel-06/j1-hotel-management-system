@@ -346,6 +346,39 @@ class PosRestaurantTableApiTests(BaseAPITestCase):
         self.assertEqual(after["captured_amount"], "3500.00")
         self.assertEqual(after["unpaid_balance"], "0.00")
 
+    def test_register_counts_orders_taken_without_an_open_session(self):
+        """A walk-in dine-in order belongs to its table even with no session.
+
+        ``PosOrder`` has no ``table`` foreign key: a session-backed order reaches
+        its table through ``table_session.table``, but a walk-in seated without
+        opening a session (and a table-QR order accepted before the waiter
+        opened one) carries only the table CODE in the free-text
+        ``table_number``. Those orders used to be invisible to every register
+        figure, so a table with live orders showed "0 order(s) · ₦0.00" and the
+        waiter took a second order for a bill that already existed.
+        """
+        self._register_table(code="T-WALKIN", seats=4)
+        self.auth(self.waiter)
+        created = self.client.post("/api/admin/pos/orders/", {
+            "mode": "RESTAURANT",
+            "table_number": "T-WALKIN",
+            "lines": [{"menu_item_id": self.item.pk, "quantity": 2}],
+            "idempotency_key": "walk-in-order-001",
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.content)
+        order = PosOrder.objects.get(reference=created.json()["data"]["reference"])
+        # Precondition: this really is the session-less shape.
+        self.assertIsNone(order.table_session_id)
+        self.assertEqual(order.table_number.upper(), "T-WALKIN")
+
+        listed = self.client.get("/api/admin/pos/restaurant-tables/", {"active": "all"}).json()["data"]
+        row = {r["code"]: r for r in listed}["T-WALKIN"]
+        self.assertEqual(row["order_count"], 1)
+        self.assertEqual(row["guest_order_count"], 1)
+        self.assertEqual(row["total_ordered_amount"], str(order.total_amount))
+        self.assertNotEqual(row["total_ordered_amount"], "0.00")
+        self.assertEqual(row["unpaid_balance"], row["net_ordered_amount"])
+
     def test_restaurant_table_register_summary_tracks_spend_and_survives_transfer(self):
         source = self._register_table(code="T-REG-A", seats=4)
         destination = self._register_table(code="T-REG-B", seats=4)

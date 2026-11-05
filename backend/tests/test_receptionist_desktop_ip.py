@@ -148,6 +148,54 @@ class RegisteredDesktopIpTests(BaseAPITestCase):
         response = self.login(ip=OTHER_IP, headers={"HTTP_X_FORWARDED_FOR": DESK_IP})
         self.assertEqual(response.status_code, 403, response.content)
 
+    # --- Cloudflare in front of the platform (the deployed topology) ---------
+    # Production is Cloudflare -> Northflank. The connection therefore arrives
+    # from a PUBLIC Cloudflare edge address, which the private-range defaults do
+    # not trust: the edge headers are ignored and the desk address can never
+    # match. TRUST_PROXY_HEADERS_FROM_CLOUDFLARE opts into the published ranges.
+
+    CLOUDFLARE_PEER = "162.158.0.10"      # published Cloudflare edge (ips-v4)
+
+    @override_settings(TRUST_PROXY_HEADERS_FROM_CLOUDFLARE=True)
+    def test_a_cloudflare_edge_peer_is_trusted_when_the_deployment_opts_in(self):
+        from apps.core.client_ip import is_trusted_proxy
+
+        self.assertTrue(is_trusted_proxy(self.CLOUDFLARE_PEER))
+
+    @override_settings(TRUST_PROXY_HEADERS_FROM_CLOUDFLARE=True)
+    def test_the_desk_address_resolves_through_cloudflare_and_is_admitted(self):
+        # Exactly what Cloudflare sends: its own single-value header plus a
+        # client-forged X-Forwarded-For prefix it appended to.
+        response = self.login(
+            ip=self.CLOUDFLARE_PEER,
+            headers={
+                "HTTP_CF_CONNECTING_IP": DESK_IP,
+                "HTTP_X_FORWARDED_FOR": f"{OTHER_IP}, {DESK_IP}",
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+    @override_settings(TRUST_PROXY_HEADERS_FROM_CLOUDFLARE=False)
+    def test_the_same_request_is_refused_while_the_option_is_off(self):
+        # The fail-closed default: an undeclared public proxy is not trusted, so
+        # the address is the ingress and not the desk.
+        response = self.login(
+            ip=self.CLOUDFLARE_PEER,
+            headers={
+                "HTTP_CF_CONNECTING_IP": DESK_IP,
+                "HTTP_X_FORWARDED_FOR": f"{OTHER_IP}, {DESK_IP}",
+            },
+        )
+        self.assertEqual(response.status_code, 403, response.content)
+
+    @override_settings(TRUST_PROXY_HEADERS_FROM_CLOUDFLARE=True)
+    def test_opting_in_does_not_trust_an_arbitrary_public_address(self):
+        # Only the published Cloudflare ranges are added - not "the internet".
+        from apps.core.client_ip import is_trusted_proxy
+
+        self.assertFalse(is_trusted_proxy(OTHER_IP))
+        self.assertFalse(is_trusted_proxy("8.8.8.8"))
+
     def test_the_desk_is_recognized_behind_the_deployment_proxy(self):
         # Same forged prefix, but this request really did come from our proxy:
         # the proxy's appended address (the desk) is the last hop, so it wins.

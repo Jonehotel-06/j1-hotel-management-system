@@ -36,6 +36,10 @@ from apps.notifications.services import notify_staff, notify_users
 
 from ..models import Payment, Refund
 from . import paystack
+from apps.finance.services.folio_service import (
+    booking_folio_charge_balance,
+    booking_outstanding_balance,
+)
 
 logger = logging.getLogger("apps")
 
@@ -1225,7 +1229,34 @@ def _handle_dispute_created(data, *, request=None):
 # Staff-recorded offline payments (cash / POS / transfer at the front desk)
 # ---------------------------------------------------------------------------
 @transaction.atomic
-def record_offline_payment(*, booking: Booking, staff_user, amount, provider, notes="", request=None):
+def record_offline_payment(
+    *,
+    booking: Booking,
+    staff_user,
+    amount,
+    provider,
+    notes="",
+    request=None,
+    external_reference="",
+    cash_session_reference="",
+    include_unbilled=True,
+    idempotency_key="",
+):
+    """Record money taken at the desk.
+
+    Two contracts live here, and which one applies is decided by the caller's
+    INPUT, not by a flag someone has to remember to set:
+
+    * **stay-only** (historical): none of ``external_reference`` /
+      ``cash_session_reference`` / ``idempotency_key`` supplied. Identical
+      refusals and wording to the original implementation, because callers
+      (and tests) depend on them.
+    * **whole bill**: any of those three supplied. The collection then settles
+      the folio charges as well as the stay, applies the folio part to the
+      folio, and is idempotent on both the key and the slip. This exists because
+      a guest who had paid for the room but still owed restaurant/bar/laundry
+      money charged to their folio was previously refused outright.
+    """
     booking = Booking.objects.select_for_update().get(pk=booking.pk)
     booking_service.refresh_expired_pending(booking)
     if booking.status not in (Booking.Status.PENDING, Booking.Status.CONFIRMED, Booking.Status.CHECKED_IN):
@@ -1244,12 +1275,64 @@ def record_offline_payment(*, booking: Booking, staff_user, amount, provider, no
             f"This booking is already marked {booking.get_payment_status_display().lower()}; "
             "no further payment can be recorded against it."
         )
-    if booking.amount_due <= 0:
-        raise PaymentAlreadyCompletedError()
-    if amount > booking.amount_due:
-        raise PaymentError(
-            f"Amount exceeds the outstanding balance of {booking.currency} {money(booking.amount_due)}."
+    provider = str(provider or "").strip().upper()
+    whole_bill = bool(
+        str(external_reference or "").strip()
+        or str(cash_session_reference or "").strip()
+        or str(idempotency_key or "").strip()
+    )
+    folio_due = booking_folio_charge_balance(booking=booking)
+    if not whole_bill:
+        # Historical stay-only contract: identical refusals, identical wording.
+        if booking.amount_due <= 0:
+            # Speak in the desk's own figure. `folio_due` counts only what is
+            # ALREADY BILLED, so a guest whose laundry had not been billed yet
+            # was told a bare "already fully paid" while the check-out screen
+            # showed money outstanding. ``amount_to_settle`` is the exact number
+            # the desk is looking at (folio balance + still-unbilled requests),
+            # so the refusal and the screen can never disagree.
+            try:
+                from apps.bookings.views_admin import _folio_clearance_payload
+
+                settlement_due = Decimal(
+                    _folio_clearance_payload(booking)["amount_to_settle"]
+                )
+            except Exception:  # noqa: BLE001 - fall back to the billed figures
+                settlement_due = booking_outstanding_balance(
+                    booking=booking, folio_charge_balance=folio_due,
+                )
+            if settlement_due > 0:
+                raise PaymentError(
+                    f"The room is fully paid, but {booking.currency} {money(settlement_due)} is still owed "
+                    "for this guest's requests. Record the payment with a POS/bank reference or your "
+                    "open cash drawer so it is applied to those charges."
+                )
+            raise PaymentAlreadyCompletedError()
+        if amount > booking.amount_due + folio_due:
+            raise PaymentError(
+                f"Amount exceeds the outstanding balance of "
+                f"{booking.currency} {money(booking.amount_due + folio_due)}."
+            )
+    if whole_bill:
+        from apps.finance.services.payment_collection_service import settle_outstanding_balance
+
+        payment, _breakdown = settle_outstanding_balance(
+            booking=booking,
+            actor=staff_user,
+            amount=amount,
+            provider=provider,
+            notes=notes,
+            request=request,
+            include_unbilled=include_unbilled,
+            cash_session_reference=cash_session_reference,
+            idempotency_key=idempotency_key,
+            external_reference=external_reference,
         )
+        logger.info(
+            "Offline payment recorded (whole bill): %s booking=%s amount=%s by=%s",
+            payment.reference, booking.booking_reference, amount, staff_user.id,
+        )
+        return payment
 
     payment = Payment.objects.create(
         booking=booking,

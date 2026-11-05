@@ -87,6 +87,36 @@ DEFAULT_TRUSTED_PROXY_CIDRS = (
     "fe80::/10",
 )
 
+#: The published Cloudflare edge, fetched from cloudflare.com/ips-v4 and
+#: cloudflare.com/ips-v6. Used ONLY when the deployment opts in with
+#: ``TRUST_PROXY_HEADERS_FROM_CLOUDFLARE=1``; see ``_configured_proxy_cidrs``.
+CLOUDFLARE_NETWORKS = (
+    # IPv4
+    "173.245.48.0/20",
+    "103.21.244.0/22",
+    "103.22.200.0/22",
+    "103.31.4.0/22",
+    "141.101.64.0/18",
+    "108.162.192.0/18",
+    "190.93.240.0/20",
+    "188.114.96.0/20",
+    "197.234.240.0/22",
+    "198.41.128.0/17",
+    "162.158.0.0/15",
+    "104.16.0.0/13",
+    "104.24.0.0/14",
+    "172.64.0.0/13",
+    "131.0.72.0/22",
+    # IPv6
+    "2400:cb00::/32",
+    "2606:4700::/32",
+    "2803:f800::/32",
+    "2405:b500::/32",
+    "2405:8100::/32",
+    "2a06:98c0::/29",
+    "2c0f:f248::/32",
+)
+
 FORWARDED_FOR_HEADER = "HTTP_X_FORWARDED_FOR"
 
 #: Single-value headers an edge rewrites with the client it saw. Used only when
@@ -213,8 +243,32 @@ def _setting_list(name: str, defaults: tuple[str, ...]) -> tuple[str, ...]:
     return cleaned
 
 
+def trust_cloudflare_networks() -> bool:
+    """Whether the deployment opted into the published Cloudflare edge ranges.
+
+    ``TRUST_PROXY_HEADERS_FROM_CLOUDFLARE`` accepts the usual truthy spellings
+    and defaults to OFF: trusting a public proxy range is a statement about how
+    the deployment is wired, and it must be made deliberately, never guessed.
+    """
+    configured = getattr(settings, "TRUST_PROXY_HEADERS_FROM_CLOUDFLARE", False)
+    if isinstance(configured, str):
+        return configured.strip().lower() in {"1", "true", "yes", "on", "y"}
+    return bool(configured)
+
+
 def _configured_proxy_cidrs() -> tuple[str, ...]:
-    return _setting_list("TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS)
+    configured = _setting_list("TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS)
+    if not trust_cloudflare_networks():
+        return configured
+    # Opted in: the Cloudflare edge reaches the container from its OWN public
+    # addresses (Northflank ingress in front of the app), which the private
+    # defaults can never match. Merge rather than replace, so a deployment can
+    # still add its own hop.
+    merged = list(configured)
+    for network in CLOUDFLARE_NETWORKS:
+        if network not in merged:
+            merged.append(network)
+    return tuple(merged)
 
 
 def trusted_proxy_networks() -> list:

@@ -46,7 +46,7 @@ from typing import Iterable, Mapping
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
-from django.db.models import Count, DecimalField, Q, Sum, Value
+from django.db.models import Count, DecimalField, F, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -131,9 +131,18 @@ def line_net_amount_for(line, quantity: int, *, already_returned_amount: Decimal
 
 
 def _eligible_queryset():
+    """Delivered, charged orders that still have something on them to return.
+
+    An order whose every line has already come back used to stay in the list
+    forever: the return tabs offered it, the modal opened, and every quantity
+    was zero - so the operator kept re-opening orders that had nothing left to
+    give back, and the list never shrank. Orders with no returnable quantity are
+    now excluded at the source, so the list means "you can still act on this".
+    """
     return (
         PosOrder.objects.filter(status__in=RETURNABLE_STATUSES, mode__in=RETURNABLE_MODES)
         .exclude(charge_transaction__isnull=True)
+        .exclude(Q(returned_amount__gte=F("total_amount")) & Q(returned_amount__gt=0))
         .select_related("stay", "folio", "created_by", "table_session__table", "charge_transaction")
         .annotate(
             paid_total=Coalesce(

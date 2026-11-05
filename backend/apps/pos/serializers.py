@@ -212,8 +212,10 @@ class TableSummarySerializerMixin(serializers.Serializer):
     simply renders zeroes instead of raising.
     """
 
+    order_count = serializers.SerializerMethodField()
     guest_order_count = serializers.SerializerMethodField()
     total_ordered_amount = serializers.SerializerMethodField()
+    net_ordered_amount = serializers.SerializerMethodField()
     returned_amount = serializers.SerializerMethodField()
     captured_amount = serializers.SerializerMethodField()
     unpaid_balance = serializers.SerializerMethodField()
@@ -237,12 +239,28 @@ class TableSummarySerializerMixin(serializers.Serializer):
             outstanding = Decimal("0.00")
         return str(outstanding.quantize(Decimal("0.01")))
 
+    def get_order_count(self, obj):
+        value = getattr(obj, "order_count", None)
+        return 0 if value is None else int(value)
+
     def get_guest_order_count(self, obj):
         value = getattr(obj, "guest_order_count", None)
         return 0 if value is None else int(value)
 
     def get_total_ordered_amount(self, obj):
         return self._money(obj, "total_ordered_amount")
+
+    def get_net_ordered_amount(self, obj):
+        """What the table still owes on goods it kept: total minus returns.
+
+        Kept separate from ``total_ordered_amount`` so a reviewer can tell "how
+        much was ordered" from "how much of it was sent back".
+        """
+        value = getattr(obj, "net_ordered_amount", None)
+        if value is None:
+            total = getattr(obj, "total_ordered_amount", None) or Decimal("0.00")
+            value = Decimal(total) - (getattr(obj, "returned_amount", None) or Decimal("0.00"))
+        return str(Decimal(value).quantize(Decimal("0.01")))
 
     def get_returned_amount(self, obj):
         return self._money(obj, "returned_amount")
@@ -259,7 +277,8 @@ class RestaurantTableSerializer(TableSummarySerializerMixin, serializers.ModelSe
         model = RestaurantTable
         fields = [
             "id", "code", "name", "section", "seats", "is_active", "created_at", "updated_at",
-            "guest_order_count", "total_ordered_amount", "returned_amount", "captured_amount", "unpaid_balance",
+            "order_count", "guest_order_count", "total_ordered_amount", "net_ordered_amount",
+            "returned_amount", "captured_amount", "unpaid_balance",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
@@ -450,11 +469,103 @@ class PosOrderDetailSerializer(PosOrderListSerializer):
     events = PosOrderEventSerializer(many=True, read_only=True)
     kitchen_ticket = KitchenTicketSerializer(read_only=True)
     charge_financial_reference = serializers.CharField(source="charge_transaction.reference", read_only=True)
+    # -- Receipt authority -------------------------------------------------
+    # The browser must not decide whether money was received. These three fields
+    # are computed from the frozen ledger evidence and are the ONLY input the
+    # Print action uses; ``apps.guest_services.serializers`` reuses the same
+    # ``_receipt_state`` so a guest-request receipt cannot disagree.
+    payment_basis = serializers.SerializerMethodField()
+    receipt_printable = serializers.SerializerMethodField()
+    receipt_blocked_reason = serializers.SerializerMethodField()
 
     class Meta(PosOrderListSerializer.Meta):
         fields = PosOrderListSerializer.Meta.fields + [
             "notes", "cancelled_at", "charge_financial_reference", "lines", "tenders", "events", "kitchen_ticket",
+            "payment_basis", "receipt_printable", "receipt_blocked_reason",
         ]
+
+    @staticmethod
+    def _receipt_state(order):
+        """``(basis, printable, blocked_reason)`` for one order.
+
+        A guest may be handed paper for two different situations, and they must
+        never be confused:
+
+        * ``DIRECT_TENDER`` - paid at the till. Printable once the order is
+          DELIVERED, its charge is posted, nothing has been refunded, and the
+          captured tenders cover the amount now due (``net_total``, i.e. after
+          unopened-item returns). The ceiling is deliberately not the frozen
+          original total: a settled order whose returned bottles reduced the
+          bill must still print.
+        * ``ROOM_FOLIO`` - charged to the guest's folio and settled with the
+          room. There is no tender at the till, which is why this used to be
+          refused outright; the receipt states the basis and carries the note
+          "This is not a till receipt".
+
+        Anything else - draft, in progress, cancelled, voided, uncharged, or a
+        direct sale with a balance still due - is blocked, with a reason the
+        operator can read.
+        """
+        if order.status in (PosOrder.Status.CANCELLED, PosOrder.Status.VOIDED):
+            return None, False, "This order was cancelled; there is nothing to collect or receipt."
+        if order.status != PosOrder.Status.DELIVERED:
+            return None, False, (
+                "A paid receipt is available only after the backend confirms the order was "
+                "delivered and charged."
+            )
+        if not order.charge_transaction_id:
+            return None, False, (
+                "The charge for this order has not been posted to the ledger yet, so no "
+                "paid receipt can be issued."
+            )
+        # A refund makes the paper wrong in both directions, so it blocks the
+        # receipt before anything else is considered. ``settlement_status`` is
+        # the frozen statement of that; the POS records no separate refunded
+        # amount column (returns reduce ``net_total`` instead).
+        if order.settlement_status == PosOrder.SettlementStatus.REFUNDED:
+            return None, False, (
+                "This order has been refunded, so a paid receipt would no longer state what "
+                "the guest owes."
+            )
+        if order.mode == PosOrder.Mode.ROOM_SERVICE:
+            # Settled with the room, not at this till.
+            return "ROOM_FOLIO", True, ""
+
+        net = Decimal(order.net_total or 0)
+        captured = sum(
+            (Decimal(getattr(tender, "amount", 0) or 0) for tender in order.tenders.all()
+             if tender.status == PosTender.Status.CAPTURED),
+            Decimal("0.00"),
+        )
+        if captured <= 0:
+            return "DIRECT_TENDER", False, (
+                "No payment has been captured for this order yet; record the payment before "
+                "printing a paid receipt."
+            )
+        if captured + Decimal("0.0001") < net:
+            return "DIRECT_TENDER", False, (
+                f"{net - captured} is still outstanding on this order; a paid receipt is "
+                "available only once the full amount is captured."
+            )
+        # A REFUNDED settlement with tenders still on file cannot be printed:
+        # the paper would tell the guest the hotel holds money it has given back.
+        if order.settlement_status not in (
+            PosOrder.SettlementStatus.PAID, PosOrder.SettlementStatus.PARTIALLY_REFUNDED,
+        ):
+            return "DIRECT_TENDER", False, (
+                "Settlement is recorded as "
+                f"{order.get_settlement_status_display().lower()}, so no paid receipt can be issued."
+            )
+        return "DIRECT_TENDER", True, ""
+
+    def get_payment_basis(self, obj):
+        return self._receipt_state(obj)[0]
+
+    def get_receipt_printable(self, obj):
+        return self._receipt_state(obj)[1]
+
+    def get_receipt_blocked_reason(self, obj):
+        return self._receipt_state(obj)[2]
 
 
 class PosOrderLineInputSerializer(serializers.Serializer):
