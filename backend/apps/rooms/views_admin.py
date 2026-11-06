@@ -1,7 +1,7 @@
 # apps/rooms/views_admin.py
 """Staff management for amenities, room types, images and physical rooms."""
 import logging
-from datetime import timedelta
+
 from pathlib import Path
 from uuid import uuid4
 
@@ -129,15 +129,31 @@ class RoomAdminViewSet(_AuditedModelViewSet):
 
     def get_queryset(self):
         from apps.bookings.models import Booking, BookingRoom
-        from apps.bookings.services import availability
 
         now = timezone.now()
         today = timezone.localdate(now)
-        tomorrow = today + timedelta(days=1)
-        tonight = (
+        # Authoritative, date-aware reservation status.
+        #
+        # A room is RESERVED when it has an active (CONFIRMED or CHECKED_IN)
+        # assignment whose stay has not ended (check_out >= today). This covers
+        # future stays — not just tonight — so a room booked ahead never looks
+        # AVAILABLE on the room management dashboard simply because the
+        # reservation starts later.
+        #
+        # A room is OCCUPIED when that assignment has been handed over
+        # (checked_in_at set). A CHECKED_IN assignment without checked_in_at is
+        # still RESERVED (awaiting arrival), not OCCUPIED.
+        #
+        # PENDING holds block inventory via the availability engine but do not
+        # change the displayed operational status — only confirmed/in-house
+        # bookings make a room RESERVED or OCCUPIED.
+        active_assignments = (
             BookingRoom.objects.filter(room=OuterRef("pk"))
-            .filter(availability.blocking_booking_q(now=now, prefix="booking"))
-            .filter(availability.overlap_q(today, tomorrow))
+            .filter(
+                Q(booking__status=Booking.Status.CONFIRMED)
+                | Q(booking__status=Booking.Status.CHECKED_IN)
+            )
+            .filter(check_out__gte=today)
         )
         qs = (
             Room.objects.select_related("room_type")
@@ -147,8 +163,8 @@ class RoomAdminViewSet(_AuditedModelViewSet):
                 Prefetch("room_type__images", queryset=RoomTypeImage.objects.filter(is_active=True)),
             )
             .annotate(
-                _reserved_tonight=Exists(tonight),
-                _occupied_tonight=Exists(tonight.filter(booking__status=Booking.Status.CHECKED_IN)),
+                _occupied=Exists(active_assignments.filter(checked_in_at__isnull=False)),
+                _reserved=Exists(active_assignments.filter(checked_in_at__isnull=True)),
             )
             .order_by("room_number")
         )

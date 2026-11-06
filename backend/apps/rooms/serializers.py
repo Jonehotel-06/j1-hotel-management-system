@@ -398,8 +398,8 @@ class RoomSerializer(serializers.ModelSerializer):
             return obj.status
         if not obj.is_active:
             return Room.Status.OUT_OF_SERVICE
-        occupied = getattr(obj, "_occupied_tonight", None)
-        reserved = getattr(obj, "_reserved_tonight", None)
+        occupied = getattr(obj, "_occupied", None)
+        reserved = getattr(obj, "_reserved", None)
         if occupied is None and reserved is None:
             return obj.status
         if occupied:
