@@ -49,6 +49,32 @@ class PosRestaurantTableApiTests(BaseAPITestCase):
             "idempotency_key": key,
         }, format="json")
 
+    def test_multiple_orders_after_delivery_keep_the_table_and_separate_charges(self):
+        from apps.finance.models import FinancialTransaction
+        table = self._register_table()
+        session = self._open_session(table).json()["data"]
+        refs = []
+        for index in range(3):
+            created = self._create_order(session["reference"], key=f"repeat-table-order-{index}")
+            self.assertEqual(created.status_code, 201, created.content)
+            ref = created.json()["data"]["reference"]
+            refs.append(ref)
+            order = PosOrder.objects.get(reference=ref)
+            self.assertEqual(order.status, "DRAFT")
+            self.assertEqual(order.table_session.reference, session["reference"])
+            if index < 2:
+                submitted = self.client.post(f"/api/admin/pos/orders/{ref}/submit/", {}, format="json")
+                self.assertEqual(submitted.status_code, 200, submitted.content)
+                delivered = self.client.post(f"/api/admin/pos/orders/{ref}/status/", {"status": "DELIVERED"}, format="json")
+                self.assertEqual(delivered.status_code, 200, delivered.content)
+        self.assertEqual(len(set(refs)), 3)
+        for index, ref in enumerate(refs):
+            order = PosOrder.objects.get(reference=ref)
+            self.assertEqual(order.status, "DELIVERED" if index < 2 else "DRAFT")
+            self.assertEqual(str(order.total_amount), "3500.00")
+            self.assertEqual(order.lines.count(), 1)
+            self.assertEqual(FinancialTransaction.objects.filter(type="POS_CHARGE", source_reference=ref).count(), 1 if index < 2 else 0)
+
     def test_register_read_scope_and_manager_only_write(self):
         table = self._register_table(code=" t-01 ")
         self.assertEqual(table["code"], "T-01")

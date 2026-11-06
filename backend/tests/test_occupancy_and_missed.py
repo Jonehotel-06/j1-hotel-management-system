@@ -240,6 +240,23 @@ class RescheduleBookingTests(BaseAPITestCase):
         self.assertEqual(self.booking.amount_paid, payments_before)
         self.assertEqual(Booking.objects.count(), 1, "no duplicate booking is created")
 
+    def test_staff_room_preserved_on_reschedule_and_conflict_rejected(self):
+        self.booking.source = Booking.Source.PHONE
+        self.booking.save(update_fields=["source"])
+        assignment = self.booking.room_assignments.get()
+        result = self.post(days_out=14)
+        self.assertEqual(result.status_code, 200, result.content)
+        self.assertEqual(self.booking.room_assignments.get().pk, assignment.pk)
+        self.assertEqual(self.booking.room_assignments.get().room_id, self.r1.pk)
+        target = self.today + timedelta(days=21)
+        other = make_guest("room-change-blocker@test.dev")
+        make_booking(other, self.room_type, rooms=[self.r1], check_in=target, check_out=target + timedelta(days=1))
+        result = self.post(days_out=21)
+        self.assertIn(result.status_code, (400, 409), result.content)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.check_in, self.today + timedelta(days=14))
+        self.assertEqual(self.booking.room_assignments.get().room_id, self.r1.pk)
+
     def test_rooms_are_reassigned_for_the_new_dates(self):
         self.post()
         assignments = BookingRoom.objects.filter(booking=self.booking)

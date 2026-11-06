@@ -453,7 +453,7 @@
           }
         },
         { name: "physical_room", label: "Exact physical room", type: "custom", required: true,
-          help: "Select the first room explicitly. Additional rooms on a multi-room booking retain the existing allocation workflow. Availability is checked again at submission; no walk-in substitution is allowed.",
+          help: "Select the first room explicitly. Additional rooms on a multi-room booking retain the existing allocation workflow. Availability is checked again at submission; no walk-in or phone substitution is allowed.",
           render: function(mount){physicalSelect=document.createElement("select");physicalSelect.className="select";physicalSelect.setAttribute("aria-label","Exact physical room");mount.appendChild(physicalSelect);loadPhysicalRooms();},
           getValue: function(){return physicalSelect?physicalSelect.value:"";},
           validate: function(){return physicalSelect&&!physicalSelect.disabled&&physicalSelect.value?"":"Choose an available physical room.";}

@@ -159,6 +159,32 @@ class GuestPortalRoomOrderTests(BaseAPITestCase):
         self.assertEqual(shown.json()["data"]["pos_order"]["status"], "DELIVERED")
         self.assertTrue(shown.json()["data"]["pos_order"]["charge_posted"])
 
+    def test_three_orders_after_delivery_keep_independent_charges_and_stock(self):
+        orders = []
+        for index in range(3):
+            self.unauth()
+            req, response = self.create_order(self.payload(key=f"repeat-room-order-{index}"))
+            order = req.pos_order
+            self.assertEqual(order.status, PosOrder.Status.DRAFT)
+            self.assertEqual(order.total_amount, Decimal("800.00"))
+            orders.append(order)
+            self.auth(self.waiter)
+            listing = self.client.get("/api/admin/pos/orders/?mode=ROOM_SERVICE")
+            self.assertIn(order.reference, [row["reference"] for row in listing.json()["data"]])
+            if index < 2:
+                result = self.client.post(f"/api/admin/pos/orders/{order.reference}/submit/", {}, format="json")
+                self.assertEqual(result.status_code, 200, result.content)
+                result = self.client.post(f"/api/admin/pos/orders/{order.reference}/status/", {"status": "DELIVERED"}, format="json")
+                self.assertEqual(result.status_code, 200, result.content)
+        self.assertEqual(len({order.pk for order in orders}), 3)
+        for index, order in enumerate(orders):
+            order.refresh_from_db()
+            self.assertEqual(order.status, "DELIVERED" if index < 2 else "DRAFT")
+            self.assertEqual(order.total_amount, Decimal("800.00"))
+            self.assertEqual(order.lines.count(), 1)
+            self.assertEqual(FinancialTransaction.objects.filter(type="POS_CHARGE", source_reference=order.reference).count(), 1 if index < 2 else 0)
+        self.assertEqual(StockBalance.objects.get(item=self.malt, location=self.bar).quantity_on_hand, Decimal("3"))
+
     def test_same_key_replay_is_idempotent_and_changed_payload_is_rejected(self):
         payload = self.payload()
         req, _ = self.create_order(payload)

@@ -284,10 +284,9 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
 
     ``room_id`` requests one EXACT physical room ("Book this room — Room 203").
     The backend never trusts it blindly: the room must belong to the requested
-    room type, be in service and be free for the stay. When it is not, a
-    deterministic substitute is selected by the availability engine and
-    exposed to the caller as ``booking.room_substitution`` so the guest can be
-    told — a room is never swapped silently.
+    room type, be in service and be free for the stay. Staff walk-in and phone
+    selections are never substituted; public bookings retain their existing
+    disclosed substitution policy.
 
     ``room_guests`` optionally records who is staying in the additional rooms
     (``[{email, full_name?, phone?, room_index?}]``). The booking contact is
@@ -347,13 +346,13 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
                 "That room is not available for the selected dates. "
                 "Please choose another room."
             )
-        if is_staff and source == Booking.Source.WALK_IN and requested_room.status == Room.Status.OCCUPIED:
+        if is_staff and source in (Booking.Source.WALK_IN, Booking.Source.PHONE) and requested_room.status == Room.Status.OCCUPIED:
             raise RoomUnavailableError("The selected physical room is occupied. Choose another room; no substitute was assigned.")
         if requested_room in free_rooms:
             # Happy path: the exact room the guest clicked is still free.
             free_rooms = [requested_room] + [r for r in free_rooms if r.pk != requested_room.pk]
         else:
-            if is_staff and source == Booking.Source.WALK_IN:
+            if is_staff and source in (Booking.Source.WALK_IN, Booking.Source.PHONE):
                 raise RoomUnavailableError(
                     f"Room {requested_room.room_number} is no longer available for the selected dates. "
                     "Choose another physical room; no substitute was assigned."
@@ -2006,15 +2005,34 @@ def reschedule_booking(booking: Booking, *, check_in, check_out, staff_user, req
     # Lock the room type, then re-check inventory for the NEW window while
     # ignoring this booking's own current assignments.
     RoomType.objects.select_for_update().get(pk=booking.room_type_id)
-    free_rooms = list(
-        availability.available_rooms_queryset(
-            room_type=booking.room_type,
-            check_in=check_in,
-            check_out=check_out,
-            for_update=True,
-            exclude_booking_id=booking.pk,
-        )[:rooms_needed]
+    available_rooms = availability.available_rooms_queryset(
+        room_type=booking.room_type,
+        check_in=check_in,
+        check_out=check_out,
+        for_update=True,
+        exclude_booking_id=booking.pk,
     )
+    # Staff bookings can contain a specifically promised room. Older records do
+    # not record whether it was chosen manually, so retain all existing staff
+    # assignments rather than silently replacing one on a date change.
+    staff_booking = booking.source in (Booking.Source.WALK_IN, Booking.Source.PHONE)
+    assignments = list(booking.room_assignments.select_related("room").select_for_update()) if staff_booking else []
+    if staff_booking and len(assignments) != rooms_needed:
+        raise RoomUnavailableError("This booking has incomplete room assignments. Assign the rooms explicitly before changing dates.")
+    if staff_booking:
+        available_by_id = {room.pk: room for room in available_rooms}
+        unavailable = [
+            a.room.room_number for a in assignments
+            if a.room_id not in available_by_id or available_by_id[a.room_id].status == Room.Status.OCCUPIED
+        ]
+        if unavailable:
+            raise RoomUnavailableError(
+                "The assigned room(s) " + ", ".join(unavailable) +
+                " are unavailable for the new dates. Choose different dates or change the room explicitly."
+            )
+        free_rooms = [available_by_id[a.room_id] for a in assignments]
+    else:
+        free_rooms = list(available_rooms[:rooms_needed])
     if len(free_rooms) < rooms_needed:
         raise RoomUnavailableError(
             f"Only {len(free_rooms)} room(s) of this type are available for the new dates; "
@@ -2029,11 +2047,14 @@ def reschedule_booking(booking: Booking, *, check_in, check_out, staff_user, req
         settings_obj=settings_obj, for_staff=True, guest=booking.guest,
     )
 
-    booking.room_assignments.all().delete()
-    BookingRoom.objects.bulk_create([
-        BookingRoom(booking=booking, room=room, check_in=check_in, check_out=check_out)
-        for room in free_rooms
-    ])
+    if staff_booking:
+        booking.room_assignments.update(check_in=check_in, check_out=check_out)
+    else:
+        booking.room_assignments.all().delete()
+        BookingRoom.objects.bulk_create([
+            BookingRoom(booking=booking, room=room, check_in=check_in, check_out=check_out)
+            for room in free_rooms
+        ])
 
     booking.check_in = check_in
     booking.check_out = check_out

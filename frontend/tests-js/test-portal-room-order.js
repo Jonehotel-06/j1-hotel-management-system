@@ -205,3 +205,17 @@ test("portal integrates the cart and displays order status without storing porta
   assert.doesNotMatch(script, /localStorage|sessionStorage|document\.cookie/);
   assert.doesNotMatch(script, /\/api\/|localhost|127\.0\.0\.1/);
 });
+
+test("successive orders use new keys while retaining the selected stay and room", async () => {
+  const calls = [];
+  const { cart } = setup({ submit: async (body) => {
+    calls.push(plain(body));
+    return { data: { reference: "SRQ-" + calls.length, pos_order: { status: "DRAFT" } } };
+  } });
+  for (let i = 0; i < 3; i++) {
+    assert.equal(cart.add(item()), true);
+    assert.equal(await cart.submit(), true);
+  }
+  assert.deepEqual(calls.map(call => call.idempotency_key), ["order-key-1", "order-key-2", "order-key-3"]);
+  assert.ok(calls.every(call => call.stay_reference === "STAY-1" && call.room_id === 17));
+});

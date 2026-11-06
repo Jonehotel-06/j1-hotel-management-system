@@ -6,6 +6,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.utils import timezone
+from django.test import TransactionTestCase
 
 from apps.bookings.models import Booking, Guest
 from apps.core.utils import hotel_today
@@ -280,6 +281,51 @@ class WalkInBookingLifecycleTests(BaseAPITestCase):
         self.assertEqual(r_room.status_code, 400, r_room.content)
         self.assertIn("room_id", r_room.json()["errors"])
 
+    def test_exact_room_for_both_sources_and_overlap_rejected(self):
+        for source, room in (("WALK_IN", self.room2), ("PHONE", self.room1)):
+            response = self.client.post("/api/admin/bookings/", self._walk_in_payload(source=source, room_id=room.pk), format="json")
+            self.assertEqual(response.status_code, 201, response.content)
+            ref = response.json()["data"]["booking_reference"]
+            booking = Booking.objects.get(booking_reference=ref)
+            self.assertEqual(booking.room_assignments.get().room_id, room.pk)
+            detail = self.client.get(f"/api/admin/bookings/{ref}/")
+            self.assertEqual(detail.status_code, 200, detail.content)
+            self.assertEqual(detail.json()["data"]["room_assignments"][0]["room_number"], room.room_number)
+            self.assertEqual(detail.json()["data"]["room_assignments"][0]["room_id"], room.pk)
+        # An available alternative must not substitute for the promised room.
+        response = self.client.post("/api/admin/bookings/", self._walk_in_payload(source="PHONE", room_id=self.room1.pk), format="json")
+        self.assertIn(response.status_code, (400, 409), response.content)
+        self.assertEqual(Booking.objects.count(), 2)
+
+    def test_phone_conflict_rejects_instead_of_substituting_free_room(self):
+        first = self.client.post("/api/admin/bookings/", self._walk_in_payload(source="PHONE", room_id=self.room2.pk), format="json")
+        self.assertEqual(first.status_code, 201, first.content)
+        second = self.client.post("/api/admin/bookings/", self._walk_in_payload(source="PHONE", room_id=self.room2.pk), format="json")
+        self.assertIn(second.status_code, (400, 409), second.content)
+        self.assertEqual(Booking.objects.count(), 1)
+
+    def test_exact_unavailable_and_automatic_assignment(self):
+        from apps.rooms.models import Room
+        for status in (Room.Status.OCCUPIED, Room.Status.MAINTENANCE, Room.Status.OUT_OF_SERVICE):
+            self.room2.status = status
+            self.room2.save(update_fields=["status"])
+            for source in ("WALK_IN", "PHONE"):
+                result = self.client.post("/api/admin/bookings/", self._walk_in_payload(source=source, room_id=self.room2.pk), format="json")
+                self.assertIn(result.status_code, (400, 409), result.content)
+        auto = self.client.post("/api/admin/bookings/", self._walk_in_payload(source="PHONE"), format="json")
+        self.assertEqual(auto.status_code, 201, auto.content)
+        self.assertEqual(Booking.objects.get(booking_reference=auto.json()["data"]["booking_reference"]).room_assignments.get().room_id, self.room1.pk)
+
+    def test_checkin_preserves_selected_room(self):
+        response = self.client.post("/api/admin/bookings/", self._walk_in_payload(
+            source="WALK_IN", room_id=self.room2.pk, check_in=self.today.isoformat(),
+            check_out=(self.today + timedelta(days=2)).isoformat()), format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        ref = response.json()["data"]["booking_reference"]
+        result = self.client.post(f"/api/admin/bookings/{ref}/check-in/", {}, format="json")
+        self.assertEqual(result.status_code, 200, result.content)
+        self.assertEqual(Booking.objects.get(booking_reference=ref).room_assignments.get().room_id, self.room2.pk)
+
     def test_walk_in_booking_succeeds_even_if_confirmation_email_preparation_fails(self):
         from unittest.mock import patch
 
@@ -408,3 +454,41 @@ class PublicBookingPhoneNormalisationTests(BaseAPITestCase):
         self.assertEqual(response.status_code, 200, response.content)
         guest.refresh_from_db()
         self.assertEqual(guest.phone, "+234(0)8035551234")
+
+class StaffExactRoomRaceTests(TransactionTestCase):
+    """Two independent staff connections cannot reserve the same exact room."""
+    def test_two_staff_race_for_same_room(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from django.db import close_old_connections, connection
+        from rest_framework.test import APIClient
+        from apps.bookings.models import BookingRoom
+
+        hotel_settings(tax_rate="0.00", service_fee="0.00")
+        room_type = make_room_type("Staff race", price="15000.00", max_guests=2)
+        room = make_room(room_type, "STAFF-RACE-1")
+        staff = [make_staff("staff-race-1@test.dev"), make_staff("staff-race-2@test.dev")]
+        today = hotel_today()
+        payload = {"room_type": room_type.slug, "room_id": room.pk,
+                   "check_in": (today + timedelta(days=5)).isoformat(),
+                   "check_out": (today + timedelta(days=7)).isoformat(),
+                   "source": "PHONE", "status": "CONFIRMED", "rooms": 1,
+                   "adults": 1, "children": 0,
+                   "guest": {"first_name": "Race", "last_name": "Guest",
+                             "email": "race-guest@test.dev", "phone": "08030000000"}}
+        gate = Barrier(2)
+        def attempt(user):
+            close_old_connections()
+            try:
+                client = APIClient()
+                client.force_authenticate(user=user)
+                gate.wait(timeout=20)
+                return client.post("/api/admin/bookings/", payload, format="json").status_code
+            finally:
+                close_old_connections()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            codes = list(pool.map(attempt, staff))
+        self.assertLessEqual(codes.count(201), 1, codes)
+        self.assertLessEqual(BookingRoom.objects.filter(room=room).count(), 1)
+        if connection.vendor != "sqlite":
+            self.assertEqual(sorted(codes), [201, 409])

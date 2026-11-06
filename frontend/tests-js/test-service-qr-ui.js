@@ -70,3 +70,44 @@ test("food-and-beverage QR requests are visible in the specialist guest-request 
   assert.match(page, /data-sr-pos-draft/);
   assert.match(page, /pos\.html\?service_request=/);
 });
+
+test("successful QR requests release the guard so another room or table request can be sent", async () => {
+  const vm = require("node:vm");
+  const { makeElement } = require("./harness");
+  for (const target of ["ROOM", "TABLE"]) {
+    const ctx = makeContext();
+    ctx.location.hash = "#token=" + "a".repeat(40);
+    ctx.history = { replaceState() {} };
+    const nodes = {};
+    for (const name of ["loading","unavailable","error","form","category-wrap","success","success-message","submit-error","location","new","submit"]) {
+      nodes[name] = makeElement(name === "form" ? "form" : "div");
+    }
+    const category = makeElement("select"), summary = makeElement("input"), detail = makeElement("textarea");
+    category.options = [];
+    category.appendChild = function(option) { this.options.push(option); };
+    ctx.document.querySelector = (selector) => nodes[selector.match(/^\[data-qr-([^\]]+)\]$/)[1]];
+    ctx.document.getElementById = (id) => ({ "qr-category": category, "qr-summary": summary, "qr-detail": detail })[id];
+    nodes.form.querySelector = () => nodes.submit;
+    loadScript(ctx, "js/utils.js");
+    let counter = 0; const posts = [];
+    ctx.JONE.operations = { newIdempotencyKey: () => "fresh-key-" + (++counter) };
+    ctx.APP_CONFIG = { API_ENDPOINTS: { serviceQrContext: "/context", serviceQrRequests: "/requests" } };
+    ctx.API = {
+      get: async () => ({ data: { target_type: target, location: "101", categories: [{value:"FOOD_BEVERAGE",label:"Food"}] } }),
+      post: async (_url, body) => { posts.push(body); return { data: { reference: "SRQ-" + posts.length } }; },
+    };
+    const html = fs.readFileSync(path.join(FRONTEND, "qr-service.html"), "utf8");
+    const script = [...html.matchAll(/<script>\s*([\s\S]*?)<\/script>/g)].at(-1)[1];
+    vm.runInContext(script, ctx);
+    await new Promise(resolve => setImmediate(resolve));
+    for (let i = 0; i < 3; i++) {
+      summary.value = "Request " + i;
+      await nodes.form.listeners.submit[0]({ preventDefault() {} });
+      assert.equal(nodes.submit.dataset.busy, "false");
+      assert.equal(nodes.success.hidden, false);
+      nodes.new.click();
+    }
+    assert.equal(posts.length, 3);
+    assert.equal(new Set(posts.map(p => p.idempotency_key)).size, 3);
+  }
+});

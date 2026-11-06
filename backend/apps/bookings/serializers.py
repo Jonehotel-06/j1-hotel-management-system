@@ -91,6 +91,7 @@ class RoomOccupantSerializer(serializers.ModelSerializer):
 
 
 class BookingRoomSerializer(serializers.ModelSerializer):
+    room_id = serializers.IntegerField(read_only=True)
     room_number = serializers.CharField(source="room.room_number", read_only=True)
     floor = serializers.IntegerField(source="room.floor", read_only=True)
     occupants = RoomOccupantSerializer(many=True, read_only=True)
@@ -100,7 +101,7 @@ class BookingRoomSerializer(serializers.ModelSerializer):
     class Meta:
         model = BookingRoom
         fields = [
-            "id", "room_number", "floor", "check_in", "check_out",
+            "id", "room_id", "room_number", "floor", "check_in", "check_out",
             "checked_in_at", "not_arrived_at", "arrival_status",
             "checked_in_by_name", "arrival_note", "occupants",
         ]
