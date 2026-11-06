@@ -116,7 +116,7 @@ class DirectDeliveryTests(TestCase):
 
 
 @override_settings(EMAIL_PROVIDER="brevo", BREVO_API_KEY="test-key-not-a-real-secret",
-                   DEFAULT_FROM_EMAIL="J-one hotel & lodge <agbo33010@gmail.com>")
+                   DEFAULT_FROM_EMAIL="J-one hotel & lodge<support@jonehotels.com>>")
 class BrevoTransportTests(TestCase):
     """The Brevo HTTPS API path: request format, truth-tracking, error surfacing."""
 

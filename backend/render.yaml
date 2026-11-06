@@ -74,7 +74,7 @@ envVarGroups:
       # EMAIL_PROVIDER: brevo | sendgrid | mailgun | postmark | resend.
       # EMAIL_API_KEY: created in that vendor's dashboard.
       # DEFAULT_FROM_EMAIL: MUST be a sender VERIFIED with that vendor, with
-      # no surrounding quotes, e.g.  J-one hotel & lodge <agbo33010@gmail.com>
+      # no surrounding quotes, e.g.  J-one hotel & lodge<support@jonehotels.com>>
       # EMAIL_LOGO_URL: absolute HTTPS logo; required for Brevo and Resend,
       # whose APIs cannot deliver inline cid: images.
       # Verify anytime: python manage.py email_check --send you@example.com

@@ -632,7 +632,7 @@ EMAIL_LOGO_URL = config("EMAIL_LOGO_URL", default="")
 # ADMIN_OVERRIDE audit evidence on the workflow itself.
 # ---------------------------------------------------------------------------
 ALLOW_ADMIN_APPROVAL_OVERRIDE = config("ALLOW_ADMIN_APPROVAL_OVERRIDE", default=True, cast=bool)
-DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="J-one hotel & lodge <agbo33010@gmail.com>")
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="J-one hotel & lodge<support@jonehotels.com>>")
 
 # address and every provider rejects the sender.
 if (len(DEFAULT_FROM_EMAIL) >= 2 and DEFAULT_FROM_EMAIL[0] == DEFAULT_FROM_EMAIL[-1]
