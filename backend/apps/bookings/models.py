@@ -278,6 +278,99 @@ class BookingRoom(models.Model):
         return "CHECKED_IN"
 
 
+class BookingExtension(TimeStampedModel):
+    """One "the guest is staying longer" event on an existing booking.
+
+    Why this exists instead of editing ``Booking.check_out``: an extension is
+    MONEY. It changes what the guest owes and it must be paid for, so it needs
+    the same durability and auditability as the original reservation:
+
+    * the ORIGINAL checkout date is never erased — ``previous_check_out`` keeps
+      it (and the booking's very first checkout date is recoverable as the
+      earliest extension's ``previous_check_out``);
+    * the amount, what was actually paid, the tender and the staff member are
+      recorded as facts, not recomputed from today's configuration;
+    * the payment is the SAME ``payments.Payment`` row the rest of the hotel
+      uses, so accounting, receipts and financial reports see it.
+
+    An extension never creates a second booking: the stay stays one
+    reservation, one folio, one guest.
+    """
+
+    class Status(models.TextChoices):
+        CONFIRMED = "CONFIRMED", "Confirmed"
+        VOID = "VOID", "Void"
+
+    booking = models.ForeignKey(
+        Booking, on_delete=models.PROTECT, related_name="extensions",
+    )
+    # --- Dates -------------------------------------------------------------
+    previous_check_out = models.DateField(
+        help_text="The booking's checkout date BEFORE this extension.",
+    )
+    new_check_out = models.DateField(db_index=True)
+    additional_nights = models.PositiveSmallIntegerField()
+    # --- Money (all snapshotted, never recomputed) -------------------------
+    nightly_rate = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        help_text="Nightly rate the extension was charged at (the rate already agreed on the booking).",
+    )
+    extension_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    currency = models.CharField(max_length=3, default="NGN")
+    # --- Payment evidence --------------------------------------------------
+    payment = models.ForeignKey(
+        "payments.Payment", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="booking_extensions",
+    )
+    payment_method = models.CharField(max_length=20, blank=True, default="")
+    payment_reference = models.CharField(max_length=60, blank=True, default="", db_index=True)
+    processed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="booking_extensions_processed",
+    )
+    notes = models.CharField(max_length=255, blank=True, default="")
+    status = models.CharField(max_length=20, choices=Status.choices,
+                              default=Status.CONFIRMED, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["booking", "-created_at"]),
+            models.Index(fields=["new_check_out", "status"]),
+        ]
+        constraints = [
+            # A stay cannot be confirmed twice to the SAME new checkout date.
+            # This is what makes a double-clicked "Confirm extension" button
+            # (or two terminals extending the same stay) charge the guest once.
+            models.UniqueConstraint(
+                fields=["booking", "new_check_out"],
+                condition=models.Q(status="CONFIRMED"),
+                name="unique_confirmed_extension_checkout",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(new_check_out__gt=models.F("previous_check_out")),
+                name="extension_moves_checkout_forward",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.booking.booking_reference} · {self.previous_check_out} → "
+            f"{self.new_check_out} (+{self.additional_nights}n)"
+        )
+
+    @property
+    def outstanding_balance(self):
+        """What is still owed for this extension (never negative)."""
+        due = (self.extension_amount or Decimal("0.00")) - (self.amount_paid or Decimal("0.00"))
+        return max(due, Decimal("0.00"))
+
+    @property
+    def is_fully_paid(self):
+        return (self.amount_paid or Decimal("0.00")) >= (self.extension_amount or Decimal("0.00"))
+
+
 class RoomOccupant(TimeStampedModel):
     """A named guest staying in one reserved room, with their own email.
 

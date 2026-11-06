@@ -32,6 +32,13 @@ bookings_urlpatterns = [
     path("<str:lookup>/reschedule/", views_admin.AdminBookingRescheduleView.as_view(), name="booking-reschedule"),
     path("<str:lookup>/send-receipt/", views_admin.AdminBookingSendReceiptView.as_view(), name="booking-send-receipt"),
     path("<str:lookup>/settle-balance/", views_admin.AdminBookingSettleBalanceView.as_view(), name="booking-settle-balance"),
+    # --- Stay extensions ---------------------------------------------------
+    # Literal segments MUST stay ahead of the "<str:lookup>/" fallback; they are
+    # registered after it in this list but the detail route only matches a
+    # single segment, so "X/extend-stay/" is never captured by it.
+    path("<str:lookup>/extend-quote/", views_admin.AdminBookingExtensionQuoteView.as_view(), name="booking-extend-quote"),
+    path("<str:lookup>/extend-stay/", views_admin.AdminBookingExtensionConfirmView.as_view(), name="booking-extend-stay"),
+    path("<str:lookup>/extensions/", views_admin.AdminBookingExtensionHistoryView.as_view(), name="booking-extensions"),
 ]
 
 guests_urlpatterns = [

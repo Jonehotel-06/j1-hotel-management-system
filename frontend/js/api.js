@@ -963,6 +963,39 @@ const API = (() => {
   function updateGuestDiscount(id, payload, opts = {}) { return update("guestDiscounts", id, payload, opts); }
   function deactivateGuestDiscount(id, opts = {}) { return remove("guestDiscounts", id, opts); }
 
+  /* ---- Promotional offers: activation state + guest restrictions ----------
+     POST /api/admin/offers/{id}/activate/     — switch a promotion back on
+     POST /api/admin/offers/{id}/deactivate/   — withdraw it (never deletes it)
+     /api/admin/offer-restrictions/            — one guest barred from one offer
+
+     Both are server decisions. The buttons below only ASK; the price a booking
+     actually gets is recomputed by the backend every time, so hiding a control
+     in the browser changes nothing about what the hotel charges. */
+  function activateOffer(id, opts = {}) { return resourceAction("offers", id, "activate", {}, opts); }
+  function deactivateOffer(id, opts = {}) { return resourceAction("offers", id, "deactivate", {}, opts); }
+  function listOfferRestrictions(params, opts = {}) { return list("offerRestrictions", params, opts); }
+  function createOfferRestriction(payload, opts = {}) { return create("offerRestrictions", payload, opts); }
+  function updateOfferRestriction(id, payload, opts = {}) { return update("offerRestrictions", id, payload, opts); }
+  /* Lifting a restriction is a state change, not a delete: PATCH is_active=false. */
+  function liftOfferRestriction(id, opts = {}) { return updateOfferRestriction(id, { is_active: false }, opts); }
+  function restoreOfferRestriction(id, opts = {}) { return updateOfferRestriction(id, { is_active: true }, opts); }
+
+  /* ---- Stay extensions ----------------------------------------------------
+     POST /api/admin/bookings/{lookup}/extend-quote/   — price + room check
+     POST /api/admin/bookings/{lookup}/extend-stay/    — extend AND take the money
+     GET  /api/admin/bookings/{lookup}/extensions/     — the history
+
+     The quote is a preview; the confirm call re-runs every check server-side
+     inside one transaction, so the browser can never talk the hotel into an
+     overbooked room or an unpaid extension. */
+  const quoteStayExtension = (lookup, payload, opts = {}) => bookingAction("extend-quote", lookup, payload || {}, opts);
+  const extendStay = (lookup, payload, opts = {}) => bookingAction("extend-stay", lookup, payload || {}, opts);
+  const listStayExtensions = (lookup, opts = {}) => {
+    const base = BOOKINGS_EP();
+    if (!base) throw notConfigured("bookings");
+    return get(`${base}/${encodeURIComponent(lookup)}/extensions/`, opts);
+  };
+
   /* Record an offline payment (CASH / POS / BANK_TRANSFER).
      The response carries the payment plus the authoritative booking snapshot
      (total / paid / due / status) so the payment modal never needs a second
@@ -1253,6 +1286,10 @@ const API = (() => {
     housekeepingRoomsNotReady, housekeepingMarkRoomClean,
     rescheduleBooking, getOccupancyCalendar, listMissedBookings, listLateArrivals,
     listGuestDiscounts, createGuestDiscount, updateGuestDiscount, deactivateGuestDiscount,
+    activateOffer, deactivateOffer,
+    listOfferRestrictions, createOfferRestriction, updateOfferRestriction,
+    liftOfferRestriction, restoreOfferRestriction,
+    quoteStayExtension, extendStay, listStayExtensions,
     confirmBooking, staffCancelBooking, checkInBooking, checkOutBooking, bookingFolioClearance,
     saveBookingRoomGuests, checkInBookingRoom,
     settleBookingBalance,

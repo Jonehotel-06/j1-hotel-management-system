@@ -245,6 +245,7 @@
     facilities:    "/api/admin/facilities/",
     policies:      "/api/admin/policies/",
     offers:        "/api/admin/offers/",
+    offerRestrictions: "/api/admin/offer-restrictions/", // guests barred from a specific offer
     gallery:       "/api/admin/gallery/",
 
     /* POS & room service (capability-gated server-side) */

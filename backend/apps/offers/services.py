@@ -12,6 +12,7 @@ from apps.core.exceptions import (
     OfferCodeInvalidError,
     OfferDoesNotCoverStayError,
     OfferExpiredError,
+    OfferGuestRestrictedError,
     OfferNotApplicableError,
     OfferNotStartedError,
     OfferRoomTypeNotEligibleError,
@@ -29,6 +30,51 @@ def _q(value: Decimal) -> Decimal:
     return Decimal(value).quantize(_CENT, rounding=ROUND_HALF_UP)
 
 
+# ---------------------------------------------------------------------------
+# Guest-level offer restrictions
+#
+# The BACKEND is the only authority on whether a guest may use a promotion.
+# A price or an eligibility flag that arrives from the browser is never
+# consulted: every pricing path calls :func:`restricted_offer_ids` (or
+# :func:`guest_is_restricted`) so an offer a guest is barred from cannot be
+# selected, auto-applied or redeemed by a hand-crafted API request.
+# ---------------------------------------------------------------------------
+def restricted_offer_ids(guest) -> "frozenset[int]":
+    """Offer ids ``guest`` is currently barred from (empty for anonymous)."""
+    from .models import OfferGuestRestriction
+
+    guest_pk = getattr(guest, "pk", None)
+    if not guest_pk:
+        # An unidentified website visitor cannot be matched to a restriction,
+        # and must not be blocked by one either.
+        return frozenset()
+    return frozenset(
+        OfferGuestRestriction.objects.filter(
+            guest_id=guest_pk, is_active=True
+        ).values_list("offer_id", flat=True)
+    )
+
+
+def guest_is_restricted(guest, offer) -> bool:
+    """Whether this guest is barred from this offer right now."""
+    from .models import OfferGuestRestriction
+
+    guest_pk = getattr(guest, "pk", None)
+    offer_pk = getattr(offer, "pk", None)
+    if not guest_pk or not offer_pk:
+        return False
+    return OfferGuestRestriction.objects.filter(
+        guest_id=guest_pk, offer_id=offer_pk, is_active=True
+    ).exists()
+
+
+def _q_exclude_restricted(guest):
+    from django.db.models import Q
+
+    blocked = restricted_offer_ids(guest)
+    return ~Q(pk__in=blocked) if blocked else Q()
+
+
 def discount_amount(offer: Offer, subtotal: Decimal) -> Decimal:
     """Absolute discount for a given subtotal (never exceeding the subtotal)."""
     if offer.discount_type == Offer.DiscountType.PERCENTAGE:
@@ -38,11 +84,16 @@ def discount_amount(offer: Offer, subtotal: Decimal) -> Decimal:
     return max(_ZERO, min(_q(amount), subtotal))
 
 
-def eligible_offers_queryset(room_type, check_in, check_out, nights):
+def eligible_offers_queryset(room_type, check_in, check_out, nights, guest=None):
     """Offers whose window fully covers the stay and meet stay-length rules.
 
     Window rule: check_in must fall on/after start_date and the LAST NIGHT
     (check_out - 1 day) must fall on/before end_date.
+
+    ``is_active=True`` is the single deactivation switch: an offer the hotel has
+    deactivated can never be selected here, so a new booking always falls back
+    to the configured room price. ``guest`` (when known) additionally removes
+    every offer that guest has been restricted from.
     """
     from datetime import timedelta
 
@@ -56,6 +107,8 @@ def eligible_offers_queryset(room_type, check_in, check_out, nights):
     qs = qs.filter(models_q_max_nights(nights))
     # Empty M2M means "applies to all room types".
     qs = qs.filter(models_q_room_types(room_type))
+    # Backend-side guest restrictions — never trust a browser-supplied price.
+    qs = qs.filter(_q_exclude_restricted(guest))
     return qs.distinct()
 
 
@@ -71,7 +124,8 @@ def models_q_room_types(room_type):
     return Q(room_types__isnull=True) | Q(room_types=room_type)
 
 
-def public_offer_candidates_for_room_types(*, room_types, check_in, check_out, nights):
+def public_offer_candidates_for_room_types(*, room_types, check_in, check_out, nights,
+                                           guest=None):
     """Preload eligible public offers and partition them by room type.
 
     ``search_availability`` quotes every visible room type. Querying the normal
@@ -83,6 +137,10 @@ def public_offer_candidates_for_room_types(*, room_types, check_in, check_out, n
     The explicit ordering is not cosmetic: :func:`best_offer` keeps the first
     candidate on equal discounts, matching the existing queryset behavior and
     ``Offer.Meta.ordering`` exactly.
+
+    ``guest`` removes offers that guest is restricted from. This is the public
+    search path, so it is normally anonymous — it is honoured here so a signed-in
+    guest browsing the website sees the price they will actually be charged.
     """
     room_type_ids = list(dict.fromkeys(
         getattr(room_type, "pk", room_type) for room_type in room_types
@@ -103,6 +161,7 @@ def public_offer_candidates_for_room_types(*, room_types, check_in, check_out, n
             min_nights__lte=nights,
         )
         .filter(models_q_max_nights(nights))
+        .filter(_q_exclude_restricted(guest))
         .prefetch_related("room_types")
         .order_by(*Offer._meta.ordering)
     )
@@ -114,17 +173,23 @@ def public_offer_candidates_for_room_types(*, room_types, check_in, check_out, n
     return candidates
 
 
-def best_offer(room_type, check_in, check_out, nights, subtotal, candidates=None):
+def best_offer(room_type, check_in, check_out, nights, subtotal, candidates=None,
+               guest=None):
     """Return (offer, discount) producing the largest discount, or (None, 0).
 
     ``candidates`` is an optional ordered list from
     :func:`public_offer_candidates_for_room_types`. The default remains the
     authoritative per-room-type eligibility queryset for quote/booking flows.
+    ``guest`` (when supplied) removes the offers that guest is restricted from.
     """
     best, best_discount = None, _ZERO
-    offers = candidates if candidates is not None else eligible_offers_queryset(
-        room_type, check_in, check_out, nights
-    )
+    if candidates is not None:
+        blocked = restricted_offer_ids(guest)
+        offers = [offer for offer in candidates if offer.pk not in blocked]
+    else:
+        offers = eligible_offers_queryset(
+            room_type, check_in, check_out, nights, guest=guest
+        )
     for offer in offers:
         amount = discount_amount(offer, subtotal)
         if amount > best_discount:
@@ -132,7 +197,8 @@ def best_offer(room_type, check_in, check_out, nights, subtotal, candidates=None
     return best, best_discount
 
 
-def validate_offer_code(code, room_type, check_in, check_out, nights, subtotal):
+def validate_offer_code(code, room_type, check_in, check_out, nights, subtotal,
+                        guest=None):
     """Resolve a promo code to an ``(offer, discount)`` pair.
 
     Raises the SPECIFIC ``OFFER_*`` error describing why the code does not
@@ -148,7 +214,16 @@ def validate_offer_code(code, room_type, check_in, check_out, nights, subtotal):
     if offer is None:
         raise OfferCodeInvalidError(f"\u201c{cleaned}\u201d is not a valid offer code.")
     if not offer.is_active:
+        # Deactivated offer: the promotion is withdrawn for EVERYBODY, so this
+        # stay is charged at the configured room price.
         raise OfferExpiredError("This offer is no longer available.")
+    # A restricted guest is refused even though the offer is live for everyone
+    # else — this is about the guest, not about the code or the dates.
+    if guest_is_restricted(guest, offer):
+        raise OfferGuestRestrictedError(
+            "This guest is restricted from using this offer, so the promotional "
+            "price does not apply. The standard room price will be used."
+        )
 
     last_night = check_out - timedelta(days=1)
     if offer.end_date < check_in:
@@ -181,18 +256,23 @@ def validate_offer_code(code, room_type, check_in, check_out, nights, subtotal):
             f"This offer applies to {names}, not {room_type.name}."
         )
 
-    # Defensive: the queryset is the single source of truth for eligibility.
-    if not eligible_offers_queryset(room_type, check_in, check_out, nights).filter(pk=offer.pk).exists():
+    # Defensive: the queryset is the single source of truth for eligibility —
+    # including the guest restriction filter, so a restricted guest cannot slip
+    # through on a path that forgot to check.
+    if not eligible_offers_queryset(
+        room_type, check_in, check_out, nights, guest=guest
+    ).filter(pk=offer.pk).exists():
         raise OfferNotApplicableError("This offer cannot be applied to the selected stay.")
     return offer, discount_amount(offer, subtotal)
 
 
-def offers_for_room_type(room_type, limit=5):
+def offers_for_room_type(room_type, limit=5, guest=None):
     """Public display helper: currently active offers usable for a room type."""
     today = timezone.localdate()
     qs = (
         Offer.objects.filter(is_active=True, start_date__lte=today, end_date__gte=today)
         .filter(models_q_room_types(room_type))
+        .filter(_q_exclude_restricted(guest))
         .distinct()
         .order_by("-is_featured", "-discount_value")[:limit]
     )
@@ -276,15 +356,20 @@ def best_discount_for_stay(*, guest, room_type, check_in, check_out, nights,
     * ``offer_candidates`` is an internal optimization for anonymous public
       availability search only; explicit promo-code validation always uses the
       authoritative lookup path.
+    * ``guest`` is honoured on BOTH branches: an offer this guest is restricted
+      from cannot be auto-applied and cannot be redeemed with its promo code.
+      A restriction never blocks the guest's PERSONAL discount (that is a
+      separate, staff-granted record) and never blocks any other offer.
     """
     if offer_code:
         offer, offer_discount = validate_offer_code(
-            offer_code, room_type, check_in, check_out, nights, subtotal
+            offer_code, room_type, check_in, check_out, nights, subtotal,
+            guest=guest,
         )
     else:
         offer, offer_discount = best_offer(
             room_type, check_in, check_out, nights, subtotal,
-            candidates=offer_candidates,
+            candidates=offer_candidates, guest=guest,
         )
 
     discount = active_guest_discount(guest, on_date=check_in, subtotal=subtotal)

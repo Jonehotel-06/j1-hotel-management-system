@@ -1586,11 +1586,20 @@
           }
           if (f.type === "custom") {
             if (typeof f.getValue === "function") {
-              const custom = f.getValue() || {};
-              Object.keys(custom).forEach((k) => {
-                values[k] = custom[k];
-                if (formData && custom[k] !== "" && custom[k] != null) formData.append(k, custom[k]);
-              });
+              const custom = f.getValue();
+              // A custom field contributes its value(s) by returning a PLAIN
+              // OBJECT; each key becomes a submitted value. Anything else
+              // (a string, a number, null) used to be spread by Object.keys(),
+              // which turned "06" into values["0"]="0", values["1"]="6" and
+              // silently dropped the real field — the exact physical room never
+              // reached the server. Refuse to invent values instead: a caller
+              // that returns a non-object gets nothing rather than garbage.
+              if (custom && typeof custom === "object" && !Array.isArray(custom)) {
+                Object.keys(custom).forEach((k) => {
+                  values[k] = custom[k];
+                  if (formData && custom[k] !== "" && custom[k] != null) formData.append(k, custom[k]);
+                });
+              }
             }
             return;
           }
@@ -2038,6 +2047,316 @@
         };
       },
     });
+  }
+
+  /* ======================================================================
+     EXTEND STAY  —  shared by booking details, the guest's active stay and
+     the reception desk.
+
+     Verified endpoints:
+       POST /api/admin/bookings/{lookup}/extend-quote/   { new_check_out | additional_nights }
+       POST /api/admin/bookings/{lookup}/extend-stay/    { …, amount_paid, provider, notes }
+       GET  /api/admin/bookings/{lookup}/extensions/
+
+     The rules this screen exists to protect:
+       · The guest KEEPS their physical room. If it is already reserved for any
+         of the added nights the extension is refused and the conflicting room
+         is named — the stay is never silently moved to another room.
+       · The price is computed by the server from the rate already agreed on
+         this booking. The browser never sends a price; it only reports the
+         money actually handed over, and the server checks that figure too.
+       · Nothing is recorded, and nothing is marked paid, until the server has
+         confirmed the extension AND the payment inside one transaction. A
+         failed attempt leaves no extension and no payment — so the desk can
+         safely retry instead of having to unpick a half-extension.
+     ====================================================================== */
+  function extendStayModal(booking, opts = {}) {
+    opts = opts || {};
+    const b = booking || {};
+    const lookup = b.booking_reference || b.reference || opts.lookup;
+    if (!lookup) {
+      JONE.ui.toast("This stay has no booking reference — it cannot be extended.", "error");
+      return Promise.resolve(null);
+    }
+    const currency = b.currency || "NGN";
+    const roomsText = (b.room_numbers && b.room_numbers.length)
+      ? b.room_numbers.join(", ")
+      : ((b.rooms || []).map((r) => (r && (r.room_number || r.number)) || "—").filter(Boolean).join(", ") || "—");
+
+    return new Promise((resolve) => {
+      const backdrop = document.createElement("div");
+      backdrop.className = "modal";
+      backdrop.innerHTML = '<div class="modal-backdrop" data-ex-cancel></div>';
+      const panel = document.createElement("div");
+      panel.className = "modal-panel modal-lg";
+      panel.setAttribute("role", "dialog");
+      panel.setAttribute("aria-modal", "true");
+
+      const head = document.createElement("div");
+      head.className = "modal-head";
+      head.innerHTML = '<h3 style="font-size:var(--fs-md);"></h3>' +
+        '<button class="btn-icon btn-ghost modal-close" type="button" data-ex-cancel aria-label="Close">' +
+        JONE.icons.get("x") + "</button>";
+      head.querySelector("h3").textContent = "Extend stay — " + lookup;
+
+      const body = document.createElement("form");
+      body.className = "modal-body";
+      body.noValidate = true;
+      body.innerHTML = [
+        '<div class="review-section">',
+        '  <h3 class="h4">Current stay</h3>',
+        '  <div class="flex-between"><span class="muted">Room</span><span data-ex-room></span></div>',
+        '  <div class="flex-between"><span class="muted">Check-in</span><span data-ex-checkin></span></div>',
+        '  <div class="flex-between"><span class="muted">Current check-out</span><span><strong data-ex-checkout></strong></span></div>',
+        '  <div class="flex-between" data-ex-original-row><span class="muted">Originally booked until</span><span data-ex-original></span></div>',
+        "</div>",
+        '<div class="field"><label class="field-label" for="ex-date">New check-out date</label>',
+        '  <input class="input" id="ex-date" type="date" data-ex-date>',
+        '  <div class="hint">The guest stays in the same room until this date. They check out on this date.</div></div>',
+        '<div class="field"><label class="field-label" for="ex-nights">Or add nights instead</label>',
+        '  <input class="input" id="ex-nights" type="number" min="1" max="365" step="1" placeholder="e.g. 2" data-ex-nights>',
+        '  <div class="hint">Fill in the date OR the number of nights; the other box is cleared.</div>',
+        '  <div class="field-error" data-ex-dates-error style="display:none;"></div></div>',
+        '<div class="pay-modal-summary" data-ex-quote style="display:none;">',
+        '  <div class="pay-modal-hero"><span class="pay-modal-hero-label">Cost of the extension</span>',
+        '    <span class="pay-modal-hero-amount" data-ex-amount>—</span></div>',
+        '  <dl class="pay-modal-facts">',
+        '    <div class="pay-modal-fact"><dt>Extra nights</dt><dd data-ex-nightsout>—</dd></div>',
+        '    <div class="pay-modal-fact"><dt>Rate per night</dt><dd data-ex-rate>—</dd></div>',
+        '    <div class="pay-modal-fact"><dt>New check-out</dt><dd data-ex-newco>—</dd></div>',
+        '    <div class="pay-modal-fact"><dt>Total nights</dt><dd data-ex-totalnights>—</dd></div>',
+        '    <div class="pay-modal-fact"><dt>Balance on booking</dt><dd data-ex-due>—</dd></div>',
+        "  </dl>",
+        '  <div class="field-error" data-ex-conflicts style="display:none;white-space:pre-line;"></div>',
+        "</div>",
+        '<div class="field"><label class="field-label" for="ex-paid">Amount received</label>',
+        '  <input class="input" id="ex-paid" type="number" min="0" step="0.01" placeholder="0.00" data-ex-paid>',
+        '  <div class="hint">Exactly what the guest handed over. Leave it empty to record the full cost; enter less to record a part payment and leave the difference on the booking.</div></div>',
+        '<div class="field"><label class="field-label" for="ex-method">Payment method</label>',
+        '  <select class="select" id="ex-method" data-ex-method></select></div>',
+        '<div class="field"><label class="field-label" for="ex-notes">Notes (optional)</label>',
+        '  <textarea class="textarea" id="ex-notes" rows="2" data-ex-notes placeholder="e.g. paid cash at the front desk"></textarea></div>',
+        '<div class="field-error" data-ex-error style="display:none;font-weight:500;"></div>',
+      ].join("");
+
+      const foot = document.createElement("div");
+      foot.style.cssText = "display:flex;gap:0.6rem;justify-content:flex-end;padding-top:0.5rem;";
+      const cancel = document.createElement("button");
+      cancel.type = "button"; cancel.className = "btn btn-outline"; cancel.textContent = "Cancel";
+      cancel.setAttribute("data-ex-cancel", "");
+      const submit = document.createElement("button");
+      submit.type = "submit"; submit.className = "btn btn-accent";
+      submit.textContent = "Confirm extension & record payment";
+      submit.disabled = true;
+      foot.appendChild(cancel); foot.appendChild(submit);
+      body.appendChild(foot);
+
+      panel.appendChild(head); panel.appendChild(body);
+      backdrop.appendChild(panel);
+      document.body.appendChild(backdrop);
+      document.body.classList.add("modal-open");
+      requestAnimationFrame(() => backdrop.classList.add("open"));
+      JONE.icons.inject(panel);
+
+      const q = (sel) => body.querySelector(sel);
+      const currencyText = (v) => money(v, currency) || "—";
+
+      q("[data-ex-room]").textContent = roomsText;
+      q("[data-ex-checkin]").textContent = b.check_in ? JONE.formatDate(b.check_in, "mid") : "—";
+      q("[data-ex-checkout]").textContent = b.check_out ? JONE.formatDate(b.check_out, "mid") : "—";
+      /* The minimum is the day AFTER the current check-out: an extension that
+         ends on the same day is not an extension. */
+      if (b.check_out) q("[data-ex-date]").min = addDaysISO(b.check_out, 1);
+
+      const methodSelect = q("[data-ex-method]");
+      OFFLINE_PROVIDERS.forEach((p) => {
+        const o = document.createElement("option");
+        o.value = p.value; o.textContent = p.label;
+        methodSelect.appendChild(o);
+      });
+      methodSelect.value = "CASH";
+
+      let quote = null;       // the last server quote that priced successfully
+      let quoting = false;    // an in-flight quote request
+      let history = null;     // { original_check_out, count }
+
+      function showError(msg) {
+        const box = q("[data-ex-error]");
+        if (!box) return;
+        if (msg) { box.textContent = msg; box.style.display = "block"; }
+        else { box.textContent = ""; box.style.display = "none"; }
+      }
+      function paintQuote() {
+        const box = q("[data-ex-quote]");
+        if (!quote) { box.style.display = "none"; submit.disabled = true; return; }
+        box.style.display = "";
+        q("[data-ex-amount]").textContent = currencyText(quote.extension_amount);
+        q("[data-ex-nightsout]").textContent = quote.additional_nights + " night" + (quote.additional_nights === 1 ? "" : "s");
+        q("[data-ex-rate]").textContent = currencyText(quote.nightly_rate) +
+          " × " + (quote.number_of_rooms || 1) + " room" + (quote.number_of_rooms === 1 ? "" : "s");
+        q("[data-ex-newco]").textContent = JONE.formatDate(quote.new_check_out, "mid");
+        q("[data-ex-totalnights]").textContent = quote.total_nights_after_extension + " nights";
+        q("[data-ex-due]").textContent = currencyText(quote.amount_due_before_extension);
+        const conflicts = q("[data-ex-conflicts]");
+        if (quote.conflicts && quote.conflicts.length) {
+          conflicts.textContent = quote.conflicts.join("\n");
+          conflicts.style.display = "block";
+        } else {
+          conflicts.textContent = ""; conflicts.style.display = "none";
+        }
+        submit.disabled = !quote.available;
+      }
+
+      /* A quote is a preview, recomputed on every keystroke: the desk sees the
+         real cost and the real conflict before committing anything. */
+      async function refreshQuote() {
+        const dateVal = q("[data-ex-date]").value;
+        const nightsVal = q("[data-ex-nights]").value;
+        const payload = {};
+        if (dateVal) payload.new_check_out = dateVal;
+        else if (nightsVal && Number(nightsVal) > 0) payload.additional_nights = Number(nightsVal);
+        else { quote = null; paintQuote(); showError(""); return; }
+        if (quoting) return;
+        quoting = true;
+        submit.disabled = true;
+        try {
+          const res = await window.API.quoteStayExtension(lookup, payload);
+          quote = (res && res.data) || null;
+          /* The desk is told why the guest's own room cannot be extended into —
+             naming the conflicting room beats a bare "unavailable". */
+          showError("");
+          const datesErr = q("[data-ex-dates-error]");
+          if (datesErr) { datesErr.textContent = ""; datesErr.style.display = "none"; }
+          if (quote) {
+            q("[data-ex-paid]").placeholder = quote.extension_amount || "0.00";
+            if (!q("[data-ex-paid]").value) q("[data-ex-paid]").value = "";
+          }
+        } catch (err) {
+          quote = null;
+          const msg = (err && err.message) || "The extension could not be priced.";
+          const datesErr = q("[data-ex-dates-error]");
+          if (datesErr) { datesErr.textContent = msg; datesErr.style.display = "block"; }
+          showError("");
+        } finally {
+          quoting = false;
+          paintQuote();
+        }
+      }
+
+      let timer = null;
+      function scheduleQuote() { clearTimeout(timer); timer = setTimeout(refreshQuote, 250); }
+      q("[data-ex-date]").addEventListener("input", () => {
+        q("[data-ex-nights]").value = "";
+        scheduleQuote();
+      });
+      q("[data-ex-nights]").addEventListener("input", () => {
+        q("[data-ex-date]").value = "";
+        scheduleQuote();
+      });
+
+      // Original check-out, straight from the server's extension history.
+      (async () => {
+        try {
+          const res = await window.API.listStayExtensions(lookup);
+          history = (res && res.data) || null;
+          if (history && history.original_check_out && history.count > 0) {
+            const row = q("[data-ex-original-row]");
+            if (row) row.style.display = "";
+            q("[data-ex-original]").textContent = JONE.formatDate(history.original_check_out, "mid");
+          }
+        } catch (_) { /* history is context, not a gate */ }
+      })();
+
+      let closed = false;
+      function close(result) {
+        if (closed) return;
+        closed = true;
+        clearTimeout(timer);
+        document.removeEventListener("keydown", onKey);
+        backdrop.remove();
+        if (!document.querySelector(".modal.open")) document.body.classList.remove("modal-open");
+        resolve(result || null);
+      }
+      function onKey(e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); } }
+      document.addEventListener("keydown", onKey);
+      backdrop.addEventListener("click", (e) => { if (e.target.closest("[data-ex-cancel]")) close(null); });
+
+      body.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (!JONE.guardSubmit(submit)) return;
+        showError("");
+        if (!quote) {
+          showError("Choose a new check-out date, or how many nights to add, first.");
+          JONE.releaseGuard(submit);
+          return;
+        }
+        if (!quote.available) {
+          showError((quote.conflicts || ["The room is not free for the added nights."]).join("\n"));
+          JONE.releaseGuard(submit);
+          return;
+        }
+        const payload = {};
+        if (q("[data-ex-date]").value) payload.new_check_out = q("[data-ex-date]").value;
+        else payload.additional_nights = Number(q("[data-ex-nights]").value);
+        const paidRaw = String(q("[data-ex-paid]").value || "").trim();
+        if (paidRaw !== "") {
+          const paid = Number(paidRaw);
+          if (!isFinite(paid) || paid < 0) {
+            showError("Enter a valid amount received, or leave it empty to record the full cost.");
+            JONE.releaseGuard(submit);
+            return;
+          }
+          if (paid > Number(quote.extension_amount)) {
+            showError("The guest cannot pay more than the extension costs (" +
+              currencyText(quote.extension_amount) + ").");
+            JONE.releaseGuard(submit);
+            return;
+          }
+          payload.amount_paid = paidRaw;
+        }
+        payload.provider = q("[data-ex-method]").value || "CASH";
+        payload.notes = String(q("[data-ex-notes]").value || "").trim();
+
+        submit.disabled = true;
+        try {
+          const res = await window.API.extendStay(lookup, payload);
+          const data = (res && res.data) || {};
+          JONE.ui.toast(res && res.message ? res.message : "Stay extended.", "success");
+          if (opts.onExtended) {
+            try { opts.onExtended(data.booking || null, data.extension || null); } catch (_) {}
+          }
+          close(data);
+        } catch (err) {
+          /* Nothing was written — the server does the whole extension in one
+             transaction — so the desk can correct the figure and try again
+             instead of having to undo a half-recorded extension. */
+          if (err && err.status === 403) {
+            showError("You do not have permission to extend a stay and take payment for it. Ask a manager or administrator.");
+          } else {
+            showError((err && err.message) || "The extension could not be recorded. Nothing has been changed.");
+          }
+          submit.disabled = false;
+          refreshQuote();
+        } finally {
+          JONE.releaseGuard(submit);
+        }
+      });
+
+      const dateInput = q("[data-ex-date]");
+      if (dateInput) dateInput.focus();
+    });
+  }
+
+  /* Calendar arithmetic on plain ISO dates (no timezone drift, no library):
+     "the day after" is what the minimum extension date has to be. */
+  function addDaysISO(isoDate, days) {
+    const value = String(isoDate || "").slice(0, 10);
+    const parts = value.split("-").map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) return "";
+    const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+    if (isNaN(d.getTime())) return "";
+    d.setUTCDate(d.getUTCDate() + Number(days || 0));
+    return d.toISOString().slice(0, 10);
   }
 
   function fact(label, value) {
@@ -2512,6 +2831,7 @@
     // Operational components
     currentRole, hasRole, canManageRooms, canManageStaff, money,
     paymentModal, canRecordPayment, staffProfileModal, editStaffModal, roomTypeRoomsModal,
+    extendStayModal,
     deskCash,
     guestProfileModal, paymentDetailPanel, openPanel, closePanel,
   };

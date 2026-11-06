@@ -89,6 +89,18 @@ class OfferRoomTypeNotEligibleError(OfferNotApplicableError):
     default_code = "OFFER_ROOM_TYPE_NOT_ELIGIBLE"
 
 
+class OfferGuestRestrictedError(OfferNotApplicableError):
+    """The guest has been barred from this specific offer by authorised staff.
+
+    Distinct from the other ``OFFER_*`` codes so the desk (and the guest) is
+    told exactly why the promotion did not apply, and can see that removing the
+    restriction — not changing the dates or the room — is the way to restore it.
+    """
+
+    default_detail = "This guest is restricted from using this offer."
+    default_code = "OFFER_GUEST_RESTRICTED"
+
+
 class PaymentError(JOneAPIError):
     default_detail = "The payment could not be completed."
     default_code = "PAYMENT_FAILED"

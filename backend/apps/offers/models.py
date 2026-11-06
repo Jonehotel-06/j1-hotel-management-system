@@ -80,6 +80,82 @@ class Offer(TimeStampedModel):
         super().save(*args, **kwargs)
 
 
+class OfferGuestRestriction(TimeStampedModel):
+    """Bars ONE guest from ONE promotional offer.
+
+    A public :class:`Offer` is open to everybody who meets its stay rules.
+    Every hotel eventually meets a guest who must not receive a particular
+    promotion — a rate dispute, an abuse of a corporate code, a courtesy a
+    manager has withdrawn. Recording that as data (instead of deleting the
+    offer or editing its room types) keeps three things true at once:
+
+    * the RESTRICTION IS NARROW — it removes this one offer for this one
+      guest; every other offer the guest qualifies for still applies;
+    * the OFFER SURVIVES — deactivating a promotion is a separate decision
+      (``Offer.is_active``) and this row is not it;
+    * the DECISION IS AUDITABLE — who restricted the guest, when and why is
+      stored, and lifting the restriction deactivates the row instead of
+      erasing the evidence.
+
+    Enforcement lives in :mod:`apps.offers.services`, never in the browser:
+    the frontend may hide an offer, but only the backend decides the price.
+    """
+
+    offer = models.ForeignKey(
+        Offer, on_delete=models.CASCADE, related_name="guest_restrictions",
+        help_text="The promotional offer this guest may not use.",
+    )
+    guest = models.ForeignKey(
+        "bookings.Guest", on_delete=models.CASCADE, related_name="offer_restrictions",
+        help_text="The guest barred from the offer.",
+    )
+    reason = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Why this guest was restricted (staff-facing).",
+    )
+    is_active = models.BooleanField(
+        default=True, db_index=True,
+        help_text="Lifting a restriction deactivates this row; it is never deleted.",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="offer_restrictions_created",
+        help_text="Staff member who imposed the restriction.",
+    )
+    removed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="offer_restrictions_removed",
+        help_text="Staff member who lifted the restriction.",
+    )
+    removed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            # One live restriction per (offer, guest). The database — not a
+            # race-prone application check — is what stops a double-click (or
+            # two staff members at two terminals) from creating duplicates.
+            models.UniqueConstraint(
+                fields=["offer", "guest"], name="unique_offer_guest_restriction",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["guest", "is_active"]),
+            models.Index(fields=["offer", "is_active"]),
+        ]
+
+    def __str__(self):
+        return f"{self.guest_id} ✕ {self.offer_id}{'' if self.is_active else ' (lifted)'}"
+
+    @property
+    def guest_name(self):
+        return getattr(self.guest, "full_name", "") or ""
+
+    @property
+    def guest_email(self):
+        return getattr(self.guest, "email", "") or ""
+
+
 class GuestDiscount(TimeStampedModel):
     """A personal, staff-granted discount for ONE guest.
 

@@ -285,22 +285,58 @@
        only RENDERS its answer — dates, room type, nights, nightly rate,
        rooms and total, with no tax line. It refreshes when the stay-defining
        inputs change and drops stale replies. */
-    var physicalSelect=null, physicalSeq=0;
+    /* ---- Exact physical room ---------------------------------------------
+       The desk picks ONE concrete room ("Room 06") and that choice must reach
+       the server untouched. Two rules make that true:
+         1. the widget is the single owner of the value — it is read from the
+            live <select> at submit time, never copied into a second variable
+            that a later refresh could leave stale;
+         2. getValue() returns an OBJECT. formModal merges an object's keys into
+            the submitted values, so `v.physical_room` is the chosen id. (A bare
+            string would be spread as its own character indices and the room id
+            would silently vanish.)
+       Availability is only a hint here: the server re-checks the exact room at
+       creation and refuses the booking instead of substituting another one. */
+    var physicalSelect=null, physicalSeq=0, physicalWarned=false;
+    function selectedRoomNumber(){
+      if(!physicalSelect||!physicalSelect.value) return "";
+      var opt=physicalSelect.options[physicalSelect.selectedIndex];
+      return opt ? String(opt.textContent||"").split(" · ")[0].replace(/^Room\s*/,"").trim() : "";
+    }
     async function loadPhysicalRooms(){
       if(!physicalSelect)return;
       var seq=++physicalSeq,form=physicalSelect.closest("form"),slug=form.elements.room_type.value;
-      var previous=physicalSelect.value;physicalSelect.disabled=true;
-      physicalSelect.innerHTML='<option value="">Select dates first</option>';
-      if(!calSel.checkIn||!calSel.checkOut)return;
+      var previous=physicalSelect.value;
+      physicalSelect.disabled=true;
+      physicalSelect.innerHTML='<option value="">Loading rooms…</option>';
+      if(!calSel.checkIn||!calSel.checkOut){
+        physicalSelect.innerHTML='<option value="">Select dates first</option>';
+        return;
+      }
       try{
         var response=await window.API.getRoomTypeRooms(slug,{check_in:calSel.checkIn,check_out:calSel.checkOut});
         if(seq!==physicalSeq)return;
         var rows=window.API.normalizeList(response.data,response.pagination).items||[];
         physicalSelect.innerHTML='<option value="">Choose exact physical room</option>'+rows.map(function(room){return '<option value="'+JONE.esc(room.id)+'"'+(room.available!==true?' disabled':'')+'>Room '+JONE.esc(room.room_number)+' · '+JONE.esc(typeLabelOf[slug]||slug)+' · '+(room.available===true?'Available':'Unavailable for these dates')+'</option>';}).join('');
         physicalSelect.disabled=false;
-        if(rows.some(function(room){return String(room.id)===previous&&room.available===true;}))physicalSelect.value=previous;
-      }catch(err){if(seq!==physicalSeq)return;physicalSelect.innerHTML='<option value="">Rooms could not be loaded — retry dates/type</option>';JONE.ui.toast((err&&err.message)||"Room availability could not be loaded.","error");}
+        if(rows.some(function(room){return String(room.id)===String(previous)&&room.available===true;})){
+          physicalSelect.value=previous;
+        }else if(previous&&!physicalWarned){
+          /* The room the desk had chosen is gone (dates moved, or it was taken
+             while the form was open). Clear it and say so: a stale id would be
+             submitted and the server would answer with a confusing refusal. */
+          physicalWarned=true;
+          JONE.ui.toast("The room you had selected is no longer available for these dates. Please choose another one.","warning");
+        }
+      }catch(err){
+        if(seq!==physicalSeq)return;
+        physicalSelect.innerHTML='<option value="">Rooms could not be loaded — retry dates/type</option>';
+        JONE.ui.toast((err&&err.message)||"Room availability could not be loaded.","error");
+      }
     }
+    /* What the desk asked for, captured at submit time (see onSubmit). Used to
+       verify the room the server actually persisted. */
+    var submittedRoom = { id: 0, number: "" };
     var quoteBox = null, quoteTimer = null, quoteSeq = 0;
     function scheduleQuote(){
       if (quoteTimer) clearTimeout(quoteTimer);
@@ -455,8 +491,16 @@
         { name: "physical_room", label: "Exact physical room", type: "custom", required: true,
           help: "Select the first room explicitly. Additional rooms on a multi-room booking retain the existing allocation workflow. Availability is checked again at submission; no walk-in or phone substitution is allowed.",
           render: function(mount){physicalSelect=document.createElement("select");physicalSelect.className="select";physicalSelect.setAttribute("aria-label","Exact physical room");mount.appendChild(physicalSelect);loadPhysicalRooms();},
-          getValue: function(){return physicalSelect?physicalSelect.value:"";},
-          validate: function(){return physicalSelect&&!physicalSelect.disabled&&physicalSelect.value?"":"Choose an available physical room.";}
+          /* Returned as an OBJECT so formModal merges it under its own name —
+             see the note above the loader. */
+          getValue: function(){return { physical_room: physicalSelect?physicalSelect.value:"" };},
+          validate: function(){
+            if(!physicalSelect||physicalSelect.disabled) return "Choose an available physical room.";
+            if(!physicalSelect.value) return "Choose an available physical room.";
+            var opt=physicalSelect.options[physicalSelect.selectedIndex];
+            if(opt&&opt.disabled) return "That room is unavailable for these dates. Choose another room.";
+            return "";
+          }
         },
         { name: "adults", label: "Adults", type: "number", required: true, value: 1 },
         { name: "children", label: "Children", type: "number", value: 0 },
@@ -526,7 +570,9 @@
             var roomsInput = form.elements["rooms"];
             if (roomsInput) roomsInput.addEventListener("input", buildRows);
           },
-          getValue: function(){ return roomGuestsApi.read(); },
+          /* An OBJECT too — the rows must arrive as `v.room_guests`, not spread
+             as numeric index keys (the same defect that dropped the exact room). */
+          getValue: function(){ return { room_guests: roomGuestsApi.read() }; },
           validate: function(){
             var rows = roomGuestsApi.read();
             var form = roomGuestsApi.form;
@@ -549,9 +595,21 @@
         }
       ],
       onSubmit: async function(v){
+        /* The exact room is the desk's promise to the guest. If the id is
+           missing or not a positive integer the booking is NOT submitted:
+           sending a null/garbage room_id would make the server allocate some
+           other room and the guest would be walked to the wrong door. */
+        var exactRoomId = Number(v.physical_room);
+        if (!Number.isFinite(exactRoomId) || !Number.isInteger(exactRoomId) || exactRoomId < 1) {
+          throw new Error("Choose an available physical room before creating this booking.");
+        }
+        /* Remember what the desk actually chose so the response can be checked
+           against it. The server is authoritative, but a mismatch must be
+           reported loudly rather than quietly shown as the saved room. */
+        submittedRoom = { id: exactRoomId, number: selectedRoomNumber() };
         var payload = {
           room_type: v.room_type,
-          room_id: Number(v.physical_room),
+          room_id: exactRoomId,
           check_in: v.check_in,
           check_out: v.check_out,
           rooms: Number(v.rooms || 1),
@@ -606,6 +664,22 @@
     var ref = created.booking_reference;
     JONE.ui.toast("Booking " + (ref || "") + " created.", "success");
     prependRow(created);
+    /* Consistency check: the room the desk selected must be the room the server
+       saved. A walk-in/phone selection is never substituted server-side, so a
+       mismatch means something is wrong and the desk must be told instead of
+       walking the guest to the wrong door. */
+    if (submittedRoom.id) {
+      var savedIds = ((created && created.room_assignments) || []).map(function (a) {
+        return Number(a.room_id != null ? a.room_id : a.id);
+      }).filter(Number.isFinite);
+      if (savedIds.length && savedIds.indexOf(Number(submittedRoom.id)) === -1) {
+        JONE.ui.toast(
+          "Warning: Room " + (submittedRoom.number || submittedRoom.id) +
+          " was selected but the booking saved a different room. Please review it before the guest arrives.",
+          "error"
+        );
+      }
+    }
 
     if (JONE.dashboard.canRecordPayment(created)) {
       if (created.room_substitution) {

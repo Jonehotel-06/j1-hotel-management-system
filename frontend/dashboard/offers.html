@@ -115,6 +115,10 @@
 (function(){
   var data=[];
   var grid=document.querySelector("[data-offer-grid]");
+  /* Offer activation and guest restrictions change what the hotel charges, so
+     they are manager/admin actions (IsStaffReadOnlyManagerWrite on the server).
+     This flag only hides controls; the API is the authority. */
+  var canManageOffers = JONE.dashboard.hasRole("manager");
 
   function render(){
     grid.innerHTML=data.map(function(o){
@@ -127,10 +131,33 @@
       var desc = o.short_description || o.description || "";
       var period = JONE.offerPeriod(o, "mid");
       var note = JONE.offerStatusNote(o);
-      return '<article class="card card-hover"><div class="card-pad"><div class="flex-between" style="margin-bottom:1rem;"><span class="offer-tag">'+JONE.esc(disc)+'</span>'+JONE.dashboard.statusPill(o.is_active===false?"inactive":"active")+'</div><h3 style="font-size:var(--fs-lg);">'+JONE.esc(o.title||"—")+'</h3><p class="caption">'+JONE.esc(desc)+'</p>'+/* Staff need the START date as well as the end date: without it they
+      var isOn = o.is_active !== false;
+      /* Offer control: the activation state is the switch that decides whether
+         a NEW booking is quoted at the promotional price or at the actual room
+         price. It is offered to the manager tier only — the backend re-checks
+         the same rule, so hiding the button changes nothing about the price. */
+      var toggle = canManageOffers
+        ? '<button class="btn btn-sm '+(isOn?"btn-outline":"btn-accent")+'" data-of-toggle="'+encodeURIComponent(id)+'">' +
+          '<span data-icon="'+(isOn?"pauseCircle":"playCircle")+'" data-size="14"></span> ' +
+          (isOn ? "Deactivate offer" : "Activate offer") + '</button>'
+        : "";
+      var restrict = '<button class="btn btn-sm btn-outline" data-of-restrict="'+encodeURIComponent(id)+'">' +
+        '<span data-icon="userX" data-size="14"></span> Restricted guests' +
+        (Number(o.restricted_guests_count || 0) ? ' (' + Number(o.restricted_guests_count) + ')' : '') +
+        '</button>';
+      return '<article class="card card-hover"><div class="card-pad"><div class="flex-between" style="margin-bottom:1rem;"><span class="offer-tag">'+JONE.esc(disc)+'</span>'+JONE.dashboard.statusPill(isOn?"active":"inactive")+'</div><h3 style="font-size:var(--fs-lg);">'+JONE.esc(o.title||"—")+'</h3><p class="caption">'+JONE.esc(desc)+'</p>'+/* Staff need the START date as well as the end date: without it they
               cannot tell a scheduled offer from a live one. */
            (period?'<p class="caption offer-period"><span data-icon="calendar" data-size="14"></span> '+JONE.esc(period)+'</p>':'')+
-           (note?'<p class="caption offer-note">'+JONE.esc(note)+'</p>':'')+(o.is_featured?'<span class="badge">Featured</span>':'')+'<div style="display:flex;gap:0.5rem;margin-top:1rem;"><button class="btn btn-sm btn-outline" data-of-edit="'+encodeURIComponent(id)+'">Edit</button><button class="btn btn-sm btn-danger" data-of-del="'+encodeURIComponent(id)+'">Delete</button></div></div></article>';
+           (note?'<p class="caption offer-note">'+JONE.esc(note)+'</p>':'')+
+           /* An inactive offer must be unmistakable: it is the reason a booking
+              is suddenly quoted at the full room price. */
+           (isOn?'':'<p class="caption" style="color:var(--danger);font-weight:600;margin:.35rem 0 0;">Inactive — new bookings use the standard room price.</p>')+
+           (o.is_featured?'<span class="badge">Featured</span>':'')+
+           '<div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">'+
+             '<button class="btn btn-sm btn-outline" data-of-edit="'+encodeURIComponent(id)+'">Edit</button>'+
+             toggle+restrict+
+             '<button class="btn btn-sm btn-danger" data-of-del="'+encodeURIComponent(id)+'">Delete</button>'+
+           '</div></div></article>';
     }).join("") || '<div class="empty-state" style="grid-column:1/-1;border:0;"><h3>No offers yet</h3></div>';
     JONE.icons.inject(grid);
   }
@@ -142,12 +169,31 @@
       var list=window.API.normalizeList?window.API.normalizeList(res.data).items:((res.data&&res.data.results)||res.data||[]);
       data=list||[];
       if(!data.length){ grid.innerHTML='<div class="empty-state" style="grid-column:1/-1;border:0;"><h3>No offers yet</h3></div>'; return; }
+      await loadRestrictionCounts();
       render();
     }catch(err){
       grid.innerHTML='<div class="empty-state" style="grid-column:1/-1;border:0;"><span data-icon="alertTriangle" data-size="34"></span><h3>Offers couldn\'t be loaded</h3><p>'+((err&&err.status===0&&err.message)||"Please try again in a moment.")+'</p></div>';
       JONE.icons.inject(grid);
     }
   }
+  /* How many guests are currently barred from each offer, so the card can say
+     so without opening the dialog. One request for the whole page. */
+  var restrictionCounts = {};
+  async function loadRestrictionCounts(){
+    restrictionCounts = {};
+    try{
+      var res = await window.API.listOfferRestrictions({ is_active: "true", page_size: 200 });
+      var rows = window.API.normalizeList(res.data, res.pagination).items || [];
+      rows.forEach(function(r){
+        var key = String(r.offer);
+        restrictionCounts[key] = (restrictionCounts[key] || 0) + 1;
+      });
+    }catch(_){ restrictionCounts = {}; }
+    data.forEach(function(o){
+      o.restricted_guests_count = restrictionCounts[String(o.id)] || 0;
+    });
+  }
+
   load();
   window.OFFERS=data;
 
@@ -166,9 +212,161 @@
       var o2=data.filter(function(x){ return String(x.id)===String(decodeURIComponent(edit.getAttribute("data-of-edit"))); })[0];
       if(o2) openOfferModal(o2);
     }
+    var togg=e.target.closest("[data-of-toggle]");
+    if(togg){
+      var oid=decodeURIComponent(togg.getAttribute("data-of-toggle"));
+      var o3=data.filter(function(x){ return String(x.id)===String(oid); })[0];
+      if(o3) toggleOffer(oid, o3.is_active===false);
+    }
+    var restr=e.target.closest("[data-of-restrict]");
+    if(restr){ openRestrictions(decodeURIComponent(restr.getAttribute("data-of-restrict"))); }
   });
   var add=document.querySelector("[data-of-add]");
   if(add) add.addEventListener("click",function(){ openOfferModal(null); });
+
+  /* ---- Activate / Deactivate -------------------------------------------
+     Deactivating withdraws the promotion from NEW bookings: the backend
+     filters on `is_active` when it picks an offer, so the very next booking is
+     quoted at the configured room price. The offer itself is never deleted —
+     historical bookings keep the price they were given and the promotion can be
+     switched back on. The confirm text says so, because the two decisions
+     (withdraw vs delete) look alike on screen and are not alike at all. */
+  async function toggleOffer(id, activate){
+    var offer = data.filter(function(x){ return String(x.id)===String(id); })[0];
+    if(!offer) return;
+    var ok = await JONE.ui.confirm({
+      title: activate ? "Activate “"+offer.title+"”?" : "Deactivate “"+offer.title+"”?",
+      message: activate
+        ? "Eligible guests will benefit from this offer again on new bookings. The room types, dates and stay rules stay exactly as they are."
+        : "New bookings will be charged the standard room price instead of the promotional price. The offer is kept for historical records and can be reactivated at any time — existing bookings keep the price they were already given.",
+      confirmText: activate ? "Activate offer" : "Deactivate offer",
+      danger: !activate
+    });
+    if(!ok) return;
+    try{
+      var res = activate ? await window.API.activateOffer(id) : await window.API.deactivateOffer(id);
+      JONE.ui.toast((res && res.message) || (activate ? "Offer activated." : "Offer deactivated."), "success");
+      await load();
+    }catch(err){
+      if(err && err.status===403){ JONE.ui.toast("Only managers and administrators can change an offer's activation state.","error"); }
+      else JONE.ui.toast((err&&err.message)||"The offer state could not be changed.","error");
+    }
+  }
+
+  /* ---- Guest restrictions ----------------------------------------------
+     A restriction is deliberately NARROW: it removes ONE offer for ONE guest.
+     Every other offer the guest qualifies for still applies, so this is not a
+     ban and must never be presented as one. */
+  async function openRestrictions(offerId){
+    var offer = data.filter(function(x){ return String(x.id)===String(offerId); })[0];
+    if(!offer) return;
+    var rows = [];
+    try{
+      var res = await window.API.listOfferRestrictions({ offer: offerId, page_size: 200 });
+      rows = window.API.normalizeList(res.data, res.pagination).items || [];
+    }catch(err){
+      JONE.ui.toast((err&&err.message)||"The restrictions could not be loaded.","error");
+      return;
+    }
+    var active = rows.filter(function(r){ return r.is_active !== false; });
+    var lifted = rows.filter(function(r){ return r.is_active === false; });
+
+    function rowHtml(r){
+      var who = JONE.esc(r.guest_name || r.guest_email || ("Guest #"+r.guest));
+      var contact = r.guest_email ? '<div class="caption">'+JONE.esc(r.guest_email)+'</div>' : "";
+      var why = r.reason ? '<div class="caption">'+JONE.esc(r.reason)+'</div>' : "";
+      var action = (r.is_active === false)
+        ? (canManageOffers ? '<button class="btn btn-sm btn-outline" data-or-restore="'+r.id+'">Restore</button>' : "")
+        : (canManageOffers ? '<button class="btn btn-sm btn-outline" data-or-lift="'+r.id+'">Remove restriction</button>' : "");
+      return '<div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;padding:.55rem 0;border-bottom:1px solid var(--line,#e6e4e1);">'+
+        '<div><strong>'+who+'</strong>'+contact+why+'</div><div>'+action+'</div></div>';
+    }
+    var body = document.createElement("div");
+    body.innerHTML =
+      '<p class="caption">These guests cannot use <strong>'+JONE.esc(offer.title)+'</strong>. '+
+      'Every other offer they qualify for still applies, and their own personal discounts are unaffected. '+
+      'The backend re-checks this on every booking — it is not a display-only rule.</p>'+
+      '<h4 class="h4" style="margin:.9rem 0 .3rem;">Restricted ('+active.length+')</h4>'+
+      (active.length ? active.map(rowHtml).join("") : '<p class="caption">No guest is restricted from this offer.</p>')+
+      (lifted.length ? '<h4 class="h4" style="margin:.9rem 0 .3rem;">Previously lifted ('+lifted.length+')</h4>'+lifted.map(rowHtml).join("") : "");
+
+    var footer = document.createElement("div");
+    footer.style.cssText = "display:flex;justify-content:space-between;gap:.75rem;flex-wrap:wrap;";
+    var closeBtn = document.createElement("button");
+    closeBtn.className = "btn btn-outline"; closeBtn.type = "button"; closeBtn.textContent = "Close";
+    closeBtn.onclick = function(){ JONE.ui.modal.close(); };
+    footer.appendChild(closeBtn);
+    var addBtn = null;
+    if(canManageOffers){
+      addBtn = document.createElement("button");
+      addBtn.className = "btn btn-accent"; addBtn.type = "button"; addBtn.textContent = "Restrict a guest";
+      addBtn.onclick = function(){ JONE.ui.modal.close(); addRestriction(offer); };
+      footer.appendChild(addBtn);
+    }
+    JONE.ui.modal.open({ title: "Restricted guests — "+offer.title, body: body, footer: footer });
+
+    Array.prototype.forEach.call(body.querySelectorAll("[data-or-lift]"), function(btn){
+      btn.addEventListener("click", async function(){
+        try{
+          await window.API.liftOfferRestriction(btn.getAttribute("data-or-lift"));
+          JONE.ui.toast("Restriction removed — the guest can use this offer again.","success");
+          JONE.ui.modal.close();
+          await load(); openRestrictions(offerId);
+        }catch(err){
+          JONE.ui.toast((err&&err.status===403)?"Only managers and administrators can change offer restrictions.":((err&&err.message)||"The restriction could not be removed."),"error");
+        }
+      });
+    });
+    Array.prototype.forEach.call(body.querySelectorAll("[data-or-restore]"), function(btn){
+      btn.addEventListener("click", async function(){
+        try{
+          await window.API.restoreOfferRestriction(btn.getAttribute("data-or-restore"));
+          JONE.ui.toast("Restriction restored.","success");
+          JONE.ui.modal.close();
+          await load(); openRestrictions(offerId);
+        }catch(err){ JONE.ui.toast((err&&err.message)||"The restriction could not be restored.","error"); }
+      });
+    });
+  }
+
+  /* Restrict a guest: the desk searches the guest list and picks one. The
+     reason is recorded so the next person to look at the price understands it. */
+  async function addRestriction(offer){
+    var out = await JONE.dashboard.formModal({
+      title: "Restrict a guest from “"+offer.title+"”",
+      submitText: "Restrict guest",
+      fields: [
+        { name: "guest_q", label: "Find the guest", help: "Start typing a name, email or phone number." },
+        { name: "reason", label: "Reason (recorded in the audit trail)", type: "textarea", rows: 2 }
+      ],
+      onSubmit: async function(v){
+        var q = String(v.guest_q || "").trim();
+        if(!q) throw new Error("Search for the guest you want to restrict.");
+        var res = await window.API.list("guests", { search: q, page_size: 8 });
+        var guests = window.API.normalizeList(res.data, res.pagination).items || [];
+        if(!guests.length) throw new Error("No guest matched “"+q+"”.");
+        /* The system never guesses which guest was meant: restricting the wrong
+           person would silently change the price on all of their bookings. An
+           ambiguous search is refused with the candidates listed so the desk can
+           be specific instead. */
+        if(guests.length > 1){
+          throw new Error(
+            guests.length + " guests matched \u201c" + q + "\u201d (" +
+            guests.slice(0, 4).map(function(g){ return g.full_name || g.email; }).join(", ") +
+            (guests.length > 4 ? ", …" : "") + "). Search the exact name or email."
+          );
+        }
+        var chosen = guests[0];
+        await window.API.createOfferRestriction({
+          offer: Number(offer.id),
+          guest: Number(chosen.id),
+          reason: String(v.reason || "").trim()
+        });
+        JONE.ui.toast((chosen.full_name || chosen.email)+" can no longer use this offer.","success");
+      }
+    });
+    if(out){ await load(); openRestrictions(offer.id); }
+  }
 
   /* Verified write contract — OfferAdminSerializer (multipart):
      title, short_description, description, code, discount_type

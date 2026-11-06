@@ -164,7 +164,13 @@
               '<span data-icon="search" data-size="13"></span> <span class="btn-label">Bookings</span></a>' +
             (canManageDiscounts
               ? '<button class="btn btn-sm btn-ghost" type="button" data-guest-discount="' + g.id + '" title="Discounts">' +
-                '<span data-icon="tag" data-size="13"></span> <span class="btn-label">Discount</span></button>'
+                '<span data-icon="tag" data-size="13"></span> <span class="btn-label">Discount</span></button>' +
+                /* Offer ELIGIBILITY, the other side of the same coin: stop this
+                   guest from using one specific promotion. Kept on the guest row
+                   next to discounts so "what does this guest pay?" is answered
+                   in one place instead of on a second screen. */
+                '<button class="btn btn-sm btn-ghost" type="button" data-guest-offers="' + g.id + '" title="Offer restrictions">' +
+                '<span data-icon="userX" data-size="13"></span> <span class="btn-label">Offers</span></button>'
               : "") +
           '</div>' +
         '</td></tr>';
@@ -225,6 +231,9 @@
     });
     tbody.querySelectorAll("[data-guest-discount]").forEach(function(b){
       b.addEventListener("click", function(){ manageDiscounts(b.getAttribute("data-guest-discount")); });
+    });
+    tbody.querySelectorAll("[data-guest-offers]").forEach(function(b){
+      b.addEventListener("click", function(){ manageOfferRestrictions(b.getAttribute("data-guest-offers")); });
     });
   }
 
@@ -340,6 +349,124 @@
         } catch (err) {
           btn.disabled = false;
           JONE.ui.toast((err && err.message) || "The discount couldn't be withdrawn.", "error");
+        }
+      });
+    });
+  }
+
+  /* -------- Offer restrictions for this guest ---------------------------
+     Verified /api/admin/offer-restrictions/ row: { id, offer, offer_title,
+     offer_code, guest, guest_name, guest_email, reason, is_active,
+     created_by_email, removed_by_email, removed_at, created_at, updated_at }.
+
+     A restriction removes ONE offer for this ONE guest. It is not a ban: every
+     other offer they qualify for still applies, and their personal discounts
+     are untouched. The rule is enforced by the backend on every booking, so a
+     hand-crafted API request cannot get around it either. */
+  async function manageOfferRestrictions(guestId){
+    var guest = null, offers = [], restrictions = [];
+    try {
+      var gRes = await window.API.getOne("guests", guestId);
+      guest = (gRes && gRes.data) || {};
+      var oRes = await window.API.list("offers", { page_size: 200 });
+      offers = window.API.normalizeList(oRes.data, oRes.pagination).items || [];
+      var rRes = await window.API.listOfferRestrictions({ guest: guestId, page_size: 200 });
+      restrictions = window.API.normalizeList(rRes.data, rRes.pagination).items || [];
+    } catch (err) {
+      JONE.ui.toast((err && err.message) || "Offer restrictions couldn't be loaded.", "error");
+      return;
+    }
+    var name = guest.full_name || guest.email || "Guest";
+    var active = restrictions.filter(function(r){ return r.is_active !== false; });
+
+    function rowHtml(r){
+      var label = JONE.esc(r.offer_title || ("Offer #" + r.offer));
+      if (r.offer_code) label += ' <span class="caption">' + JONE.esc(r.offer_code) + "</span>";
+      var why = r.reason ? '<div class="caption">' + JONE.esc(r.reason) + "</div>" : "";
+      var action = (r.is_active === false)
+        ? (canManageDiscounts ? '<button class="btn btn-sm btn-ghost" type="button" data-gor-restore="' + r.id + '">Restore</button>' : "")
+        : (canManageDiscounts ? '<button class="btn btn-sm btn-ghost" type="button" data-gor-lift="' + r.id + '">Remove</button>' : "");
+      var state = r.is_active === false
+        ? JONE.dashboard.statusPill("inactive", "LIFTED")
+        : JONE.dashboard.statusPill("active", "RESTRICTED");
+      return "<tr><td>" + label + why + "</td><td>" + state + "</td>" +
+        '<td class="cell-nowrap">' + action + "</td></tr>";
+    }
+
+    var body =
+      "<p>A restriction stops this guest from using ONE promotion. Every other offer " +
+      "they qualify for still applies, and any personal discount they were granted is " +
+      "unaffected. Deactivating an offer is a separate, hotel-wide decision — it lives " +
+      "on the Offers page.</p>" +
+      (restrictions.length
+        ? '<div class="table-wrap"><table class="table"><thead><tr>' +
+          "<th>Offer</th><th>State</th><th><span class='sr-only'>Actions</span></th>" +
+          "</tr></thead><tbody>" + restrictions.map(rowHtml).join("") + "</tbody></table></div>"
+        : '<div class="empty-state"><span data-icon="tag"></span><h3>No offer restrictions</h3>' +
+          "<p>This guest can use every offer they qualify for.</p></div>");
+
+    JONE.dashboard.openPanel("Offer restrictions — " + name, body,
+      '<button class="btn btn-sm btn-ghost" data-gor-close>Close</button>' +
+      (canManageDiscounts ? ' <button class="btn btn-sm btn-accent" data-gor-add>Restrict an offer</button>' : ""),
+      "modal-lg");
+
+    var closeBtn = document.querySelector("[data-gor-close]");
+    if (closeBtn) closeBtn.addEventListener("click", JONE.dashboard.closePanel);
+
+    var addBtn = document.querySelector("[data-gor-add]");
+    if (addBtn) addBtn.addEventListener("click", async function(){
+      JONE.dashboard.closePanel();
+      var available = offers.filter(function(o){
+        return !active.some(function(r){ return String(r.offer) === String(o.id); });
+      });
+      if (!available.length) { JONE.ui.toast("Every offer is already restricted for this guest.", "warning"); return; }
+      var saved = await JONE.dashboard.formModal({
+        title: "Restrict an offer — " + name,
+        submitText: "Restrict offer",
+        fields: [
+          { name: "offer", label: "Offer", type: "select", required: true,
+            options: available.map(function(o){
+              return { value: String(o.id), label: o.title + (o.is_active === false ? " (inactive)" : "") };
+            }) },
+          { name: "reason", label: "Reason (recorded in the audit trail)", type: "textarea", rows: 2 }
+        ],
+        onSubmit: function(v){
+          return window.API.createOfferRestriction({
+            offer: Number(v.offer),
+            guest: Number(guestId),
+            reason: String(v.reason || "").trim()
+          }).then(function(){ JONE.ui.toast("Offer restricted for this guest.", "success"); });
+        }
+      });
+      if (saved) manageOfferRestrictions(guestId);
+    });
+
+    document.querySelectorAll("[data-gor-lift]").forEach(function(btn){
+      btn.addEventListener("click", async function(){
+        try {
+          btn.disabled = true;
+          await window.API.liftOfferRestriction(btn.getAttribute("data-gor-lift"));
+          JONE.ui.toast("Restriction removed — the guest can use that offer again.", "success");
+          JONE.dashboard.closePanel();
+          manageOfferRestrictions(guestId);
+        } catch (err) {
+          btn.disabled = false;
+          if (err && err.status === 403) JONE.ui.toast("Only managers and administrators can change offer restrictions.", "error");
+          else JONE.ui.toast((err && err.message) || "The restriction couldn't be removed.", "error");
+        }
+      });
+    });
+    document.querySelectorAll("[data-gor-restore]").forEach(function(btn){
+      btn.addEventListener("click", async function(){
+        try {
+          btn.disabled = true;
+          await window.API.restoreOfferRestriction(btn.getAttribute("data-gor-restore"));
+          JONE.ui.toast("Restriction restored.", "success");
+          JONE.dashboard.closePanel();
+          manageOfferRestrictions(guestId);
+        } catch (err) {
+          btn.disabled = false;
+          JONE.ui.toast((err && err.message) || "The restriction couldn't be restored.", "error");
         }
       });
     });

@@ -93,6 +93,7 @@
         <h2 data-bd-ref>Booking</h2>
         <div class="panel-actions">
           <button class="btn btn-sm btn-outline" data-bd-checkin>Check-in</button>
+          <button class="btn btn-sm btn-outline" data-bd-extend hidden><span data-icon="plus" data-size="16"></span> Extend stay</button>
           <button class="btn btn-sm btn-outline" data-bd-record hidden><span data-icon="wallet" data-size="16"></span> Record payment</button>
           <button class="btn btn-sm btn-danger" data-bd-cancel>Cancel</button>
         </div>
@@ -129,6 +130,19 @@
           <div class="panel-actions"><span class="caption" data-bd-room-summary></span></div>
         </div>
         <div class="panel-body" data-bd-rooms></div>
+      </section>
+
+      <!-- EXTENSION HISTORY -------------------------------------------------
+           A stay that grows repeatedly ends up with several confirmed check-out
+           dates over its life. Listing the ones already applied means whoever is
+           on the desk can see which date is current and why, without reading the
+           audit log. -->
+      <section class="panel" data-bd-extensions-panel hidden>
+        <div class="panel-head">
+          <h2>Stay extensions</h2>
+          <div class="panel-actions"><span class="caption" data-bd-ext-summary></span></div>
+        </div>
+        <div class="panel-body no-pad" data-bd-extensions></div>
       </section>
 
       <section class="panel">
@@ -439,6 +453,19 @@
       }
       else checkin.style.display="none";
     }
+    /* "Extend stay" is only real for a stay that has begun or is definitely
+       coming: CONFIRMED (not yet arrived) and CHECKED_IN. A guest who has
+       already left, or a booking that was cancelled, cannot be extended —
+       that is a new booking, not an extension. The backend re-checks the same
+       rule (EXTENDABLE_STATUSES) and returns the reason; this only decides
+       whether the control is worth showing. */
+    var extend=document.querySelector("[data-bd-extend]");
+    if(extend){
+      var extendable=(st==="CONFIRMED"||st==="CHECKED_IN");
+      extend.hidden=!extendable;
+      extend.disabled=!extendable;
+      if(extendable) extend.removeAttribute("title");
+    }
     if(cancel){
       cancel.style.display = (!(window.Auth&&window.Auth.hasAnyRole&&window.Auth.hasAnyRole(["admin","manager","general_manager"]))||st==="CANCELLED"||st==="CHECKED_OUT"||st==="EXPIRED"||st==="NO_SHOW") ? "none" : "";
       /* Reported: a booking that has already taken the guest's money still
@@ -464,6 +491,58 @@
     }
   }
 
+  /* ------------------------ Extension history ----------------------------
+     Every applied extension, oldest first, with the ORIGINAL check-out kept
+     alongside it: a stay extended three times has had three "current" dates and
+     the desk needs to see the whole chain, not just the last link. All money
+     figures come from the server row — none are recomputed here. */
+  function renderExtensions(data){
+    var panel=document.querySelector("[data-bd-extensions-panel]");
+    var host=document.querySelector("[data-bd-extensions]");
+    if(!panel||!host) return;
+    var rows=(data&&data.results)||[];
+    if(!rows.length){ panel.hidden=true; return; }
+    panel.hidden=false;
+    var summary=document.querySelector("[data-bd-ext-summary]");
+    if(summary){
+      summary.textContent=rows.length+" applied · originally "+
+        JONE.esc(JONE.formatDate(data.original_check_out,"mid"))+" · now "+
+        JONE.esc(JONE.formatDate(data.current_check_out,"mid"));
+    }
+    host.innerHTML='<div class="table-wrap"><table class="table"><thead><tr>'+
+      "<th>Applied</th><th>Check-out</th><th>Nights</th><th>Cost</th><th>Paid</th>"+
+      "<th>Tender</th><th>Reference</th><th>By</th></tr></thead><tbody>"+
+      rows.map(function(r){
+        return "<tr>"+
+          "<td>"+JONE.esc(JONE.formatDateTime(r.created_at))+'<div class="caption">'+
+            JONE.dashboard.statusPill(r.status==="VOID"?"inactive":"active",r.status)+"</div></td>"+
+          "<td>"+JONE.esc(JONE.formatDate(r.previous_check_out,"mid"))+" → <strong>"+
+            JONE.esc(JONE.formatDate(r.new_check_out,"mid"))+"</strong></td>"+
+          '<td class="num">'+JONE.esc(r.additional_nights)+"</td>"+
+          '<td class="num">'+JONE.esc(JONE.formatNaira(r.extension_amount))+"</td>"+
+          '<td class="num">'+JONE.esc(JONE.formatNaira(r.amount_paid||0))+
+            (Number(r.outstanding_balance)>0
+              ? '<div class="caption">'+JONE.esc(JONE.formatNaira(r.outstanding_balance))+" due</div>"
+              : '<div class="caption">settled</div>')+"</td>"+
+          "<td>"+JONE.esc(String(r.payment_method||"—").replace(/_/g," "))+"</td>"+
+          "<td>"+JONE.esc(r.payment_reference||"—")+"</td>"+
+          "<td>"+JONE.esc(r.processed_by_name||"—")+
+            (r.notes?'<div class="caption">'+JONE.esc(r.notes)+"</div>":"")+"</td>"+
+        "</tr>";
+      }).join("")+"</tbody></table></div>";
+  }
+
+  async function loadExtensions(){
+    try{
+      var res=await window.API.listStayExtensions(ref);
+      renderExtensions(res.data||{results:[]});
+    }catch(_){
+      /* History is context, not a gate: a receptionist without booking.read
+         would already have been stopped from opening the page. Silently skip
+         the panel rather than failing the whole screen. */
+    }
+  }
+
   function showError(msg){
     var hold=document.querySelector("[data-bd-ref]");
     if(hold) hold.textContent="Booking unavailable";
@@ -476,6 +555,7 @@
       var res=await window.API.getOne("booking", ref);
       book=res.data||{};
       renderBookings();
+      await loadExtensions();
     }catch(err){ showError(err&&err.status===0?err.message:""); return; }
     // Payments come from the receipt endpoint (verified, staff allowed).
     try{
@@ -506,6 +586,34 @@
     }finally{
       checkBtn.disabled=false;
       JONE.releaseGuard(checkBtn);
+    }
+  });
+
+  /* Extending a stay is a TWO-part authority: change the booking AND take
+     money for it. The server enforces both (booking.manage + payment.capture);
+     this only decides whether to offer the control at all. */
+  var extendBtn=document.querySelector("[data-bd-extend]");
+  if(extendBtn) extendBtn.addEventListener("click", async function(){
+    if(!book){ JONE.ui.toast("This booking hasn't loaded yet.","warning"); return; }
+    if(extendBtn.disabled){ JONE.ui.toast("This booking cannot be extended.","warning"); return; }
+    if(!JONE.guardSubmit(extendBtn)) return;
+    try{
+      var res=await JONE.dashboard.extendStayModal(book, {
+        onExtended: function(fresh){
+          if(fresh) book=Object.assign({}, book, fresh);
+          renderBookings();
+          if(JONE.dashboard.notifBadge) JONE.dashboard.notifBadge.refresh();
+        }
+      });
+      /* Whatever the server did, this page re-reads it rather than trusting the
+         modal's own copy of the booking: the checkout date, the balance and the
+         room occupancy must all agree with what was actually written. */
+      if(res){ await load(); }
+    }catch(err){
+      JONE.ui.toast((err&&err.message)||"The stay could not be extended.","error");
+    }finally{
+      JONE.releaseGuard(extendBtn);
+      syncActions();
     }
   });
 

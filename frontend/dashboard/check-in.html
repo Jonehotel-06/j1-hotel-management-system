@@ -136,9 +136,21 @@
   var tbody=document.querySelector("[data-tbody=checkin]");
   var inhouseBody=document.querySelector("[data-tbody=inhouse]");
   var arrivals=[];
+  /* The server rows behind the in-house table, keyed by reference. Extending a
+     stay needs the whole booking (check-in date, rate, rooms, currency), and
+     re-fetching it inside the modal would slow the desk down and could hand over
+     a stale row if the guest paid in between. */
+  var inHouseByRef={};
   function renderInHouse(list){
+    inHouseByRef={};
     if(!list.length){ DATA.empty(inhouseBody,"bed","No guests currently in-house","Checked-in guests will remain visible here.",6); return; }
-    inhouseBody.innerHTML=list.map(function(b){ var ref=refOf(b); return '<tr><td>'+JONE.esc(ref)+'</td><td>'+JONE.esc(b.guest_name||"—")+'</td><td>'+roomCell(b)+'</td><td>'+JONE.esc(b.check_out?JONE.formatDate(b.check_out,"mid"):"—")+'</td><td>'+JONE.dashboard.statusPill(b.status)+'</td><td><a class="btn btn-sm btn-outline" href="booking-details.html?ref='+encodeURIComponent(ref)+'">View</a>'+roomsLink(b)+'</td></tr>'; }).join("");
+    inhouseBody.innerHTML=list.map(function(b){ var ref=refOf(b); inHouseByRef[String(ref)]=b;
+      return '<tr><td>'+JONE.esc(ref)+'</td><td>'+JONE.esc(b.guest_name||"—")+'</td><td>'+roomCell(b)+'</td><td>'+JONE.esc(b.check_out?JONE.formatDate(b.check_out,"mid"):"—")+'</td><td>'+JONE.dashboard.statusPill(b.status)+'</td><td>'+
+        '<a class="btn btn-sm btn-outline" href="booking-details.html?ref='+encodeURIComponent(ref)+'">View</a>'+
+        /* Extending from the desk: this is where the request is usually made —
+           the guest is standing at the counter asking for another night. */
+        '<button class="btn btn-sm btn-ghost" type="button" data-extend-btn="'+JONE.esc(String(ref))+'" title="Extend this stay">Extend</button>'+
+        roomsLink(b)+'</td></tr>'; }).join("");
     JONE.icons.inject(inhouseBody);
   }
 
@@ -231,6 +243,28 @@
   // Check-in is a real backend action (POST /api/admin/bookings/{ref}/check-in/):
   // success is only shown AFTER the server confirms.
   document.addEventListener("click", async function(e){
+    /* Extend stay — from the in-house list the desk is already looking at.
+       The modal prices the extension from the server and refuses it when the
+       guest's own room is not free; the list is re-read afterwards so the new
+       check-out date on screen is the one the server actually stored. */
+    var exBtn=e.target.closest("[data-extend-btn]");
+    if(exBtn){
+      var exRef=exBtn.getAttribute("data-extend-btn");
+      var exBooking=inHouseByRef[String(exRef)];
+      if(!exBooking){ JONE.ui.toast("Reload the list and try again.","warning"); return; }
+      if(!JONE.guardSubmit(exBtn)) return;
+      try{
+        exBtn.disabled=true;
+        await JONE.dashboard.extendStayModal(exBooking,{});
+        await load();
+      }catch(err){
+        JONE.ui.toast((err&&err.message)||"The stay could not be extended.","error");
+      }finally{
+        exBtn.disabled=false;
+        JONE.releaseGuard(exBtn);
+      }
+      return;
+    }
     var btn=e.target.closest("[data-checkin-btn]");
     if(!btn) return;
     if(searchTimer){ clearTimeout(searchTimer); searchTimer=null; }

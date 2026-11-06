@@ -5,7 +5,7 @@ from rest_framework import serializers
 from apps.core.storage import absolute_media_url
 from apps.rooms.models import RoomType
 
-from .models import GuestDiscount, GuestDiscountApplication, Offer
+from .models import GuestDiscount, GuestDiscountApplication, Offer, OfferGuestRestriction
 
 
 def _abs(serializer, image_field):
@@ -85,6 +85,72 @@ class OfferAdminSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"max_nights": ["Maximum nights must be at least one."]})
         if max_n is not None and min_n and max_n < min_n:
             raise serializers.ValidationError({"max_nights": ["Maximum nights must be >= minimum nights."]})
+        return attrs
+
+
+class OfferGuestRestrictionSerializer(serializers.ModelSerializer):
+    """One guest barred from one offer.
+
+    ``guest`` is written as an id; everything else about the guest (name,
+    email) is read-only and resolved from the database, so a request can never
+    assert who the guest is. ``offer`` is writeable on create so the
+    restrictions collection can be used from either side of the relationship
+    (the offer card or the guest card) with one endpoint.
+    """
+
+    guest_name = serializers.CharField(source="guest.full_name", read_only=True)
+    guest_email = serializers.CharField(source="guest.email", read_only=True)
+    offer_title = serializers.CharField(source="offer.title", read_only=True)
+    offer_code = serializers.CharField(source="offer.code", read_only=True, allow_null=True)
+    created_by_email = serializers.CharField(source="created_by.email", read_only=True,
+                                             allow_null=True)
+    removed_by_email = serializers.CharField(source="removed_by.email", read_only=True,
+                                             allow_null=True)
+
+    class Meta:
+        model = OfferGuestRestriction
+        fields = [
+            "id", "offer", "offer_title", "offer_code", "guest", "guest_name",
+            "guest_email", "reason", "is_active", "created_by", "created_by_email",
+            "removed_by", "removed_by_email", "removed_at", "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "offer_title", "offer_code", "guest_name", "guest_email",
+            "created_by", "created_by_email", "removed_by", "removed_by_email",
+            "removed_at", "created_at", "updated_at",
+        ]
+
+    def get_unique_together_validators(self):
+        """Allow a repeat CREATE for the same (offer, guest) pair.
+
+        DRF turns the model's ``unique_offer_guest_restriction`` constraint into
+        a validator that runs BEFORE ``perform_create``, so "restrict this guest
+        again" would come back as a 400 instead of re-imposing a restriction
+        that was lifted earlier. Re-restricting is a legitimate, common action
+        (the desk lifts a bar while a dispute is settled, then puts it back),
+        so the request is allowed through and the view updates the existing row.
+
+        Uniqueness is still enforced where it belongs — by the database
+        constraint, which cannot be raced by two terminals. A duplicate row can
+        therefore never be written; the worst case is a constraint error, not
+        two live restrictions for one pair.
+        """
+        return []
+
+    def validate(self, attrs):
+        # Editing an existing row may not silently re-point it at another
+        # guest/offer pair: the audit trail has to describe one decision.
+        if self.instance is not None:
+            if "guest" in attrs and attrs["guest"].pk != self.instance.guest_id:
+                raise serializers.ValidationError(
+                    {"guest": ["A restriction cannot be moved to a different guest. "
+                               "Remove it and create a new one."]}
+                )
+            if "offer" in attrs and attrs["offer"].pk != self.instance.offer_id:
+                raise serializers.ValidationError(
+                    {"offer": ["A restriction cannot be moved to a different offer. "
+                               "Remove it and create a new one."]}
+                )
         return attrs
 
 

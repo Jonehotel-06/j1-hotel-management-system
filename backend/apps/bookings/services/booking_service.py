@@ -272,6 +272,87 @@ def upsert_guest(*, user=None, guest_data=None) -> Guest:
 
 
 # ---------------------------------------------------------------------------
+# Exact physical room resolution (Issue 1)
+# ---------------------------------------------------------------------------
+# Sources for which an explicitly selected physical room is a hard promise.
+# For these the backend must REJECT the booking when the chosen room cannot be
+# honoured — it must never fall back to another room, because the receptionist
+# has already told the guest which room they are getting.
+EXACT_ROOM_GUARANTEED_SOURCES = (Booking.Source.WALK_IN, Booking.Source.PHONE)
+
+
+def _resolve_exact_room(*, room_id, room_type, source, is_staff) -> Room:
+    """Resolve and validate an explicitly requested physical room.
+
+    Returns the room, or raises :class:`RoomUnavailableError` with a reason the
+    desk can act on. The checks are deliberately ordered so the message names
+    the REAL problem (wrong type / out of service / housekeeping / occupied /
+    already reserved) instead of a generic "not available".
+
+    For staff walk-in and phone bookings every refusal is terminal: no
+    substitution is attempted anywhere in this module for those sources.
+    """
+    room = Room.objects.filter(pk=room_id).first()
+    if room is None:
+        raise RoomUnavailableError(
+            "The selected physical room no longer exists. Please choose another room."
+        )
+    if not room.is_active:
+        raise RoomUnavailableError(
+            f"Room {room.room_number} has been withdrawn from inventory and cannot be booked."
+        )
+    if room.room_type_id != room_type.pk:
+        raise RoomUnavailableError(
+            f"Room {room.room_number} is a {room.room_type.name}, not the selected "
+            f"{room_type.name}. Choose a room of the selected room type."
+        )
+    # ONE authoritative readiness rule (active + not in an operational outage +
+    # released CLEAN by housekeeping) — see availability.room_readiness_q().
+    readiness_reason = availability.unready_room_reason(room)
+    if readiness_reason:
+        raise RoomUnavailableError(readiness_reason)
+    # A room somebody is physically in right now cannot be handed to a walk-in
+    # guest even when the reservation calendar happens to be clear for it.
+    if (
+        room.status == Room.Status.OCCUPIED
+        and source in EXACT_ROOM_GUARANTEED_SOURCES
+    ):
+        raise RoomUnavailableError(
+            f"Room {room.room_number} is occupied. Choose another physical room; "
+            "no substitute was assigned."
+        )
+    return room
+
+
+def _assert_rooms_still_free(*, rooms, check_in, check_out, exclude_booking_id=None):
+    """Final overlap guard, executed inside the booking transaction.
+
+    ``available_rooms_queryset`` is the allocation source of truth, but it is
+    evaluated before the booking row exists. This re-check runs immediately
+    before the assignment rows are written and refuses to create a
+    double-booking even if a concurrent request slipped past the room-type lock
+    (for example on a backend where SELECT ... FOR UPDATE is not enforced).
+    """
+    if not rooms:
+        return
+    conflicts = set(
+        availability.blocked_room_ids(
+            room_type_id=rooms[0].room_type_id,
+            check_in=check_in,
+            check_out=check_out,
+            exclude_booking_id=exclude_booking_id,
+        )
+    )
+    clashing = [room for room in rooms if room.pk in conflicts]
+    if clashing:
+        numbers = ", ".join(sorted(room.room_number for room in clashing))
+        raise RoomUnavailableError(
+            f"Room(s) {numbers} were reserved by another booking while this one was "
+            "being created. Please choose another room."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Booking creation (public guests + staff manual bookings)
 # ---------------------------------------------------------------------------
 @transaction.atomic
@@ -334,22 +415,20 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
     substitution = None
 
     # --- Exact physical room requested ("Book this room") -------------------
+    # An explicitly chosen physical room is a promise made to the guest at the
+    # desk. It is resolved, validated and pinned to the FRONT of the allocation
+    # list *before* the generic "take the first N free rooms" step runs, so the
+    # requested room can never be dropped or displaced by another room.
     requested_room = None
     if room_id:
-        requested_room = (
-            Room.objects.filter(pk=room_id, is_active=True, room_type=room_type)
-            .filter(availability.room_readiness_q())
-            .first()
+        requested_room = _resolve_exact_room(
+            room_id=room_id,
+            room_type=room_type,
+            source=source,
+            is_staff=is_staff,
         )
-        if requested_room is None:
-            raise RoomUnavailableError(
-                "That room is not available for the selected dates. "
-                "Please choose another room."
-            )
-        if is_staff and source in (Booking.Source.WALK_IN, Booking.Source.PHONE) and requested_room.status == Room.Status.OCCUPIED:
-            raise RoomUnavailableError("The selected physical room is occupied. Choose another room; no substitute was assigned.")
-        if requested_room in free_rooms:
-            # Happy path: the exact room the guest clicked is still free.
+        if any(room.pk == requested_room.pk for room in free_rooms):
+            # Happy path: the exact room that was selected is still free.
             free_rooms = [requested_room] + [r for r in free_rooms if r.pk != requested_room.pk]
         else:
             if is_staff and source in (Booking.Source.WALK_IN, Booking.Source.PHONE):
@@ -444,6 +523,14 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
     )
     # The raw token is returned only once to the guest; only its digest is stored.
     booking.guest_access_token = booking.issue_guest_access_token()
+    # Last line of defence against a double-booking: re-check every room we are
+    # about to write is still unblocked for [check_in, check_out). A clash here
+    # rolls the whole booking back — a partially saved reservation is never left
+    # behind.
+    _assert_rooms_still_free(
+        rooms=free_rooms, check_in=check_in, check_out=check_out,
+        exclude_booking_id=booking.pk,
+    )
     BookingRoom.objects.bulk_create(
         [
             BookingRoom(booking=booking, room=room, check_in=check_in, check_out=check_out)
@@ -488,6 +575,17 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
             "source": booking.source,
             "total": str(booking.total_amount),
             "rooms": [r.room_number for r in free_rooms],
+            # Audit evidence that the desk pinned an EXACT physical room: the
+            # promise made to the guest, and the room the system actually wrote.
+            **({
+                "exact_room_selected": {
+                    "requested_room_id": requested_room.pk,
+                    "requested_room_number": requested_room.room_number,
+                    "assigned_room_id": requested_room.pk,
+                    "assigned_room_number": requested_room.room_number,
+                    "honoured": free_rooms[0].pk == requested_room.pk,
+                }
+            } if requested_room is not None else {}),
             **({
                 "room_substitution": {
                     "requested": substitution["requested_room_number"],

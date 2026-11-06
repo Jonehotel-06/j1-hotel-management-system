@@ -120,6 +120,7 @@ api_patterns = [
     path("admin/settings/", include((hotel_urls.admin_settings_urlpatterns, "hotel"), namespace="admin-settings")),
     path("admin/offers/", include((offer_urls.admin_urlpatterns, "offers"), namespace="admin-offers")),
     path("admin/guest-discounts/", include((offer_urls.admin_guest_discount_urlpatterns, "offers"), namespace="admin-guest-discounts")),
+    path("admin/offer-restrictions/", include((offer_urls.admin_offer_restriction_urlpatterns, "offers"), namespace="admin-offer-restrictions")),
     path("admin/gallery/", include((gallery_urls.admin_urlpatterns, "gallery"), namespace="admin-gallery")),
     path("admin/enquiries/", include((enquiry_urls.admin_urlpatterns, "enquiries"), namespace="admin-enquiries")),
     path("admin/users/", include("apps.accounts.urls_admin", namespace="admin-users")),

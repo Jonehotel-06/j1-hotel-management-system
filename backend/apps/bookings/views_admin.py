@@ -26,7 +26,7 @@ from apps.core.serializers import EmptySerializer
 from apps.core.emails import send_email_safe
 from apps.rooms.models import Room
 
-from .models import Booking, BookingRoom, Guest
+from .models import Booking, BookingExtension, BookingRoom, Guest
 from .serializers_admin import (
     AdminBookingCreateSerializer,
     AdminRoomGuestsSerializer,
@@ -37,6 +37,9 @@ from .serializers_admin import (
     AdminGuestListSerializer,
     AdminGuestUpdateSerializer,
     AssignRoomSerializer,
+    BookingExtensionConfirmSerializer,
+    BookingExtensionQuoteSerializer,
+    BookingExtensionSerializer,
     LateArrivalBookingSerializer,
     MissedBookingSerializer,
     RecordActionSerializer,
@@ -44,7 +47,7 @@ from .serializers_admin import (
     SettleGuestBalanceSerializer,
 )
 from .serializers import ReceiptSerializer
-from .services import booking_service
+from .services import booking_service, extension_service
 from .services.receipt_email import render_receipt_email
 
 logger = logging.getLogger("apps")
@@ -1129,6 +1132,124 @@ class AdminBookingRescheduleView(_BookingActionView):
                 if result.get("balance_due") not in (None, "", "0.00")
                 else "Booking rescheduled."
             ),
+        )
+
+
+@extend_schema(tags=["Admin · Bookings"], summary="Preview the cost of extending a stay")
+class AdminBookingExtensionQuoteView(APIView):
+    """Price an extension and check the room WITHOUT changing anything.
+
+    The dashboard calls this while the desk is still typing, so the extra
+    nights and the amount payable are on screen before any money is taken.
+    Every figure comes from the server; the response also says whether the
+    guest's own room is actually free for the added nights and names the
+    conflicting room when it is not.
+    """
+
+    permission_classes = [BookingManageAccess]
+    serializer_class = BookingExtensionQuoteSerializer
+
+    def post(self, request, lookup):
+        booking = _get_admin_booking(lookup)
+        serializer = BookingExtensionQuoteSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        quote = extension_service.quote_extension(
+            booking=booking,
+            new_check_out=data.get("new_check_out"),
+            additional_nights=data.get("additional_nights"),
+        )
+        allowed, reason = extension_service.can_extend(booking)
+        quote["can_extend"] = allowed
+        quote["can_extend_reason"] = "" if allowed else reason
+        return success_response(quote)
+
+
+@extend_schema(tags=["Admin · Bookings"], summary="Extend a stay and record its payment")
+class AdminBookingExtensionConfirmView(APIView):
+    """Extend the stay, take the money, and keep the history.
+
+    Write permission mirrors the front-desk payment endpoint
+    (``booking.manage`` AND ``payment.capture``): a stay extension changes what
+    the guest owes and collects money for it, so it is not a read grant.
+
+    The whole operation is one transaction — if the payment cannot be recorded,
+    or the room is not free for the added nights, nothing is written and no
+    partial extension survives.
+    """
+
+    permission_classes = [HasCapability]
+    required_capabilities = ("booking.manage", "payment.capture")
+    serializer_class = BookingExtensionConfirmSerializer
+
+    def post(self, request, lookup):
+        booking = _get_admin_booking(lookup)
+        serializer = BookingExtensionConfirmSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        extension = extension_service.extend_booking(
+            booking=booking,
+            staff_user=request.user,
+            new_check_out=data.get("new_check_out"),
+            additional_nights=data.get("additional_nights"),
+            amount_paid=data.get("amount_paid"),
+            provider=data.get("provider") or "CASH",
+            notes=data.get("notes", ""),
+            request=request,
+        )
+        booking = _get_admin_booking(booking.booking_reference)
+        payload = {
+            "extension": BookingExtensionSerializer(extension).data,
+            "booking": AdminBookingDetailSerializer(
+                booking, context=_booking_detail_context(request, booking)
+            ).data,
+        }
+        message = (
+            f"Stay extended by {extension.additional_nights} night(s) to "
+            f"{extension.new_check_out}."
+        )
+        if extension.outstanding_balance > 0:
+            message += (
+                f" {money(extension.outstanding_balance)} of the extension is still "
+                "outstanding on the booking."
+            )
+        return success_response(payload, message=message)
+
+
+@extend_schema(tags=["Admin · Bookings"], summary="Extension history of a stay")
+class AdminBookingExtensionHistoryView(generics.ListAPIView):
+    """Every extension recorded against one booking, oldest first.
+
+    The response also carries ``original_check_out`` — the checkout date the
+    booking was created with — so the desk can always see what changed from the
+    guest's original reservation even after several extensions.
+    """
+
+    permission_classes = [BookingReadAccess]
+    serializer_class = BookingExtensionSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        booking = _get_admin_booking(self.kwargs["lookup"])
+        return booking.extensions.select_related("processed_by", "payment").order_by(
+            "created_at", "pk"
+        )
+
+    def list(self, request, *args, **kwargs):
+        booking = _get_admin_booking(kwargs.get("lookup") or self.kwargs["lookup"])
+        queryset = self.filter_queryset(self.get_queryset())
+        original, _rows = extension_service.extension_history(booking)
+        allowed, reason = extension_service.can_extend(booking)
+        return success_response(
+            {
+                "booking_reference": booking.booking_reference,
+                "original_check_out": original.isoformat() if original else None,
+                "current_check_out": booking.check_out.isoformat() if booking.check_out else None,
+                "can_extend": allowed,
+                "can_extend_reason": "" if allowed else reason,
+                "count": queryset.count(),
+                "results": self.get_serializer(queryset, many=True).data,
+            }
         )
 
 

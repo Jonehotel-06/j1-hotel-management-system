@@ -8,7 +8,7 @@ from apps.core.utils import money
 from apps.rooms.models import Room
 from apps.rooms.serializers import RoomSerializer
 
-from .models import Booking, BookingRoom, Guest
+from .models import Booking, BookingExtension, BookingRoom, Guest
 from .serializers import (
     BookingRoomSerializer,
     RoomGuestInputSerializer,
@@ -577,3 +577,83 @@ class SettleGuestBalanceSerializer(serializers.Serializer):
                                                    max_length=64)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, default="", max_length=128)
     external_reference = serializers.CharField(required=False, allow_blank=True, default="", max_length=160)
+
+
+class BookingExtensionSerializer(serializers.ModelSerializer):
+    """Read-only view of one recorded stay extension.
+
+    The desk must be able to answer "what was this guest originally booked for,
+    and who took the money for the extra nights?" without reading code, so the
+    row carries the before/after dates, the amount, what was actually paid, what
+    is still owed, the tender, the reference and the staff member.
+    """
+
+    processed_by_name = serializers.SerializerMethodField()
+    outstanding_balance = serializers.SerializerMethodField()
+    is_fully_paid = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BookingExtension
+        fields = [
+            "id", "booking", "previous_check_out", "new_check_out",
+            "additional_nights", "nightly_rate", "extension_amount",
+            "amount_paid", "outstanding_balance", "is_fully_paid", "currency",
+            "payment_method", "payment_reference", "processed_by",
+            "processed_by_name", "notes", "status", "created_at", "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_processed_by_name(self, obj):
+        user = obj.processed_by
+        if user is None:
+            return ""
+        return (getattr(user, "full_name", "") or "").strip() or user.get_full_name() or user.email
+
+    def get_outstanding_balance(self, obj):
+        return money(obj.outstanding_balance)
+
+    def get_is_fully_paid(self, obj):
+        return obj.is_fully_paid
+
+
+class BookingExtensionQuoteSerializer(serializers.Serializer):
+    """Preview an extension: a date OR a number of nights. Never both at odds."""
+
+    new_check_out = serializers.DateField(required=False)
+    additional_nights = serializers.IntegerField(min_value=1, max_value=365, required=False)
+
+    def validate(self, attrs):
+        if not attrs.get("new_check_out") and not attrs.get("additional_nights"):
+            raise serializers.ValidationError(
+                "Provide either new_check_out or additional_nights."
+            )
+        return attrs
+
+
+class BookingExtensionConfirmSerializer(serializers.Serializer):
+    """Confirm and pay for an extension.
+
+    ``amount_paid`` is the money the desk ACTUALLY received — the backend
+    computes what the extension costs and only checks that the figure handed
+    over is not more than that. Omitting it means "the guest paid the full
+    extension cost"; sending less records a part payment and leaves the
+    difference on the booking balance under the hotel's existing partial-payment
+    rules. Nothing is ever marked paid because a form was opened.
+    """
+
+    new_check_out = serializers.DateField(required=False)
+    additional_nights = serializers.IntegerField(min_value=1, max_value=365, required=False)
+    amount_paid = serializers.DecimalField(
+        max_digits=12, decimal_places=2, min_value=0, max_value=99_999_999, required=False,
+    )
+    provider = serializers.ChoiceField(
+        choices=["CASH", "POS", "BANK_TRANSFER"], required=False, default="CASH",
+    )
+    notes = serializers.CharField(required=False, allow_blank=True, default="", max_length=255)
+
+    def validate(self, attrs):
+        if not attrs.get("new_check_out") and not attrs.get("additional_nights"):
+            raise serializers.ValidationError(
+                "Provide either new_check_out or additional_nights."
+            )
+        return attrs
