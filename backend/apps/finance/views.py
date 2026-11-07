@@ -220,6 +220,7 @@ class FinancialReconciliationView(APIView):
             start_date=_parse_query_date(request.query_params.get("start"), "start"),
             end_date=_parse_query_date(request.query_params.get("end"), "end"),
             currency=request.query_params.get("currency", "NGN"),
+            audit_scans=True,
         )
         return success_response(data["reconciliation"])
 

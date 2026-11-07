@@ -112,6 +112,22 @@ def _pos_order_references(modes: tuple[str, ...]):
     return PosOrder.objects.filter(mode__in=modes).values("reference")
 
 
+def _laundry_references():
+    """References of every laundry order (an indexed subquery).
+
+    Laundry revenue is posted to ``REVENUE.OTHER_OPERATING`` (in-house bills via
+    ``OTHER_CHARGE``, walk-in payments via ``PAYMENT_COLLECTION``), the same
+    account used for other operating income, so it is otherwise invisible inside
+    the "Other operating income" bucket. Every laundry ledger line carries
+    ``source_reference = LaundryOrder.reference``, so — exactly like the POS
+    outlet split — the laundry portion can be extracted from the ledger alone
+    without rewriting history or inventing a new revenue account.
+    """
+    from apps.guest_services.models import LaundryOrder
+
+    return LaundryOrder.objects.values("reference")
+
+
 def _transactions_touching(account_code: str, direction):
     """Transaction ids that post ``direction`` against ``account_code``.
 
@@ -128,6 +144,7 @@ def _metrics() -> dict[str, Q]:
     """Reusable signed-line predicates for each distinct operational measure."""
     restaurant_bar_orders = _pos_order_references(RESTAURANT_BAR_MODES)
     room_service_orders = _pos_order_references(ROOM_SERVICE_MODES)
+    laundry_references = _laundry_references()
     deposit_credits = _transactions_touching(
         accounting.GUEST_DEPOSITS, FinancialLine.Direction.CREDIT,
     )
@@ -207,6 +224,29 @@ def _metrics() -> dict[str, Q]:
             direction=FinancialLine.Direction.DEBIT,
             account_code__in=TENDER_ASSET_ACCOUNTS,
             transaction__source_reference__in=room_service_orders,
+        ),
+        # ---- Laundry (task 6 / §11) -------------------------------------
+        # Laundry posts to REVENUE.OTHER_OPERATING (in-house via OTHER_CHARGE,
+        # walk-in via PAYMENT_COLLECTION), so it is otherwise hidden inside
+        # "Other operating income". Both legs carry source_reference =
+        # LaundryOrder.reference, so the laundry portion is extracted from the
+        # ledger alone — a breakdown of other_operating_revenue / collections,
+        # never an addition to either total.
+        "laundry_revenue": Q(
+            direction=FinancialLine.Direction.CREDIT,
+            account_code__in=[accounting.OTHER_OPERATING_REVENUE, accounting.SERVICE_FEE_REVENUE],
+            transaction__source_reference__in=laundry_references,
+        ),
+        "laundry_revenue_reversals": Q(
+            direction=FinancialLine.Direction.DEBIT,
+            account_code__in=[accounting.OTHER_OPERATING_REVENUE, accounting.SERVICE_FEE_REVENUE],
+            transaction__source_reference__in=laundry_references,
+        ),
+        "laundry_collections": Q(
+            transaction__type=FinancialTransaction.Type.PAYMENT_COLLECTION,
+            direction=FinancialLine.Direction.DEBIT,
+            account_code__in=TENDER_ASSET_ACCOUNTS,
+            transaction__source_reference__in=laundry_references,
         ),
         # ---- Booking money received (task 4) -----------------------------
         # A booking payment debits a tender account and credits GUEST
@@ -473,7 +513,8 @@ def _serialize_metrics(values: dict, metrics: dict[str, Q], *, include_transacti
     return payload
 
 
-def financial_summary(*, start_date: date | None, end_date: date | None, currency: str = "NGN") -> dict:
+def financial_summary(*, start_date: date | None, end_date: date | None, currency: str = "NGN",
+                      audit_scans: bool = False) -> dict:
     """Summarize immutable posted ledger evidence by hotel business date.
 
     The bounded query plan is deliberately stable: one indexed transaction
@@ -595,12 +636,20 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
     unclassified_fb_revenue = food_beverage_revenue - restaurant_bar_revenue - room_service_revenue
     restaurant_bar_collections = _amount(totals.get("restaurant_bar_collections"))
     room_service_collections = _amount(totals.get("room_service_collections"))
+    # Laundry is extracted from OTHER_OPERATING_REVENUE / collections using the
+    # laundry order reference. It is a breakout of those totals, never an
+    # addition to them, so the three revenue buckets still sum to recognized
+    # revenue and the collection breakdowns still sum to collections.
+    laundry_revenue = _net("laundry_revenue")
+    laundry_collections = _amount(totals.get("laundry_collections"))
     for key, value in (
         ("restaurant_bar_revenue", restaurant_bar_revenue),
         ("room_service_revenue", room_service_revenue),
         ("food_beverage_revenue", food_beverage_revenue),
         ("accommodation_revenue", accommodation_revenue),
         ("other_operating_revenue", other_operating_revenue),
+        ("laundry_revenue", laundry_revenue),
+        ("laundry_collections", laundry_collections),
     ):
         totals_payload[key]["amount"] = money(value)
 
@@ -662,6 +711,21 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
             {"key": "discounts", "label": "Discounts allowed", "amount": money(discounts)},
         ],
         "net_income": money(revenue - discounts),
+        # Laundry traceability (task 6 / §11). It is a breakout of Other
+        # operating income and of collections, so the lines below are labelled
+        # and must NOT be summed into total_income or collections.
+        "revenue_breakdown": [
+            {"key": "accommodation_revenue", "label": "Accommodation earned (rooms)",
+             "amount": money(accommodation_revenue), "is_subset": False},
+            {"key": "restaurant_bar_revenue", "label": "Restaurants and bar",
+             "amount": money(restaurant_bar_revenue), "is_subset": False},
+            {"key": "room_service_revenue", "label": "Room service",
+             "amount": money(room_service_revenue), "is_subset": False},
+            {"key": "other_operating_revenue", "label": "Other operating income and service fees",
+             "amount": money(other_operating_revenue), "is_subset": False},
+            {"key": "laundry_revenue", "label": "  of which Laundry (breakout of Other operating income)",
+             "amount": money(laundry_revenue), "is_subset": True, "subset_of": "other_operating_revenue"},
+        ],
         "expenses": [row for row in expense_rows if row["presented"]] + (
             [{"account_code": "", "label": "Other expenses", "transactions": 0, "presented": True,
               "amount": money(sum((_amount(row["amount"]) for row in expense_rows
@@ -744,6 +808,17 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
             ),
             "room_service_revenue": "REVENUE.FOOD_BEVERAGE for ROOM_SERVICE orders (food and drink billed to a room).",
             "accommodation_revenue": "REVENUE.ACCOMMODATION credits less reversal debits (nights earned).",
+            "laundry_revenue": (
+                "REVENUE.OTHER_OPERATING credits less reversal debits whose source_reference is a laundry "
+                "order (in-house bills and walk-in payments). A breakout of Other operating income, so it is "
+                "never added on top of it. In-house laundry revenue is earned on billing; a walk-in payment "
+                "recognises the revenue and collects the cash in one posting."
+            ),
+            "laundry_collections": (
+                "Tender debits on PAYMENT_COLLECTION transactions whose source_reference is a walk-in laundry "
+                "order. A breakout of collections; in-house laundry is collected later when the guest folio "
+                "settles, so it is not counted here."
+            ),
             "total_expenses": (
                 "Debits less reversing credits across every EXPENSE.* account: operating, procurement, "
                 "kitchen and other departmental costs, payroll, pension, cash over/short. Only POSTED "
@@ -777,6 +852,8 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
         "net_booking_payments": money(booking_payments_received - refunds),
         "unclassified_food_beverage_revenue": {"amount": money(unclassified_fb_revenue)},
         "net_restaurant_bar_collections": money(restaurant_bar_collections),
+        "laundry_revenue_total": {"amount": money(laundry_revenue)},
+        "laundry_collections_total": {"amount": money(laundry_collections)},
         "net_result": money(net_result),
         "profit_and_loss": profit_and_loss,
         # Supplier payments, payables and every other disbursement. Additive keys
@@ -820,7 +897,9 @@ def financial_summary(*, start_date: date | None, end_date: date | None, currenc
             ),
         },
     }
-    result["reconciliation"] = build_reconciliation(summary=result, receivables=receivables)
+    result["reconciliation"] = build_reconciliation(
+        summary=result, receivables=receivables, audit_scans=audit_scans
+    )
     return result
 
 
@@ -848,6 +927,8 @@ MEASURE_LABELS = (
     ("actual_payments_made", "Actual payments made"),
     ("gross_operating_result", "Gross operating result"),
     ("net_result", "Net result (revenue less discounts and total expenses)"),
+    ("laundry_revenue", "Laundry revenue (breakout of Other operating income)"),
+    ("laundry_collections", "Laundry collections (breakout of collections)"),
 )
 
 
