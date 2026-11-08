@@ -306,12 +306,26 @@ class WalkInBookingLifecycleTests(BaseAPITestCase):
 
     def test_exact_unavailable_and_automatic_assignment(self):
         from apps.rooms.models import Room
-        for status in (Room.Status.OCCUPIED, Room.Status.MAINTENANCE, Room.Status.OUT_OF_SERVICE):
+        # OCCUPIED status alone must NOT block a future non-overlapping reservation.
+        # Only maintenance/out-of-service blocks unconditionally. OCCUPIED is
+        # physical presence, not a permanent booking block; date overlap decides.
+        for status in (Room.Status.MAINTENANCE, Room.Status.OUT_OF_SERVICE):
             self.room2.status = status
             self.room2.save(update_fields=["status"])
             for source in ("WALK_IN", "PHONE"):
                 result = self.client.post("/api/admin/bookings/", self._walk_in_payload(source=source, room_id=self.room2.pk), format="json")
                 self.assertIn(result.status_code, (400, 409), result.content)
+        # An occupied room is still bookable for a future non-overlapping stay.
+        self.room2.status = Room.Status.OCCUPIED
+        self.room2.save(update_fields=["status"])
+        for source in ("WALK_IN", "PHONE"):
+            future_ok = self.client.post("/api/admin/bookings/", self._walk_in_payload(source=source, room_id=self.room2.pk), format="json")
+            self.assertEqual(future_ok.status_code, 201, future_ok.content)
+            # clean up the booking so the auto-assignment check below is isolated
+            Booking.objects.filter(booking_reference=future_ok.json()["data"]["booking_reference"]).delete()
+        # Reset to blocked state to verify automatic assignment still avoids it
+        self.room2.status = Room.Status.MAINTENANCE
+        self.room2.save(update_fields=["status"])
         auto = self.client.post("/api/admin/bookings/", self._walk_in_payload(source="PHONE"), format="json")
         self.assertEqual(auto.status_code, 201, auto.content)
         self.assertEqual(Booking.objects.get(booking_reference=auto.json()["data"]["booking_reference"]).room_assignments.get().room_id, self.room1.pk)
