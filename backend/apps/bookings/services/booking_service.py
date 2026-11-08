@@ -311,13 +311,16 @@ def _resolve_exact_room(*, room_id, room_type, source, is_staff) -> Room:
     readiness_reason = availability.unready_room_reason(room)
     if readiness_reason:
         raise RoomUnavailableError(readiness_reason)
-    # Availability is determined solely by date-range overlap via the
-    # authoritative availability engine (availability.blocked_room_ids), not
-    # by the room's current operational status. A room marked OCCUPIED for a
-    # current stay (e.g. Nov 8-10) must remain reservable for a non-overlapping
-    # future stay (e.g. Nov 12-14). The OCCUPIED flag indicates physical
-    # presence, not a permanent booking block; overlap validation handles
-    # genuine conflicts.
+    # A room somebody is physically in right now cannot be handed to a walk-in
+    # guest even when the reservation calendar happens to be clear for it.
+    if (
+        room.status == Room.Status.OCCUPIED
+        and source in EXACT_ROOM_GUARANTEED_SOURCES
+    ):
+        raise RoomUnavailableError(
+            f"Room {room.room_number} is occupied. Choose another physical room; "
+            "no substitute was assigned."
+        )
     return room
 
 
@@ -2118,7 +2121,7 @@ def reschedule_booking(booking: Booking, *, check_in, check_out, staff_user, req
         available_by_id = {room.pk: room for room in available_rooms}
         unavailable = [
             a.room.room_number for a in assignments
-            if a.room_id not in available_by_id
+            if a.room_id not in available_by_id or available_by_id[a.room_id].status == Room.Status.OCCUPIED
         ]
         if unavailable:
             raise RoomUnavailableError(
