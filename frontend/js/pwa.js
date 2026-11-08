@@ -1,16 +1,29 @@
 /* js/pwa.js */
 /* ==========================================================================
-   PWA layer — service-worker registration, safe update handling, and the
-   staff-dashboard install experience.
+   PWA layer — service-worker registration, safe update handling, and the iOS
+   home-screen installation instructions.
 
    This is the ONLY place in the frontend that talks to navigator.serviceWorker.
    Pages never register the worker themselves.
 
-   The installable PWA is the STAFF DASHBOARD ONLY. Public guest pages link no
-   web app manifest, never register the worker, and never show install UI —
-   guests are not offered an app install. On those pages this file only
-   provides the connectivity helpers / update plumbing other scripts use, and
-   unregisters the legacy root-scoped worker earlier public releases created.
+   TWO separate applications share this file:
+
+   * the PUBLIC SITE (jonehotels.com, scope "/") is installable as
+     "J-ONE Hotel Management System" — its manifest, apple-mobile-web-app-*
+     metadata and apple-touch-icon are static head tags emitted by build.py
+     (PUBLIC_PWA_HEAD). iOS installs it from Safari's Share > Add to Home
+     Screen, and that path is driven by the apple-* meta tags, not by a service
+     worker. Public pages therefore never register a worker (an offline cache
+     over a live booking/payment site is a liability), and no install banner or
+     popup is shown — only the small, deliberate install instructions that the
+     user asks for by tapping an install control.
+
+   * the STAFF DASHBOARD (/dashboard/, scope "/dashboard/") is installable as
+     "J-ONE Staff" with its own manifest and its own worker registration.
+
+   On public pages this file only provides the connectivity helpers / update
+   plumbing other scripts use, retires the legacy root-scoped worker earlier
+   public releases created, and offers the iPhone installation instructions.
    The worker itself is registered with scope "/dashboard/", so it can only
    ever control dashboard pages.
 
@@ -31,9 +44,18 @@
 
   var SW_URL = "/sw.js";
   var SW_SCOPE = "/dashboard/";
-  // Installability is a dashboard-only feature (see the header note above).
   var IS_DASHBOARD = location.pathname === "/dashboard" || location.pathname.indexOf("/dashboard/") === 0;
-  var INSTALL_ENABLED = IS_DASHBOARD;
+  // Pages that must never be installed as an app: the verified-email guest
+  // portal, the bearer-link QR guest form and the password-reset page. They
+  // handle one-use credentials and must not live in an installed shell.
+  var IS_PASS_THROUGH_PAGE = function (p) {
+    return p.indexOf("/portal") === 0 ||
+      p.indexOf("/qr-service.html") === 0 ||
+      p.indexOf("/reset-password.html") === 0;
+  }(location.pathname);
+  // Both the staff dashboard and the public site are installable (see the
+  // header note); everything else offers no install path at all.
+  var INSTALL_ENABLED = !IS_PASS_THROUGH_PAGE;
   var DISMISS_KEY = "jone.pwa.installDismissedAt";
   var DISMISS_DAYS = 30;
 
@@ -296,16 +318,59 @@
 
   function iosInstructions() {
     if (!window.JONE || !window.JONE.ui || !window.JONE.ui.modal) return;
+    var staff = IS_DASHBOARD;
     window.JONE.ui.modal.open({
-      title: "Add J-ONE Staff to your Home Screen",
+      title: staff ? "Add J-ONE Staff to your Home Screen" : "Add J-ONE to your Home Screen",
       body:
         '<ol style="margin:0;padding-left:1.25rem;line-height:1.7;">' +
         "<li>Tap the <strong>Share</strong> button in Safari&rsquo;s toolbar.</li>" +
         "<li>Scroll down and choose <strong>Add to Home Screen</strong>.</li>" +
-        "<li>Tap <strong>Add</strong> &mdash; the J-ONE staff dashboard will open like an app.</li>" +
+        "<li>Tap <strong>Add</strong> &mdash; " +
+        (staff ? "the J-ONE staff dashboard" : "J-ONE") +
+        " will open like an app.</li>" +
         "</ol>" +
-        '<p style="margin-top:1rem;color:var(--color-text-muted);">The dashboard still requires an internet connection and your staff sign-in.</p>'
+        '<p style="margin-top:1rem;color:var(--color-text-muted);">' +
+        (staff
+          ? "The dashboard still requires an internet connection and your staff sign-in."
+          : "Booking, payments and your account still need an internet connection.") +
+        "</p>"
     });
+  }
+
+  /* Small, non-intrusive public-site install row. iOS has no install event, so
+     the ONLY way a guest can discover Add to Home Screen is a visible control;
+     it is one quiet line inside the site footer plus a dismiss button — never a
+     popup, never a modal on load. It stays hidden once the site is installed,
+     after a dismissal, and on pages that are not installable. */
+  var FOOTER_BANNER_ID = "pwa-install-row";
+  function footerHost() {
+    return document.querySelector("[data-pwa-install-host]") ||
+      document.querySelector(".site-footer .container") ||
+      document.querySelector(".site-footer");
+  }
+  function showFooterBanner() {
+    if (document.getElementById(FOOTER_BANNER_ID)) return;
+    if (IS_DASHBOARD || !INSTALL_ENABLED || isStandalone() || recentlyDismissed() || !canInstall()) return;
+    var host = footerHost();
+    if (!host) return;
+    var row = document.createElement("div");
+    row.id = FOOTER_BANNER_ID;
+    row.className = "pwa-install-row no-print";
+    row.setAttribute("role", "note");
+    row.innerHTML =
+      '<span class="pwa-install-row-copy">' +
+        '<strong>Install J-ONE</strong> ' +
+        "<span>" +
+        (isIOSSafari()
+          ? "Add it to your iPhone Home Screen: tap Share, then Add to Home Screen."
+          : "Open J-ONE like an app, straight from your home screen.") +
+        "</span>" +
+      "</span>" +
+      '<button type="button" class="btn btn-sm btn-outline" data-pwa-install>Install app</button>' +
+      '<button type="button" class="btn-icon btn-ghost pwa-install-row-close" aria-label="Dismiss install instructions">&times;</button>';
+    host.appendChild(row);
+    var close = row.querySelector(".pwa-install-row-close");
+    if (close) close.addEventListener("click", function () { markDismissed(); row.remove(); });
   }
 
   /* All install controls carry [data-pwa-install]; they are hidden until an
@@ -315,10 +380,12 @@
   }
 
   function canInstall() {
-    if (!INSTALL_ENABLED) return false;  // public guest pages: never installable
+    if (!INSTALL_ENABLED) return false;  // portal / QR / reset: never installable
     if (isStandalone()) return false;
-    if (deferredPrompt) return true;
-    return isIOSSafari();               // iOS: manual Add to Home Screen
+    if (deferredPrompt) return true;     // Android/desktop native install prompt
+    // iOS Safari never fires beforeinstallprompt, so the Add to Home Screen
+    // path is always available there and must never be hidden.
+    return isIOSSafari();
   }
 
   function syncControls() {
@@ -328,6 +395,7 @@
       el.setAttribute("aria-hidden", show ? "false" : "true");
     });
     if (!show) hideBanner();
+    if (!IS_DASHBOARD) { if (show) showFooterBanner(); else hideBanner(); }
   }
 
   function doInstall(trigger) {
@@ -390,6 +458,8 @@
   var bannerEl = null;
   function hideBanner() {
     if (bannerEl) { bannerEl.remove(); bannerEl = null; }
+    var row = document.getElementById(FOOTER_BANNER_ID);
+    if (row && !canInstall()) row.remove();
   }
   function showBanner() {
     if (bannerEl || isStandalone() || recentlyDismissed() || !canInstall()) return;
@@ -476,6 +546,7 @@
   function boot() {
     injectControls();
     syncControls();
+    if (!IS_DASHBOARD) showFooterBanner();
     register();
   }
 

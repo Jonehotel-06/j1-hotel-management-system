@@ -31,9 +31,14 @@ from apps.core.serializers import EmptySerializer
 
 from .capabilities import capability_codes_for_user
 from .desktop_policy import (
+    DESKTOP_BY_DEVICE,
     desktop_key_override_for_unusable_ip_pin,
+    device_credential_overrides_unusable_ip_pin,
     front_desk_desktop_ip_allowed,
+    front_desk_device_for_token,
     front_desk_workstation_missing,
+    presented_device_token,
+    record_device_seen,
     request_client_ip,
     resolve_receptionist_desktop,
     sign_in_policy_applies,
@@ -234,9 +239,29 @@ def _refuse_staff_refresh_outside_desk(request):
     # killed mid-shift just because this header is missing on a refresh.
     desktop, desktop_method = resolve_receptionist_desktop(request)
     if desktop is not None:
+        if desktop_method == DESKTOP_BY_DEVICE:
+            # An approved device identifies the BROWSER, and the browser is the
+            # thing whose address changed. The device must still belong to the
+            # staff account whose session is being refreshed, so a token lifted
+            # from another desk cannot keep somebody else's session alive.
+            device = front_desk_device_for_token(presented_device_token(request), staff=user)
+            if device is None:
+                logger.warning(
+                    "Staff session refresh refused: user_id=%s role=%s reason=device_credential_not_valid",
+                    user.pk, user.role,
+                )
+                log_action(
+                    actor=user, action="STAFF_SIGN_IN_RESTRICTED", request=request,
+                    metadata={"reason": "refresh_device_credential_invalid", "role": user.role,
+                              "client_ip": request_client_ip(request)},
+                    summary="Staff session refresh refused: device credential no longer valid",
+                )
+                raise StaffSignInRestrictedError(client_ip=request_client_ip(request))
+            record_device_seen(device, request_client_ip(request))
+            return None
         if front_desk_desktop_ip_allowed(request) or desktop_key_override_for_unusable_ip_pin(
             request, desktop_method
-        ):
+        ) or device_credential_overrides_unusable_ip_pin(request, desktop_method):
             return None
         logger.warning("Staff session refresh refused: user_id=%s role=%s reason=front_desk_ip_mismatch", user.pk, user.role)
         log_action(

@@ -11,13 +11,14 @@
 <title>Guests | J-ONE Staff</title>
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
-<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="stylesheet" href="../css/main.css?v=1.1.23">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
+<meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.23">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png">
 
 </head>
 <body>
@@ -354,6 +355,21 @@
     });
   }
 
+  /* Read a paginated list completely (bounded: 20 pages x 100 = 2000 rows).
+     A single oversized ?page_size= is silently capped by the server, so an
+     unchecked page could hide the row the caller is about to duplicate. */
+  async function readAllPages(fetchPage) {
+    var all = [], page = 1;
+    for (var guard = 0; guard < 20; guard++) {
+      var res = await fetchPage(page);
+      var norm = window.API.normalizeList(res.data, res.pagination);
+      all = all.concat(norm.items || []);
+      if (!norm.next || !(norm.items || []).length) break;
+      page += 1;
+    }
+    return all;
+  }
+
   /* -------- Offer restrictions for this guest ---------------------------
      Verified /api/admin/offer-restrictions/ row: { id, offer, offer_title,
      offer_code, guest, guest_name, guest_email, reason, is_active,
@@ -364,15 +380,28 @@
      are untouched. The rule is enforced by the backend on every booking, so a
      hand-crafted API request cannot get around it either. */
   async function manageOfferRestrictions(guestId){
+    /* The guest is addressed by its PRIMARY KEY and nothing else. A button that
+       carries no usable id is how "Restricted Guests" used to end up asking the
+       API about an identifier that does not exist, which the server could only
+       answer with "the item could not be found". */
+    var guestKey = String(guestId == null ? "" : guestId);
+    if (!/^[0-9]+$/.test(guestKey) || Number(guestKey) < 1) {
+      JONE.ui.toast("This guest could not be identified. Refresh the list and try again.", "error");
+      return;
+    }
     var guest = null, offers = [], restrictions = [];
     try {
-      var gRes = await window.API.getOne("guests", guestId);
+      var gRes = await window.API.getOne("guests", guestKey);
       guest = (gRes && gRes.data) || {};
-      var oRes = await window.API.list("offers", { page_size: 200 });
-      offers = window.API.normalizeList(oRes.data, oRes.pagination).items || [];
-      var rRes = await window.API.listOfferRestrictions({ guest: guestId, page_size: 200 });
-      restrictions = window.API.normalizeList(rRes.data, rRes.pagination).items || [];
+      /* Server page size caps at 100; read every page so the "already
+         restricted" check below compares against the COMPLETE set and cannot
+         offer an offer that is in fact already restricted. */
+      offers = await readAllPages(function(page){ return window.API.list("offers", { page_size: 100, page: page }); });
+      restrictions = await readAllPages(function(page){ return window.API.listOfferRestrictions({ guest: guestKey, page_size: 100, page: page }); });
     } catch (err) {
+      /* Keep the API layer's own sentence: it names the record that is gone
+         (404), the permission that is missing (403) or the bad identifier
+         (400) far more precisely than a generic line ever could. */
       JONE.ui.toast((err && err.message) || "Offer restrictions couldn't be loaded.", "error");
       return;
     }
@@ -383,9 +412,12 @@
       var label = JONE.esc(r.offer_title || ("Offer #" + r.offer));
       if (r.offer_code) label += ' <span class="caption">' + JONE.esc(r.offer_code) + "</span>";
       var why = r.reason ? '<div class="caption">' + JONE.esc(r.reason) + "</div>" : "";
-      var action = (r.is_active === false)
-        ? (canManageDiscounts ? '<button class="btn btn-sm btn-ghost" type="button" data-gor-restore="' + r.id + '">Restore</button>' : "")
-        : (canManageDiscounts ? '<button class="btn btn-sm btn-ghost" type="button" data-gor-lift="' + r.id + '">Remove</button>' : "");
+      /* A restriction row without a primary key gets no control at all. */
+      var rid = (r && /^[0-9]+$/.test(String(r.id == null ? "" : r.id))) ? String(r.id) : "";
+      var action = !rid ? ""
+        : (r.is_active === false)
+          ? (canManageDiscounts ? '<button class="btn btn-sm btn-ghost" type="button" data-gor-restore="' + rid + '">Restore</button>' : "")
+          : (canManageDiscounts ? '<button class="btn btn-sm btn-ghost" type="button" data-gor-lift="' + rid + '">Remove</button>' : "");
       var state = r.is_active === false
         ? JONE.dashboard.statusPill("inactive", "LIFTED")
         : JONE.dashboard.statusPill("active", "RESTRICTED");
@@ -431,28 +463,33 @@
           { name: "reason", label: "Reason (recorded in the audit trail)", type: "textarea", rows: 2 }
         ],
         onSubmit: function(v){
+          var offerId = Number(v.offer);
+          if (!isFinite(offerId) || offerId < 1) throw new Error("Choose the offer to restrict.");
+          /* POST is idempotent per offer+guest on the server: repeating it
+             restores the existing row instead of creating a duplicate. */
           return window.API.createOfferRestriction({
-            offer: Number(v.offer),
-            guest: Number(guestId),
+            offer: offerId,
+            guest: Number(guestKey),
             reason: String(v.reason || "").trim()
-          }).then(function(){ JONE.ui.toast("Offer restricted for this guest.", "success"); });
+          }).then(function(res){
+            JONE.ui.toast((res && res.message) || "Offer restricted for this guest.", "success");
+          });
         }
       });
-      if (saved) manageOfferRestrictions(guestId);
+      if (saved) manageOfferRestrictions(guestKey);
     });
 
     document.querySelectorAll("[data-gor-lift]").forEach(function(btn){
       btn.addEventListener("click", async function(){
         try {
           btn.disabled = true;
-          await window.API.liftOfferRestriction(btn.getAttribute("data-gor-lift"));
-          JONE.ui.toast("Restriction removed — the guest can use that offer again.", "success");
+          var res = await window.API.liftOfferRestriction(btn.getAttribute("data-gor-lift"));
+          JONE.ui.toast((res && res.message) || "Restriction removed — the guest can use that offer again.", "success");
           JONE.dashboard.closePanel();
-          manageOfferRestrictions(guestId);
+          manageOfferRestrictions(guestKey);
         } catch (err) {
           btn.disabled = false;
-          if (err && err.status === 403) JONE.ui.toast("Only managers and administrators can change offer restrictions.", "error");
-          else JONE.ui.toast((err && err.message) || "The restriction couldn't be removed.", "error");
+          JONE.ui.toast((err && err.message) || "The restriction couldn't be removed.", "error");
         }
       });
     });
@@ -460,10 +497,10 @@
       btn.addEventListener("click", async function(){
         try {
           btn.disabled = true;
-          await window.API.restoreOfferRestriction(btn.getAttribute("data-gor-restore"));
-          JONE.ui.toast("Restriction restored.", "success");
+          var res = await window.API.restoreOfferRestriction(btn.getAttribute("data-gor-restore"));
+          JONE.ui.toast((res && res.message) || "Restriction restored.", "success");
           JONE.dashboard.closePanel();
-          manageOfferRestrictions(guestId);
+          manageOfferRestrictions(guestKey);
         } catch (err) {
           btn.disabled = false;
           JONE.ui.toast((err && err.message) || "The restriction couldn't be restored.", "error");

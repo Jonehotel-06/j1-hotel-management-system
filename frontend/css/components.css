@@ -705,6 +705,32 @@ body.modal-open { overflow: hidden; }
 .pwa-banner .btn { flex: none; }
 .pwa-banner-close { flex: none; margin-left: auto; }
 
+/* Public-site install row (footer). One quiet line, never a popup: iOS has no
+   install event, so the Add to Home Screen path has to be discoverable
+   somewhere unobtrusive. Dismissible, hidden once installed. */
+.pwa-install-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin: var(--sp-4) 0 0;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.pwa-install-row-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 14rem;
+  line-height: var(--leading-snug);
+}
+.pwa-install-row-copy strong { font-size: var(--fs-sm); font-weight: 600; }
+.pwa-install-row-copy span { font-size: var(--fs-xs); color: var(--color-text-muted); }
+.pwa-install-row .btn { flex: none; }
+.pwa-install-row-close { flex: none; margin-left: auto; }
+
 @media (max-width: 420px) {
   .pwa-banner { gap: var(--sp-2); padding: var(--sp-3); }
   .pwa-banner-copy span { display: none; }

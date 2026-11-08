@@ -115,6 +115,24 @@ const API = (() => {
   // Map HTTP status codes to human-friendly, non-technical messages.
   // Backend-provided messages (envelope `message`) win when they are
   // user-safe; technical/token messages are replaced.
+  /* 404s from TWO different worlds must not read the same.
+     ---------------------------------------------------------------------
+     A missing record (e.g. an offer that was deleted between the list render
+     and the click) is answered by DRF with an authored sentence such as
+     "This offer no longer exists, so its state cannot be changed." A path the
+     running backend does not serve at all (an older deployment without the
+     route) is answered by Django itself with an HTML error page, so no JSON
+     message ever arrives. Both used to be collapsed into the same "The
+     requested item could not be found.", which hid which one had happened and
+     is precisely the message staff reported for Deactivate Offer and
+     Restricted Guests. The backend's own sentence always wins now, and the
+     fallback tells the truth about the two remaining cases. */
+  const NOT_FOUND_FALLBACK = "The requested item could not be found.";
+  const NOT_FOUND_UNSERVED = (
+    "The server does not recognise this request. If it persisted after a reload, " +
+    "the API deployment does not include this feature yet — report it to the administrator."
+  );
+
   function friendlyMessage(status, data) {
     const dmsg = data && (data.message || data.detail || data.error);
     // Field-level errors are more useful than the generic envelope message
@@ -144,7 +162,10 @@ const API = (() => {
       }
       case 401: return "Your session has expired. Please sign in again.";
       case 403: return "You don't have permission to perform this action.";
-      case 404: return "The requested item could not be found.";
+      case 404:
+        // No JSON envelope at all means the request never reached a DRF view:
+        // the route is not served by this deployment.
+        return data == null ? NOT_FOUND_UNSERVED : NOT_FOUND_FALLBACK;
       case 409: return "The selected room is no longer available. Please choose another room.";
       case 422: return "Some of the information provided is invalid. Please review and try again.";
       case 429: return "Too many requests. Please wait a moment and try again.";
@@ -344,7 +365,14 @@ const API = (() => {
          res.data (and pagination at res.pagination) — the documented contract
          of normalizeList(res.data, res.pagination). */
       let pagination = (data && typeof data === "object" && !Array.isArray(data) && data.pagination) || null;
+      /* The envelope's own sentence is preserved. Operations such as
+         "Deactivate offer" answer with a message that explains the CONSEQUENCE
+         ("...New bookings will use the standard room price; existing bookings
+         keep the price they were given"), and pages were having to invent a
+         replacement because unwrapping the envelope threw that sentence away. */
+      let message = null;
       if (data && typeof data === "object" && !Array.isArray(data) && data.success !== undefined && "data" in data) {
+        message = typeof data.message === "string" ? data.message : null;
         data = data.data !== undefined ? data.data : null;
       }
 
@@ -352,6 +380,7 @@ const API = (() => {
         status: res.status,
         ok: true,
         data,
+        message,
         pagination,
         response: res,
         headers: res.headers
@@ -971,6 +1000,34 @@ const API = (() => {
      Both are server decisions. The buttons below only ASK; the price a booking
      actually gets is recomputed by the backend every time, so hiding a control
      in the browser changes nothing about what the hotel charges. */
+  /* ------------------- FRONT DESK DEVICES (workstation identity) -----------
+     An approved device is what keeps the front desk working when its IP address
+     changes. Requesting approval grants NOTHING (it creates a pending row an
+     administrator must review); listing, approving and revoking need the
+     terminal.manage capability, which the server enforces. Paths are built here
+     from the terminals resource so no page hard-codes them. */
+  function terminalsBase() {
+    const base = resourceEp("workstations");
+    if (!base) throw notConfigured("workstations");
+    return base;
+  }
+  function listFrontDeskDevices(params, opts = {}) {
+    return get(`${terminalsBase()}/devices/`, { params, ...opts });
+  }
+  function requestFrontDeskDevice(payload, opts = {}) {
+    return post(`${terminalsBase()}/devices/request/`, payload || {}, opts);
+  }
+  function approveFrontDeskDevice(id, payload, opts = {}) {
+    const safe = String(id || "");
+    if (!/^[0-9]+$/.test(safe)) return Promise.reject(new APIError(0, "This device could not be identified."));
+    return post(`${terminalsBase()}/devices/${safe}/approve/`, payload || {}, opts);
+  }
+  function revokeFrontDeskDevice(id, payload, opts = {}) {
+    const safe = String(id || "");
+    if (!/^[0-9]+$/.test(safe)) return Promise.reject(new APIError(0, "This device could not be identified."));
+    return post(`${terminalsBase()}/devices/${safe}/revoke/`, payload || {}, opts);
+  }
+
   function activateOffer(id, opts = {}) { return resourceAction("offers", id, "activate", {}, opts); }
   function deactivateOffer(id, opts = {}) { return resourceAction("offers", id, "deactivate", {}, opts); }
   function listOfferRestrictions(params, opts = {}) { return list("offerRestrictions", params, opts); }
@@ -1286,6 +1343,7 @@ const API = (() => {
     housekeepingRoomsNotReady, housekeepingMarkRoomClean,
     rescheduleBooking, getOccupancyCalendar, listMissedBookings, listLateArrivals,
     listGuestDiscounts, createGuestDiscount, updateGuestDiscount, deactivateGuestDiscount,
+    listFrontDeskDevices, requestFrontDeskDevice, approveFrontDeskDevice, revokeFrontDeskDevice,
     activateOffer, deactivateOffer,
     listOfferRestrictions, createOfferRestriction, updateOfferRestriction,
     liftOfferRestriction, restoreOfferRestriction,

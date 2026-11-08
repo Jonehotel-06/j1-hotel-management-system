@@ -219,6 +219,130 @@ class Workstation(TimeStampedModel):
         return f"{self.name} ({self.department})"
 
 
+def _hash_device_token(raw_token: str) -> str:
+    """SHA-256 digest of a device token. The raw token is never stored."""
+    import hashlib
+
+    return hashlib.sha256(str(raw_token or "").encode("utf-8")).hexdigest()
+
+
+class FrontDeskDevice(TimeStampedModel):
+    """A staff device approved to be the Receptionist Desktop, independent of its IP.
+
+    WHY A DEVICE RECORD EXISTS
+    ==========================
+    The Receptionist Desktop used to be identified by its network address: an
+    administrator registered the address the desk reaches the API from, and a
+    sign-in or token refresh arriving from that address was accepted. That works
+    until the address changes — a power cut reboots the router, the ISP hands
+    out a new lease, the desk moves to another floor — and then:
+
+    * sign-in is refused because the request no longer arrives from the
+      registered address, and
+    * every staff session dies at its next token refresh for the same reason,
+      because the refresh path enforces the same rule.
+
+    The address was never the desk. The desk is a particular BROWSER on a
+    particular machine, used by particular staff. This model records that
+    browser as a device:
+
+    * ``token_hash`` — SHA-256 of a random 256-bit token the browser keeps. The
+      raw token is returned once, at enrolment, and never again: it is not in
+      the database, not in the API, and not in any log.
+    * ``device_label`` — what the browser called itself, for an administrator
+      reviewing the list.
+    * ``last_ip_address`` / ``ip_addresses`` — METADATA ONLY. Every distinct
+      address the device has been seen from, so a change is visible and
+      reviewable. An address is never required to match, and a new address never
+      silently rewrites the workstation's registered address.
+    * ``staff`` — the account that enrolled the device. A device credential is
+      bound to that account, so a token copied to another machine cannot be
+      replayed by a different user, and revoking the staff account revokes the
+      device.
+
+    SECURITY PROPERTIES (unchanged or strengthened, never weakened)
+    ==============================================================
+    * The device must belong to an ACTIVE ``FRONT_DESK`` workstation
+      (``workstation``, ``PROTECT``); deactivating that workstation deauthorises
+      every device enrolled for it on the next request.
+    * The staff account must still be active and still hold an operational role.
+    * Revocation is immediate (``is_active=False`` / ``revoked_at``) and audited.
+    * A stolen token cannot be used from a different staff account.
+    * The workstation is still required to exist and be active, so a hotel that
+      retires its front desk retires its devices with it.
+    * Nothing here disables the address pin. When an administrator HAS pinned a
+      desk address, the pin still applies exactly as before; when the device
+      proves itself and the saved pin is unreachable (a platform proxy address),
+      the device credential is what admits the browser (see
+      ``desktop_policy.device_credential_overrides_unusable_ip_pin``).
+    """
+
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    workstation = models.ForeignKey(
+        Workstation,
+        on_delete=models.PROTECT,
+        related_name="front_desk_devices",
+        help_text="The active Front Desk workstation this device stands at.",
+    )
+    staff = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="front_desk_devices",
+        help_text="The account that enrolled the device. A token only works for this account.",
+    )
+    device_label = models.CharField(max_length=160, blank=True, default="")
+    is_active = models.BooleanField(default=True, db_index=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_ip_address = models.CharField(max_length=64, blank=True, default="")
+    #: Every distinct address this device has presented, oldest first. Written by
+    #: ``desktop_policy.record_device_seen``; capped so the row stays small.
+    ip_addresses = models.JSONField(default=list, blank=True)
+    first_enrolled_ip = models.CharField(max_length=64, blank=True, default="")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="revoked_front_desk_devices",
+    )
+    revoked_reason = models.CharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        ordering = ["-last_seen_at", "-id"]
+        indexes = [
+            models.Index(fields=["is_active", "workstation"]),
+        ]
+
+    def __str__(self):
+        return f"Front desk device {self.device_label or self.pk} (workstation {self.workstation_id})"
+
+    def save(self, *args, **kwargs):
+        """Give a not-yet-approved device a placeholder digest.
+
+        ``token_hash`` is UNIQUE, so several pending rows cannot all carry the
+        empty string. A pending row gets a random ``pending:<hex>`` value that
+        is not a SHA-256 digest and therefore can never be produced by hashing
+        a presented token — the row exists for an administrator to review and
+        resolves nothing until ``issue_device_token`` replaces it.
+        """
+        if not self.token_hash:
+            import uuid
+
+            self.token_hash = f"pending:{uuid.uuid4().hex}"
+        super().save(*args, **kwargs)
+
+    # -- token helpers (kept on the model so no caller can store a raw token) --
+    @staticmethod
+    def hash_token(raw_token: str) -> str:
+        return _hash_device_token(raw_token)
+
+    def matches(self, raw_token: str) -> bool:
+        return bool(self.token_hash) and self.token_hash == _hash_device_token(raw_token)
+
+
 class Capability(TimeStampedModel):
     """A server-side permission atom exposed to staff clients as a capability.
 

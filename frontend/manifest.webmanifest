@@ -1,23 +1,19 @@
 {
-  "name": "J-ONE HOTEL & LODGE",
-  "short_name": "J1 Hotel",
-  "description": "Book your stay at J-ONE Hotel & Lodge — comfortable rooms, thoughtful facilities and direct online booking.",
+  "name": "J-ONE Hotel Management System",
+  "short_name": "J-ONE",
+  "description": "J-ONE Hotel & Lodge — book a stay, and install the J-ONE app for the staff hotel management system.",
   "id": "/",
   "start_url": "/index.html",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",
   "background_color": "#F8F9FA",
   "theme_color": "#373435",
   "lang": "en",
   "dir": "ltr",
-  "categories": ["travel", "lifestyle", "business"],
+  "categories": ["travel", "business", "productivity"],
   "icons": [
-    {
-      "src": "/favicon/favicon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
     {
       "src": "/favicon/icon-192.png",
       "sizes": "192x192",
@@ -43,9 +39,16 @@
       "purpose": "maskable"
     },
     {
+      "src": "/favicon/apple-touch-icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
       "src": "/favicon/favicon.svg",
       "sizes": "any",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ],
   "shortcuts": [
@@ -62,9 +65,9 @@
       "icons": [{ "src": "/favicon/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
-      "name": "Your stays",
-      "short_name": "My stays",
-      "url": "/my-bookings.html",
+      "name": "Staff sign in",
+      "short_name": "Staff",
+      "url": "/login.html",
       "icons": [{ "src": "/favicon/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]

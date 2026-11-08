@@ -6,12 +6,14 @@
 /* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
 (function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
 </script><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="robots" content="noindex, nofollow">
-  <title>Workstations | J-ONE Staff</title><meta name="theme-color" content="#373435"><link rel="icon" href="../favicon/favicon-32.png" sizes="32x32"><link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+  <title>Workstations | J-ONE Staff</title><meta name="theme-color" content="#373435"><link rel="icon" href="../favicon/favicon-32.png" sizes="32x32"><link rel="stylesheet" href="../css/main.css?v=1.1.23">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
+<meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="J-ONE Staff"><link rel="stylesheet" href="../css/main.css?v=1.1.26">
+<meta name="apple-mobile-web-app-title" content="J-ONE Staff">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png">
 </head>
 <body>
 <div class="dash"><aside class="dash-sidebar" aria-label="Staff navigation"><div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div><nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
@@ -121,6 +123,35 @@
     <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Registered workstations"><table class="table"><thead><tr><th>Workstation</th><th>Department</th><th>Status</th><th class="hide-sm">Last reported staff</th><th class="hide-sm">Last seen</th><th>Actions</th></tr></thead><tbody data-terminal-rows></tbody></table></div><div class="pagination" data-terminal-pagination></div></div>
   </section>
 
+  <section class="panel" id="front-desk-devices-panel">
+    <div class="panel-head">
+      <div>
+        <h2>Approved front desk devices</h2>
+        <p class="caption muted">A device is approved once and then identifies this browser without depending on its IP address. Approving issues a token that is shown <strong>once</strong>; paste it into the enrolment panel below on the desk browser itself. Addresses are recorded for review &mdash; a changed address is logged, never silently accepted as a new registration.</p>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div class="row-actions" style="margin-bottom:0.75rem;">
+        <label class="caption" for="device-filter">Show</label>
+        <select class="input" id="device-filter" style="max-width:180px;">
+          <option value="">All devices</option>
+          <option value="pending">Pending requests</option>
+          <option value="approved">Approved</option>
+          <option value="revoked">Revoked</option>
+        </select>
+        <button class="btn btn-sm btn-outline" type="button" data-device-refresh>Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Device</th><th>Workstation</th><th>Staff</th><th>State</th><th>Address (recorded)</th><th><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody data-device-rows></tbody>
+        </table>
+      </div>
+      <div class="pagination" data-device-pagination hidden></div>
+      <p class="caption muted" data-device-current></p>
+    </div>
+  </section>
+
   <section class="panel" id="desktop-enrolment-panel">
     <div class="panel-head">
       <div>
@@ -142,10 +173,27 @@
           <button class="btn btn-sm btn-outline" type="button" data-desktop-enrol-clear>Remove key from this browser</button>
         </div>
       </div>
+
+      <hr style="border:0;border-top:1px solid var(--line,#e6e4e1);margin:1.25rem 0;">
+      <h3 class="h4" style="margin:0 0 0.35rem;">Approved device (survives an address change)</h3>
+      <p class="caption muted" style="margin-top:0;">A desktop key and a registered address both stop working when the desk&rsquo;s IP changes &mdash; which is what happens after an unexpected power cut or router restart. An <strong>approved device</strong> is bound to this browser and to one staff account instead of to an address, so the same browser keeps working from a new address, and the address change is recorded for the administrator to review. Every sign-in still needs that staff member&rsquo;s own password.</p>
+      <p class="caption" data-device-state role="status" aria-live="polite"></p>
+      <div class="form-grid fg-2" style="margin-top:0.5rem;align-items:end;">
+        <div class="field">
+          <label class="field-label" for="device-enrol-token">Approved-device token</label>
+          <input class="input" id="device-enrol-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste the device token an administrator approved for this browser">
+          <p class="caption muted" style="margin:0.25rem 0 0;">Only the digest is stored on the server, so nobody — including an administrator — can read the token back. If it is lost, approve the browser again to issue a new one.</p>
+        </div>
+        <div class="row-actions">
+          <button class="btn btn-sm" type="button" data-device-install>Install token on this browser</button>
+          <button class="btn btn-sm btn-outline" type="button" data-device-forget>Remove from this browser</button>
+          <button class="btn btn-sm btn-outline" type="button" data-device-request>Request approval for this browser</button>
+        </div>
+      </div>
     </div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.26"></script><script src="../js/config.js?v=1.1.26"></script><script src="../js/utils.js?v=1.1.26"></script><script src="../js/icons.js?v=1.1.26"></script><script src="../js/api.js?v=1.1.26"></script><script src="../js/theme.js?v=1.1.26"></script><script src="../js/ui.js?v=1.1.26"></script><script src="../js/auth.js?v=1.1.26"></script><script src="../js/navigation.js?v=1.1.26"></script><script src="../js/dashboard.js?v=1.1.26"></script><script src="../js/table-fit.js?v=1.1.26"></script><script src="../js/operations.js?v=1.1.26"></script><script src="../js/biometrics.js?v=1.1.26"></script>
+<script src="../js/runtime-config.js?v=1.1.23"></script><script src="../js/config.js?v=1.1.23"></script><script src="../js/utils.js?v=1.1.23"></script><script src="../js/icons.js?v=1.1.23"></script><script src="../js/api.js?v=1.1.23"></script><script src="../js/theme.js?v=1.1.23"></script><script src="../js/ui.js?v=1.1.23"></script><script src="../js/auth.js?v=1.1.23"></script><script src="../js/navigation.js?v=1.1.23"></script><script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script><script src="../js/operations.js?v=1.1.23"></script><script src="../js/biometrics.js?v=1.1.23"></script>
 <script>
 JONE.ui.initChrome();var __terminalAllowed=JONE.dashboard.boot(["admin","general_manager"]);document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
 (function(){"use strict";if(!__terminalAllowed)return;var OPS=JONE.operations,rows=document.querySelector("[data-terminal-rows]"),pager=document.querySelector("[data-terminal-pagination]"),current=document.querySelector("[data-terminal-current]"),state={page:1,cache:{}};
@@ -170,7 +218,47 @@ async function registerTerminalAddress(id,name){if(!detectedAddress.ip)await loa
 async function clearTerminalAddress(id,name,address){var ok=await JONE.ui.confirm({title:"Remove the registered address?",message:(name||"This desk")+" will no longer be recognized by address ("+(address||"")+"). Front desk staff there must use the desktop key, or nobody can sign in at that desk.",confirmText:"Remove address",danger:true});if(!ok)return;try{await window.API.update("workstations",id,{ip_address:""});JONE.ui.toast("Registered address removed.","success");load();}catch(err){JONE.ui.toast((err&&err.message)||"The address could not be removed.","error");}}
 rows.addEventListener("click",function(event){var button=event.target.closest("button[data-terminal-action]");if(!button)return;var action=button.dataset.terminalAction,id=button.dataset.terminalId,ref=button.dataset.terminalRef;if(action==="select"){var item=state.cache&&state.cache[String(id)];if(!item||!item.is_active)return;var selected=window.API.getWorkstationReference()===ref;window.API.setWorkstationReference(selected?"":ref);JONE.ui.toast(selected?"Workstation attribution cleared.":"Workstation selected for this browser.","success");load();}else if(action==="edit")editTerminal(id);else if(action==="desk-key")issueDeskKey(id,ref,button.dataset.terminalName||"");else if(action==="register-ip")registerTerminalAddress(id,button.dataset.terminalName||"");else if(action==="clear-ip")clearTerminalAddress(id,button.dataset.terminalName||"",button.dataset.terminalIp||"");else if(action==="deactivate")deactivate(id,ref);});
 document.querySelector("[data-terminal-new]").addEventListener("click",createTerminal);document.querySelector("[data-desk-key-copy]").addEventListener("click",copyDeskKey);document.querySelector("[data-desk-key-dismiss]").addEventListener("click",hideDeskKey);var enrolState=document.querySelector("[data-desktop-enrol-state]"),enrolInput=document.getElementById("desktop-enrol-key");
-function renderEnrolState(){if(!enrolState)return;enrolState.textContent=window.Auth.receptionistDesktopKey()?"This browser is enrolled as a Receptionist Desktop. Front desk staff can sign in here.":"This browser is not enrolled. Front desk staff cannot sign in here until a desktop key is installed.";}
+function renderEnrolState(){if(!enrolState)return;var key=window.Auth.receptionistDesktopKey(),tok=(window.Auth.frontDeskDeviceToken&&window.Auth.frontDeskDeviceToken())||"";if(key&&tok){enrolState.textContent="This browser is enrolled as a Receptionist Desktop by both a desktop key and an approved device.";}else if(key){enrolState.textContent="This browser is enrolled with a desktop key. Front desk staff can sign in here — but a key does not survive an address change; approve the device below if the desk’s IP is not fixed.";}else if(tok){enrolState.textContent="This browser is enrolled as an approved device. Front desk staff whose account was approved can sign in here from any address.";}else{enrolState.textContent="This browser is not enrolled. Front desk staff cannot sign in here until a desktop key or an approved device token is installed.";}}
+/* ---- Approved device: install / forget / request ---------------------
+   The token is installed by the administrator who approved it, on the desk
+   browser itself, and never leaves localStorage afterwards. "Request approval"
+   creates a PENDING row that can sign nothing in; it exists so a desk that has
+   just lost its address can put itself in front of an administrator instead of
+   waiting to be told which address to register. */
+var deviceState=document.querySelector("[data-device-state]"),deviceInput=document.getElementById("device-enrol-token");
+function renderDeviceState(){
+  if(!deviceState)return;
+  var tok=(window.Auth.frontDeskDeviceToken&&window.Auth.frontDeskDeviceToken())||"";
+  if(!tok){deviceState.textContent="No approved-device token on this browser.";return;}
+  deviceState.textContent="An approved-device token is installed on this browser (ending …"+tok.slice(-6)+"). It is sent with sign-in, token refresh and attendance calls.";
+}
+document.querySelector("[data-device-install]").addEventListener("click",function(){
+  var value=(deviceInput.value||"").trim();
+  if(!value){JONE.ui.toast("Paste the device token an administrator approved for this browser first.","warning");deviceInput.focus();return;}
+
+if(window.Auth.setFrontDeskDeviceToken(value)){deviceInput.value="";renderEnrolState();renderDeviceState();JONE.ui.toast("Device token installed. This browser is now an approved front desk device.","success");}
+  else{JONE.ui.toast("This browser does not allow saving the device token. Check its privacy settings.","error");}
+});
+document.querySelector("[data-device-forget]").addEventListener("click",async function(){
+  var ok=await JONE.ui.confirm({title:"Remove the device token from this browser?",message:"This browser will no longer identify itself as an approved front desk device, so front desk staff will need the desktop key or the registered address again. The approval itself stays on the server and can be installed on this or another browser.",confirmText:"Remove from this browser",danger:true});
+  if(!ok)return;
+  window.Auth.setFrontDeskDeviceToken("");
+  renderEnrolState();renderDeviceState();
+  JONE.ui.toast("Device token removed from this browser.","warning");
+});
+document.querySelector("[data-device-request]").addEventListener("click",async function(){
+  try{
+    var res=await window.API.requestFrontDeskDevice({device_label:(navigator.userAgent||"").slice(0,120)});
+    var id=res&&res.data&&res.data.id;
+    JONE.ui.toast((res&&res.message)||"Approval requested.",(res&&res.message&&/request/i.test(res.message))?"success":"info");
+    if(id){await JONE.ui.confirm({title:"Approval requested",message:"An administrator must approve this browser in the Approved front desk devices list above, then install the token it issues here on the desk browser.",confirmText:"OK",cancelText:"Close"});}
+    /* The device list is a separate widget that owns its own state. Tell it a
+       request was made so the new PENDING row appears immediately, instead of
+       refreshing the workstation table (which this action never touched). */
+    document.dispatchEvent(new CustomEvent("jone:device-requested"));
+  }catch(err){JONE.ui.toast((err&&err.message)||"The approval request could not be sent.","error");}
+});
+renderDeviceState();
 document.querySelector("[data-desktop-enrol-save]").addEventListener("click",function(){var value=(enrolInput.value||"").trim();if(!value){JONE.ui.toast("Paste the desktop key issued for this workstation first.","warning");enrolInput.focus();return;}if(window.Auth.setReceptionistDesktopKey(value)){enrolInput.value="";renderEnrolState();JONE.ui.toast("This browser is enrolled as a Receptionist Desktop.","success");}else{JONE.ui.toast("This browser does not allow saving the desktop key. Check its privacy settings.","error");}});
 document.querySelector("[data-desktop-enrol-clear]").addEventListener("click",function(){window.Auth.setReceptionistDesktopKey("");renderEnrolState();JONE.ui.toast("Desktop key removed from this browser. Front desk staff can no longer sign in here.","warning");});
 renderEnrolState();loadDetectedAddress();document.querySelector("[data-terminal-refresh]").addEventListener("click",function(){load();});document.querySelector("[data-terminal-clear]").addEventListener("click",function(){window.API.setWorkstationReference("");JONE.ui.toast("Workstation attribution cleared.","success");load();});document.getElementById("terminal-active").addEventListener("change",function(){load(1);});document.getElementById("terminal-search").addEventListener("input",JONE.debounce(function(){load(1);},300));
@@ -208,7 +296,14 @@ async function loadReceptionTerminal(){
       '</tr>';
     }).join("");
   }catch(err){
-    JONE.dashboard.DATA.error(rtRows,"Reception terminal status unavailable",(err&&err.message)||"Sign in with an account that may record attendance (management may operate this terminal from anywhere), or enrol this browser as the Receptionist Desktop.",6);
+    // A 403 here is a POLICY answer, not a failure to load: the server is
+    // saying this browser is not (yet) the Reception Desk. Say exactly that,
+    // and point at the two things on THIS page that fix it (desktop key or an
+    // approved device), instead of a generic "unavailable".
+    var message = (err && (err.status === 403 || err.status === 401))
+      ? ((err.message ? err.message + " " : "") + "Use the Receptionist Desktop enrolment panel below: install the workstation\u2019s desktop key, or have an administrator approve this browser as a front desk device \u2014 neither depends on this computer\u2019s IP address.")
+      : ((err&&err.message)||"Sign in with an account that may record attendance (management may operate this terminal from anywhere), or enrol this browser as the Receptionist Desktop.");
+    JONE.dashboard.DATA.error(rtRows,"Reception terminal status unavailable",message,6);
   }
 }
 
@@ -266,4 +361,152 @@ var rtRefresh=document.getElementById("reception-terminal-refresh");
 if(rtRefresh)rtRefresh.addEventListener("click",function(){loadReceptionTerminal();});
 loadReceptionTerminal();
 })();
-</script><script src="../js/pwa.js?v=1.1.26"></script><script src="../js/version.js?v=1.1.26"></script><script src="../js/update-checker.js?v=1.1.26"></script></body></html>
+
+/* ---- Device registry (administrator view) ----------------------------
+   Approve → the token is returned ONCE and must be installed on the desk
+   browser; the list never contains it again. Revoke → effective on the next
+   request, which is what makes a lost or replaced machine safe to handle. */
+(function(){
+  var rowsEl=document.querySelector("[data-device-rows]");
+  if(!rowsEl||typeof window.API.listFrontDeskDevices!=="function")return;
+  var deviceRows=rowsEl,filterEl=document.getElementById("device-filter"),
+      pagerEl=document.querySelector("[data-device-pagination]"),currentEl=document.querySelector("[data-device-current]"),
+      devicePage=1,staffCache=null;
+  function stateCell(row){
+    var state=String(row.state||"");
+    if(state==="APPROVED")return JONE.dashboard.statusPill("active","APPROVED");
+    if(state==="PENDING")return '<span class="badge">PENDING APPROVAL</span>';
+    return JONE.dashboard.statusPill("inactive","REVOKED");
+  }
+  /* Date AND time: "last used" is the question an administrator is really
+     asking when a desk reports trouble, and a bare date hides the hour. */
+  function seenLabel(value){
+    if(!value)return "never";
+    var d=new Date(value);
+    if(isNaN(d.getTime()))return "never";
+    try{
+      return new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}).format(d);
+    }catch(_){return d.toISOString().slice(0,16).replace("T"," ");}
+  }
+  function addressCell(row){
+    var last=row.last_ip_address||"";
+    var count=(row.ip_addresses||[]).length;
+    if(!last)return '<span class="caption muted">Not recorded</span>';
+    var html=JONE.esc(last);
+    if(count>1)html+='<br><small class="caption">'+count+" addresses seen, first "+JONE.esc(row.first_enrolled_ip||"")+"</small>";
+    return html;
+  }
+  async function loadStaff(){
+    if(staffCache)return staffCache;
+    try{
+      var res=await window.API.list("users",{page_size:100});
+      staffCache=window.API.normalizeList(res.data,res.pagination).items||[];
+    }catch(_){staffCache=[];}
+    return staffCache;
+  }
+  async function renderDevices(){
+    var params={page:devicePage,page_size:JONE.dashboard.pageSize()};
+    var state=filterEl?filterEl.value:"";
+    if(state)params.state=state;
+    try{
+      var res=await window.API.listFrontDeskDevices(params);
+      var norm=window.API.normalizeList(res.data,res.pagination),items=norm.items||[];
+      if(currentEl)currentEl.textContent="Page "+norm.page+" of "+(norm.totalPages||1)+" · "+norm.count+" device"+(norm.count===1?"":"s");
+      if(pagerEl){
+        pagerEl.hidden=!norm.totalPages||norm.totalPages<=1;
+        pagerEl.innerHTML='<button class="btn btn-sm btn-outline" type="button" data-device-prev '+(norm.page<=1?"disabled":"")+'>Previous</button><button class="btn btn-sm btn-outline" type="button" data-device-next '+(norm.next?"":"disabled")+'>Next</button>';
+      }
+      if(!items.length){
+        JONE.dashboard.DATA.empty(deviceRows,"shield","No devices","No browser has been approved as a front desk device yet. A staff member can request approval from the enrolment panel below.",6);
+        return;
+      }
+      deviceRows.innerHTML=items.map(function(row){
+        var controls="";
+        if(row.state==="PENDING")controls+='<button class="btn btn-sm" type="button" data-device-approve="'+JONE.esc(row.id)+'">Approve…</button>';
+        else if(row.state==="APPROVED")controls+='<button class="btn btn-sm btn-outline" type="button" data-device-rotate="'+JONE.esc(row.id)+'">Reissue token</button>';
+        if(row.state!=="REVOKED")controls+='<button class="btn btn-sm btn-danger" type="button" data-device-revoke="'+JONE.esc(row.id)+'">Revoke</button>';
+        return "<tr><td><strong>"+JONE.esc(row.device_label||("Device #"+row.id))+"</strong><br><small class='caption'>Last used "+(seenLabel(row.last_seen_at))+"</small></td>"+
+          "<td>"+JONE.esc(row.workstation_name||"")+"<br><small class='caption'>"+JONE.esc(row.workstation_reference||"")+"</small></td>"+
+          "<td>"+(row.staff_name?JONE.esc(row.staff_name)+"<br><small class='caption'>"+JONE.esc(row.staff_email||"")+"</small>":'<span class="caption muted">Unassigned</span>')+"</td>"+
+          "<td>"+stateCell(row)+"</td><td>"+addressCell(row)+"</td><td class='cell-nowrap'>"+controls+"</td></tr>";
+      }).join("");
+      JONE.icons.inject(deviceRows);
+    }catch(err){
+      JONE.ui.toast((err&&err.message)||"The device list could not be loaded.","error");
+    }
+  }
+  async function showToken(token,label){
+    var body=document.createElement("div");
+    body.innerHTML='<p class="caption">Copy this token now — it is stored only as a digest on the server and cannot be shown again. Paste it into <strong>Approved-device token → Install token on this browser</strong> on the front desk browser itself.</p>'+
+      '<div class="field"><label class="field-label">Device token for '+(JONE.esc?JONE.esc(label||"this device"):"this device")+'</label>'+
+      '<input class="input" readonly value="'+(JONE.esc?JONE.esc(token):token)+'" data-new-device-token></div>'+
+      '<p class="caption muted">Signing in from that browser still requires the staff member\'s own password. Revoke it here at any time and it stops working on the very next request.</p>';
+    var footer=document.createElement("div");
+    var copy=document.createElement("button");copy.className="btn btn-accent";copy.type="button";copy.textContent="Copy token";
+    copy.onclick=async function(){try{await navigator.clipboard.writeText(token);JONE.ui.toast("Device token copied.","success");}catch(_){JONE.ui.toast("Copy failed. Select the token and copy it manually.","error");}};
+    var close=document.createElement("button");close.className="btn btn-outline";close.type="button";close.textContent="Close";
+    close.onclick=function(){JONE.ui.modal.close();};
+    footer.appendChild(copy);footer.appendChild(close);
+    JONE.ui.modal.open({title:"Device approved",body:body,footer:footer});
+  }
+  deviceRows.addEventListener("click",async function(event){
+    var button=event.target.closest("button[data-device-approve],button[data-device-rotate],button[data-device-revoke]");
+    if(!button)return;
+    var approveId=button.getAttribute("data-device-approve"),rotateId=button.getAttribute("data-device-rotate"),revokeId=button.getAttribute("data-device-revoke");
+    try{
+      if(revokeId){
+        var ok=await JONE.ui.confirm({title:"Revoke this device?",message:"The browser loses its approved-device credential on its next request. Staff there fall back to the desktop key or the registered address. The record and its address history are kept for the audit trail.",confirmText:"Revoke device",danger:true});
+        if(!ok)return;
+        var revoked=await window.API.revokeFrontDeskDevice(revokeId,{reason:"revoked from Terminals page"});
+        JONE.ui.toast((revoked&&revoked.message)||"Device revoked.","success");
+        renderDevices();return;
+      }
+      var id=approveId||rotateId;
+      var staffList=await loadStaff();
+      if(!staffList.length){JONE.ui.toast("The staff list could not be loaded, so no account can be named as the device owner.","error");return;}
+      var user="";
+      if(approveId){
+        var saved=await JONE.dashboard.formModal({
+          title:"Approve this device",
+          submitText:"Approve and issue token",
+          fields:[
+            {name:"staff",label:"Staff account this device belongs to",type:"select",required:true,options:staffList.map(function(u){return {value:String(u.id),label:(u.full_name||u.email)+" — "+(u.role||"")};})},
+            {name:"device_label",label:"Device label",type:"text",maxLength:160,placeholder:"e.g. Lobby desk PC"}
+          ],
+          onSubmit:async function(values){
+            var res=await window.API.approveFrontDeskDevice(approveId,{staff:Number(values.staff),device_label:String(values.device_label||"").trim()});
+            return {data:res&&res.data};
+          }
+        });
+        if(!saved)return;
+        var token=saved&&saved.data&&saved.data.device_token;
+        if(token){await showToken(token,(saved.data.device_label||""));}
+        else{JONE.ui.toast("The device was approved but the token was not returned; reissue it.","warning");}
+      }else{
+        var rotate=await JONE.dashboard.formModal({
+          title:"Reissue the device token",
+          submitText:"Reissue token",
+          fields:[{name:"staff",label:"Staff account (leave as-is to keep the current owner)",type:"select",required:true,options:staffList.map(function(u){return {value:String(u.id),label:(u.full_name||u.email)+" — "+(u.role||"")};})}],
+          onSubmit:async function(values){
+            var res=await window.API.approveFrontDeskDevice(rotateId,{staff:Number(values.staff),rotate:true});
+            return {data:res&&res.data};
+          }
+        });
+        if(!rotate)return;
+        var newToken=rotate&&rotate.data&&rotate.data.device_token;
+        if(newToken){await showToken(newToken,rotate.data.device_label||"");}
+      }
+      renderDevices();
+    }catch(err){JONE.ui.toast((err&&err.message)||"The device action could not be completed.","error");}
+  });
+  if(filterEl)filterEl.addEventListener("change",function(){devicePage=1;renderDevices();});
+  // A new request (from the enrolment panel above) must show up without a reload.
+  document.addEventListener("jone:device-requested",function(){staffCache=null;devicePage=1;renderDevices();});
+  document.querySelector("[data-device-refresh]")&&document.querySelector("[data-device-refresh]").addEventListener("click",function(){staffCache=null;renderDevices();});
+  document.addEventListener("click",function(event){
+    if(event.target.closest("[data-device-prev]")){if(devicePage>1){devicePage-=1;renderDevices();}}
+    else if(event.target.closest("[data-device-next]")){devicePage+=1;renderDevices();}
+  });
+  renderDevices();
+})();
+</script><script src="../js/pwa.js?v=1.1.23"></script><script src="../js/version.js?v=1.1.23"></script><script src="../js/update-checker.js?v=1.1.23"></script></body></html>

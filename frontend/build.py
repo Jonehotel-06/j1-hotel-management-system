@@ -104,23 +104,60 @@ QR_SERVICE_PAGES = ["qr-service.html"]
 # Stamp release assets but do not inject reload-capable update/PWA scripts.
 RESET_PASSWORD_PAGES = ["reset-password.html"]
 
-# The installable PWA is the staff dashboard only. Public guest pages and the
-# guest portal intentionally receive no manifest link and no standalone-web-app
-# metadata, so the site never offers guests an app install.
+# --- PWA wiring (two deliberately separate applications) -------------------
+#
+# 1. PUBLIC SITE (jonehotels.com, scope "/") — "J-ONE Hotel Management System".
+#    iPhone users install it with Safari's Share > Add to Home Screen, which is
+#    driven ONLY by the apple-* meta tags and the apple-touch-icon <link>: iOS
+#    does not read the web app manifest when deciding whether a site may be
+#    added to the home screen. Without the apple-* tags iOS falls back to a
+#    plain website bookmark instead of a standalone app, which is exactly why
+#    iPhone installation failed while Android worked. The manifest link is
+#    still required for Android/desktop installability and is now present on
+#    every public page (see PUBLIC_PWA_HEAD below).
+# 2. STAFF DASHBOARD (/dashboard/, scope "/dashboard/") — "J-ONE Staff", with
+#    its own manifest, its own scope and the dashboard-scoped service worker.
+#
+# Guest-portal and bearer-link QR pages stay outside both: they intentionally
+# receive no manifest and no standalone metadata (they handle one-use
+# credentials and must never be launched as an installed app).
+PUBLIC_PWA_HEAD = (
+    '<link rel="manifest" href="/manifest.webmanifest">\n'
+    '<meta name="application-name" content="J-ONE">\n'
+    '<meta name="apple-mobile-web-app-capable" content="yes">\n'
+    '<meta name="mobile-web-app-capable" content="yes">\n'
+    '<meta name="apple-mobile-web-app-status-bar-style" content="default">\n'
+    '<meta name="apple-mobile-web-app-title" content="J-ONE">\n'
+    '<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png">'
+)
+
 DASHBOARD_PWA_HEAD = (
     '<link rel="manifest" href="/dashboard/manifest.webmanifest">\n'
+    '<meta name="application-name" content="J-ONE Staff">\n'
     '<meta name="apple-mobile-web-app-capable" content="yes">\n'
     '<meta name="mobile-web-app-capable" content="yes">\n'
     '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">\n'
-    '<meta name="apple-mobile-web-app-title" content="J-ONE Staff">'
+    '<meta name="apple-mobile-web-app-title" content="J-ONE Staff">\n'
+    '<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png">'
 )
 
 _PWA_META_NAMES = (
+    "application-name",
     "apple-mobile-web-app-capable",
     "mobile-web-app-capable",
     "apple-mobile-web-app-status-bar-style",
     "apple-mobile-web-app-title",
 )
+
+#: Pages that must never become an installed app: the verified-email guest
+#: portal, the bearer-link QR guest form and the password-reset page. They
+#: handle one-use credentials and keep deliberately minimal shells.
+_NON_INSTALLABLE_PREFIXES = ("portal/",)
+_NON_INSTALLABLE_PAGES = frozenset({"qr-service.html", "reset-password.html"})
+
+
+def _is_installable_page(path: str) -> bool:
+    return not (path.startswith(_NON_INSTALLABLE_PREFIXES) or path in _NON_INSTALLABLE_PAGES)
 
 
 # ---------------------------------------------------------------------------#
@@ -211,33 +248,40 @@ def _strip_pwa_head(raw):
     """Remove every manifest link / standalone-web-app meta, wherever it is.
 
     Pages are then re-equipped strictly by area: dashboard pages get the
-    dashboard manifest; public pages get nothing installable.
+    dashboard manifest, public pages get the public manifest, and the
+    guest-portal / QR / reset pages get nothing installable. Both the sized and
+    the unsized apple-touch-icon links are stripped too, so exactly one icon
+    declaration survives per page.
     """
     raw = re.sub(r'\s*<link rel="manifest"[^>]*>', "", raw)
+    raw = re.sub(r'\s*<link rel="apple-touch-icon"[^>]*>', "", raw)
     for name in _PWA_META_NAMES:
         raw = re.sub(r'\s*<meta name="%s"[^>]*>' % name, "", raw)
     return raw
 
 
-def _ensure_pwa(raw, depth="", is_dashboard=False):
-    """Idempotently apply the dashboard-only PWA wiring and js/pwa.js.
+def _ensure_pwa(raw, depth="", is_dashboard=False, page_path=""):
+    """Idempotently apply the PWA wiring for this page's area, plus js/pwa.js.
 
     Dashboard pages link /dashboard/manifest.webmanifest (scope /dashboard/).
+    Installable public pages link /manifest.webmanifest (scope /), which is what
+    makes the J-ONE Hotel Management System installable on Android and desktop
+    and supplies the icon/name iOS uses once the site has been added to the home
+    screen. Guest-portal, QR and reset pages get no manifest and no standalone
+    metadata — they are never installed as an app.
     Public pages keep js/pwa.js only for its connectivity helpers, update
-    plumbing and legacy root-worker cleanup — with no manifest link they are
-    not installable and show no install UI.
+    plumbing and legacy root-worker cleanup — they register no service worker
+    and show no install UI.
     """
     raw = _strip_pwa_head(raw)
-    if is_dashboard:
-        m = re.search(r'<link rel="apple-touch-icon"[^>]*>', raw)
+    if is_dashboard or _is_installable_page(page_path):
+        head_block = DASHBOARD_PWA_HEAD if is_dashboard else PUBLIC_PWA_HEAD
+        m = re.search(r'<link rel="stylesheet"[^>]*>', raw)
         anchor = m.group(0) if m else None
-        if anchor is None:
-            m = re.search(r'<link rel="stylesheet"[^>]*>', raw)
-            anchor = m.group(0) if m else None
         if anchor:
-            raw = raw.replace(anchor, anchor + "\n" + DASHBOARD_PWA_HEAD, 1)
+            raw = raw.replace(anchor, anchor + "\n" + head_block, 1)
         else:
-            raw = raw.replace("</head>", DASHBOARD_PWA_HEAD + "\n</head>", 1)
+            raw = raw.replace("</head>", head_block + "\n</head>", 1)
     if 'name="theme-color"' not in raw:
         raw = raw.replace('<link rel="icon"',
                           '<meta name="theme-color" content="#373435">\n<link rel="icon"', 1)
@@ -323,8 +367,16 @@ def build(path, version):
     # Portal, QR and password-reset pages retain deliberate minimal shells.
     # Do not inject pwa.js, a theme boot, or update-checker there: a reload
     # could discard an in-memory session or one-use credential.
+    #
+    # Dashboard pages are staff-only shells (no shared chrome) but they are the
+    # installable "J-ONE Staff" app, so they must be re-equipped with their
+    # manifest and standalone metadata on EVERY build. They previously skipped
+    # this step: _strip_pwa_head() had already removed the block, so a rebuild
+    # shipped dashboard pages with no manifest link and no apple-* meta, which
+    # silently made the staff app uninstallable on iOS.
     if not is_memory_only_page:
-        raw = _ensure_pwa(raw, depth=depth, is_dashboard=path.startswith("dashboard/"))
+        raw = _ensure_pwa(raw, depth=depth, is_dashboard=path.startswith("dashboard/"),
+                          page_path=path)
         raw = _ensure_version_scripts(raw, depth)
 
     # --- Version wiring ------------------------------------------------------

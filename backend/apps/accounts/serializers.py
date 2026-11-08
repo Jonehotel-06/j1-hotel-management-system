@@ -17,9 +17,15 @@ from apps.core.storage import absolute_media_url
 
 from .capabilities import capability_codes_for_user, has_capability
 from .desktop_policy import (
+    DESKTOP_BY_DEVICE,
     desktop_key_override_for_unusable_ip_pin,
+    device_belongs_to_staff,
+    device_credential_overrides_unusable_ip_pin,
     front_desk_desktop_ip_allowed,
+    front_desk_device_for_token,
     front_desk_workstation_missing,
+    presented_device_token,
+    record_device_seen,
     request_client_ip,
     resolve_receptionist_desktop,
     sign_in_policy_applies,
@@ -117,10 +123,31 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
         if sign_in_policy_applies(self.user):
             # Enforced after the password check so the response reveals nothing
             # about an account until its credentials are proven. The desktop is
-            # identified either by the key its browser was enrolled with, or by
-            # the request arriving from the address an administrator registered
-            # for a front desk workstation (nothing typed at sign-in).
+            # identified either by the key its browser was enrolled with, the
+            # device credential an administrator approved for that browser, or
+            # by the request arriving from the address an administrator
+            # registered for a front desk workstation (nothing typed at
+            # sign-in).
             desktop, desktop_method = resolve_receptionist_desktop(request)
+            device_token = presented_device_token(request)
+            if desktop is not None and desktop_method == DESKTOP_BY_DEVICE:
+                # A device credential identifies the BROWSER, never the person
+                # using it: it is only accepted for the account it was issued
+                # to, which has just proved its password above. A token copied
+                # to another machine therefore cannot sign anybody else in.
+                if not device_belongs_to_staff(device_token, self.user):
+                    log_staff_sign_in_rejected(
+                        self.user, request, reason="device_token_owner_mismatch",
+                        client_ip=request_client_ip(request),
+                    )
+                    raise StaffSignInRestrictedError(
+                        client_ip=request_client_ip(request),
+                        front_desk_workstation_missing=front_desk_workstation_missing(),
+                    )
+                record_device_seen(
+                    front_desk_device_for_token(device_token, staff=self.user),
+                    request_client_ip(request),
+                )
             if desktop is None:
                 log_staff_sign_in_rejected(
                     self.user, request, client_ip=request_client_ip(request),
@@ -131,8 +158,9 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
                     unusable_saved_addresses=unusable,
                     front_desk_workstation_missing=front_desk_workstation_missing(),
                 )
-            if not front_desk_desktop_ip_allowed(request) and not desktop_key_override_for_unusable_ip_pin(
-                request, desktop_method
+            if not front_desk_desktop_ip_allowed(request) and not (
+                desktop_key_override_for_unusable_ip_pin(request, desktop_method)
+                or device_credential_overrides_unusable_ip_pin(request, desktop_method)
             ):
                 log_staff_sign_in_rejected(
                     self.user, request, reason="front_desk_ip_mismatch",
@@ -599,6 +627,49 @@ class WorkstationSerializer(serializers.ModelSerializer):
                 timezone.now() if validated_data["ip_address"] else None
             )
         return super().update(instance, validated_data)
+
+
+class FrontDeskDeviceSerializer(serializers.ModelSerializer):
+    """One approved / pending front desk browser.
+
+    The token is NEVER part of this representation: only its digest is stored,
+    and the raw value is returned exactly once from the approve endpoint. The
+    address fields are shown as RECORDED METADATA so an administrator can see
+    that a desk's address changed (and when) when investigating a refusal — they
+    are not a rule, and saving this serializer never rewrites a workstation's
+    registered address.
+    """
+
+    workstation_reference = serializers.CharField(source="workstation.reference", read_only=True)
+    workstation_name = serializers.CharField(source="workstation.name", read_only=True)
+    staff_email = serializers.SerializerMethodField()
+    staff_name = serializers.SerializerMethodField()
+    state = serializers.SerializerMethodField()
+
+    class Meta:
+        from .models import FrontDeskDevice
+
+        model = FrontDeskDevice
+        fields = [
+            "id", "workstation", "workstation_reference", "workstation_name",
+            "staff", "staff_email", "staff_name", "device_label", "state",
+            "is_active", "last_seen_at", "last_ip_address", "ip_addresses",
+            "first_enrolled_ip", "revoked_at", "revoked_reason", "created_at", "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_staff_email(self, obj):
+        return obj.staff.email if obj.staff_id else None
+
+    def get_staff_name(self, obj):
+        return obj.staff.full_name if obj.staff_id else None
+
+    def get_state(self, obj):
+        if obj.revoked_at is not None or not obj.is_active:
+            return "REVOKED"
+        if obj.staff_id is None:
+            return "PENDING"
+        return "APPROVED"
 
 
 class AdminUserUpdateSerializer(serializers.ModelSerializer):

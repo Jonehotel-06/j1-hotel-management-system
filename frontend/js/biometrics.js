@@ -166,8 +166,7 @@
   // Issue temporary workstation login token + 6-digit numeric access code via fingerprint scan
   async function issueTemporaryWorkstationToken(email, minutiae) {
     var probe = minutiae || (await captureMinutiaeProbe({ seed: email, purpose: "verification" }));
-    var deskKey = window.Auth && window.Auth.receptionistDesktopKey ? window.Auth.receptionistDesktopKey() : "";
-    var headers = deskKey ? { "X-JONE-Desktop-Key": deskKey } : {};
+    var headers = (window.Auth && typeof window.Auth.desktopHeaders === "function") ? window.Auth.desktopHeaders() : {};
     var res = await window.API.post(window.APP_CONFIG.API_ENDPOINTS.temporaryCredential, {
       email: email,
       fingerprint_probe: probe
@@ -177,8 +176,7 @@
 
   // Dedicated Reception Attendance Workstation status & actions
   async function getReceptionTerminalStatus() {
-    var deskKey = window.Auth && window.Auth.receptionistDesktopKey ? window.Auth.receptionistDesktopKey() : "";
-    var headers = deskKey ? { "X-JONE-Desktop-Key": deskKey } : {};
+    var headers = (window.Auth && typeof window.Auth.desktopHeaders === "function") ? window.Auth.desktopHeaders() : {};
     var res = await window.API.get(window.APP_CONFIG.API_ENDPOINTS.receptionTerminal, { headers: headers });
     return res && res.data;
   }
@@ -214,8 +212,7 @@
         purpose: String(data.action || "").toLowerCase() || "verification"
       });
     }
-    var deskKey = window.Auth && window.Auth.receptionistDesktopKey ? window.Auth.receptionistDesktopKey() : "";
-    var headers = deskKey ? { "X-JONE-Desktop-Key": deskKey } : {};
+    var headers = (window.Auth && typeof window.Auth.desktopHeaders === "function") ? window.Auth.desktopHeaders() : {};
     var res = await window.API.post(window.APP_CONFIG.API_ENDPOINTS.receptionTerminal, data, { headers: headers });
     return res && res.data;
   }

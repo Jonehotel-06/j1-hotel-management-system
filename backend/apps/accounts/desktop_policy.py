@@ -23,6 +23,15 @@ has passed:
    ``request_ip`` into ``front_desk_desktop_ip`` got a value that could REFUSE
    a sign-in and could never AUTHORIZE one, leaving staff at that very desk
    refused and pushed onto the numeric access code.
+4. **Approved device credential** — the browser was approved once from the
+   Terminals page (an administrator reviews the request there) and presents the
+   token it was issued in ``X-JONE-Device-Token``. Only a SHA-256 digest is
+   stored, the token is bound to one staff account and to one active FRONT_DESK
+   workstation, and it is revocable at any time. This route exists because an
+   address is NOT a stable identity: after an unexpected shutdown the router
+   hands the desk a different address, and an address-based rule then refuses
+   sign-in AND kills every live session at its next token refresh. The device
+   is the durable fact; the address is metadata that is logged when it changes.
 
 Route 2 and route 3 need a trustworthy client address, which behind a managed
 host is only available from a forwarding header. That header is read
@@ -33,12 +42,15 @@ PRECEDENCE (one consistent rule; the first match wins, and the two registration
 sources can no longer contradict each other silently):
 
 1. a presented desktop key that resolves to an active FRONT_DESK workstation;
-2. the request arriving from an address registered on an active FRONT_DESK
+2. a presented device token that resolves to an ACTIVE ``FrontDeskDevice`` whose
+   workstation is an active FRONT_DESK record and whose bound staff account is
+   the account signing in (or, on refresh, the account the token belongs to);
+3. the request arriving from an address registered on an active FRONT_DESK
    workstation (``Workstation.ip_address``);
-3. the request arriving from an address/network configured in
+4. the request arriving from an address/network configured in
    ``HotelSettings.front_desk_desktop_ip``, while at least one active FRONT_DESK
    workstation exists;
-4. otherwise the request is outside the Receptionist Desktop.
+5. otherwise the request is outside the Receptionist Desktop.
 
 An Admin may additionally set ``HotelSettings.front_desk_desktop_ip``. When
 set, staff identified by route 1 must ALSO reach sign-in, token refresh, and
@@ -76,6 +88,16 @@ from .models import User, Workstation
 
 DESKTOP_HEADER = "HTTP_X_JONE_DESKTOP_KEY"
 MAX_KEY_LENGTH = 128
+
+#: Header carrying the approved-device token. A browser keeps it in local
+#: storage and sends it on sign-in, refresh and attendance calls. It is a bearer
+#: secret like the desktop key: hashed at rest, returned once, never logged.
+DEVICE_HEADER = "HTTP_X_JONE_DEVICE_TOKEN"
+MAX_DEVICE_TOKEN_LENGTH = 256
+#: How many distinct addresses a device row remembers. A desk that moves keeps a
+#: short history (enough to answer "which address was it on last week"), bounded
+#: so the row cannot grow without limit.
+DEVICE_IP_HISTORY_LIMIT = 20
 
 # Management retains access from any device. Everyone else who holds an
 # operational staff role must present a Receptionist Desktop key.
@@ -207,6 +229,174 @@ def receptionist_desktop_for_key(raw_key: str) -> Workstation | None:
         .exclude(sign_in_key_hash="")
         .first()
     )
+
+
+def new_device_token() -> str:
+    """A fresh 256-bit device token, URL-safe (32 bytes)."""
+    return secrets.token_urlsafe(32)
+
+
+def presented_device_token(request) -> str:
+    if request is None:
+        return ""
+    return str(request.META.get(DEVICE_HEADER, "") or "").strip()
+
+
+def front_desk_device_for_token(raw_token: str, *, staff=None) -> "FrontDeskDevice | None":
+    """Resolve an ACTIVE approved device from the token it presented.
+
+    Every refusal path is answered with ``None`` — the caller cannot tell an
+    inactive device from a wrong token, and there is nothing to learn from that
+    difference. What is checked here is the complete authority chain, so a token
+    cannot outlive any part of it:
+
+    * the device row exists, is active and is not revoked;
+    * its workstation still exists and is an ACTIVE ``FRONT_DESK`` record
+      (retiring the desk retires its devices);
+    * its bound staff account is still active, and — when the caller names the
+      account that is signing in — it is the SAME account, so a copied token
+      cannot be replayed by a different user.
+    """
+    from .models import FrontDeskDevice
+
+    raw_token = str(raw_token or "").strip()
+    if not raw_token or len(raw_token) > MAX_DEVICE_TOKEN_LENGTH:
+        return None
+    device = (
+        FrontDeskDevice.objects.select_related("workstation", "staff")
+        .filter(token_hash=FrontDeskDevice.hash_token(raw_token), is_active=True)
+        .exclude(token_hash="")
+        .first()
+    )
+    if device is None or device.revoked_at is not None:
+        return None
+    workstation = device.workstation
+    if workstation is None or not workstation.is_active:
+        return None
+    if workstation.department != Workstation.Department.FRONT_DESK:
+        return None
+    if device.staff is not None:
+        if not device.staff.is_active:
+            return None
+        if staff is not None and device.staff_id != getattr(staff, "pk", None):
+            return None
+    elif staff is not None:
+        # An unbound device may only be used while it is being claimed at
+        # enrolment; after that it always carries an owner.
+        return None
+    return device
+
+
+def device_belongs_to_staff(raw_token: str, staff) -> bool:
+    """True when this device token was issued to THIS staff account.
+
+    A device credential proves "this is the approved front desk browser"; it must
+    never also prove "which staff member is here". Sign-in therefore requires
+    the token's owner to be the account that just proved its password, so a
+    token copied to another machine cannot sign anybody else in. A token with no
+    owner yet (a pending enrolment) matches nobody: it carries no authority
+    until an administrator approves it.
+    """
+    device = front_desk_device_for_token(raw_token, staff=staff)
+    return device is not None and device.staff_id is not None and device.staff_id == getattr(staff, "pk", None)
+
+
+def issue_device_token(device, staff, *, device_label: str = "", request=None) -> str:
+    """Approve (or re-approve) a device and return its token — exactly once.
+
+    Rotation is the same call: an EXISTING token is replaced, so re-approving a
+    browser after a reinstall is a single operation and never leaves two live
+    credentials for one desk. Only the digest is stored; the raw value exists in
+    this return value and nowhere else, and is never written to the audit trail.
+
+    The device must sit at an ACTIVE FRONT_DESK workstation: approving a browser
+    for a retired desk would create a credential with no authority, which is a
+    support call waiting to happen.
+    """
+    from .models import FrontDeskDevice
+
+    workstation = device.workstation
+    if workstation is None or not workstation.is_active or workstation.department != Workstation.Department.FRONT_DESK:
+        raise ValueError("Approved devices can only be issued for an active Front Desk workstation.")
+    raw_token = new_device_token()
+    client_ip = request_client_ip(request) if request is not None else ""
+    device.token_hash = FrontDeskDevice.hash_token(raw_token)
+    device.staff = staff
+    device.device_label = str(device_label or device.device_label or "")[:160]
+    device.is_active = True
+    device.revoked_at = None
+    device.revoked_by = None
+    device.revoked_reason = ""
+    device.first_enrolled_ip = device.first_enrolled_ip or client_ip
+    device.last_ip_address = client_ip or device.last_ip_address
+    device.save(update_fields=[
+        "token_hash", "staff", "device_label", "is_active", "revoked_at", "revoked_by",
+        "revoked_reason", "first_enrolled_ip", "last_ip_address", "updated_at",
+    ])
+    if client_ip:
+        record_device_seen(device, client_ip)
+    return raw_token
+
+
+def revoke_device(device, *, by=None, reason: str = "") -> None:
+    """Withdraw a device credential. Takes effect on the very next request."""
+    device.is_active = False
+    device.revoked_at = timezone.now()
+    device.revoked_by = by
+    device.revoked_reason = str(reason or "")[:255]
+    device.save(update_fields=["is_active", "revoked_at", "revoked_by", "revoked_reason", "updated_at"])
+
+
+def record_device_seen(device: "FrontDeskDevice", client_ip: str) -> None:
+    """Remember that the device was used, and from which address.
+
+    THE ADDRESS IS METADATA. It is recorded so an administrator can SEE that the
+    desk moved (and when), and so a refused sign-in can name the address to
+    review. It is never required to match anything: a changed address is a
+    logged fact, not a refusal reason. Nothing here rewrites the workstation's
+    registered address — an enrolment must be an explicit administrative act,
+    never a side effect of somebody signing in.
+
+    Saved with a targeted ``update_fields`` so a refresh cannot clobber a
+    concurrent edit to the same row.
+    """
+    from django.utils import timezone as _timezone
+
+    now = _timezone.now()
+    client_ip = str(client_ip or "").strip()
+    updates: dict = {"last_seen_at": now, "updated_at": now}
+    history = list(device.ip_addresses or [])
+    if client_ip and client_ip not in history:
+        history = (history + [client_ip])[-DEVICE_IP_HISTORY_LIMIT:]
+    if client_ip and device.last_ip_address != client_ip:
+        updates["last_ip_address"] = client_ip
+    if history != list(device.ip_addresses or []):
+        updates["ip_addresses"] = history
+    device.last_seen_at = now
+    device.last_ip_address = updates.get("last_ip_address", device.last_ip_address)
+    device.ip_addresses = history
+    type(device).objects.filter(pk=device.pk).update(**updates)
+
+
+def device_credential_overrides_unusable_ip_pin(request, method: str) -> bool:
+    """Allow an APPROVED DEVICE past an IP pin that no browser could ever satisfy.
+
+    An administrator-issued device token is a stronger, revocable statement of
+    identity than a network address: it is bound to one staff account and one
+    active front desk workstation, and can be withdrawn instantly. But the
+    hotel-wide ``HotelSettings.front_desk_desktop_ip`` pin still applies
+    wherever it CAN work.
+
+    It is ignored in exactly one situation, mirroring
+    ``desktop_key_override_for_unusable_ip_pin``: the request arrived from a
+    public address and EVERY saved pin is a private/shared/loopback address that
+    no browser on the internet can match (the address the platform's own proxy
+    used to report). Keeping the two overrides identical means the two
+    enrolment routes cannot disagree about when a saved pin is dead.
+    """
+    if method != DESKTOP_BY_DEVICE:
+        return False
+    return configured_front_desk_desktop_cannot_match(request_client_ip(request))
 
 
 def request_client_ip(request) -> str:
@@ -363,6 +553,7 @@ def receptionist_desktop_for_ip(client_ip: str) -> Workstation | None:
 
 #: How the request proved it was the Receptionist Desktop.
 DESKTOP_BY_KEY = "key"
+DESKTOP_BY_DEVICE = "approved_device"
 DESKTOP_BY_IP = "registered_ip"
 DESKTOP_BY_SETTINGS_IP = "settings_ip"
 DESKTOP_BY_NONE = ""
@@ -404,11 +595,14 @@ def front_desk_workstation_missing() -> bool:
 def resolve_receptionist_desktop(request) -> tuple[Workstation | None, str]:
     """Identify the Receptionist Desktop behind this request.
 
-    Three enrolment routes, all server-verified and tried in the documented
+    Four enrolment routes, all server-verified and tried in the documented
     precedence order:
 
     * a desktop key presented in ``X-JONE-Desktop-Key`` (the desk browser was
       enrolled once from the Workstations page);
+    * an approved-device token presented in ``X-JONE-Device-Token`` (the browser
+      was approved from the Terminals page and survives address changes; see
+      ``front_desk_device_for_token``);
     * the request arriving from the address an administrator registered on a
       front desk workstation (``Workstation.ip_address``) — the desktop is then
       identified by where it is, with no code to enter on every sign-in; or
@@ -421,13 +615,23 @@ def resolve_receptionist_desktop(request) -> tuple[Workstation | None, str]:
       were pushed onto the numeric access code.
 
     Returns ``(workstation, method)`` where ``method`` is ``"key"``,
-    ``"registered_ip"``, ``"settings_ip"`` or ``""``. A caller that gets
+    ``"approved_device"``, ``"registered_ip"``, ``"settings_ip"`` or ``""``. A caller that gets
     ``(None, "")`` must treat the request as coming from outside the
     Receptionist Desktop.
     """
     desk = receptionist_desktop_for_key(presented_desktop_key(request))
     if desk is not None:
         return desk, DESKTOP_BY_KEY
+    # Second route: an APPROVED DEVICE. Placed before the address routes on
+    # purpose — the device is the durable identity, so a desk whose address has
+    # just changed is recognised here rather than after every address rule has
+    # failed. ``staff`` is not passed: at sign-in the account is not yet bound
+    # to the request, so the caller re-checks ownership (see
+    # ``device_belongs_to_staff``); on refresh the token's own account is the
+    # subject.
+    device = front_desk_device_for_token(presented_device_token(request))
+    if device is not None:
+        return device.workstation, DESKTOP_BY_DEVICE
     client_ip = request_client_ip(request)
     desk = receptionist_desktop_for_ip(client_ip)
     if desk is not None:

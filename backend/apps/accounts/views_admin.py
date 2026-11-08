@@ -12,6 +12,7 @@ import logging
 from django.db.models import Count, Q
 from drf_spectacular.utils import extend_schema
 from rest_framework import filters, generics, status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -737,3 +738,199 @@ class AdminUserPermissionsView(APIView):
         )
         return self.get(request, pk=pk)
 
+
+
+# ---------------------------------------------------------------------------
+# Approved front desk devices (task: workstation identity must survive an IP change)
+#
+# Two separate authorities, deliberately:
+#
+# * REQUESTING — any signed-in staff account may ask for the browser it is using
+#   right now to be approved. That creates nothing that can sign in; it is a
+#   pending row that an administrator must approve. A desk can therefore recover
+#   from an unexpected router reboot on its own, without waiting for somebody to
+#   be told the new IP address (and without an administrator guessing one).
+# * APPROVING / REVOKING — ``terminal.manage`` only, which is the same
+#   capability that already governs workstation registration and desktop keys.
+#
+# The device token is returned ONCE, to the request that asked for it, and never
+# again: only its SHA-256 digest is stored. Nothing here widens sign-in: the
+# device is accepted only for the account that owns it, only while its front
+# desk workstation is active, and only while it has not been revoked.
+# ---------------------------------------------------------------------------
+DEVICE_TOKEN_CLAIM_WINDOW_MINUTES = 15
+
+
+def _device_or_404(pk):
+    from .models import FrontDeskDevice
+
+    device = FrontDeskDevice.objects.select_related("workstation", "staff").filter(pk=pk).first()
+    if device is None:
+        raise NotFound("Device not found.")
+    return device
+
+
+class FrontDeskDeviceListView(APIView):
+    """List approved/pending front desk devices (``terminal.manage``)."""
+
+    permission_classes = [HasCapability]
+    required_capability = "terminal.manage"
+    pagination_class = StandardPagination
+
+    def get(self, request):
+        from .models import FrontDeskDevice
+        from .serializers import FrontDeskDeviceSerializer
+
+        queryset = FrontDeskDevice.objects.select_related("workstation", "staff").order_by("-id")
+        if (state := (request.query_params.get("state") or "").strip().lower()):
+            if state == "pending":
+                queryset = queryset.filter(staff__isnull=True, is_active=True, revoked_at__isnull=True)
+            elif state == "approved":
+                queryset = queryset.filter(staff__isnull=False, is_active=True)
+            elif state == "revoked":
+                queryset = queryset.filter(Q(is_active=False) | Q(revoked_at__isnull=False))
+            else:
+                raise ValidationError({"state": "Use pending, approved or revoked."})
+        if (workstation := (request.query_params.get("workstation") or "").strip()):
+            if not workstation.isdigit():
+                raise ValidationError({"workstation": "Expected the numeric id of a workstation."})
+            queryset = queryset.filter(workstation_id=int(workstation))
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        return paginator.get_paginated_response(FrontDeskDeviceSerializer(page, many=True).data)
+
+
+class FrontDeskDeviceRequestView(APIView):
+    """Ask for THIS browser to be approved as the front desk device.
+
+    Signed-in staff only. The row it creates cannot sign anything in: ``staff``
+    stays empty (pending) until an administrator approves it, and a pending row
+    never resolves a device token. Re-requesting from the same browser is
+    idempotent for its pending row so the Terminals page does not fill with
+    duplicates.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from django.utils import timezone as _tz
+
+        from .models import FrontDeskDevice
+        from .serializers import FrontDeskDeviceSerializer
+
+        user = request.user
+        if not getattr(user, "is_authenticated", False) or not getattr(user, "is_staff_member", False):
+            raise ValidationError({"detail": "Only a staff account can request a device enrolment."})
+        from .desktop_policy import request_client_ip
+
+        label = str(request.data.get("device_label") or "").strip()[:160]
+        if not label:
+            label = str(request.META.get("HTTP_USER_AGENT", "") or "")[:160]
+        client_ip = request_client_ip(request)
+        workstation = (
+            Workstation.objects.filter(
+                department=Workstation.Department.FRONT_DESK, is_active=True
+            ).order_by("id").first()
+        )
+        if workstation is None:
+            raise ValidationError(
+                {"detail": "Register an active Front Desk workstation first; a device belongs to one."}
+            )
+        # One pending request per (workstation, label) is enough: re-asking from
+        # the same browser reuses the row instead of creating a queue of twins.
+        pending = (
+            FrontDeskDevice.objects.filter(
+                workstation=workstation, staff__isnull=True, is_active=True,
+                revoked_at__isnull=True, device_label=label,
+            ).order_by("-id").first()
+        )
+        if pending is None:
+            pending = FrontDeskDevice.objects.create(
+                workstation=workstation, device_label=label,
+                first_enrolled_ip=client_ip, last_ip_address=client_ip,
+                ip_addresses=[client_ip] if client_ip else [],
+                last_seen_at=_tz.now(),
+            )
+        log_action(
+            actor=user, action="FRONT_DESK_DEVICE_REQUESTED", instance=pending, request=request,
+            metadata={"workstation": workstation.reference, "client_ip": client_ip},
+            summary="Front desk browser requested device approval",
+        )
+        payload = FrontDeskDeviceSerializer(pending).data
+        payload["approval_required"] = True
+        return success_response(
+            payload,
+            message=(
+                "Approval requested. An administrator must approve this browser on the Terminals "
+                "page before it can be used as the front desk device."
+            ),
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class FrontDeskDeviceApproveView(APIView):
+    """Approve a pending device (or rotate an approved one). ``terminal.manage``."""
+
+    permission_classes = [HasCapability]
+    required_capability = "terminal.manage"
+
+    def post(self, request, pk):
+        from .desktop_policy import issue_device_token
+        from .serializers import FrontDeskDeviceSerializer
+
+        device = _device_or_404(pk)
+        staff = device.staff
+        staff_id = request.data.get("staff") or request.data.get("staff_id")
+        if staff_id not in (None, ""):
+            if not str(staff_id).isdigit():
+                raise ValidationError({"staff": "Expected the numeric id of a staff account."})
+            staff = User.objects.filter(pk=int(staff_id)).first()
+            if staff is None:
+                raise ValidationError({"staff": "That staff account does not exist."})
+            if not staff.is_active:
+                raise ValidationError({"staff": "That staff account is deactivated."})
+        if staff is None:
+            # The approving administrator may install the token in the browser
+            # themselves; otherwise the account that requested it is the owner
+            # and must be named explicitly. Guessing an owner would hand one
+            # person's desk authority to another.
+            raise ValidationError(
+                {"staff": "Name the staff account this device belongs to (staff id) before approving it."}
+            )
+        requested_label = str(request.data.get("device_label") or "").strip()
+        try:
+            raw_token = issue_device_token(
+                device, staff, device_label=requested_label or device.device_label, request=request,
+            )
+        except ValueError as exc:
+            raise ValidationError({"workstation": str(exc)}) from exc
+        log_action(
+            actor=request.user, action="FRONT_DESK_DEVICE_APPROVED", instance=device, request=request,
+            metadata={"workstation": device.workstation.reference, "staff": staff.pk,
+                      "label": device.device_label, "rotated": bool(request.data.get("rotate"))},
+            summary="Front desk device approved; its previous token (if any) is now invalid",
+        )
+        payload = FrontDeskDeviceSerializer(device).data
+        # Shown once. The browser stores it; the database keeps only the digest.
+        payload["device_token"] = raw_token
+        return success_response(payload, message="Device approved. Copy the token now; it will not be shown again.")
+
+
+class FrontDeskDeviceRevokeView(APIView):
+    """Revoke a device. Effective on the next request. ``terminal.manage``."""
+
+    permission_classes = [HasCapability]
+    required_capability = "terminal.manage"
+
+    def post(self, request, pk):
+        from .desktop_policy import revoke_device
+        from .serializers import FrontDeskDeviceSerializer
+
+        device = _device_or_404(pk)
+        revoke_device(device, by=request.user, reason=str(request.data.get("reason") or ""))
+        log_action(
+            actor=request.user, action="FRONT_DESK_DEVICE_REVOKED", instance=device, request=request,
+            metadata={"workstation": device.workstation.reference, "reason": device.revoked_reason},
+            summary="Front desk device revoked",
+        )
+        return success_response(FrontDeskDeviceSerializer(device).data, message="Device revoked.")

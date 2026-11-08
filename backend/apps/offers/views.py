@@ -18,6 +18,14 @@ from .serializers import (
     OfferPublicSerializer,
 )
 
+#: Authored 404 detail for both state-change endpoints. It names the thing that
+#: is missing and the identifier that was used, so "which record is gone" is
+#: answerable from the screen, the log and the support call.
+OFFER_NOT_FOUND_MESSAGE = (
+    "This offer no longer exists, so its state cannot be changed. "
+    "Refresh the offer list and try again."
+)
+
 
 @extend_schema(tags=["Offers"], summary="Currently running offers")
 class OfferPublicListView(generics.ListAPIView):
@@ -72,6 +80,27 @@ class OfferAdminViewSet(viewsets.ModelViewSet):
                    changes=changes, request=self.request)
 
 
+def _positive_int_param(value, name: str):
+    """Validate an id filter (``?offer=``, ``?guest=``) as a database id.
+
+    Returns ``None`` when the parameter is absent (no filter), the parsed
+    integer when it is a real id, and raises a 400 naming the parameter when it
+    is not. Guessing — treating an unparseable value as "no results" — hides
+    the caller's bug behind an empty list, which is how a broken identifier
+    reached production looking like "there are no restricted guests".
+    """
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if not raw.isdigit() or int(raw) < 1:
+        from rest_framework.exceptions import ValidationError
+
+        raise ValidationError({name: ["Expected the numeric id of an existing record."]})
+    return int(raw)
+
+
 @extend_schema(tags=["Admin · Offers"], summary="Activate a promotional offer")
 class OfferActivateView(APIView):
     """Switch a promotion ON.
@@ -88,10 +117,19 @@ class OfferActivateView(APIView):
     def post(self, request, pk):
         offer = Offer.objects.filter(pk=pk).first()
         if offer is None:
-            raise NotFound("Offer not found.")
+            # A specific, actionable sentence: the id that came back in the
+            # response is no longer in the database (deleted, or the offer was
+            # listed from another deployment). The frontend can now say which,
+            # instead of the generic "the requested item could not be found".
+            raise NotFound(OFFER_NOT_FOUND_MESSAGE)
         if offer.is_active:
+            # Idempotent: an offer that is already ON is a completed request,
+            # not an error. Answering 200 with the CURRENT state is what makes a
+            # double tap (or two people at two terminals) safe — it can never
+            # produce an inconsistent audit trail or a spurious failure toast.
             return success_response(
-                _offer_state_payload(offer), message="This offer is already active."
+                _offer_state_payload(offer),
+                message="This offer is already active.",
             )
         from apps.audit.services import log_action
 
@@ -128,8 +166,10 @@ class OfferDeactivateView(APIView):
     def post(self, request, pk):
         offer = Offer.objects.filter(pk=pk).first()
         if offer is None:
-            raise NotFound("Offer not found.")
+            raise NotFound(OFFER_NOT_FOUND_MESSAGE)
         if not offer.is_active:
+            # Idempotent (see OfferActivateView.post): already OFF is success
+            # with the current state, never a duplicate write or a new audit row.
             return success_response(
                 _offer_state_payload(offer), message="This offer is already inactive."
             )
@@ -193,10 +233,16 @@ class OfferGuestRestrictionAdminViewSet(viewsets.ModelViewSet):
             "offer", "guest", "created_by", "removed_by"
         ).order_by("-is_active", "-created_at")
         params = self.request.query_params
-        if offer := params.get("offer"):
-            qs = qs.filter(offer_id=offer) if str(offer).isdigit() else qs.none()
-        if guest := params.get("guest"):
-            qs = qs.filter(guest_id=guest) if str(guest).isdigit() else qs.none()
+        # Identifiers are DATABASE PRIMARY KEYS and nothing else: never an array
+        # index, never a slug, never a title. A value that is not a positive
+        # integer cannot identify a row, so it is answered with an honest 400
+        # instead of an empty 200 — an empty list made a mistyped/undefined id
+        # look like "this offer has no restricted guests", which is exactly how
+        # the desk concluded the feature was broken.
+        if (offer := _positive_int_param(params.get("offer"), "offer")) not in (None, ""):
+            qs = qs.filter(offer_id=offer)
+        if (guest := _positive_int_param(params.get("guest"), "guest")) not in (None, ""):
+            qs = qs.filter(guest_id=guest)
         if active := params.get("is_active"):
             qs = qs.filter(is_active=active.lower() in ("1", "true", "yes"))
         if search := params.get("search"):
@@ -223,11 +269,19 @@ class OfferGuestRestrictionAdminViewSet(viewsets.ModelViewSet):
         existing = OfferGuestRestriction.objects.filter(offer=offer, guest=guest).first()
         if existing is not None:
             was_active = existing.is_active
-            existing.is_active = True
+            desired_active = serializer.validated_data.get("is_active", True)
+            # Re-posting an EXISTING (offer, guest) pair updates that one row; it
+            # never creates a second live restriction for the same guest and
+            # never touches another offer's rows. An explicit is_active=False in
+            # the request is honoured instead of being overwritten with True, so
+            # a form that sends the field cannot silently re-impose a bar the
+            # caller just lifted.
+            existing.is_active = bool(desired_active)
             existing.reason = serializer.validated_data.get("reason", "") or ""
-            existing.created_by = self.request.user
-            existing.removed_by = None
-            existing.removed_at = None
+            if existing.is_active:
+                existing.created_by = self.request.user
+                existing.removed_by = None
+                existing.removed_at = None
             existing.save(update_fields=[
                 "is_active", "reason", "created_by", "removed_by", "removed_at",
                 "updated_at",
@@ -236,15 +290,24 @@ class OfferGuestRestrictionAdminViewSet(viewsets.ModelViewSet):
                 actor=self.request.user,
                 action="OFFER_GUEST_RESTRICTED",
                 instance=existing,
-                changes={"is_active": [str(was_active), "True"]},
+                changes={
+                    "is_active": [str(was_active), str(existing.is_active)],
+                    "reason": ["", existing.reason],
+                } if was_active or existing.reason else {},
                 metadata={
                     "offer": offer.title,
+                    "offer_id": offer.pk,
                     "guest": guest.email,
+                    "guest_id": guest.pk,
                     "reason": existing.reason,
                     "reactivated": not was_active,
                 },
                 request=self.request,
-                summary=f"{guest.email} restricted from “{offer.title}”",
+                summary=(
+                    f"{guest.email} restricted from “{offer.title}”"
+                    if existing.is_active
+                    else f"{guest.email} restriction on “{offer.title}” cleared"
+                ),
             )
             serializer.instance = existing
             return existing
@@ -255,7 +318,9 @@ class OfferGuestRestrictionAdminViewSet(viewsets.ModelViewSet):
             instance=instance,
             metadata={
                 "offer": instance.offer.title,
+                "offer_id": instance.offer_id,
                 "guest": instance.guest.email,
+                "guest_id": instance.guest_id,
                 "reason": instance.reason,
             },
             request=self.request,
@@ -293,7 +358,9 @@ class OfferGuestRestrictionAdminViewSet(viewsets.ModelViewSet):
                 changes=changes,
                 metadata={
                     "offer": instance.offer.title,
+                    "offer_id": instance.offer_id,
                     "guest": instance.guest.email,
+                    "guest_id": instance.guest_id,
                 },
                 request=self.request,
                 summary=(

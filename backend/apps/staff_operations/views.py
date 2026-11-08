@@ -558,16 +558,35 @@ def _assert_reception_workstation(request):
     sign-in.
     """
     from apps.accounts.desktop_policy import (
+        DESKTOP_BY_DEVICE,
+        device_credential_overrides_unusable_ip_pin,
         front_desk_desktop_ip_allowed,
+        front_desk_device_for_token,
+        presented_device_token,
         receptionist_desktop_required,
+        record_device_seen,
+        request_client_ip,
         resolve_receptionist_desktop,
     )
 
     if not receptionist_desktop_required(request.user):
         return None
-    desktop, _method = resolve_receptionist_desktop(request)
+    desktop, desktop_method = resolve_receptionist_desktop(request)
     if desktop is not None:
-        if not front_desk_desktop_ip_allowed(request):
+        # An approved device is bound to ONE staff account, so it can only clock
+        # that account in and out — the same limit the desktop key implies,
+        # expressed as data rather than as trust in the browser.
+        if desktop_method == DESKTOP_BY_DEVICE:
+            device = front_desk_device_for_token(presented_device_token(request), staff=request.user)
+            if device is None:
+                raise PermissionDenied(
+                    "This device is approved for a different staff account. Ask an administrator "
+                    "to approve this device for you on the Terminals page."
+                )
+            record_device_seen(device, request_client_ip(request))
+        if not front_desk_desktop_ip_allowed(request) and not device_credential_overrides_unusable_ip_pin(
+            request, desktop_method
+        ):
             raise PermissionDenied(
                 "Attendance is recorded only from the configured Front Desk desktop IP address. "
                 "Ask an administrator to update Settings if the Front Desk desktop has changed."

@@ -256,8 +256,14 @@
       try {
         const cred = getSessionCred();
         if (!cred || !cred.refresh) return false;
-        const deskKey = receptionistDesktopKey();
-        const res = await window.API.refreshTokenCall(cred.refresh, deskKey ? { headers: { "X-JONE-Desktop-Key": deskKey } } : {});
+        /* Both desk credentials travel on refresh as well as sign-in. This is
+           the call that used to end every session when the address changed: the
+           refresh path enforces the same desk rule, so the durable credential
+           has to cover it, not just the login. */
+        const deskHeaders = desktopHeaders();
+        const res = await window.API.refreshTokenCall(
+          cred.refresh, Object.keys(deskHeaders).length ? { headers: deskHeaders } : {}
+        );
         const tokens = (res.data && (res.data.tokens || res.data)) || {};
         const access = tokens.access || null;
         if (!access) return false;
@@ -313,6 +319,45 @@
   /* Receptionist Desktop enrolment. The desk key is issued by an administrator
      and kept in this browser only; the server stores just its digest. Staff
      (other than management) can sign in only when this key is present. */
+  /* APPROVED-DEVICE CREDENTIAL
+     -----------------------------------------------------------------------
+     A second way for a front desk browser to prove what it is. The desktop key
+     above is typed in once by hand; this token is issued by an administrator
+     via the Terminals page ("approve this browser") and installed here by the
+     same one click. The difference that matters operationally: the token
+     identifies the BROWSER, not its network address, so an unexpected router
+     reboot that changes the desk's IP no longer refuses sign-in and no longer
+     kills staff sessions at token refresh.
+
+     It is a bearer secret exactly like the desktop key: kept in localStorage,
+     sent only as ``X-JONE-Device-Token``, hashed at rest on the server, bound to
+     one staff account and one active front desk workstation, and revocable. It
+     can never sign anybody in on its own — the account's password is still
+     required. */
+  const DEVICE_TOKEN_STORAGE = "jone.frontDeskDeviceToken";
+  function frontDeskDeviceToken() {
+    try { return localStorage.getItem(DEVICE_TOKEN_STORAGE) || ""; } catch (_) { return ""; }
+  }
+  function setFrontDeskDeviceToken(value) {
+    const token = String(value || "").trim();
+    try {
+      if (token) localStorage.setItem(DEVICE_TOKEN_STORAGE, token);
+      else localStorage.removeItem(DEVICE_TOKEN_STORAGE);
+    } catch (_) { return false; }
+    return true;
+  }
+  /* Headers every receptionist-desktop-aware call must carry. Both credentials
+     are sent when both are present: the server tries them in its documented
+     order and either one can prove the desk. */
+  function desktopHeaders() {
+    const headers = {};
+    const key = receptionistDesktopKey();
+    if (key) headers["X-JONE-Desktop-Key"] = key;
+    const token = frontDeskDeviceToken();
+    if (token) headers["X-JONE-Device-Token"] = token;
+    return headers;
+  }
+
   const DESKTOP_KEY_STORAGE = "jone.receptionistDesktopKey";
   function receptionistDesktopKey() {
     try { return localStorage.getItem(DESKTOP_KEY_STORAGE) || ""; } catch (_) { return ""; }
@@ -327,10 +372,8 @@
   }
 
   async function login(email, password, extra) {
-    const key = receptionistDesktopKey();
     const subCtx = getSubdomainContext();
-    const headers = {};
-    if (key) headers["X-JONE-Desktop-Key"] = key;
+    const headers = desktopHeaders();
     if (subCtx && subCtx.subdomain) headers["X-JONE-Department"] = subCtx.subdomain;
     const opts = Object.keys(headers).length ? { headers: headers } : {};
     const body = Object.assign({ email: email, password: password }, extra || {});
@@ -504,6 +547,7 @@
     isAuthenticated, restore, refreshProfile, onUnauthorized,
     bindLoginForm, clearSession, refreshAccess, loadCapabilities,
     receptionistDesktopKey, setReceptionistDesktopKey,
+    frontDeskDeviceToken, setFrontDeskDeviceToken, desktopHeaders,
     hasCapability, hasAnyCapability,
     isStaffRole, defaultStaffLanding,
     getSubdomainContext, isAuthorizedForSubdomain

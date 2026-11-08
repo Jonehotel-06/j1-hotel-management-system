@@ -1,0 +1,149 @@
+# J-ONE HOTEL & LODGE — Authoritative Cloudflare Pages / Static Assets Headers
+# Production architecture:
+#   Frontend origins : https://jonehotels.com , https://www.jonehotels.com
+#   Backend API      : https://api.jonehotels.com (direct cross-origin HTTPS)
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), interest-cohort=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https://api.jonehotels.com https: data: blob:; font-src 'self' data:; connect-src 'self' https://api.jonehotels.com; manifest-src 'self'; worker-src 'self' blob:; media-src 'self' https://api.jonehotels.com https: blob:; frame-src 'self' https://www.google.com https://maps.google.com; object-src 'none'; base-uri 'self'; form-action 'self' https://checkout.paystack.com; frame-ancestors 'none'; upgrade-insecure-requests
+
+/sw.js
+  Cache-Control: public, max-age=0, must-revalidate
+  Service-Worker-Allowed: /dashboard/
+
+# Public web app manifest (scope "/") — the J-ONE Hotel Management System.
+# Cloudflare Pages serves .webmanifest as application/manifest+json by default;
+# the explicit rule keeps that guarantee for both the document and iOS/Android
+# install metadata. must-revalidate so a corrected manifest is never stale.
+/manifest.webmanifest
+  Content-Type: application/manifest+json; charset=utf-8
+  Cache-Control: public, max-age=0, must-revalidate
+
+/dashboard/manifest.webmanifest
+  Content-Type: application/manifest+json; charset=utf-8
+  Cache-Control: public, max-age=0, must-revalidate
+
+# iOS home-screen icon. Cloudflare caches /favicon/* for a week, which is
+# correct for artwork that rarely changes; the explicit rule documents that the
+# sized apple-touch-icon must be served as a PNG (nosniff is applied globally).
+/favicon/apple-touch-icon-180.png
+  Content-Type: image/png
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+
+/dashboard
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/dashboard/*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
+/portal
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/portal/*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/js/runtime-config.js
+  Cache-Control: no-store, no-cache, max-age=0, must-revalidate
+
+/js/version.js
+  Cache-Control: no-store, no-cache, max-age=0, must-revalidate
+
+/version.json
+  Cache-Control: no-store, no-cache, max-age=0, must-revalidate
+
+# Cloudflare Pages serves these HTML documents at extensionless URLs after
+# redirecting their .html paths. Protect both the redirect and final response.
+/qr-service
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/qr-service.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/payment-verify
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/payment-verify.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/booking-review
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/booking-review.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/my-bookings
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/my-bookings.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/booking-confirmation
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/booking-confirmation.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/cancellation-result
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/cancellation-result.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/reset-password
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+/reset-password.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+
+# SEO files — must never be cached for long: a stale sitemap delays indexing.
+/robots.txt
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+/sitemap.xml
+  Content-Type: application/xml; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+/assets/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+
+/favicon/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400

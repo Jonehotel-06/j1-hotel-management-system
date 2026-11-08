@@ -255,14 +255,32 @@ def _resolve_reception_terminal(request):
     a workstation that does not exist.
     """
     from apps.accounts.desktop_policy import (
+        DESKTOP_BY_DEVICE,
         attendance_off_desk_authority,
+        device_credential_overrides_unusable_ip_pin,
+        front_desk_device_for_token,
         may_record_attendance_off_desk,
+        presented_device_token,
+        record_device_seen,
+        request_client_ip,
         resolve_receptionist_desktop,
     )
     from apps.accounts.models import Workstation
     from apps.audit.services import log_action
 
-    desk, _method = resolve_receptionist_desktop(request)
+    desk, method = resolve_receptionist_desktop(request)
+    if desk is not None and method == DESKTOP_BY_DEVICE:
+        # The device is the desk. It must be issued to the signed-in account, so
+        # one approved browser cannot clock the whole hotel in, and it is still
+        # subject to a saved network pin wherever that pin can actually work.
+        user = getattr(request, "user", None)
+        device = front_desk_device_for_token(presented_device_token(request), staff=user)
+        if device is not None:
+            record_device_seen(device, request_client_ip(request))
+            if front_desk_desktop_ip_allowed(request) or device_credential_overrides_unusable_ip_pin(
+                request, method
+            ):
+                return desk.reference, desk
     if desk is not None and front_desk_desktop_ip_allowed(request):
         return desk.reference, desk
 

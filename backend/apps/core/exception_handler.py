@@ -158,8 +158,19 @@ def jone_exception_handler(exc, context):
         )
 
     if isinstance(exc, drf_exceptions.NotFound):
+        # 404 messages are authored in this codebase, never echoed from a
+        # provider payload, and DRF's own UrlPathVersioning/format errors are
+        # equally safe. Replacing them ALL with "The requested resource was not
+        # found." made two different failures indistinguishable to the desk:
+        # "this offer id does not exist any more" and "this path is not served
+        # by the backend that is answering" both arrived as the same sentence,
+        # so the frontend could only ever report "the requested item could not
+        # be found" and nobody could tell a stale id from an undeployed route.
+        # Keep DRF's status/code contract and carry the authored reason.
         return _envelope(
-            "RESOURCE_NOT_FOUND", "The requested resource was not found.", None,
+            "RESOURCE_NOT_FOUND",
+            _detail_text(getattr(exc, "detail", None), "The requested resource was not found."),
+            None,
             status.HTTP_404_NOT_FOUND, response.headers,
         )
 
