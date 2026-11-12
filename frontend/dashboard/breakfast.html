@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<script>
+(function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Breakfast | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/dashboard/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Staff">
+<link rel="stylesheet" href="../css/main.css?v=1.1.23">
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <script>
+    (function(){\n      var nav=document.querySelector("[data-dash-nav]");\n      if(!nav)return;\n      var role=null;\n      try{\n        var raw=window["local"+"Storage"].getItem("jone.auth");\n        if(raw){var p=JSON.parse(raw)||{};var u=p.user||p;role=(u&&u.role)||p.role||null;if(role)role=String(role).toLowerCase();}\n      }catch(e){role=null;}\n      if(!role)return;\n      var snap=null;\n      try{snap=JSON.parse(window.sessionStorage.getItem("jone.dash.nav")||"null");}catch(e){snap=null;}\n      if(!snap||snap.role!==role||typeof snap.html!=="string"||!snap.html)return;\n      nav.innerHTML=snap.html;\n      var here=location.pathname.split("/").pop()||"index.html";\n      var items=nav.querySelectorAll("a.dash-nav-item");\n      for(var i=0;i<items.length;i++){\n        items[i].classList.remove("is-active");\n        items[i].removeAttribute("aria-current");\n        var href=(items[i].getAttribute("href")||"").split("?")[0].split("#")[0];\n        if(href===here){items[i].classList.add("is-active");items[i].setAttribute("aria-current","page");}\n      }\n      nav.setAttribute("data-nav-snapshot","1");\n    })();
+    </script>
+    <div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,.2);"><span data-icon="logOut" data-size="16"></span> Sign out</button></div>
+  </aside>
+  <div class="dash-main">
+    <header class="dash-topbar">
+      <button class="btn-icon btn-ghost dash-menu-toggle" data-dash-menu-toggle aria-label="Open navigation"><span data-icon="menu" data-size="22"></span></button>
+      <h1>Complementary Breakfast</h1>
+      <div class="dash-topbar-actions">
+        <span data-icon="info" data-size="16" style="color:var(--color-text-muted);"></span>
+        <span style="font-size:.85rem;color:var(--color-text-muted);">Guest-accommodation benefit — no folio charge</span>
+      </div>
+    </header>
+    <main class="dash-content">
+      <!-- Config banner -->
+      <div class="alert alert-info" data-breakfast-config-banner>
+        <strong>Breakfast Benefit:</strong> <span data-breakfast-config-status>Loading…</span>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="issue" role="tab" aria-selected="true">Record Breakfast</button>
+        <button class="tab" data-tab="eligibility" role="tab" aria-selected="false">Check Eligibility</button>
+        <button class="tab" data-tab="history" role="tab" aria-selected="false">History</button>
+        <button class="tab" data-tab="config" role="tab" aria-selected="false">Configuration</button>
+      </div>
+
+      <!-- Record Breakfast tab -->
+      <section class="tab-panel" data-panel="issue">
+        <div class="card">
+          <div class="card-header"><h2>Record a Complementary Breakfast</h2></div>
+          <div class="card-body">
+            <form data-breakfast-issue-form>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Guest *</label>
+                  <select name="guest_id" required data-breakfast-guest-select></select>
+                </div>
+                <div class="form-group">
+                  <label>Service Date *</label>
+                  <input type="date" name="service_date" required>
+                </div>
+                <div class="form-group">
+                  <label>Notes</label>
+                  <input type="text" name="notes" placeholder="Optional notes">
+                </div>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-accent"><span data-icon="check" data-size="16"></span> Record Breakfast</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- Check Eligibility tab -->
+      <section class="tab-panel hidden" data-panel="eligibility">
+        <div class="card">
+          <div class="card-header"><h2>Check Guest Eligibility</h2></div>
+          <div class="card-body">
+            <form data-breakfast-eligibility-form>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Guest *</label>
+                  <select name="guest_id" required data-breakfast-elig-guest-select></select>
+                </div>
+                <div class="form-group">
+                  <label>Service Date *</label>
+                  <input type="date" name="service_date" required>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-outline"><span data-icon="search" data-size="16"></span> Check Eligibility</button>
+              </div>
+            </form>
+            <div data-breakfast-eligibility-result></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- History tab -->
+      <section class="tab-panel hidden" data-panel="history">
+        <div class="card">
+          <div class="card-header">
+            <h2>Breakfast Issuance History</h2>
+            <button class="btn btn-sm btn-outline" data-breakfast-history-refresh><span data-icon="refresh" data-size="14"></span> Refresh</button>
+          </div>
+          <div class="card-body">
+            <div data-breakfast-history-container>
+              <p class="text-muted">Loading…</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Configuration tab -->
+      <section class="tab-panel hidden" data-panel="config">
+        <div class="card">
+          <div class="card-header"><h2>Breakfast Benefit Configuration</h2></div>
+          <div class="card-body">
+            <form data-breakfast-config-form>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Enabled</label>
+                  <label class="switch"><input type="checkbox" name="is_enabled" data-breakfast-config-enabled> <span>Enable complementary breakfast</span></label>
+                </div>
+                <div class="form-group">
+                  <label>Service Start (HH:MM)</label>
+                  <input type="text" name="service_start" placeholder="e.g. 07:30">
+                </div>
+                <div class="form-group">
+                  <label>Service End (HH:MM)</label>
+                  <input type="text" name="service_end" placeholder="e.g. 10:00">
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Notes</label>
+                <textarea name="notes" rows="3" placeholder="Optional configuration notes"></textarea>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-accent"><span data-icon="save" data-size="16"></span> Save Configuration</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+<div class="mobile-drawer" aria-hidden="true"><div class="mobile-drawer-backdrop"></div><div class="mobile-drawer-content" data-drawer-close></div></div>
+<script src="../js/config.js"></script>
+<script src="../js/utils.js"></script>
+<script src="../js/icons.js"></script>
+<script src="../js/api.js"></script>
+<script src="../js/theme.js"></script>
+<script src="../js/ui.js"></script>
+<script src="../js/hotel-data.js"></script>
+<script src="../js/navigation.js"></script>
+<script src="../js/pwa.js"></script>
+<script src="../js/version.js"></script>
+<script src="../js/dashboard.js"></script>
+<script src="../js/breakfast.js"></script>
+</body>
+</html>

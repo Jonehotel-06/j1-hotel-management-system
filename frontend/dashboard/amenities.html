@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<script>
+(function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Amenities | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="manifest" href="/dashboard/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Staff">
+<link rel="stylesheet" href="../css/main.css?v=1.1.23">
+</head>
+<body>
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <script>
+    (function(){\n      var nav=document.querySelector("[data-dash-nav]");\n      if(!nav)return;\n      var role=null;\n      try{\n        var raw=window["local"+"Storage"].getItem("jone.auth");\n        if(raw){var p=JSON.parse(raw)||{};var u=p.user||p;role=(u&&u.role)||p.role||null;if(role)role=String(role).toLowerCase();}\n      }catch(e){role=null;}\n      if(!role)return;\n      var snap=null;\n      try{snap=JSON.parse(window.sessionStorage.getItem("jone.dash.nav")||"null");}catch(e){snap=null;}\n      if(!snap||snap.role!==role||typeof snap.html!=="string"||!snap.html)return;\n      nav.innerHTML=snap.html;\n      var here=location.pathname.split("/").pop()||"index.html";\n      var items=nav.querySelectorAll("a.dash-nav-item");\n      for(var i=0;i<items.length;i++){\n        items[i].classList.remove("is-active");\n        items[i].removeAttribute("aria-current");\n        var href=(items[i].getAttribute("href")||"").split("?")[0].split("#")[0];\n        if(href===here){items[i].classList.add("is-active");items[i].setAttribute("aria-current","page");}\n      }\n      nav.setAttribute("data-nav-snapshot","1");\n    })();
+    </script>
+    <div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,.2);"><span data-icon="logOut" data-size="16"></span> Sign out</button></div>
+  </aside>
+  <div class="dash-main">
+    <header class="dash-topbar">
+      <button class="btn-icon btn-ghost dash-menu-toggle" data-dash-menu-toggle aria-label="Open navigation"><span data-icon="menu" data-size="22"></span></button>
+      <h1>Guest Amenities</h1>
+      <div class="dash-topbar-actions">
+        <span data-icon="info" data-size="16" style="color:var(--color-text-muted);"></span>
+        <span style="font-size:.85rem;color:var(--color-text-muted);">Reception stock allocation &amp; issuance</span>
+      </div>
+    </header>
+    <main class="dash-content">
+      <!-- Tabs -->
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="stock" role="tab" aria-selected="true">Reception Stock</button>
+        <button class="tab" data-tab="allocate" role="tab" aria-selected="false">Allocate</button>
+        <button class="tab" data-tab="issue" role="tab" aria-selected="false">Issue to Guest</button>
+        <button class="tab" data-tab="history" role="tab" aria-selected="false">History</button>
+      </div>
+
+      <!-- Reception Stock tab -->
+      <section class="tab-panel" data-panel="stock">
+        <div class="card">
+          <div class="card-header">
+            <h2>Reception Department Stock</h2>
+            <button class="btn btn-sm btn-outline" data-amenity-refresh><span data-icon="refresh" data-size="14"></span> Refresh</button>
+          </div>
+          <div class="card-body">
+            <div data-amenity-stock-container>
+              <p class="text-muted">Loading…</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Allocate tab -->
+      <section class="tab-panel hidden" data-panel="allocate">
+        <div class="card">
+          <div class="card-header"><h2>Allocate Amenities to Reception</h2></div>
+          <div class="card-body">
+            <form data-amenity-allocate-form>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Stock Item *</label>
+                  <select name="item_id" required data-amenity-item-select></select>
+                </div>
+                <div class="form-group">
+                  <label>Quantity *</label>
+                  <input type="number" name="quantity" step="0.0001" min="0.0001" required placeholder="e.g. 30">
+                </div>
+                <div class="form-group">
+                  <label>From Location *</label>
+                  <select name="from_location_id" required data-amenity-location-select></select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Notes</label>
+                <textarea name="notes" rows="2" placeholder="Optional notes"></textarea>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-accent"><span data-icon="arrowRight" data-size="16"></span> Allocate to Reception</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- Issue tab -->
+      <section class="tab-panel hidden" data-panel="issue">
+        <div class="card">
+          <div class="card-header"><h2>Issue Amenity to Guest</h2></div>
+          <div class="card-body">
+            <form data-amenity-issue-form>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Guest *</label>
+                  <select name="guest_id" required data-amenity-guest-select></select>
+                </div>
+                <div class="form-group">
+                  <label>Room Number</label>
+                  <input type="text" name="room_number" placeholder="e.g. 101">
+                </div>
+                <div class="form-group">
+                  <label>Item *</label>
+                  <select name="item_id" required data-amenity-issue-item-select></select>
+                </div>
+                <div class="form-group">
+                  <label>Quantity *</label>
+                  <input type="number" name="quantity" step="0.0001" min="0.0001" required placeholder="e.g. 2">
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Notes</label>
+                <textarea name="notes" rows="2" placeholder="Optional notes"></textarea>
+              </div>
+              <div class="form-actions">
+                <button type="submit" class="btn btn-accent"><span data-icon="check" data-size="16"></span> Issue to Guest</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- History tab -->
+      <section class="tab-panel hidden" data-panel="history">
+        <div class="card">
+          <div class="card-header">
+            <h2>Amenity Issuance History</h2>
+            <button class="btn btn-sm btn-outline" data-amenity-history-refresh><span data-icon="refresh" data-size="14"></span> Refresh</button>
+          </div>
+          <div class="card-body">
+            <div data-amenity-history-container>
+              <p class="text-muted">Loading…</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+<div class="mobile-drawer" aria-hidden="true"><div class="mobile-drawer-backdrop"></div><div class="mobile-drawer-content" data-drawer-close></div></div>
+<script src="../js/config.js"></script>
+<script src="../js/utils.js"></script>
+<script src="../js/icons.js"></script>
+<script src="../js/api.js"></script>
+<script src="../js/theme.js"></script>
+<script src="../js/ui.js"></script>
+<script src="../js/hotel-data.js"></script>
+<script src="../js/navigation.js"></script>
+<script src="../js/pwa.js"></script>
+<script src="../js/version.js"></script>
+<script src="../js/dashboard.js"></script>
+<script src="../js/amenities.js"></script>
+</body>
+</html>

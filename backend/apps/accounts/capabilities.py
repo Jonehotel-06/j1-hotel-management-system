@@ -50,6 +50,12 @@ CAPABILITY_DEFINITIONS = (
     ("kitchen.ticket.manage", "Progress production tickets", "Kitchen", "Start, mark ready, or complete assigned production tickets."),
     ("guest_request.manage", "Manage guest requests", "Guest services", "Create or progress permitted guest requests."),
     ("guest_request.assign", "Dispatch guest requests", "Guest services", "Assign or re-route guest service requests."),
+    ("guest_amenity.allocate", "Allocate guest amenities", "Inventory",
+     "Allocate basic guest-amenity stock (soap, toothbrush, toothpaste, tissue) into the Reception Department's stock."),
+    ("guest_amenity.issue", "Issue guest amenities", "Reception",
+     "Issue basic guest amenities to checking-in guests from the Reception Department's own allocation."),
+    ("breakfast.issue", "Record complementary breakfast", "Reception",
+     "Record a complementary breakfast served to an eligible lodged guest, with no folio charge and no inventory movement."),
     ("housekeeping.task.manage", "Manage housekeeping tasks", "Operations", "Work permitted housekeeping tasks."),
     ("housekeeping.task.assign", "Dispatch housekeeping tasks", "Operations", "Assign and inspect housekeeping tasks."),
     ("maintenance.work_order.manage", "Manage maintenance work orders", "Operations", "Work permitted maintenance orders."),
@@ -128,6 +134,7 @@ ROLE_CAPABILITY_CODES = {
         "cash_session.open", "cash_session.close",
         "guest_request.manage", "guest_request.assign", "housekeeping.task.manage", "housekeeping.task.assign",
         "maintenance.work_order.manage", "maintenance.work_order.assign", "attendance.clock", "leave.request",
+        "guest_amenity.issue", "breakfast.issue",
     }),
     # Historical role: no new assignment can select CASHIER. Its persisted
     # grants are retained for old rows and are copied to WAITER by migration
@@ -145,7 +152,7 @@ ROLE_CAPABILITY_CODES = {
         "maintenance.work_order.manage", "guest_request.manage", "attendance.clock", "leave.request",
     }),
     "INVENTORY_CLERK": frozenset({
-        "inventory.manage", "inventory.record", "procurement.manage", "expense.request",
+        "inventory.manage", "inventory.record", "guest_amenity.allocate", "procurement.manage", "expense.request",
         "attendance.clock", "leave.request",
     }),
     "FRONT_DESK_SUPERVISOR": frozenset({
@@ -261,7 +268,7 @@ ROLE_CAPABILITY_CODES = {
     # Task 09: the Store Keeper is the hotel's stock custodian, so they keep the
     # full inventory workspace AND stock-recording authority.
     "STOREKEEPER": frozenset({
-        "inventory.manage", "inventory.record", "procurement.manage", "expense.request",
+        "inventory.manage", "inventory.record", "guest_amenity.allocate", "procurement.manage", "expense.request",
         "attendance.clock", "leave.request",
     }),
     "PORTER": frozenset({"guest_request.manage", "attendance.clock", "leave.request"}),

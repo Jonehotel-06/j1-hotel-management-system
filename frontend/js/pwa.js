@@ -104,6 +104,13 @@
     var ua = navigator.userAgent || "";
     return isIOS() && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
   }
+  function isAndroid() {
+    var ua = navigator.userAgent || "";
+    return /Android/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+  }
+  function isDesktop() {
+    return !isIOS() && !isAndroid();
+  }
 
   /* ------------------------------ Dismissal -------------------------------- */
   function recentlyDismissed() {
@@ -316,24 +323,113 @@
       : "";
   }
 
+  /* Build the iOS instructions as a real DOM node.
+     ------------------------------------------------------------------
+     The modal's `body` is passed to JONE.el(), which appends string children
+     with document.createTextNode() — a markup string would therefore be shown
+     VERBATIM ("Tap the <strong>Share</strong>…") instead of rendered. Passing
+     a Node (whose innerHTML is set here) makes the browser parse the markup
+     exactly as intended, with no change to any other modal behaviour. */
   function iosInstructions() {
     if (!window.JONE || !window.JONE.ui || !window.JONE.ui.modal) return;
     var staff = IS_DASHBOARD;
+    var body = document.createElement("div");
+    body.innerHTML =
+      '<ol style="margin:0;padding-left:1.25rem;line-height:1.7;">' +
+      "<li>Open the J-ONE website in Safari.</li>" +
+      "<li>Tap the <strong>Share</strong> button in Safari&rsquo;s toolbar.</li>" +
+      "<li>Scroll down and choose <strong>Add to Home Screen</strong>.</li>" +
+      "<li>Tap <strong>Add</strong> &mdash; " +
+      (staff ? "the J-ONE staff dashboard" : "J-ONE") +
+      " will open like an app.</li>" +
+      "</ol>" +
+      '<p style="margin-top:1rem;color:var(--color-text-muted);">' +
+      (staff
+        ? "The dashboard still requires an internet connection and your staff sign-in."
+        : "Booking, payments and your account still need an internet connection.") +
+      "</p>";
     window.JONE.ui.modal.open({
       title: staff ? "Add J-ONE Staff to your Home Screen" : "Add J-ONE to your Home Screen",
-      body:
-        '<ol style="margin:0;padding-left:1.25rem;line-height:1.7;">' +
-        "<li>Tap the <strong>Share</strong> button in Safari&rsquo;s toolbar.</li>" +
-        "<li>Scroll down and choose <strong>Add to Home Screen</strong>.</li>" +
-        "<li>Tap <strong>Add</strong> &mdash; " +
-        (staff ? "the J-ONE staff dashboard" : "J-ONE") +
-        " will open like an app.</li>" +
-        "</ol>" +
-        '<p style="margin-top:1rem;color:var(--color-text-muted);">' +
-        (staff
-          ? "The dashboard still requires an internet connection and your staff sign-in."
-          : "Booking, payments and your account still need an internet connection.") +
-        "</p>"
+      body: body
+    });
+  }
+
+  /* Android install instructions — Chrome/Firefox on Android support the
+     native beforeinstallprompt, so the install button handles it directly.
+     This modal is shown only when the native prompt is unavailable. */
+  function androidInstructions() {
+    if (!window.JONE || !window.JONE.ui || !window.JONE.ui.modal) return;
+    var staff = IS_DASHBOARD;
+    var body = document.createElement("div");
+    body.innerHTML =
+      '<ol style="margin:0;padding-left:1.25rem;line-height:1.7;">' +
+      "<li>Open the J-ONE website in Chrome or Firefox.</li>" +
+      "<li>Tap the <strong>menu</strong> button (three dots, top-right).</li>" +
+      "<li>Choose <strong>Add to Home screen</strong> or <strong>Install app</strong>.</li>" +
+      "<li>Tap <strong>Add</strong> or <strong>Install</strong> &mdash; " +
+      (staff ? "the J-ONE staff dashboard" : "J-ONE") +
+      " will open like an app.</li>" +
+      "</ol>" +
+      '<p style="margin-top:1rem;color:var(--color-text-muted);">' +
+      (staff
+        ? "The dashboard still requires an internet connection and your staff sign-in."
+        : "Booking, payments and your account still need an internet connection.") +
+      "</p>";
+    window.JONE.ui.modal.open({
+      title: staff ? "Add J-ONE Staff to your Home Screen" : "Add J-ONE to your Home Screen",
+      body: body
+    });
+  }
+
+  /* Desktop install instructions — Chrome, Edge and Firefox on desktop support
+     the native install prompt. Safari does not, so it falls back to these
+     instructions. */
+  function desktopInstructions() {
+    if (!window.JONE || !window.JONE.ui || !window.JONE.ui.modal) return;
+    var staff = IS_DASHBOARD;
+    var ua = navigator.userAgent || "";
+    var isChrome = /Chrome|Chromium/.test(ua) && !/Edg/.test(ua);
+    var isEdge = /Edg/.test(ua);
+    var isFirefox = /Firefox/.test(ua);
+    var isSafari = /Safari/.test(ua) && !/Chrome|Chromium|Edg|Firefox/.test(ua);
+
+    var step1, step2, step3;
+    if (isChrome) {
+      step1 = "Open the J-ONE website in Chrome.";
+      step2 = "Click the <strong>install</strong> icon in the address bar (or press Ctrl+Shift+D).";
+      step3 = "Click <strong>Install</strong> in the confirmation dialog.";
+    } else if (isEdge) {
+      step1 = "Open the J-ONE website in Edge.";
+      step2 = "Click the <strong>install</strong> icon in the address bar.";
+      step3 = "Click <strong>Install</strong> in the confirmation dialog.";
+    } else if (isFirefox) {
+      step1 = "Open the J-ONE website in Firefox.";
+      step2 = "Click the <strong>menu</strong> button (three lines, top-right).";
+      step3 = "Choose <strong>Save and Share</strong> &rarr; <strong>Install</strong>.";
+    } else {
+      // Safari and others
+      step1 = "Open the J-ONE website in your browser.";
+      step2 = "Use your browser&rsquo;s <strong>Install app</strong> or <strong>Add to Home Screen</strong> option.";
+      step3 = "Confirm the installation.";
+    }
+
+    var body = document.createElement("div");
+    body.innerHTML =
+      '<ol style="margin:0;padding-left:1.25rem;line-height:1.7;">' +
+      "<li>" + step1 + "</li>" +
+      "<li>" + step2 + "</li>" +
+      "<li>" + step3 + " &mdash; " +
+      (staff ? "the J-ONE staff dashboard" : "J-ONE") +
+      " will open like an app.</li>" +
+      "</ol>" +
+      '<p style="margin-top:1rem;color:var(--color-text-muted);">' +
+      (staff
+        ? "The dashboard still requires an internet connection and your staff sign-in."
+        : "Booking, payments and your account still need an internet connection.") +
+      "</p>";
+    window.JONE.ui.modal.open({
+      title: staff ? "Install J-ONE Staff App" : "Install J-ONE App",
+      body: body
     });
   }
 
@@ -414,6 +510,8 @@
       return;
     }
     if (isIOSSafari()) { iosInstructions(); return; }
+    if (isAndroid()) { androidInstructions(); return; }
+    if (isDesktop()) { desktopInstructions(); return; }
     if (trigger && window.JONE && window.JONE.ui && window.JONE.ui.toast) {
       window.JONE.ui.toast(
         "Use your browser menu and choose \u201cInstall app\u201d or \u201cAdd to Home Screen\u201d.",

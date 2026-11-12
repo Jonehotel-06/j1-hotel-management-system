@@ -1,20 +1,16 @@
 # apps/inventory/tasks.py
 """Celery tasks for the inventory app.
 
-Stock depletion normally happens automatically inside the POS delivery
-transaction (``apps.pos.services.order_service.transition_order`` →
-``apps.inventory.services.inventory_service.consume_stock_for_delivered_order``).
-This sweep exists as a durability net for the hand-offs that could not be
-posted at that moment:
+Automatic recipe-based stock deduction has been REMOVED by hotel policy. The
+legacy catch-up sweep that used to resolve POS-to-inventory recipe hand-offs
+(``apps.inventory.services.inventory_service.process_pending_pos_consumption``)
+no longer deducts any stock, and this scheduled task is kept only as a
+documented no-op so a deployment that still enqueues it cannot accidentally
+reintroduce automatic deductions. Ingredient consumption is recorded manually
+by the Store Keeper through the inventory ledger.
 
-* menu items whose recipe was configured *after* the sale;
-* stock that was short at delivery time and has since been topped up by a
-  goods receipt;
-* hand-offs created by a build that predates automatic depletion.
-
-Every attempt is idempotent — the hand-off is unique per POS order and every
-resulting movement is source-keyed on the hand-off — so a repeated sweep can
-never deduct the same sale twice.
+The legacy task name is preserved for Celery routing compatibility; it now
+performs no work and returns an empty summary.
 """
 import logging
 
@@ -25,10 +21,10 @@ logger = logging.getLogger("apps")
 
 @shared_task(name="apps.inventory.tasks.process_pending_pos_stock_consumption")
 def process_pending_pos_stock_consumption():
-    """Scheduled sweep: resolve open POS-to-inventory consumption hand-offs."""
-    from .services.inventory_service import process_pending_pos_consumption as run
+    """Legacy no-op: automatic recipe deduction is disabled.
 
-    summary = run()
-    if summary.get("posted"):
-        logger.info("Catch-up posted %s POS stock-consumption hand-off(s).", summary["posted"])
-    return summary
+    Historically this sweep resolved open POS stock-consumption hand-offs and
+    posted their recipe deductions. That pathway is closed. The task returns a
+    summary with zero posted movements and never touches a stock balance.
+    """
+    return {"examined": 0, "posted": 0, "skipped": 0, "recipe_deduction_disabled": True}

@@ -1030,23 +1030,21 @@ def transition_order(*, order, target_status: str, actor) -> PosOrder:
         finish_portions(order=order, actor=actor, cancelled=target_status == PosOrder.Status.CANCELLED)
     if target_status == PosOrder.Status.DELIVERED:
         prepare_nonstock_food_handoff(order=order, actor=actor)
-        # Inventory owns recipe resolution and stock balances. POS only emits a
-        # source-keyed immutable hand-off from its frozen order-line snapshot.
-        #
-        # The hand-off is then resolved IN THE SAME TRANSACTION, because
-        # delivery IS this repository's stock-consumption event. Leaving it
-        # PENDING (the previous behaviour) meant no stock-consuming sales
-        # channel ever reduced Stock on Hand until somebody opened the
-        # inventory console and pressed Process.
-        from apps.inventory.services.inventory_service import consume_stock_for_delivered_order
-
-        consumption, _ = consume_stock_for_delivered_order(order=order, actor=actor)
-        if portal_snapshot is not None:
-            from apps.inventory.models import StockConsumptionRequest
-            if consumption.status not in {StockConsumptionRequest.Status.PROCESSED, StockConsumptionRequest.Status.SKIPPED}:
-                from apps.core.exceptions import PosStockConflictError
-                # Roll back the charge, delivery, and any stock writes together.
-                raise PosStockConflictError("Stock could not be recorded for this order. Contact inventory and retry.")
+        # Automatic recipe-based stock deduction has been REMOVED (hotel
+        # policy). Completing an order — restaurant, bar, room-service or
+        # takeaway — no longer reduces ingredient stock. Ingredient consumption
+        # is recorded manually by the Store Keeper through the inventory ledger
+        # (issues / manual ingredient issues). `portal_snapshot` above only
+        # VALIDATES stock availability for a portal order; it never deducts.
+        # `request_pos_stock_consumption` creates the StockConsumptionRequest
+        # hand-off record as EVIDENCE; `process_pos_stock_consumption` marks it
+        # SKIPPED without posting any stock movement. Automatic recipe-based
+        # deduction is disabled.
+        from apps.inventory.services.inventory_service import (
+            process_pos_stock_consumption, request_pos_stock_consumption,
+        )
+        hand_off, _ = request_pos_stock_consumption(order=order, actor=actor)
+        process_pos_stock_consumption(request=hand_off, actor=actor, trigger="POS_DELIVERY")
     PosOrderEvent.objects.create(order=order, type=event_type, actor=actor)
     _sync_portal_request(portal_request, order, actor, target_status)
     return order

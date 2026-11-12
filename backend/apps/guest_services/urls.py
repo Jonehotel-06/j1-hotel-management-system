@@ -18,6 +18,15 @@ staff_urlpatterns = [
     path("<str:reference>/maintenance-work-order/", views.ServiceRequestMaintenanceWorkOrderView.as_view(), name="request-maintenance-work-order"),
     path("<str:reference>/status/", views.ServiceRequestStatusView.as_view(), name="request-status"),
     path("<str:reference>/comments/", views.ServiceRequestCommentView.as_view(), name="request-comments"),
+    # Receptionist guest amenities + complementary breakfast
+    path("reception/amenities/allocate/", views.ReceptionAmenityAllocationView.as_view(), name="reception-amenities-allocate"),
+    path("reception/amenities/stock/", views.ReceptionAmenityStockView.as_view(), name="reception-amenities-stock"),
+    path("reception/amenities/issues/", views.GuestAmenityIssueListView.as_view(), name="guest-amenity-issues"),
+    path("reception/amenities/issue/", views.GuestAmenityIssueView.as_view(), name="guest-amenity-issue"),
+    path("breakfast/config/", views.BreakfastConfigView.as_view(), name="breakfast-config"),
+    path("breakfast/eligibility/", views.BreakfastEligibilityView.as_view(), name="breakfast-eligibility"),
+    path("breakfast/issues/", views.BreakfastIssuanceListView.as_view(), name="breakfast-issuances"),
+    path("breakfast/issue/", views.BreakfastIssueView.as_view(), name="breakfast-issue"),
 ]
 
 qr_admin_urlpatterns = [

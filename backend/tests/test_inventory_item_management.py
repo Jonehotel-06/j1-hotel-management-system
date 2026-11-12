@@ -189,30 +189,30 @@ class NoAutomaticRecipeTests(InventoryManagementTestCase):
         self.assertEqual(self.balance(malt, self.bar), Decimal("12.0000"))
 
         request = PosOrder.objects.get(pk=order.pk).stock_consumption_request
-        # Nothing deducted *and* nothing configured is a gap for a human, so the
-        # hand-off is parked for review — never a silent "not tracked".
-        self.assertEqual(request.status, "FAILED")
-        self.assertIn("ITM-MALT", request.resolution_note)
-        self.assertIn("No stock deduction is configured", request.resolution_note)
-        self.assertIn("no recipe was created", request.resolution_note)
-        self.assertEqual(request.resolution_payload.get("uncontrolled"), ["ITM-MALT"])
-        self.assertEqual(request.resolution_payload.get("movement_count"), 0)
-        self.assertEqual(movements_before + 0, StockMovement.objects.count())
+        # REQ-5: automatic recipe-based deduction is disabled. The hand-off is
+        # SKIPPED (not FAILED) because no deduction is expected at delivery.
+        self.assertEqual(request.status, "SKIPPED")
+        self.assertTrue(request.resolution_payload.get("recipe_deduction_disabled", False))
+        self.assertEqual(movements_before, StockMovement.objects.count(), "no movement posted")
 
         # The order itself is untouched: the guest was charged and the sale is
-        # delivered. Configuring the product afterwards resolves the parked
-        # hand-off through the existing catch-up sweep, and deducts once.
+        # delivered. Configuring the product afterwards does NOT trigger a
+        # backdated deduction — the catch-up sweep is a no-op under REQ-5.
+        # The hand-off was already SKIPPED at delivery time.
         self.configure_direct_sale(malt, menu_item=menu_item, location=self.bar)
-        self.assertEqual(process_pending_pos_consumption(), {"examined": 1, "posted": 1, "still_open": 0})
+        summary = process_pending_pos_consumption(actor=self.clerk)
+        self.assertEqual(summary["examined"], 0, "no pending hand-offs remain")
+        self.assertEqual(summary["posted"], 0)
         request.refresh_from_db()
-        self.assertEqual(request.status, "PROCESSED")
-        self.assertEqual(self.balance(malt, self.bar), Decimal("10.0000"))
+        self.assertEqual(request.status, "SKIPPED")
+        self.assertEqual(self.balance(malt, self.bar), Decimal("12.0000"))
         self.assertEqual(
-            StockMovement.objects.filter(item=malt, type=StockMovement.Type.POS_CONSUMPTION).count(), 1,
+            StockMovement.objects.filter(item=malt, type=StockMovement.Type.POS_CONSUMPTION).count(), 0,
         )
-        # Re-running the sweep after the fact deducts nothing a second time.
-        self.assertEqual(process_pending_pos_consumption(), {"examined": 0, "posted": 0, "still_open": 0})
-        self.assertEqual(self.balance(malt, self.bar), Decimal("10.0000"))
+        # Re-running the sweep posts nothing.
+        summary2 = process_pending_pos_consumption(actor=self.clerk)
+        self.assertEqual(summary2["posted"], 0)
+        self.assertEqual(self.balance(malt, self.bar), Decimal("12.0000"))
         self.assertEqual(StockRecipe.objects.count(), recipes_before, "still no invented recipe")
 
     def test_an_invalid_recipe_still_blocks_the_whole_order(self):
@@ -260,15 +260,19 @@ class NoAutomaticRecipeTests(InventoryManagementTestCase):
         transition_order(order=order, target_status=PosOrder.Status.DELIVERED, actor=self.cashier)
 
         request = PosOrder.objects.get(pk=order.pk).stock_consumption_request
-        self.assertEqual(request.status, "FAILED")
-        self.assertIn("invalid recipe", request.resolution_note)
+        # REQ-5: the hand-off is SKIPPED, not FAILED, because no deduction is
+        # expected at delivery. The recipe is still broken, but delivery no
+        # longer attempts to deduct from it.
+        self.assertEqual(request.status, "SKIPPED")
+        self.assertTrue(request.resolution_payload.get("recipe_deduction_disabled", False))
         self.assertEqual(self.balance(self.bottle, self.bar), before, "a broken recipe must not deduct anything")
 
 
 class DirectSaleDeductionTests(InventoryManagementTestCase):
     """Requirement 3: the exact quantity sold, from the configured store, once."""
 
-    def test_a_configured_crate_deducts_the_twenty_four_bottles_it_contains(self):
+    def test_a_configured_crate_does_not_deduct_at_delivery(self):
+        """REQ-5: direct-sale configuration is recorded but delivery does not deduct."""
         self.configure_direct_sale(
             self.bottle, menu_item=self.crate_menu, location=self.bar, quantity="24.0000"
         )
@@ -277,24 +281,27 @@ class DirectSaleDeductionTests(InventoryManagementTestCase):
 
         self.sell(mode=PosOrder.Mode.BAR, menu_item=self.crate_menu, quantity=1, table_number="T-1")
 
-        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("6.0000"))
-        movement = StockMovement.objects.filter(item=self.bottle, type=StockMovement.Type.POS_CONSUMPTION).first()
-        self.assertIsNotNone(movement)
-        self.assertEqual(movement.quantity_delta, Decimal("-24.0000"))
-        resolved = movement.metadata.get("resolved_recipes") or []
-        self.assertTrue(any(row.get("direct_sale") for row in resolved), "the evidence must name the direct sale")
+        # REQ-5: no stock movement is posted at delivery.
+        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("30.0000"))
+        self.assertFalse(
+            StockMovement.objects.filter(item=self.bottle, type=StockMovement.Type.POS_CONSUMPTION).exists()
+        )
+        # The hand-off record exists as evidence.
+        request = PosOrder.objects.latest("pk").stock_consumption_request
+        self.assertEqual(request.status, "SKIPPED")
         self.assertFalse(StockRecipe.objects.filter(menu_item=self.crate_menu).exists())
 
-    def test_the_sale_deducts_only_from_the_configured_store(self):
+    def test_the_sale_does_not_deplete_any_store(self):
+        """REQ-5: delivery posts no stock movement to any store."""
         self.configure_direct_sale(self.bottle, menu_item=self.crate_menu, location=self.kitchen)
         self.stock_in(self.bottle, self.kitchen, 5)
         self.stock_in(self.bottle, self.bar, 7)
 
         self.sell(mode=PosOrder.Mode.BAR, menu_item=self.crate_menu, quantity=2, table_number="T-2")
 
-        self.assertEqual(self.balance(self.bottle, self.kitchen), Decimal("3.0000"))
-        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("7.0000"), "the bar store was not configured")
-        self.assertEqual(self.total(self.bottle), Decimal("10.0000"))
+        self.assertEqual(self.balance(self.bottle, self.kitchen), Decimal("5.0000"))
+        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("7.0000"), "no store was depleted")
+        self.assertEqual(self.total(self.bottle), Decimal("12.0000"))
 
     def test_a_configured_product_reports_its_saleable_stock_to_the_pos(self):
         self.configure_direct_sale(self.bottle, menu_item=self.crate_menu, location=self.bar, quantity="24.0000")
@@ -351,14 +358,16 @@ class DirectSaleDeductionTests(InventoryManagementTestCase):
 class RecipeUnitDeductionTests(InventoryManagementTestCase):
     """Requirement 2: a plate of rice deducts the configured grams of rice."""
 
-    def test_only_the_recipe_quantity_is_deducted_in_the_base_unit(self):
+    def test_recipe_quantity_is_recorded_but_not_deducted(self):
+        """REQ-5: recipes document fractional quantities; delivery does not deduct."""
         self.stock_in(self.rice, self.store, 5)
         self.sell(mode=PosOrder.Mode.RESTAURANT, menu_item=self.rice_menu, quantity=3)
 
-        self.assertEqual(self.balance(self.rice, self.store), Decimal("4.2500"), "3 plates × 250 g = 0.75 KG")
-        movement = StockMovement.objects.filter(item=self.rice, type=StockMovement.Type.POS_CONSUMPTION).first()
-        self.assertEqual(movement.quantity_delta, Decimal("-0.7500"))
-        self.assertEqual(movement.location_id, self.store.pk)
+        # Stock is NOT depleted.
+        self.assertEqual(self.balance(self.rice, self.store), Decimal("5.0000"))
+        self.assertFalse(
+            StockMovement.objects.filter(item=self.rice, type=StockMovement.Type.POS_CONSUMPTION).exists()
+        )
 
     def test_the_typed_unit_is_kept_beside_the_converted_deduction(self):
         recipe = StockRecipe.objects.get(menu_item=self.rice_menu)
@@ -571,27 +580,28 @@ class IdempotencyTests(InventoryManagementTestCase):
         self.assertEqual(first.pk, second.pk)
         self.assertEqual(self.balance(self.detergent, self.store), Decimal("7.0000"))
 
-    def test_a_retried_delivery_or_catch_up_sweep_deducts_once(self):
+    def test_a_retried_delivery_or_catch_up_sweep_posts_no_deduction(self):
+        """REQ-5: retry and sweep converge on zero deductions."""
         self.configure_direct_sale(self.bottle, menu_item=self.crate_menu, location=self.bar, quantity="2.0000")
         self.stock_in(self.bottle, self.bar, 10)
 
         order = self.sell(mode=PosOrder.Mode.BAR, menu_item=self.crate_menu, quantity=1, table_number="T-3")
         request = PosOrder.objects.get(pk=order.pk).stock_consumption_request
-        self.assertEqual(request.status, "PROCESSED")
-        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("8.0000"))
+        self.assertEqual(request.status, "SKIPPED")
+        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("10.0000"))
 
-        # A repeated delivery transition and the catch-up sweep must converge.
+        # A repeated delivery transition and the catch-up sweep post nothing.
         transition_order(
             order=PosOrder.objects.get(pk=order.pk), target_status=PosOrder.Status.DELIVERED, actor=self.cashier
         )
         process_pending_pos_consumption(actor=self.clerk)
-        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("8.0000"))
+        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("10.0000"))
         self.assertEqual(
-            StockMovement.objects.filter(item=self.bottle, type=StockMovement.Type.POS_CONSUMPTION).count(), 1
+            StockMovement.objects.filter(item=self.bottle, type=StockMovement.Type.POS_CONSUMPTION).count(), 0
         )
 
-    def test_an_unconfigured_product_does_not_block_the_configured_lines(self):
-        """A mixed order deducts what is configured and reports what is not."""
+    def test_a_mixed_order_posts_no_deductions(self):
+        """REQ-5: delivery posts no stock movement for any line."""
         self.configure_direct_sale(self.bottle, menu_item=self.crate_menu, location=self.bar, quantity="2.0000")
         self.stock_in(self.bottle, self.bar, 10)
         self.stock_in(self.rice, self.store, 5)
@@ -611,11 +621,11 @@ class IdempotencyTests(InventoryManagementTestCase):
         for status_value in (PosOrder.Status.PREPARING, PosOrder.Status.READY, PosOrder.Status.DELIVERED):
             transition_order(order=order, target_status=status_value, actor=self.cashier)
 
-        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("8.0000"))
+        # No store was depleted.
+        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("10.0000"))
         request = PosOrder.objects.get(pk=order.pk).stock_consumption_request
-        self.assertEqual(request.status, "PROCESSED")
-        self.assertIn("Not deducted", request.resolution_note)
-        self.assertIn("ITM-SNACK", request.resolution_note)
+        self.assertEqual(request.status, "SKIPPED")
+        self.assertTrue(request.resolution_payload.get("recipe_deduction_disabled", False))
 
 
 class ConcurrencyTests(InventoryManagementTestCase):
@@ -748,15 +758,18 @@ class ValuationIntegrityTests(InventoryManagementTestCase):
 class ExistingBehaviourTests(InventoryManagementTestCase):
     """Requirement 10: existing recipes, POS flows and history keep working."""
 
-    def test_existing_recipes_still_deduct_and_their_history_is_unchanged(self):
+    def test_existing_recipes_are_retained_but_not_deducted(self):
+        """REQ-5: recipes remain as reference; delivery posts no deduction."""
         before = StockMovement.objects.count()
         self.stock_in(self.bottle, self.bar, 10)
         self.sell(mode=PosOrder.Mode.BAR, quantity=1, table_number="T-5")
 
-        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("9.0000"))
-        self.assertEqual(StockMovement.objects.count(), before + 2)
+        # Stock is NOT depleted.
+        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("10.0000"))
+        # Only the opening movement was added.
+        self.assertEqual(StockMovement.objects.count(), before + 1)
         request = PosOrder.objects.latest("pk").stock_consumption_request
-        self.assertEqual(request.status, "PROCESSED")
+        self.assertEqual(request.status, "SKIPPED")
         recipe = StockRecipe.objects.get(menu_item=self.bar_water)
         self.assertTrue(recipe.is_active, "an existing recipe is never retired by an unrelated change")
 

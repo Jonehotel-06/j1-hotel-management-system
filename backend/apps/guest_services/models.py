@@ -362,3 +362,168 @@ class LaundryItem(models.Model):
 
     def __str__(self):
         return f"{self.quantity} × {self.description}"
+
+
+# ---------------------------------------------------------------------------
+# Receptionist guest amenities (basic guest supplies)
+#
+# The Reception Department holds an allocated stock of basic guest amenities
+# (soap, toothbrush, toothpaste, tissue). The Store Keeper allocates that stock
+# through the EXISTING inventory ledger (a transfer from Main Store into the
+# Reception location). The receptionist then issues amenity units to a guest
+# checking in; the issuance deducts from the Reception location's balance (NOT
+# directly from Main Store) and is recorded here as an append-only evidence
+# row beside the immutable StockMovement that changed the balance.
+# ---------------------------------------------------------------------------
+
+
+class GuestAmenityIssue(TimeStampedModel):
+    """Append-only record of one basic guest amenity issued at check-in.
+
+    One row per issued unit-line. It never owns a balance: the balance change is
+    the immutable ``StockMovement`` (type ``ISSUE``) created from the Reception
+    location, and this row is the auditable human record beside it (who, which
+    guest, which room, what, how many, and the departmental balance before and
+    after).
+    """
+
+    class Amenity(models.TextChoices):
+        SOAP = "SOAP", "Soap"
+        TOOTHBRUSH = "TOOTHBRUSH", "Toothbrush"
+        TOOTHPASTE = "TOOTHPASTE", "Toothpaste"
+        TISSUE = "TISSUE", "Tissue"
+        OTHER = "OTHER", "Other"
+
+    reference = models.CharField(max_length=64, unique=True, db_index=True)
+    #: Server-scoped digest of the caller's idempotency key. A retried request
+    #: (lost reply, double tap) returns the existing row instead of issuing twice.
+    source_key = models.CharField(max_length=180, unique=True)
+    guest = models.ForeignKey(
+        "bookings.Guest", on_delete=models.PROTECT, related_name="amenity_issues"
+    )
+    booking = models.ForeignKey(
+        "bookings.Booking", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="amenity_issues",
+    )
+    room_number = models.CharField(max_length=40, blank=True, default="")
+    receptionist = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="amenity_issues_issued",
+    )
+    item = models.ForeignKey(
+        "inventory.StockItem", on_delete=models.PROTECT, related_name="amenity_issues"
+    )
+    quantity = models.DecimalField(max_digits=14, decimal_places=4)
+    #: The Reception Department location the stock was issued FROM.
+    location = models.ForeignKey(
+        "inventory.StockLocation", on_delete=models.PROTECT, related_name="amenity_issues"
+    )
+    departmental_balance_before = models.DecimalField(max_digits=14, decimal_places=4)
+    departmental_balance_after = models.DecimalField(max_digits=14, decimal_places=4)
+    occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
+    notes = models.TextField(blank=True, default="")
+    movement = models.OneToOneField(
+        "inventory.StockMovement", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="amenity_issue",
+    )
+
+    class Meta:
+        ordering = ["-occurred_at", "-pk"]
+        indexes = [
+            models.Index(fields=["guest", "occurred_at"]),
+            models.Index(fields=["booking", "occurred_at"]),
+            models.Index(fields=["location", "item", "occurred_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.reference} · {self.item.sku} × {self.quantity} to {self.guest.full_name}"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Guest amenity issues are append-only and cannot be updated.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Guest amenity issues are append-only and cannot be deleted.")
+
+
+# ---------------------------------------------------------------------------
+# Complementary breakfast for lodged guests
+#
+# Breakfast is a guest-accommodation benefit, NOT a paid restaurant order. An
+# issuance is recorded on its own immutable row and never creates a POS order, a
+# folio charge or restaurant revenue. Ingredient consumption is manual, so an
+# issuance performs no inventory movement either.
+# ---------------------------------------------------------------------------
+
+
+class BreakfastBenefitConfig(TimeStampedModel):
+    """Hotel-wide complementary-breakfast configuration (admin/GM owned)."""
+
+    is_enabled = models.BooleanField(default=True, db_index=True)
+    #: Service window as HH:MM strings; empty means "all day".
+    service_start = models.CharField(max_length=5, blank=True, default="")
+    service_end = models.CharField(max_length=5, blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="breakfast_config_updates",
+    )
+
+    class Meta:
+        verbose_name = "Breakfast benefit configuration"
+
+    def __str__(self):
+        return "Complementary breakfast benefit"
+
+
+class BreakfastIssuance(TimeStampedModel):
+    """One complementary breakfast served to one guest on one service date.
+
+    Duplicate claims for the same guest and service date are prevented by a
+    database constraint, so a repeated request (or a double tap) can never
+    record the same breakfast twice.
+    """
+
+    reference = models.CharField(max_length=64, unique=True, db_index=True)
+    source_key = models.CharField(max_length=180, unique=True)
+    guest = models.ForeignKey(
+        "bookings.Guest", on_delete=models.PROTECT, related_name="breakfast_issuances"
+    )
+    booking = models.ForeignKey(
+        "bookings.Booking", on_delete=models.PROTECT, related_name="breakfast_issuances"
+    )
+    service_date = models.DateField(db_index=True)
+    issued_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="breakfast_issuances_issued",
+    )
+    #: Number of guests the booking entitles to breakfast.
+    eligible_guests = models.PositiveIntegerField(default=1)
+    #: What was served, as evidence: [{item_id, item_sku, item_name, quantity, unit}].
+    items = models.JSONField(default=list, blank=True)
+    occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-service_date", "-occurred_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["guest", "service_date"], name="one_breakfast_per_guest_service_date"
+            )
+        ]
+        indexes = [
+            models.Index(fields=["booking", "service_date"]),
+            models.Index(fields=["service_date", "guest"]),
+        ]
+
+    def __str__(self):
+        return f"{self.reference} · {self.guest.full_name} · {self.service_date}"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Breakfast issuances are append-only and cannot be updated.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Breakfast issuances are append-only and cannot be deleted.")

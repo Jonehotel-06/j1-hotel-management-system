@@ -31,6 +31,8 @@
          opened the same page, and laundry looked like a guest request rather
          than the priced, settled service it is. */
       { label: "Laundry", href: "laundry.html", icon: "shirt", view: "laundry", capabilities: ["guest_request.manage", "guest_request.assign"] },
+      { label: "Amenities", href: "amenities.html", icon: "star", view: "amenities", capabilities: ["guest_amenity.issue", "guest_amenity.allocate"] },
+      { label: "Breakfast", href: "breakfast.html", icon: "coffee", view: "breakfast", capabilities: ["breakfast.issue"] },
       { label: "Barcode Labels", href: "barcode-labels.html", icon: "printer", view: "barcode-labels", capabilities: ["inventory.manage", "pos.order.manage"] },
       /* Task 02: menu-information printing is its OWN screen. It answers a
          different question from barcode labels ("what is on this item and what

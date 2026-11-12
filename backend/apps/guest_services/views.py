@@ -969,3 +969,289 @@ class LaundryOrderBillView(APIView):
             LaundryOrderSerializer(_laundry_or_404(order.reference)).data,
             message="Laundry charged to the guest folio." if created else "Laundry was already billed.",
         )
+
+
+# ---------------------------------------------------------------------------
+# Receptionist guest amenities + complementary breakfast
+# ---------------------------------------------------------------------------
+from .serializers import (  # noqa: E402
+    GuestAmenityIssueSerializer, GuestAmenityIssueCreateSerializer,
+    ReceptionAmenityAllocationSerializer, BreakfastConfigSerializer,
+    BreakfastIssuanceSerializer, BreakfastIssueSerializer,
+)
+from .services_amenities import (  # noqa: E402
+    allocate_reception_amenities, issue_guest_amenity,
+    record_breakfast, breakfast_eligibility, get_breakfast_config,
+    reception_amenity_stock,
+)
+
+
+class ReceptionAmenityAllocationView(APIView):
+    """Store Keeper allocates amenity stock to the Reception Department."""
+
+    permission_classes = [HasCapability]
+    required_capability = "guest_amenity.allocate"
+
+    @extend_schema(request=ReceptionAmenityAllocationSerializer, responses={200: dict})
+    def post(self, request):
+        serializer = ReceptionAmenityAllocationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        attrs = serializer.validated_data
+
+        from apps.inventory.models import StockItem, StockLocation
+        try:
+            item = StockItem.objects.get(pk=attrs["item_id"])
+        except StockItem.DoesNotExist:
+            raise ValidationError({"item_id": "Unknown stock item."})
+        try:
+            from_location = StockLocation.objects.get(pk=attrs["from_location_id"])
+        except StockLocation.DoesNotExist:
+            raise ValidationError({"from_location_id": "Unknown stock location."})
+
+        try:
+            outbound, inbound, created = allocate_reception_amenities(
+                item=item, quantity=attrs["quantity"], from_location=from_location,
+                unit=attrs.get("unit") or None, conversion_factor=attrs.get("conversion_factor"),
+                actor=request.user, notes=attrs.get("notes") or "",
+                idempotency_key=attrs.get("idempotency_key") or "",
+            )
+        except ValueError as exc:
+            raise ValidationError(exc)
+
+        return success_response({
+            "created": created,
+            "outbound_movement": _movement_dict(outbound),
+            "inbound_movement": _movement_dict(inbound),
+        })
+
+
+class ReceptionAmenityStockView(APIView):
+    """Reception Department's current amenity balances."""
+
+    permission_classes = [HasCapability]
+    required_capability = "guest_amenity.allocate"
+
+    def get(self, request):
+        from apps.inventory.models import StockBalance
+        location = None
+        from .services_amenities import reception_location
+        location = reception_location()
+        if location is None:
+            return success_response({"location": None, "balances": []})
+        balances = StockBalance.objects.filter(location=location).select_related("item")
+        return success_response({
+            "location": {"id": location.pk, "code": location.code, "name": location.name},
+            "balances": [
+                {"item_id": b.item_id, "sku": b.item.sku, "name": b.item.name,
+                 "base_unit": b.item.base_unit, "quantity": str(b.quantity_on_hand)}
+                for b in balances
+            ],
+        })
+
+
+class GuestAmenityIssueView(APIView):
+    """Receptionist issues amenity to a guest from Reception allocation."""
+
+    permission_classes = [HasCapability]
+    required_capability = "guest_amenity.issue"
+
+    @extend_schema(request=GuestAmenityIssueCreateSerializer, responses={200: dict})
+    def post(self, request):
+        serializer = GuestAmenityIssueCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        attrs = serializer.validated_data
+
+        from apps.bookings.models import Guest, Booking
+        from apps.inventory.models import StockItem
+        try:
+            guest = Guest.objects.get(pk=attrs["guest_id"])
+        except Guest.DoesNotExist:
+            raise ValidationError({"guest_id": "Unknown guest."})
+        booking = None
+        if attrs.get("booking_id"):
+            try:
+                booking = Booking.objects.get(pk=attrs["booking_id"])
+            except Booking.DoesNotExist:
+                raise ValidationError({"booking_id": "Unknown booking."})
+        try:
+            item = StockItem.objects.get(pk=attrs["item_id"])
+        except StockItem.DoesNotExist:
+            raise ValidationError({"item_id": "Unknown stock item."})
+
+        try:
+            record, created = issue_guest_amenity(
+                guest=guest, booking=booking, room_number=attrs.get("room_number") or "",
+                item=item, quantity=attrs["quantity"], actor=request.user,
+                notes=attrs.get("notes") or "", idempotency_key=attrs.get("idempotency_key") or "",
+            )
+        except ValueError as exc:
+            raise ValidationError(exc)
+
+        return success_response({
+            "created": created,
+            "issue": GuestAmenityIssueSerializer(record).data,
+        })
+
+
+class GuestAmenityIssueListView(APIView):
+    """List amenity issuances (audit trail)."""
+
+    permission_classes = [HasCapability]
+    required_capability = "guest_amenity.issue"
+
+    def get(self, request):
+        qs = GuestAmenityIssue.objects.select_related("guest", "item", "location", "receptionist").all()
+        if guest_id := request.query_params.get("guest_id"):
+            qs = qs.filter(guest_id=guest_id)
+        if booking_id := request.query_params.get("booking_id"):
+            qs = qs.filter(booking_id=booking_id)
+        if item_id := request.query_params.get("item_id"):
+            qs = qs.filter(item_id=item_id)
+        serializer = GuestAmenityIssueSerializer(qs[:200], many=True)
+        return success_response({"results": serializer.data})
+
+
+def _movement_dict(m):
+    if m is None:
+        return None
+    return {
+        "id": m.pk, "reference": m.reference, "type": m.type,
+        "quantity_delta": str(m.quantity_delta), "location": m.location.code,
+        "item": m.item.sku, "created_at": m.created_at.isoformat(),
+    }
+
+
+class BreakfastConfigView(APIView):
+    """View or update the complementary-breakfast configuration."""
+
+    permission_classes = [HasCapability]
+    required_capability = "breakfast.issue"
+
+    @extend_schema(responses=BreakfastConfigSerializer)
+    def get(self, request):
+        config = get_breakfast_config()
+        return success_response(BreakfastConfigSerializer(config).data)
+
+    @extend_schema(request=BreakfastConfigSerializer, responses=BreakfastConfigSerializer)
+    def put(self, request):
+        config = get_breakfast_config()
+        serializer = BreakfastConfigSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        attrs = serializer.validated_data
+        config.is_enabled = attrs.get("is_enabled", config.is_enabled)
+        config.service_start = attrs.get("service_start", config.service_start)
+        config.service_end = attrs.get("service_end", config.service_end)
+        config.notes = attrs.get("notes", config.notes)
+        config.updated_by = request.user
+        config.save()
+        return success_response(BreakfastConfigSerializer(config).data)
+
+
+class BreakfastEligibilityView(APIView):
+    """Check whether a guest is eligible for breakfast on a date."""
+
+    permission_classes = [HasCapability]
+    required_capability = "breakfast.issue"
+
+    def get(self, request):
+        from apps.bookings.models import Guest, Booking
+        guest_id = request.query_params.get("guest_id")
+        booking_id = request.query_params.get("booking_id")
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            service_date = request.query_params.get("service_date")
+        except DjangoValidationError:
+            raise ValidationError({"service_date": "Invalid date."})
+        if not service_date:
+            raise ValidationError({"service_date": "Required."})
+        from datetime import date
+        sd = date.fromisoformat(service_date)
+
+        guest = None
+        booking = None
+        if guest_id:
+            try:
+                guest = Guest.objects.get(pk=guest_id)
+            except Guest.DoesNotExist:
+                raise ValidationError({"guest_id": "Unknown guest."})
+        if booking_id:
+            try:
+                booking = Booking.objects.get(pk=booking_id)
+            except Booking.DoesNotExist:
+                raise ValidationError({"booking_id": "Unknown booking."})
+        if guest is None and booking is not None:
+            guest = booking.guest
+        if guest is None:
+            raise ValidationError({"guest_id": "Provide a guest_id or booking_id."})
+        if booking is None:
+            booking = Booking.objects.filter(guest=guest).order_by("-check_in").first()
+
+        eligibility = breakfast_eligibility(guest=guest, booking=booking, service_date=sd)
+        return success_response(eligibility)
+
+
+class BreakfastIssueView(APIView):
+    """Record a complementary breakfast issuance."""
+
+    permission_classes = [HasCapability]
+    required_capability = "breakfast.issue"
+
+    @extend_schema(request=BreakfastIssueSerializer, responses={200: dict})
+    def post(self, request):
+        serializer = BreakfastIssueSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        attrs = serializer.validated_data
+
+        from apps.bookings.models import Guest, Booking
+        from datetime import date
+        sd = attrs["service_date"]
+        guest = None
+        booking = None
+        if attrs.get("guest_id"):
+            try:
+                guest = Guest.objects.get(pk=attrs["guest_id"])
+            except Guest.DoesNotExist:
+                raise ValidationError({"guest_id": "Unknown guest."})
+        if attrs.get("booking_id"):
+            try:
+                booking = Booking.objects.get(pk=attrs["booking_id"])
+            except Booking.DoesNotExist:
+                raise ValidationError({"booking_id": "Unknown booking."})
+        if guest is None and booking is not None:
+            guest = booking.guest
+        if guest is None:
+            raise ValidationError({"guest_id": "Provide a guest_id or booking_id."})
+        if booking is None:
+            booking = Booking.objects.filter(guest=guest).order_by("-check_in").first()
+
+        try:
+            record, created = record_breakfast(
+                guest=guest, booking=booking, service_date=sd,
+                items=attrs.get("items") or [], actor=request.user,
+                notes=attrs.get("notes") or "", idempotency_key=attrs.get("idempotency_key") or "",
+            )
+        except ValueError as exc:
+            raise ValidationError(exc)
+
+        return success_response({
+            "created": created,
+            "issuance": BreakfastIssuanceSerializer(record).data,
+        })
+
+
+class BreakfastIssuanceListView(APIView):
+    """List breakfast issuances."""
+
+    permission_classes = [HasCapability]
+    required_capability = "breakfast.issue"
+
+    def get(self, request):
+        qs = BreakfastIssuance.objects.select_related("guest", "booking", "issued_by").all()
+        if guest_id := request.query_params.get("guest_id"):
+            qs = qs.filter(guest_id=guest_id)
+        if booking_id := request.query_params.get("booking_id"):
+            qs = qs.filter(booking_id=booking_id)
+        if date_param := request.query_params.get("service_date"):
+            qs = qs.filter(service_date=date_param)
+        serializer = BreakfastIssuanceSerializer(qs[:200], many=True)
+        return success_response({"results": serializer.data})

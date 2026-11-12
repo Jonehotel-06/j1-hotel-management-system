@@ -385,3 +385,126 @@ class LaundryAssignSerializer(serializers.Serializer):
 class LaundryStatusSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=LaundryOrder.Status.choices)
     delivered_to = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
+
+
+# ---------------------------------------------------------------------------
+# Receptionist guest amenities + complementary breakfast
+# ---------------------------------------------------------------------------
+from .models import GuestAmenityIssue, BreakfastBenefitConfig, BreakfastIssuance  # noqa: E402
+
+
+class GuestAmenityIssueSerializer(serializers.ModelSerializer):
+    guest_name = serializers.CharField(source="guest.full_name", read_only=True)
+    guest_email = serializers.EmailField(source="guest.email", read_only=True, allow_null=True)
+    item_sku = serializers.CharField(source="item.sku", read_only=True)
+    item_name = serializers.CharField(source="item.name", read_only=True)
+    base_unit = serializers.CharField(source="item.base_unit", read_only=True)
+    location_code = serializers.CharField(source="location.code", read_only=True)
+    receptionist_name = serializers.CharField(
+        source="receptionist.full_name", read_only=True, allow_null=True
+    )
+
+    class Meta:
+        model = GuestAmenityIssue
+        fields = [
+            "id", "reference", "guest", "guest_name", "guest_email", "booking",
+            "room_number", "receptionist", "receptionist_name", "item", "item_sku",
+            "item_name", "base_unit", "quantity", "location", "location_code",
+            "departmental_balance_before", "departmental_balance_after",
+            "occurred_at", "notes", "movement", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class GuestAmenityIssueCreateSerializer(serializers.Serializer):
+    """Issue basic guest amenities to a guest from the Reception allocation."""
+
+    guest_id = serializers.IntegerField()
+    booking_id = serializers.IntegerField(required=False, allow_null=True)
+    room_number = serializers.CharField(required=False, allow_blank=True, max_length=40, default="")
+    item_id = serializers.IntegerField()
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
+
+
+class ReceptionAmenityAllocationSerializer(serializers.Serializer):
+    """Store Keeper allocates amenities to the Reception Department's stock.
+
+    The allocation is a stock TRANSFER into the Reception location, so the
+    allocated quantity becomes the Reception Department's own stock balance and
+    is deducted from the issuing store.
+    """
+
+    item_id = serializers.IntegerField()
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
+    from_location_id = serializers.IntegerField()
+    unit = serializers.CharField(required=False, allow_blank=True, max_length=30, default="")
+    conversion_factor = serializers.DecimalField(
+        required=False, allow_null=True, max_digits=14, decimal_places=4, min_value=Decimal("0.0001")
+    )
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
+
+
+class BreakfastConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BreakfastBenefitConfig
+        fields = ["id", "is_enabled", "service_start", "service_end", "notes", "updated_by", "updated_at"]
+        read_only_fields = ["id", "updated_by", "updated_at"]
+
+    def validate_service_start(self, value):
+        return _validate_hhmm(value, "service_start")
+
+    def validate_service_end(self, value):
+        return _validate_hhmm(value, "service_end")
+
+
+def _validate_hhmm(value, field):
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    parts = value.split(":")
+    if len(parts) != 2 or not (parts[0].isdigit() and parts[1].isdigit()):
+        raise serializers.ValidationError({field: "Use HH:MM format, e.g. 07:30."})
+    hh, mm = int(parts[0]), int(parts[1])
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        raise serializers.ValidationError({field: "Use HH:MM format, e.g. 07:30."})
+    return f"{hh:02d}:{mm:02d}"
+
+
+class BreakfastIssuanceSerializer(serializers.ModelSerializer):
+    guest_name = serializers.CharField(source="guest.full_name", read_only=True)
+    guest_email = serializers.EmailField(source="guest.email", read_only=True, allow_null=True)
+    booking_reference = serializers.CharField(source="booking.reference", read_only=True)
+    issued_by_name = serializers.CharField(source="issued_by.full_name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = BreakfastIssuance
+        fields = [
+            "id", "reference", "guest", "guest_name", "guest_email", "booking",
+            "booking_reference", "service_date", "issued_by", "issued_by_name",
+            "eligible_guests", "items", "occurred_at", "notes", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class BreakfastIssueSerializer(serializers.Serializer):
+    """Record a complementary breakfast served to an eligible guest.
+
+    Creates NO POS order, NO folio charge and NO inventory movement.
+    """
+
+    guest_id = serializers.IntegerField(required=False, allow_null=True)
+    booking_id = serializers.IntegerField(required=False, allow_null=True)
+    service_date = serializers.DateField()
+    items = serializers.ListField(
+        child=serializers.DictField(), required=False, allow_null=True, default=list
+    )
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
+
+    def validate(self, attrs):
+        if not attrs.get("guest_id") and not attrs.get("booking_id"):
+            raise serializers.ValidationError({"guest_id": "Provide a guest_id or a booking_id."})
+        return attrs
