@@ -11,7 +11,7 @@
 <title>Check-in | J-ONE Staff</title>
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
-<link rel="stylesheet" href="../css/main.css?v=1.1.25">
+<link rel="stylesheet" href="../css/main.css?v=1.1.28">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -116,17 +116,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.25"></script>
-<script src="../js/config.js?v=1.1.25"></script>
-<script src="../js/utils.js?v=1.1.25"></script>
-<script src="../js/icons.js?v=1.1.25"></script>
-<script src="../js/api.js?v=1.1.25"></script>
-<script src="../js/theme.js?v=1.1.25"></script>
-<script src="../js/ui.js?v=1.1.25"></script>
-<script src="../js/auth.js?v=1.1.25"></script>
-<script src="../js/hotel-data.js?v=1.1.25"></script>
-<script src="../js/navigation.js?v=1.1.25"></script>
-<script src="../js/dashboard.js?v=1.1.25"></script><script src="../js/table-fit.js?v=1.1.25"></script>
+<script src="../js/runtime-config.js?v=1.1.28"></script>
+<script src="../js/config.js?v=1.1.28"></script>
+<script src="../js/utils.js?v=1.1.28"></script>
+<script src="../js/icons.js?v=1.1.28"></script>
+<script src="../js/api.js?v=1.1.28"></script>
+<script src="../js/theme.js?v=1.1.28"></script>
+<script src="../js/ui.js?v=1.1.28"></script>
+<script src="../js/auth.js?v=1.1.28"></script>
+<script src="../js/hotel-data.js?v=1.1.28"></script>
+<script src="../js/navigation.js?v=1.1.28"></script>
+<script src="../js/dashboard.js?v=1.1.28"></script><script src="../js/table-fit.js?v=1.1.28"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("receptionist");
@@ -142,12 +142,36 @@
      re-fetching it inside the modal would slow the desk down and could hand over
      a stale row if the guest paid in between. */
   var inHouseByRef={};
+  /* How many amenity items are already recorded against each stay. Read once per
+     page load, so the desk can SEE that the toiletries were given and not merely
+     record them, and refreshed after every record. */
+  var amenityCounts={};
+  async function loadAmenityMarks(){
+    amenityCounts={};
+    try{
+      var data=await window.API.get("/api/admin/service-requests/reception/amenities/issues/?page_size=100");
+      ((data&&data.results)||[]).forEach(function(row){
+        if(row.booking) amenityCounts[String(row.booking)]=(amenityCounts[String(row.booking)]||0)+1;
+      });
+    }catch(err){ amenityCounts={}; }   /* no permission / nothing recorded: no marks, no error */
+  }
+  function amenityCell(b){
+    var ref=refOf(b);
+    var n=amenityCounts[String(b.id)]||0;
+    var label=n? (n+" amenit"+(n===1?"y":"ies")) : "Amenities";
+    return '<button type="button" class="'+(n?"btn btn-sm btn-soft":"btn btn-sm btn-ghost")+
+      '" data-amenity-btn="'+JONE.esc(String(ref))+'" title="'+
+      (n? "Amenities already recorded for this stay — open to add or review"
+        : "Record the amenities handed to this guest")+
+      '">'+JONE.esc(label)+'</button>';
+  }
   function renderInHouse(list){
     inHouseByRef={};
     if(!list.length){ DATA.empty(inhouseBody,"bed","No guests currently in-house","Checked-in guests will remain visible here.",6); return; }
     inhouseBody.innerHTML=list.map(function(b){ var ref=refOf(b); inHouseByRef[String(ref)]=b;
       return '<tr><td>'+JONE.esc(ref)+'</td><td>'+JONE.esc(b.guest_name||"—")+'</td><td>'+roomCell(b)+'</td><td>'+JONE.esc(b.check_out?JONE.formatDate(b.check_out,"mid"):"—")+'</td><td>'+JONE.dashboard.statusPill(b.status)+'</td><td>'+
         '<a class="btn btn-sm btn-outline" href="booking-details.html?ref='+encodeURIComponent(ref)+'">View</a>'+
+        amenityCell(b)+
         /* Extending from the desk: this is where the request is usually made —
            the guest is standing at the counter asking for another night. */
         '<button class="btn btn-sm btn-ghost" type="button" data-extend-btn="'+JONE.esc(String(ref))+'" title="Extend this stay">Extend</button>'+
@@ -205,7 +229,7 @@
       ]);
       var list=window.API.normalizeList?window.API.normalizeList(results[0].data,results[0].pagination).items:((results[0].data&&results[0].data.results)||results[0].data||[]);
       var housed=window.API.normalizeList?window.API.normalizeList(results[1].data,results[1].pagination).items:((results[1].data&&results[1].data.results)||results[1].data||[]);
-      arrivals=list||[]; renderInHouse(housed||[]);
+      arrivals=list||[]; await loadAmenityMarks(); renderInHouse(housed||[]);
       if(!arrivals.length){ DATA.empty(tbody,"logOut","No arrivals today","Guests expected to check in today will appear here.",6); return; }
       apply();
     }catch(err){ DATA.error(tbody,"Arrivals couldn't be loaded",(err&&err.message)||"Please try again in a moment.",6); }
@@ -266,6 +290,22 @@
       }
       return;
     }
+    /* Record / review the amenities for one in-house stay. */
+    var amBtn=e.target.closest("[data-amenity-btn]");
+    if(amBtn){
+      var amRef=decodeURIComponent(amBtn.getAttribute("data-amenity-btn"));
+      var amRow=inHouseByRef[String(amRef)]||{};
+      try{
+        amBtn.disabled=true;
+        await JONE.dashboard.amenityIssueModal({lookup:amRef, title:"Amenities given to "+(amRow.guest_name||"this guest")});
+        await load();
+      }catch(err){
+        JONE.ui.toast((err&&err.message)||"The amenities could not be recorded.","error");
+      }finally{
+        amBtn.disabled=false;
+      }
+      return;
+    }
     var btn=e.target.closest("[data-checkin-btn]");
     if(!btn) return;
     if(searchTimer){ clearTimeout(searchTimer); searchTimer=null; }
@@ -276,6 +316,13 @@
       await window.API.checkInBooking(ref);
       JONE.ui.toast("Guest checked in ("+ref+").","success");
       await load();
+      /* The moment the guest is actually at the counter is the moment the
+         toiletries change hands. Ask for them HERE, once, instead of hoping
+         someone remembers to open the Amenities screen later. Recording is
+         optional (the desk can close the window), and a failure to open it
+         never undoes or hides the successful check-in above. */
+      try{ await JONE.dashboard.amenityIssueModal({lookup:ref, title:"Amenities given to "+((inHouseByRef[String(ref)]||{}).guest_name||"this guest")}); }
+      catch(err){ /* check-in already succeeded; never turn this into an error */ }
     }catch(err){
       JONE.ui.toast(err && (err.message || "Couldn't check in this guest. Please try again."),"error");
     }finally{
@@ -286,8 +333,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.25"></script>
-<script src="../js/version.js?v=1.1.25"></script>
-<script src="../js/update-checker.js?v=1.1.25"></script>
+<script src="../js/pwa.js?v=1.1.28"></script>
+<script src="../js/version.js?v=1.1.28"></script>
+<script src="../js/update-checker.js?v=1.1.28"></script>
 </body>
 </html>

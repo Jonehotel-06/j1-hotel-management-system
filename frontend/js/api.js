@@ -162,10 +162,18 @@ const API = (() => {
       }
       case 401: return "Your session has expired. Please sign in again.";
       case 403: return "You don't have permission to perform this action.";
-      case 404:
-        // No JSON envelope at all means the request never reached a DRF view:
-        // the route is not served by this deployment.
-        return data == null ? NOT_FOUND_UNSERVED : NOT_FOUND_FALLBACK;
+      case 404: {
+        /* No JSON envelope at all means the request never reached a DRF view:
+           the route is not served by the deployment that answered. `data` is the
+           plain-text/HTML body in that case — a STRING, never null — so the
+           `data == null` test this branch used to make could never fire, and the
+           desk was told "The requested item could not be found." for a route the
+           API simply did not have (reported for "Extend stay": the quote call
+           answered with Django's HTML 404 and the desk retyped dates forever).
+           Non-object bodies are therefore the unserved case. */
+        const unserved = data == null || typeof data !== "object";
+        return unserved ? NOT_FOUND_UNSERVED : NOT_FOUND_FALLBACK;
+      }
       case 409: return "The selected room is no longer available. Please choose another room.";
       case 422: return "Some of the information provided is invalid. Please review and try again.";
       case 429: return "Too many requests. Please wait a moment and try again.";

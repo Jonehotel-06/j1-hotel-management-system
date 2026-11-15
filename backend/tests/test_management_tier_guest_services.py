@@ -180,10 +180,22 @@ class AmenityStationAPITests(BaseAPITestCase):
 
     def test_receptionist_issues_but_never_allocates(self):
         self.assertEqual(self.allocate(self.receptionist).status_code, 403)
-        self.assertEqual(self.stock(self.receptionist).status_code, 403)
         # The desk's own half of the station stays open to it.
         self.assertIn(self.issues(self.receptionist).status_code, (200, 200))
         self.assertIn(self.breakfast_config(self.receptionist).status_code, (200, 200))
+
+    def test_receptionist_can_see_the_shelf_it_issues_from(self):
+        """The issuing clerk must be able to READ the Reception balances.
+
+        This used to answer 403: the stock view was gated on
+        ``guest_amenity.allocate`` only, which the front desk does not hold. The
+        desk could therefore issue an item it was never allowed to look at — it
+        only discovered an empty allocation from the rejection that came back
+        after the guest had already been promised the soap. Reading the
+        department's own shelf is not allocating: the write paths are unchanged.
+        """
+        self.assertEqual(self.stock(self.receptionist).status_code, 200)
+        self.assertEqual(self.allocate(self.receptionist).status_code, 403)
 
     def test_store_keeper_allocates_but_never_issues_to_a_guest(self):
         self.assertIn(self.allocate(self.keeper).status_code, (200, 201))
@@ -191,6 +203,23 @@ class AmenityStationAPITests(BaseAPITestCase):
         self.assertEqual(self.issue(self.keeper).status_code, 403)
         self.assertEqual(self.issues(self.keeper).status_code, 403)
         self.assertEqual(self.breakfast_issue(self.keeper).status_code, 403)
+
+    def test_the_staff_guest_list_exists_for_the_desk(self):
+        """The amenity/breakfast guest pickers read /api/admin/guests/.
+
+        The pages asked for /api/bookings/guests/, which is not a route: it is
+        captured by the guest booking detail route as ``lookup="guests"`` and
+        never returns a guest list, so both pickers rendered empty and the issue
+        forms could not be submitted at all. Pin the working route AND the trap.
+        """
+        self.auth(self.receptionist)
+        self.assertEqual(self.client.get("/api/admin/guests/").status_code, 200)
+        # The path the pages used to call is the guest booking detail view, not a
+        # guest list: it must not answer with a page of guests.
+        legacy = self.client.get("/api/bookings/guests/")
+        self.assertIn(legacy.status_code, (401, 403, 404), legacy.content[:200])
+        if legacy.status_code == 200:
+            self.fail("/api/bookings/guests/ unexpectedly returned a guest list")
 
     def test_other_departments_are_refused_everywhere(self):
         for actor in (self.housekeeper, self.waiter):

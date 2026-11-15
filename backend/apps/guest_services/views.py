@@ -1029,10 +1029,20 @@ class ReceptionAmenityAllocationView(APIView):
 
 
 class ReceptionAmenityStockView(APIView):
-    """Reception Department's current amenity balances."""
+    """Reception Department's current amenity balances.
+
+    Readable by BOTH halves of the station: the store keeper who allocates into
+    it (``guest_amenity.allocate``) and the front desk who issues out of it
+    (``guest_amenity.issue``). The issuing clerk has to see what is actually on
+    the Reception shelf before handing a soap to a guest — without this the desk
+    could only discover an empty allocation from the 400 that came back after the
+    guest had already been promised the item.
+    """
 
     permission_classes = [HasCapability]
-    required_capability = "guest_amenity.allocate"
+    # Any of these is enough: this is a read of the department's own shelf.
+    required_capabilities = ("guest_amenity.allocate", "guest_amenity.issue")
+    require_any_capability = True
 
     def get(self, request):
         from apps.inventory.models import StockBalance

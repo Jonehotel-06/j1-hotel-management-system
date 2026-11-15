@@ -220,6 +220,185 @@ class AmenityIssuanceTests(BaseAPITestCase):
         self.assertEqual(record1.pk, record2.pk)
 
 
+class CheckInAmenityKitTests(BaseAPITestCase):
+    """The "tissue, brush, paste and soap handed over at check-in" record.
+
+    Reported from the front desk: there was nowhere to record that the four basic
+    amenities had been given to a guest checking in. The station existed, but the
+    guest picker it depended on never populated (the page called a guest route
+    that does not exist), and nothing on the arrival path asked the question.
+
+    The desk now records the kit in one dialog, which is a small loop over the
+    SAME issuance endpoint — one call per item, so every item keeps its own
+    immutable row + stock movement. These tests pin what that loop must be able
+    to rely on:
+
+      * one item, one issuance, one movement — never one aggregate row;
+      * re-submitting the same kit (retry, double tap, refreshed dialog) records
+        nothing twice and deducts nothing twice;
+      * a short item is refused with a message that names it, while the rest of
+        the kit is still recorded;
+      * the issuance is attached to the stay (booking + room), so the check-in
+        record and the amenity history tell the same story.
+    """
+
+    BASE = "/api/admin/service-requests/reception/amenities"
+
+    def setUp(self):
+        super().setUp()
+        self.keeper = make_staff("kit-keeper@staff.dev", role=User.Role.STOREKEEPER)
+        self.receptionist = make_staff("kit-receptionist@staff.dev", role=User.Role.RECEPTIONIST)
+
+        self.reception_loc = StockLocation.objects.create(code="RECEPTION", name="Reception Desk")
+        self.main_store = StockLocation.objects.create(code="MAIN", name="Main Store")
+
+        self.items = {
+            "soap": StockItem.objects.create(
+                sku="AMY-SOAP", name="Guest soap", base_unit="BAR", standard_cost=Decimal("50.00")),
+            "toothbrush": StockItem.objects.create(
+                sku="AMY-TB", name="Guest toothbrush", base_unit="PC", standard_cost=Decimal("100.00")),
+            "toothpaste": StockItem.objects.create(
+                sku="AMY-TP", name="Guest toothpaste", base_unit="TUBE", standard_cost=Decimal("150.00")),
+            "tissue": StockItem.objects.create(
+                sku="AMY-TISSUE", name="Guest tissue", base_unit="PACK", standard_cost=Decimal("80.00")),
+        }
+        from apps.inventory.services.inventory_service import transfer_stock
+        for i, (key, item) in enumerate(sorted(self.items.items())):
+            record_stock_movement(
+                item=item, location=self.main_store, movement_type=StockMovement.Type.OPENING,
+                quantity_delta="50", source_key=f"kit-opening-{key}", actor=self.keeper,
+            )
+            # Toothpaste is deliberately short: two tubes on the shelf.
+            transfer_stock(
+                item=item, from_location=self.main_store, to_location=self.reception_loc,
+                quantity=Decimal("2") if key == "toothpaste" else Decimal("20"),
+                actor=self.keeper, transfer_key=f"kit-transfer-{key}", notes="Amenity allocation",
+            )
+
+        self.guest = make_guest("checkin-kit@example.com")
+        room_type = make_room_type("Check-in Kit Suite", price="12000.00")
+        self.booking = make_booking(
+            self.guest, room_type,
+            check_in=date.today(), check_out=date.today() + timedelta(days=2),
+            total="24000.00",
+        )
+
+    # ------------------------------ helpers --------------------------------
+    def issue(self, item, quantity="1", key=None, guest=None, booking=None):
+        self.auth(self.receptionist)
+        payload = {
+            "guest_id": (guest or self.guest).pk,
+            "booking_id": (booking or self.booking).pk,
+            "room_number": "101",
+            "item_id": item.pk,
+            "quantity": quantity,
+        }
+        if key:
+            payload["idempotency_key"] = key
+        return self.client.post(f"{self.BASE}/issue/", payload, format="json")
+
+    def shelf(self):
+        self.auth(self.receptionist)
+        response = self.client.get(f"{self.BASE}/stock/")
+        self.assertEqual(response.status_code, 200, response.content)
+        return {row["sku"]: Decimal(str(row["quantity"])) for row in response.json()["data"]["balances"]}
+
+    def bundle(self, day="2026-11-15", quantities=None):
+        """What the check-in dialog sends: the four basics, one call each."""
+        quantities = quantities or {"soap": "1", "toothbrush": "1", "toothpaste": "1", "tissue": "2"}
+        responses = {}
+        for key, quantity in quantities.items():
+            responses[key] = self.issue(
+                self.items[key], quantity=quantity,
+                key=f"checkin:{self.booking.booking_reference}:{self.items[key].pk}:{day}",
+            )
+        return responses
+
+    # ------------------------------- the kit -------------------------------
+    def test_each_amenity_in_the_kit_is_its_own_record_and_its_own_movement(self):
+        before = GuestAmenityIssue.objects.count()
+        movements_before = StockMovement.objects.count()
+
+        responses = self.bundle()
+
+        for key, response in responses.items():
+            self.assertIn(response.status_code, (200, 201), f"{key}: {response.content}")
+            self.assertTrue(response.json()["data"]["created"], f"{key} must be a new issuance")
+        self.assertEqual(GuestAmenityIssue.objects.count() - before, 4)
+        self.assertEqual(StockMovement.objects.count() - movements_before, 4)
+
+        # Each row states which guest, which stay, which room and what came off
+        # the Reception shelf — the four questions the desk could not answer.
+        for record in GuestAmenityIssue.objects.filter(booking=self.booking):
+            self.assertEqual(record.guest, self.guest)
+            self.assertEqual(record.room_number, "101")
+            self.assertEqual(record.location, self.reception_loc)
+            self.assertEqual(record.receptionist, self.receptionist)
+            self.assertEqual(
+                record.departmental_balance_before - record.quantity,
+                record.departmental_balance_after,
+            )
+
+    def test_the_shelf_actually_drops_by_the_kit(self):
+        before = self.shelf()
+        self.bundle()
+        after = self.shelf()
+        self.assertEqual(before["AMY-SOAP"] - after["AMY-SOAP"], Decimal("1.0000"))
+        self.assertEqual(before["AMY-TB"] - after["AMY-TB"], Decimal("1.0000"))
+        self.assertEqual(before["AMY-TP"] - after["AMY-TP"], Decimal("1.0000"))
+        self.assertEqual(before["AMY-TISSUE"] - after["AMY-TISSUE"], Decimal("2.0000"))
+
+    def test_resubmitting_the_same_kit_records_and_deducts_nothing_twice(self):
+        self.bundle()
+        shelf_after_first = self.shelf()
+        count_after_first = GuestAmenityIssue.objects.filter(booking=self.booking).count()
+
+        responses = self.bundle()          # the desk retries / the page is refreshed
+
+        for key, response in responses.items():
+            self.assertIn(response.status_code, (200, 201), f"{key}: {response.content}")
+            self.assertFalse(response.json()["data"]["created"], f"{key} was recorded twice")
+        self.assertEqual(GuestAmenityIssue.objects.filter(booking=self.booking).count(), count_after_first)
+        self.assertEqual(self.shelf(), shelf_after_first, "a retry must not move stock again")
+
+    def test_a_short_item_is_named_and_does_not_block_the_rest_of_the_kit(self):
+        responses = self.bundle(quantities={"soap": "1", "toothpaste": "5", "tissue": "1"})
+
+        self.assertIn(responses["soap"].status_code, (200, 201), responses["soap"].content)
+        self.assertIn(responses["tissue"].status_code, (200, 201), responses["tissue"].content)
+        self.assertEqual(responses["toothpaste"].status_code, 400, responses["toothpaste"].content)
+        body = str(responses["toothpaste"].content)
+        self.assertIn("AMY-TP", body, "the refusal must name the item the shelf is short of")
+
+        issued = set(
+            GuestAmenityIssue.objects.filter(booking=self.booking).values_list("item__sku", flat=True)
+        )
+        self.assertEqual(issued, {"AMY-SOAP", "AMY-TISSUE"})
+        # And the refused line left no movement behind.
+        self.assertFalse(
+            StockMovement.objects.filter(item=self.items["toothpaste"], type=StockMovement.Type.ISSUE).exists()
+        )
+
+    def test_the_record_points_back_at_the_stay(self):
+        self.bundle()
+        self.auth(self.receptionist)
+        response = self.client.get(f"{self.BASE}/issues/?booking_id={self.booking.pk}")
+        self.assertEqual(response.status_code, 200, response.content)
+        rows = response.json()["data"]["results"]
+        self.assertEqual(len(rows), 4)
+        self.assertEqual({row["booking"] for row in rows}, {self.booking.pk})
+        self.assertEqual({row["room_number"] for row in rows}, {"101"})
+        self.assertTrue(all(row["reference"].startswith("AMY") for row in rows))
+
+    def test_the_store_keeper_still_cannot_record_the_kit(self):
+        """Reading the shelf is a front-desk necessity; issuing is not."""
+        self.auth(self.keeper)
+        response = self.client.post(f"{self.BASE}/issue/", {
+            "guest_id": self.guest.pk, "item_id": self.items["soap"].pk, "quantity": "1",
+        }, format="json")
+        self.assertEqual(response.status_code, 403)
+
+
 class BreakfastEligibilityTests(BaseAPITestCase):
     """Breakfast eligibility is tied to active bookings and check-in dates."""
 

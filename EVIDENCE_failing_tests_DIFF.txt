@@ -1,0 +1,21 @@
+# Failure-set diff between the two full backend runs of 15 Nov 2026
+#   BEFORE = EVIDENCE_failing_tests_BEFORE_baseline.txt  (git stash push -- backend/, new tests + migration 0038 moved aside)
+#            Ran 2518 tests in 1373.668s — FAILED (failures=72, errors=20, skipped=27)
+#   AFTER  = EVIDENCE_failing_tests_AFTER_delivered.txt  (this delivery applied)
+#            Ran 2573 tests in 1385.408s — FAILED (failures=72, errors=20, skipped=27)
+#
+# $ comm -13 BEFORE AFTER      (tests that fail only with this delivery)
+FAIL: test_staff_request_is_pending_and_response_carries_no_biometric_values
+    -> NOT a regression. The test asserts assertNotIn("0.1", response.content) and the response
+       body contains the timestamp 2026-11-15T16:03:00.163611Z, whose fractional part begins
+       "0.1". It fails only when the enrolment lands in such a second. The whole module passes on
+       its own: `manage.py test tests.test_staff_face_verification` -> 24 tests, OK.
+       No biometric/attendance/staff file is touched by this delivery.
+
+#
+# $ comm -23 BEFORE AFTER      (tests that failed before and pass now)
+FAIL: test_exact_unavailable_and_automatic_assignment
+    -> The backend half of the reported "first room in every room type is occupied" defect. Fixed.
+
+#
+# Net: 0 new failures, 1 pre-existing failure fixed, 1 pre-existing flaky assertion unchanged.

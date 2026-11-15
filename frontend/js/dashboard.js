@@ -2170,6 +2170,314 @@
          failed attempt leaves no extension and no payment — so the desk can
          safely retry instead of having to unpick a half-extension.
      ====================================================================== */
+  /* ======================================================================
+     GUEST AMENITIES AT CHECK-IN — the missing "record what was handed over"
+
+     Reported from the desk: "There's nowhere to record that tissue, brush,
+     paste and soap has been given to the guest checking in." The Amenities
+     screen existed, but nothing on the arrival path asked the question, so the
+     four items went out of the drawer unrecorded.
+
+     This is that missing step. It is a thin, honest front end over the
+     endpoints that already exist — no new API and no second source of truth:
+
+       GET  /api/admin/service-requests/reception/amenities/stock/
+            what is actually on the Reception shelf right now
+       GET  /api/admin/service-requests/reception/amenities/issues/?booking_id=
+            what has already been recorded for THIS stay
+       POST /api/admin/service-requests/reception/amenities/issue/
+            one immutable issuance + one stock movement per item
+
+     Rules kept:
+       · only items with Reception stock are offered, so the desk can never
+         promise a soap the department does not hold;
+       · a quantity can never exceed the shelf — the server checks again and
+         its message is the one shown;
+       · every line is submitted with a stable idempotency key
+         (booking + item + service date), so a double tap or a lost reply can
+         never record (or deduct) the same amenity twice;
+       · a failure is reported as a failure. The modal stays open with the
+         items that did go through listed, and nothing claims success.
+     ====================================================================== */
+  const AMENITY_STOCK_PATH = "/api/admin/service-requests/reception/amenities/stock/";
+  const AMENITY_ISSUE_PATH = "/api/admin/service-requests/reception/amenities/issue/";
+  const AMENITY_ISSUES_PATH = "/api/admin/service-requests/reception/amenities/issues/";
+
+  /* The four basic amenities, recognised by SKU or name so the desk sees
+     "Soap", not "AMN-SOAP (BAR)". Anything else on the Reception shelf is still
+     listed — it is real stock and may be handed over too. */
+  const BASIC_AMENITIES = [
+    { key: "soap", label: "Soap", match: /soap/i },
+    { key: "toothbrush", label: "Toothbrush", match: /brush/i },
+    { key: "toothpaste", label: "Toothpaste", match: /paste/i },
+    { key: "tissue", label: "Tissue", match: /tissue|tissue roll|toilet paper/i },
+  ];
+
+  /** Turn a Reception stock payload into the pickable shelf (pure). */
+  function amenityIssueCatalogue(payload) {
+    const rows = (payload && payload.balances) || [];
+    return rows.map((row) => {
+      const name = String(row.name || row.sku || "");
+      const basic = BASIC_AMENITIES.find((b) => b.match.test(name) || b.match.test(String(row.sku || "")));
+      return {
+        item_id: row.item_id,
+        sku: row.sku || "",
+        name: basic ? basic.label : name,
+        unit: row.base_unit || "",
+        available: Number(row.quantity || 0),
+        basic: !!basic,
+        order: basic ? BASIC_AMENITIES.findIndex((b) => b.key === basic.key) : BASIC_AMENITIES.length,
+      };
+    })
+      .filter((row) => row.item_id && row.available > 0)
+      .sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name));
+  }
+
+  /** Idempotency key: one deliberate issuance per booking × item × day (pure). */
+  function amenityIssueKey(bookingLookup, itemId, isoDate) {
+    return "checkin:" + String(bookingLookup || "") + ":" + String(itemId || "") + ":" + String(isoDate || "");
+  }
+
+  /** Split the desk's picks into submittable lines and the problems with them
+   *  (pure — no DOM, no network, so the rule itself is testable). */
+  function amenityIssuePlan(catalogue, picks) {
+    const byId = {};
+    (catalogue || []).forEach((row) => { byId[String(row.item_id)] = row; });
+    const lines = [];
+    const problems = [];
+    Object.keys(picks || {}).forEach((itemId) => {
+      const wanted = Number(picks[itemId] || 0);
+      if (!(wanted > 0)) return;
+      const row = byId[String(itemId)];
+      if (!row) {
+        problems.push("That item is no longer on the Reception shelf — reload and try again.");
+        return;
+      }
+      if (wanted > row.available) {
+        problems.push("Only " + row.available + " " + (row.unit || "unit") + " of " + row.name +
+          " are on the Reception shelf; " + wanted + " requested.");
+        return;
+      }
+      lines.push({ item_id: row.item_id, quantity: wanted, name: row.name, unit: row.unit });
+    });
+    return { lines, problems };
+  }
+
+  /** What was already recorded for this booking, as "Soap ×2" strings (pure). */
+  function amenityIssueSummary(issues) {
+    const rows = (issues && issues.results) || [];
+    if (!rows.length) return "";
+    return rows.map((row) => (row.item_name || row.item_sku || "Item") + " \u00d7 " + row.quantity).join(", ");
+  }
+
+  /**
+   * Open the record-what-was-handed-over dialog for one stay.
+   * opts: { lookup | bookingReference, guestId, roomNumber, title, allowEmpty }
+   * Resolves with { recorded, already, lines } or null when cancelled.
+   */
+  function amenityIssueModal(opts = {}) {
+    opts = opts || {};
+    const lookup = opts.lookup || opts.bookingReference || "";
+    const toast = (msg, kind) => window.JONE.ui.toast(msg, kind);
+    if (!lookup && !opts.guestId) {
+      toast("This stay has no booking reference — amenities cannot be recorded against it.", "error");
+      return Promise.resolve(null);
+    }
+
+    const detail = lookup
+      ? window.API.get("/api/admin/bookings/" + encodeURIComponent(lookup) + "/").catch(() => null)
+      : Promise.resolve(null);
+
+    return detail.then((booking) => {
+      const guestId = opts.guestId || (booking && booking.guest && booking.guest.id) || null;
+      if (!guestId) {
+        toast("This booking has no guest record — reload the page and try again.", "error");
+        return null;
+      }
+      const assignments = (booking && booking.room_assignments) || [];
+      const roomNumber = opts.roomNumber ||
+        assignments.map((a) => a.room_number).filter(Boolean).join(", ");
+      const bookingId = booking && booking.id;
+
+      return Promise.all([
+        window.API.get(AMENITY_STOCK_PATH).catch((err) => ({ error: err })),
+        bookingId
+          ? window.API.get(AMENITY_ISSUES_PATH + "?booking_id=" + encodeURIComponent(bookingId)).catch(() => ({ results: [] }))
+          : Promise.resolve({ results: [] }),
+      ]).then(([stock, issues]) => {
+        if (!stock || stock.error) {
+          toast((stock && stock.error && stock.error.message) ||
+            "The Reception amenity shelf could not be read.", "error");
+          return null;
+        }
+        const catalogue = amenityIssueCatalogue(stock);
+        const already = amenityIssueSummary(issues);
+
+        if (!catalogue.length) {
+          /* Never a fake tick-box: say exactly what is missing and where it is
+             fixed, and offer the one screen that can fix it. */
+          return window.JONE.ui.confirm({
+            title: opts.title || "Record amenities given to the guest",
+            message: "Reception has no amenity stock to hand out yet, so nothing can be recorded. " +
+              "The Store Keeper allocates soap, toothbrush, toothpaste and tissue to Reception on the " +
+              "Amenities screen (Allocate tab)." + (already ? " Already recorded for this stay: " + already + "." : ""),
+            confirmText: "Open Amenities",
+            cancelText: "Close",
+          }).then((go) => {
+            if (go) window.location.href = "amenities.html";
+            return null;
+          });
+        }
+
+        const picks = {};
+        const rowsHtml = catalogue.map((row, index) => (
+          '<tr><td><strong>' + window.JONE.esc(row.name) + "</strong>" +
+          (row.sku ? ' <span class="caption">' + window.JONE.esc(row.sku) + "</span>" : "") +
+          '</td><td class="num">' + window.JONE.esc(String(row.available)) + " " + window.JONE.esc(row.unit) +
+          '</td><td style="width:9rem;"><input class="input" type="number" min="0" step="1" value="0" ' +
+          'inputmode="numeric" data-amenity-qty="' + row.item_id + '" aria-label="' +
+          window.JONE.esc("Quantity of " + row.name + " given") + '"></td></tr>'
+        )).join("");
+
+        return window.JONE.dashboard.formModal({
+          title: opts.title || "Record amenities given to the guest",
+          wide: true,
+          submitText: "Record amenities",
+          fields: [{
+            name: "amenities",
+            type: "custom",
+            render(mount) {
+              mount.innerHTML =
+                (already ? '<p class="caption" style="margin:0 0 .5rem;">Recorded earlier for this stay: ' +
+                  window.JONE.esc(already) + "</p>" : "") +
+                '<div class="table-wrap"><table class="table"><thead><tr><th>Item</th>' +
+                '<th class="num">On the Reception shelf</th><th>Give now</th></tr></thead><tbody>' +
+                rowsHtml + "</tbody></table></div>" +
+                '<p class="hint" style="margin:.5rem 0 0;">Set how many of each item you handed to the guest. ' +
+                "Leave the rest at 0. Each item is recorded once per stay per day; the stock leaves Reception " +
+                "and the issuance is kept in the amenity history.</p>";
+              mount.querySelectorAll("[data-amenity-qty]").forEach((input) => {
+                input.addEventListener("input", () => {
+                  const id = input.getAttribute("data-amenity-qty");
+                  picks[id] = input.value;
+                });
+                picks[input.getAttribute("data-amenity-qty")] = input.value;
+              });
+            },
+            getValue() { return { amenities: Object.assign({}, picks) }; },
+            validate() {
+              const plan = amenityIssuePlan(catalogue, picks);
+              if (plan.problems.length) return plan.problems[0];
+              if (!plan.lines.length) return "Choose at least one amenity to record, or close this window.";
+              return null;
+            },
+          }],
+          onSubmit(values) {
+            const plan = amenityIssuePlan(catalogue, (values && values.amenities) || picks);
+            if (!plan.lines.length || plan.problems.length) {
+              throw new Error(plan.problems[0] || "Choose at least one amenity to record.");
+            }
+            const day = (window.JONE.todayISO && window.JONE.todayISO()) || new Date().toISOString().slice(0, 10);
+            let recorded = 0;
+            let existing = 0;
+            const failed = [];
+
+            /* Sequential, deliberately: each call moves real stock, and the desk
+               reads one outcome per item rather than a race. */
+            const run = (index) => {
+              if (index >= plan.lines.length) {
+                if (failed.length) {
+                  throw new Error(
+                    (recorded + existing ? (recorded + existing) + " recorded, but " : "") +
+                    failed.length + " could not be recorded: " + failed.join("; ")
+                  );
+                }
+                toast(recorded
+                  ? recorded + " amenity item(s) recorded for " + (booking.guest_name || "the guest") + "."
+                  : "Those amenities were already recorded for this stay today.", recorded ? "success" : "info");
+                return { recorded, already: existing, lines: plan.lines };
+              }
+              const line = plan.lines[index];
+              return window.API.post(AMENITY_ISSUE_PATH, {
+                guest_id: guestId,
+                booking_id: bookingId || null,
+                room_number: roomNumber || "",
+                item_id: line.item_id,
+                quantity: String(line.quantity),
+                notes: "Handed over at check-in",
+                idempotency_key: amenityIssueKey(lookup || bookingId, line.item_id, day),
+              }).then((data) => {
+                if (data && data.created === false) existing += 1; else recorded += 1;
+                return run(index + 1);
+              }).catch((err) => {
+                failed.push(line.name + ": " + ((err && err.message) || "failed"));
+                return run(index + 1);
+              });
+            };
+            return run(0);
+          },
+        });
+      });
+    });
+  }
+
+  /* ======================================================================
+     STAY EXTENSION — the pure rules behind the "Extend stay" dialog
+
+     These were inline in the modal, where nothing could test them. Each one
+     answers a question the desk actually asks, and each answer used to be
+     decided in the middle of DOM code:
+
+       extensionRequestPayload  what exactly goes to /extend-quote/ and
+                                /extend-stay/ (a date OR a number of nights);
+       extensionPaymentError    is the money handed over valid for this quote?
+       extensionNotExtendable   why can this stay not be extended at all?
+
+     Kept as plain functions so the browser and the test harness decide the same
+     way — the reported failure ("the date and the nights are failing") could not
+     be reproduced from either side while these rules were unreachable.
+     ====================================================================== */
+  function extensionRequestPayload(dateValue, nightsValue) {
+    const date = String(dateValue || "").trim();
+    const nightsText = String(nightsValue == null ? "" : nightsValue).trim();
+    if (date) return { payload: { new_check_out: date }, mode: "date" };
+    if (nightsText) {
+      const nights = Number(nightsText);
+      if (!isFinite(nights) || Math.floor(nights) !== nights) {
+        return { error: "Enter a whole number of nights, e.g. 2." };
+      }
+      if (nights < 1) return { error: "An extension is at least one night." };
+      if (nights > 365) return { error: "An extension cannot be longer than 365 nights." };
+      return { payload: { additional_nights: nights }, mode: "nights" };
+    }
+    return { error: "Choose a new check-out date, or how many nights to add, first." };
+  }
+
+  /** The desk's money entry, checked against the server's own quote (pure). */
+  function extensionPaymentError(paidRaw, extensionAmount) {
+    const raw = String(paidRaw == null ? "" : paidRaw).trim();
+    if (raw === "") return null;               // empty = "the guest paid the full cost"
+    const paid = Number(raw);
+    if (!isFinite(paid) || paid < 0) {
+      return "Enter a valid amount received, or leave it empty to record the full cost.";
+    }
+    const total = Number(extensionAmount);
+    if (isFinite(total) && paid > total + 0.0001) {
+      return "The guest cannot pay more than the extension costs.";
+    }
+    return null;
+  }
+
+  /** Why the server says this stay cannot be extended (pure; "" when it can). */
+  function extensionNotExtendable(history) {
+    if (!history || typeof history !== "object") return "";
+    if (history.can_extend === false) {
+      return history.can_extend_reason ||
+        "This stay cannot be extended. Check the booking's status and its assigned room.";
+    }
+    return "";
+  }
+
   function extendStayModal(booking, opts = {}) {
     opts = opts || {};
     const b = booking || {};
@@ -2278,7 +2586,15 @@
 
       let quote = null;       // the last server quote that priced successfully
       let quoting = false;    // an in-flight quote request
-      let history = null;     // { original_check_out, count }
+      let history = null;     // { original_check_out, count, can_extend, ... }
+      /* The last reason the server gave for refusing to price the extension. Kept
+         so pressing Confirm without a price repeats THAT reason instead of
+         blaming the empty form ("choose a date first") when a date was chosen and
+         the server refused it — the reported "it just says it can't be extended". */
+      let lastQuoteError = "";
+      /* A stay the server says cannot be extended at all (wrong status, no
+         assigned room): its reason must survive later typing attempts. */
+      let blockedReason = "";
 
       function showError(msg) {
         const box = q("[data-ex-error]");
@@ -2310,12 +2626,10 @@
       /* A quote is a preview, recomputed on every keystroke: the desk sees the
          real cost and the real conflict before committing anything. */
       async function refreshQuote() {
-        const dateVal = q("[data-ex-date]").value;
-        const nightsVal = q("[data-ex-nights]").value;
-        const payload = {};
-        if (dateVal) payload.new_check_out = dateVal;
-        else if (nightsVal && Number(nightsVal) > 0) payload.additional_nights = Number(nightsVal);
-        else { quote = null; paintQuote(); showError(""); return; }
+        if (blockedReason) { quote = null; paintQuote(); return; }
+        const request = extensionRequestPayload(q("[data-ex-date]").value, q("[data-ex-nights]").value);
+        if (request.error) { quote = null; paintQuote(); showError(""); return; }
+        const payload = request.payload;
         if (quoting) return;
         quoting = true;
         submit.disabled = true;
@@ -2325,6 +2639,7 @@
           /* The desk is told why the guest's own room cannot be extended into —
              naming the conflicting room beats a bare "unavailable". */
           showError("");
+          lastQuoteError = "";
           const datesErr = q("[data-ex-dates-error]");
           if (datesErr) { datesErr.textContent = ""; datesErr.style.display = "none"; }
           if (quote) {
@@ -2334,6 +2649,7 @@
         } catch (err) {
           quote = null;
           const msg = (err && err.message) || "The extension could not be priced.";
+          lastQuoteError = msg;
           const datesErr = q("[data-ex-dates-error]");
           if (datesErr) { datesErr.textContent = msg; datesErr.style.display = "block"; }
           showError("");
@@ -2365,6 +2681,21 @@
             q("[data-ex-original]").textContent = JONE.formatDate(history.original_check_out, "mid");
           }
         } catch (_) { /* history is context, not a gate */ }
+        /* The history call also reports whether this stay may be extended at
+           all (status, assigned room). Saying so BEFORE the desk types a date
+           beats a refusal after it: the same answer used to cost a round trip
+           and looked like the date was being rejected. */
+        const notExtendable = extensionNotExtendable(history);
+        if (notExtendable) {
+          blockedReason = notExtendable;
+          const datesErr = q("[data-ex-dates-error]");
+          if (datesErr) { datesErr.textContent = notExtendable; datesErr.style.display = "block"; }
+          ["[data-ex-date]", "[data-ex-nights]", "[data-ex-paid]"].forEach((sel) => {
+            const el = q(sel);
+            if (el) el.disabled = true;
+          });
+          submit.disabled = true;
+        }
       })();
 
       let closed = false;
@@ -2386,7 +2717,8 @@
         if (!JONE.guardSubmit(submit)) return;
         showError("");
         if (!quote) {
-          showError("Choose a new check-out date, or how many nights to add, first.");
+          showError(blockedReason || lastQuoteError ||
+            "Choose a new check-out date, or how many nights to add, first.");
           JONE.releaseGuard(submit);
           return;
         }
@@ -2395,20 +2727,20 @@
           JONE.releaseGuard(submit);
           return;
         }
-        const payload = {};
-        if (q("[data-ex-date]").value) payload.new_check_out = q("[data-ex-date]").value;
-        else payload.additional_nights = Number(q("[data-ex-nights]").value);
+        /* The same rule as the quote, re-applied so a stale field cannot slip a
+           different date/night count past the price the desk was shown. */
+        const request = extensionRequestPayload(q("[data-ex-date]").value, q("[data-ex-nights]").value);
+        if (request.error) {
+          showError(request.error);
+          JONE.releaseGuard(submit);
+          return;
+        }
+        const payload = Object.assign({}, request.payload);
         const paidRaw = String(q("[data-ex-paid]").value || "").trim();
         if (paidRaw !== "") {
-          const paid = Number(paidRaw);
-          if (!isFinite(paid) || paid < 0) {
-            showError("Enter a valid amount received, or leave it empty to record the full cost.");
-            JONE.releaseGuard(submit);
-            return;
-          }
-          if (paid > Number(quote.extension_amount)) {
-            showError("The guest cannot pay more than the extension costs (" +
-              currencyText(quote.extension_amount) + ").");
+          const moneyProblem = extensionPaymentError(paidRaw, quote.extension_amount);
+          if (moneyProblem) {
+            showError(moneyProblem + " (" + currencyText(quote.extension_amount) + ")");
             JONE.releaseGuard(submit);
             return;
           }
@@ -2935,7 +3267,9 @@
     imageFileIssue, imageExtension, IMAGE_ACCEPT, IMAGE_TYPES, IMAGE_EXTENSIONS,
     IMAGE_EXT_LABEL, formatBytes,
     paymentModal, canRecordPayment, staffProfileModal, editStaffModal, roomTypeRoomsModal,
-    extendStayModal,
+    /* Check-in amenities: the record-what-was-handed-over step + its pure rules. */
+    amenityIssueModal, amenityIssueCatalogue, amenityIssuePlan, amenityIssueSummary, amenityIssueKey,
+    extendStayModal, extensionRequestPayload, extensionPaymentError, extensionNotExtendable,
     deskCash,
     guestProfileModal, paymentDetailPanel, openPanel, closePanel,
   };

@@ -103,7 +103,15 @@ test("restriction list is read page by page, never one oversized page", () => {
 test("api.js separates a missing record from an unserved route on 404", () => {
   const src = read("js/api.js");
   assert.match(src, /const NOT_FOUND_UNSERVED =/);
-  assert.match(src, /return data == null \? NOT_FOUND_UNSERVED : NOT_FOUND_FALLBACK;/);
+  /* This assertion used to pin `data == null`, which is UNREACHABLE: a Django
+     HTML 404 arrives as a TEXT body, so `data` is a string and the honest
+     "unserved route" message could never be shown. The front desk's report
+     ("The requested item could not be found." on Extend stay) was exactly that
+     dead branch. A 404 is now only treated as a real record when the body is a
+     JSON object; anything else (HTML, text, empty) is an unserved route.
+     The behavioural proof lives in tests-js/test-extend-stay-flow.js. */
+  assert.match(src, /const unserved = data == null \|\| typeof data !== "object";/);
+  assert.match(src, /\? NOT_FOUND_UNSERVED : NOT_FOUND_FALLBACK/);
   assert.match(src, /deployment does not include this feature yet/);
 });
 

@@ -38,6 +38,20 @@
     loadItemSelects();
     loadLocationSelect();
     loadGuestSelect();
+    loadIssueItemSelect();
+
+    // Guest search (server-side): the desk types a name instead of scrolling
+    // through every guest the hotel has ever had.
+    var guestSearch = document.querySelector("[data-amenity-guest-search]");
+    if (guestSearch) {
+      guestSearch.addEventListener("input", function () {
+        if (guestSearchTimer) clearTimeout(guestSearchTimer);
+        guestSearchTimer = setTimeout(function () { loadGuestSelect(guestSearch.value); }, 250);
+      });
+    }
+
+    // ?booking=REF & friends: preselect the stay being recorded against.
+    applyDeepLink();
 
     // Refresh buttons
     var refreshStock = document.querySelector("[data-amenity-refresh]");
@@ -59,8 +73,12 @@
 
   /* ------------------------------ Dropdowns -------------------------------- */
 
+  /* The ALLOCATE dropdown needs the whole catalogue (the store keeper is
+     choosing what to send to Reception). The ISSUE dropdown must NOT: it can
+     only offer what Reception actually holds, otherwise the desk picks a soap
+     and gets a 400 after the guest has been promised it. */
   function loadItemSelects() {
-    var selects = document.querySelectorAll("[data-amenity-item-select], [data-amenity-issue-item-select]");
+    var selects = document.querySelectorAll("[data-amenity-item-select]");
     if (!selects.length) return;
     API.get("/api/admin/inventory/items/?page_size=500").then(function (data) {
       var items = (data.results || data.items || []).filter(function (i) {
@@ -75,6 +93,31 @@
           sel.appendChild(opt);
         });
       });
+    }).catch(function () {});
+  }
+
+  /* Issue dropdown = the Reception Department's own shelf. */
+  function loadIssueItemSelect() {
+    var sel = document.querySelector("[data-amenity-issue-item-select]");
+    if (!sel) return;
+    var keep = sel.value;
+    API.get("/api/admin/service-requests/reception/amenities/stock/").then(function (data) {
+      var rows = (data && data.balances) || [];
+      var available = rows.filter(function (r) { return Number(r.quantity) > 0; });
+      sel.innerHTML = '<option value="">— Select —</option>';
+      available.forEach(function (row) {
+        var opt = document.createElement("option");
+        opt.value = row.item_id;
+        opt.textContent = row.name + " — " + row.quantity + " " + row.base_unit + " on the Reception shelf";
+        sel.appendChild(opt);
+      });
+      if (!available.length) {
+        sel.innerHTML = '<option value="">Nothing on the Reception shelf yet</option>';
+        sel.disabled = true;
+      } else {
+        sel.disabled = false;
+        if (keep) sel.value = keep;
+      }
     }).catch(function () {});
   }
 
@@ -94,19 +137,87 @@
     }).catch(function () {});
   }
 
-  function loadGuestSelect() {
+  /* Guest picker.
+
+     It used to load 500 guests and hope the right one was in the first page,
+     with no search and no tie to the stay being checked in. Now:
+       · the list is a SEARCH result (name/email/phone, debounced), not a dumb
+         500-row page;
+       · a deep link (?booking=REF, as the check-in screen and the booking page
+         pass it) preselects the guest, fills the room and keeps the booking id,
+         so the issuance is attached to the stay it belongs to. */
+  var guestSearchTimer = null;
+  var linkedBooking = null;
+
+  function guestLabel(g) {
+    var name = ((g.first_name || "") + " " + (g.last_name || "")).trim() || g.full_name || "Guest";
+    return name + (g.email ? " (" + g.email + ")" : (g.phone ? " (" + g.phone + ")" : ""));
+  }
+
+  function loadGuestSelect(term) {
     var sel = document.querySelector("[data-amenity-guest-select]");
     if (!sel) return;
-    API.get("/api/bookings/guests/?page_size=500").then(function (data) {
+    var q = String(term || "").trim();
+    /* /api/admin/guests/ is the staff guest list (searchable). The old path,
+       /api/bookings/guests/, does not exist: it falls through the guest booking
+       route as <lookup>="guests" and 404s, which is why this dropdown used to
+       stay empty and the Issue form could never be submitted. */
+    var url = "/api/admin/guests/?page_size=50" + (q ? "&search=" + encodeURIComponent(q) : "");
+    API.get(url).then(function (data) {
       var guests = data.results || data.items || [];
-      sel.innerHTML = '<option value="">— Select —</option>';
+      var keep = sel.value;
+      sel.innerHTML = '<option value="">' + (q ? "— No match; refine the search —" : "— Search above, then select —") + "</option>";
       guests.forEach(function (g) {
         var opt = document.createElement("option");
         opt.value = g.id;
-        opt.textContent = (g.first_name || "") + " " + (g.last_name || "") + " (" + (g.email || "") + ")";
+        opt.textContent = guestLabel(g);
         sel.appendChild(opt);
       });
+      if (keep) sel.value = keep;
+      if (linkedBooking && linkedBooking.guest && linkedBooking.guest.id) sel.value = linkedBooking.guest.id;
     }).catch(function () {});
+  }
+
+  /* ?booking=REF / ?guest=ID / ?room=N — the "record it later" path, and the
+     link the check-in screen can hand over when the desk skipped the prompt. */
+  function applyDeepLink() {
+    var params = new URLSearchParams(window.location.search);
+    var bookingRef = (params.get("booking") || params.get("ref") || "").trim();
+    var guestId = (params.get("guest") || "").trim();
+    var room = (params.get("room") || "").trim();
+    var context = document.querySelector("[data-amenity-issue-context]");
+    var form = document.querySelector("[data-amenity-issue-form]");
+    if (room && form && form.room_number) form.room_number.value = room;
+    if (!bookingRef) {
+      if (guestId) loadGuestSelect("");
+      return;
+    }
+    API.get("/api/admin/bookings/" + encodeURIComponent(bookingRef) + "/").then(function (booking) {
+      linkedBooking = booking || null;
+      if (!booking || !form) return;
+      if (form.booking_id) form.booking_id.value = booking.id || "";
+      if (form.guest_id && booking.guest && booking.guest.id) {
+        // Keep the guest in the list even when the search box is untouched.
+        var sel = form.guest_id;
+        if (!Array.prototype.some.call(sel.options, function (o) { return String(o.value) === String(booking.guest.id); })) {
+          var opt = document.createElement("option");
+          opt.value = booking.guest.id;
+          opt.textContent = guestLabel(booking.guest);
+          sel.appendChild(opt);
+        }
+        sel.value = booking.guest.id;
+      }
+      var rooms = (booking.room_assignments || []).map(function (a) { return a.room_number; }).filter(Boolean);
+      if (!room && rooms.length && form.room_number) form.room_number.value = rooms.join(", ");
+      if (context) {
+        var guestName = booking.guest_name || (booking.guest && booking.guest.full_name) || "";
+        context.textContent = "Recording amenities against " + (booking.booking_reference || bookingRef) +
+          (guestName ? " — " + guestName : "") +
+          (rooms.length ? " (room " + rooms.join(", ") + ")" : "") + ".";
+      }
+    }).catch(function () {
+      if (context) context.textContent = "That booking could not be loaded; pick the guest manually.";
+    });
   }
 
   /* ------------------------------ Load data ------------------------------- */
@@ -201,6 +312,9 @@
       quantity: form.quantity.value,
       notes: form.notes.value,
     };
+    /* Attach the issuance to the stay when we know it (deep link / check-in). */
+    var bookingId = form.booking_id && form.booking_id.value ? parseInt(form.booking_id.value) : null;
+    if (bookingId) payload.booking_id = bookingId;
     if (!payload.guest_id || !payload.item_id || !payload.quantity) {
       UI.toast("Please fill in all required fields.", "warning");
       return;
@@ -209,6 +323,8 @@
       UI.toast(data.created ? "Amenity issued to guest." : "Issuance already recorded.", "success");
       form.reset();
       loadStock();
+      loadIssueItemSelect();
+      loadHistory();
     }).catch(function (err) {
       UI.toast("Issuance failed: " + (err.message || ""), "error");
     });

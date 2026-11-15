@@ -65,7 +65,11 @@
   function loadGuestSelects() {
     var selects = document.querySelectorAll("[data-breakfast-guest-select], [data-breakfast-elig-guest-select]");
     if (!selects.length) return;
-    API.get("/api/bookings/guests/?page_size=500").then(function (data) {
+    /* Staff guest list. The old "/api/bookings/guests/" is not a route: it is
+       swallowed by the guest booking detail route as <lookup>="guests", 404s,
+       and the catch below left both pickers with no options — so a breakfast
+       issuance could never be submitted either. */
+    API.get("/api/admin/guests/?page_size=200").then(function (data) {
       var guests = data.results || data.items || [];
       selects.forEach(function (sel) {
         sel.innerHTML = '<option value="">— Select —</option>';
