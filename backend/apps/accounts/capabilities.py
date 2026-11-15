@@ -122,6 +122,9 @@ ROLE_CAPABILITY_CODES = {
         "shift.manage", "attendance.clock",
         "attendance.manage", "leave.request", "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
         "reports.financial.view", "terminal.manage", "service_qr.manage", "sign_in.any_device",
+        # See GENERAL_MANAGER: the management tier covers the front desk's
+        # guest-amenity allocation, issuance and breakfast recording.
+        "guest_amenity.allocate", "guest_amenity.issue", "breakfast.issue",
     }),
     "RECEPTIONIST": frozenset({
         "booking.read", "booking.manage", "stay.check_in", "stay.check_out", "folio.view", "folio.charge.post",
@@ -179,6 +182,12 @@ ROLE_CAPABILITY_CODES = {
         "leave.request", "leave.approve", "payroll.view", "payroll.manage", "payroll.approve",
         "reports.financial.view", "terminal.manage", "service_qr.manage",
         "sign_in.any_device",
+        # Guest amenities and complementary breakfast (migration 0037 granted the
+        # allocation; issue/record belong to the same station, and the management
+        # tier must be able to cover the front desk. ROLE_CAPABILITY_CODES had
+        # drifted from what 0037 seeded — it omitted allocate entirely — so the
+        # matrix an auditor reads no longer matched the grants the API enforces.)
+        "guest_amenity.allocate", "guest_amenity.issue", "breakfast.issue",
     }),
     "RESTAURANT_MANAGER": frozenset({
         "restaurant.order.manage", "restaurant.table.manage", "restaurant.menu.manage", "payment.capture",

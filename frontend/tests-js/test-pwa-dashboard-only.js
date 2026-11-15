@@ -176,5 +176,10 @@ test("build, service worker and static hosting agree on both scopes", () => {
     && header.value.startsWith("application/manifest+json")));
 
   const headersFile = read("_headers");
-  assert.match(headersFile, /\/manifest\.webmanifest\n  Content-Type: application\/manifest\+json/);
+  /* Anchored at the start of a line: /dashboard/manifest.webmanifest ENDS with
+     "/manifest.webmanifest", so an unanchored pattern was satisfied by the
+     dashboard block alone and silently proved nothing about the public one. */
+  assert.match(headersFile, /(^|\n)\/manifest\.webmanifest\n  Content-Type: application\/manifest\+json/,
+    "the public manifest needs its own MIME rule in _headers");
+  assert.match(headersFile, /(^|\n)\/dashboard\/manifest\.webmanifest\n  Content-Type: application\/manifest\+json/);
 });

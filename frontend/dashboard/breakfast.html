@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <script>
+/* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
 (function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -10,13 +11,14 @@
 <title>Breakfast | J-ONE Staff</title>
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
-<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="stylesheet" href="../css/main.css?v=1.1.25">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
+<meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.23">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png">
 </head>
 <body>
 <div class="dash">
@@ -24,7 +26,35 @@
     <div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div>
     <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
     <script>
-    (function(){\n      var nav=document.querySelector("[data-dash-nav]");\n      if(!nav)return;\n      var role=null;\n      try{\n        var raw=window["local"+"Storage"].getItem("jone.auth");\n        if(raw){var p=JSON.parse(raw)||{};var u=p.user||p;role=(u&&u.role)||p.role||null;if(role)role=String(role).toLowerCase();}\n      }catch(e){role=null;}\n      if(!role)return;\n      var snap=null;\n      try{snap=JSON.parse(window.sessionStorage.getItem("jone.dash.nav")||"null");}catch(e){snap=null;}\n      if(!snap||snap.role!==role||typeof snap.html!=="string"||!snap.html)return;\n      nav.innerHTML=snap.html;\n      var here=location.pathname.split("/").pop()||"index.html";\n      var items=nav.querySelectorAll("a.dash-nav-item");\n      for(var i=0;i<items.length;i++){\n        items[i].classList.remove("is-active");\n        items[i].removeAttribute("aria-current");\n        var href=(items[i].getAttribute("href")||"").split("?")[0].split("#")[0];\n        if(href===here){items[i].classList.add("is-active");items[i].setAttribute("aria-current","page");}\n      }\n      nav.setAttribute("data-nav-snapshot","1");\n    })();
+    /* Sidebar pre-paint: the menu is painted from this ROLE's cached snapshot
+       during HTML parsing, so it is on screen with the page instead of
+       rebuilding after the dashboard scripts boot. The snapshot is used only
+       when the role it was rendered for is the role in this browser's stored
+       session; anything else (no cache, another account, signed out) leaves the
+       menu empty — the dashboard script then renders it properly. */
+    (function(){
+      var nav=document.querySelector("[data-dash-nav]");
+      if(!nav)return;
+      var role=null;
+      try{
+        var raw=window["local"+"Storage"].getItem("jone.auth");
+        if(raw){var p=JSON.parse(raw)||{};var u=p.user||p;role=(u&&u.role)||p.role||null;if(role)role=String(role).toLowerCase();}
+      }catch(e){role=null;}
+      if(!role)return;
+      var snap=null;
+      try{snap=JSON.parse(window.sessionStorage.getItem("jone.dash.nav")||"null");}catch(e){snap=null;}
+      if(!snap||snap.role!==role||typeof snap.html!=="string"||!snap.html)return;
+      nav.innerHTML=snap.html;
+      var here=location.pathname.split("/").pop()||"index.html";
+      var items=nav.querySelectorAll("a.dash-nav-item");
+      for(var i=0;i<items.length;i++){
+        items[i].classList.remove("is-active");
+        items[i].removeAttribute("aria-current");
+        var href=(items[i].getAttribute("href")||"").split("?")[0].split("#")[0];
+        if(href===here){items[i].classList.add("is-active");items[i].setAttribute("aria-current","page");}
+      }
+      nav.setAttribute("data-nav-snapshot","1");
+    })();
     </script>
     <div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,.2);"><span data-icon="logOut" data-size="16"></span> Sign out</button></div>
   </aside>
@@ -154,17 +184,28 @@
   </div>
 </div>
 <div class="mobile-drawer" aria-hidden="true"><div class="mobile-drawer-backdrop"></div><div class="mobile-drawer-content" data-drawer-close></div></div>
-<script src="../js/config.js"></script>
-<script src="../js/utils.js"></script>
-<script src="../js/icons.js"></script>
-<script src="../js/api.js"></script>
-<script src="../js/theme.js"></script>
-<script src="../js/ui.js"></script>
-<script src="../js/hotel-data.js"></script>
-<script src="../js/navigation.js"></script>
-<script src="../js/pwa.js"></script>
-<script src="../js/version.js"></script>
-<script src="../js/dashboard.js"></script>
-<script src="../js/breakfast.js"></script>
+<script src="../js/runtime-config.js?v=1.1.25"></script>
+<script src="../js/config.js?v=1.1.25"></script>
+<script src="../js/utils.js?v=1.1.25"></script>
+<script src="../js/icons.js?v=1.1.25"></script>
+<script src="../js/api.js?v=1.1.25"></script>
+<script src="../js/theme.js?v=1.1.25"></script>
+<script src="../js/ui.js?v=1.1.25"></script>
+<script src="../js/auth.js?v=1.1.25"></script>
+<script src="../js/hotel-data.js?v=1.1.25"></script>
+<script src="../js/navigation.js?v=1.1.25"></script>
+<script src="../js/pwa.js?v=1.1.25"></script>
+<script src="../js/dashboard.js?v=1.1.25"></script>
+<script>
+  /* Shell boot — the same guard every dashboard page runs. Without it this page
+     had no auth check, no sidebar and no user chip: it was reachable at a bare
+     URL by a signed-out visitor and invisible in the menu. */
+  JONE.ui.initChrome();
+  JONE.dashboard.boot(["admin","general_manager","receptionist"]);
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+</script>
+
+<script src="../js/version.js?v=1.1.25"></script>
+<script src="../js/update-checker.js?v=1.1.25"></script>
 </body>
 </html>

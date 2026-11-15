@@ -11,13 +11,14 @@
 <title>Rooms | J-ONE Staff</title>
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
-<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="stylesheet" href="../css/main.css?v=1.1.25">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
+<meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.23">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png">
 
 </head>
 <body>
@@ -105,17 +106,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.23"></script>
-<script src="../js/config.js?v=1.1.23"></script>
-<script src="../js/utils.js?v=1.1.23"></script>
-<script src="../js/icons.js?v=1.1.23"></script>
-<script src="../js/api.js?v=1.1.23"></script>
-<script src="../js/theme.js?v=1.1.23"></script>
-<script src="../js/ui.js?v=1.1.23"></script>
-<script src="../js/auth.js?v=1.1.23"></script>
-<script src="../js/hotel-data.js?v=1.1.23"></script>
-<script src="../js/navigation.js?v=1.1.23"></script>
-<script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script>
+<script src="../js/runtime-config.js?v=1.1.25"></script>
+<script src="../js/config.js?v=1.1.25"></script>
+<script src="../js/utils.js?v=1.1.25"></script>
+<script src="../js/icons.js?v=1.1.25"></script>
+<script src="../js/api.js?v=1.1.25"></script>
+<script src="../js/theme.js?v=1.1.25"></script>
+<script src="../js/ui.js?v=1.1.25"></script>
+<script src="../js/auth.js?v=1.1.25"></script>
+<script src="../js/hotel-data.js?v=1.1.25"></script>
+<script src="../js/navigation.js?v=1.1.25"></script>
+<script src="../js/dashboard.js?v=1.1.25"></script><script src="../js/table-fit.js?v=1.1.25"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("receptionist");
@@ -349,7 +350,7 @@
       '<div class="modal-body">'+
         '<div data-img-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:0.6rem;"></div>'+
         '<form data-img-form style="margin-top:1rem;display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">'+
-          '<input class="input" type="file" name="images" accept="image/jpeg,image/png,image/webp" multiple required style="flex:1;min-width:200px;">'+
+          '<input class="input" type="file" name="images" accept="image/jpeg,image/jpg,image/pjpeg,image/png,image/x-png,image/webp,.jpg,.jpeg,.jpe,.jfif,.png,.webp" multiple required style="flex:1;min-width:200px;">'+
           '<button class="btn btn-sm" type="submit">Upload</button>'+
         '</form>'+
         '<div data-img-preview style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.5rem;"></div>'+
@@ -419,9 +420,14 @@
       var form=e.target, input=form.querySelector("input[type=file]");
       if(!input.files||!input.files.length) return;
       var files=Array.from(input.files);
-      if(files.length>20 || files.some(function(f){ return f.size>5*1024*1024 || !["image/jpeg","image/png","image/webp"].includes(f.type); })){
-        JONE.ui.toast("Select up to 20 JPEG, PNG or WebP images, each at most 5 MB.","error"); return;
-      }
+      /* Shared rule (js/dashboard.js). "image/jpg", "image/pjpeg" and an empty
+         MIME are all legitimate for a real JPEG — the old strict whitelist
+         refused those photos while accepting PNG, which is the reported
+         "JPG uploads fail, PNG works" asymmetry. */
+      if(files.length>20){ JONE.ui.toast("Select at most 20 images at once.","error"); return; }
+      var imageIssue=null;
+      files.some(function(f){ imageIssue=JONE.dashboard.imageFileIssue(f,5); return !!imageIssue; });
+      if(imageIssue){ JONE.ui.toast(imageIssue,"error"); return; }
       var btn=form.querySelector("button[type=submit]");
       if(!JONE.guardSubmit(btn)) return;
       try{
@@ -474,8 +480,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.23"></script>
-<script src="../js/version.js?v=1.1.23"></script>
-<script src="../js/update-checker.js?v=1.1.23"></script>
+<script src="../js/pwa.js?v=1.1.25"></script>
+<script src="../js/version.js?v=1.1.25"></script>
+<script src="../js/update-checker.js?v=1.1.25"></script>
 </body>
 </html>

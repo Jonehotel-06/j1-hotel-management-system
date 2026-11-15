@@ -66,7 +66,12 @@ test("2. Cloudflare _headers sets Cache-Control: no-store on runtime-config.js a
   assert.match(headers, /form-action 'self' https:\/\/checkout\.paystack\.com/);
 });
 
-test("3. All 72 deployed HTML pages load runtime-config.js before config.js and match version.json", () => {
+/* The count is a tripwire, not decoration: a page that ships without the
+   runtime-config/version wiring is a page that can cache a stale API origin.
+   It moved 72 -> 77 when the amenities/breakfast release added its pages
+   (amenities.html, breakfast.html and the breakfast/amenity screens' siblings),
+   and every one of the 77 is now verified below. */
+test("3. All 77 deployed HTML pages load runtime-config.js before config.js and match version.json", () => {
   const expectedVersion = JSON.parse(fs.readFileSync(path.join(FRONTEND, "version.json"), "utf8")).version;
   const htmlFiles = [];
   for (const sub of ["", "dashboard", "portal"]) {
@@ -75,7 +80,7 @@ test("3. All 72 deployed HTML pages load runtime-config.js before config.js and 
       if (entry.endsWith(".html")) htmlFiles.push(path.join(sub, entry));
     }
   }
-  assert.equal(htmlFiles.length, 72, `expected 72 HTML pages, found ${htmlFiles.length}`);
+  assert.equal(htmlFiles.length, 77, `expected 77 HTML pages, found ${htmlFiles.length}`);
 
   for (const rel of htmlFiles) {
     const content = fs.readFileSync(path.join(FRONTEND, rel), "utf8");

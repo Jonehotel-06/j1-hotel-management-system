@@ -1,6 +1,7 @@
 # apps/gallery/serializers.py
 from rest_framework import serializers
 
+from apps.core.serializers import ValidatedImageField
 from apps.core.storage import StorageUploadError, absolute_media_url, save_upload, verify_stored_upload
 
 from .models import GalleryItem
@@ -22,6 +23,11 @@ class GalleryItemSerializer(serializers.ModelSerializer):
 
 
 class GalleryItemAdminSerializer(GalleryItemSerializer):
+    # JPG/JPEG from any camera or file manager must reach storage: the name is
+    # normalised to the format the bytes actually contain before Django's
+    # extension check runs (apps.core.serializers.ValidatedImageField).
+    image = ValidatedImageField(required=False, allow_null=True)
+
     class Meta(GalleryItemSerializer.Meta):
         fields = GalleryItemSerializer.Meta.fields + ["image"]
         extra_kwargs = {"image": {"write_only": True, "required": False}}

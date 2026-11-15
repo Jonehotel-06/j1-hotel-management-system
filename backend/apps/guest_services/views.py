@@ -974,6 +974,9 @@ class LaundryOrderBillView(APIView):
 # ---------------------------------------------------------------------------
 # Receptionist guest amenities + complementary breakfast
 # ---------------------------------------------------------------------------
+from .models import (  # noqa: E402
+    BreakfastIssuance, GuestAmenityIssue,
+)
 from .serializers import (  # noqa: E402
     GuestAmenityIssueSerializer, GuestAmenityIssueCreateSerializer,
     ReceptionAmenityAllocationSerializer, BreakfastConfigSerializer,
@@ -1009,7 +1012,7 @@ class ReceptionAmenityAllocationView(APIView):
             raise ValidationError({"from_location_id": "Unknown stock location."})
 
         try:
-            outbound, inbound, created = allocate_reception_amenities(
+            (outbound, inbound), created = allocate_reception_amenities(
                 item=item, quantity=attrs["quantity"], from_location=from_location,
                 unit=attrs.get("unit") or None, conversion_factor=attrs.get("conversion_factor"),
                 actor=request.user, notes=attrs.get("notes") or "",
@@ -1112,12 +1115,24 @@ class GuestAmenityIssueListView(APIView):
 
 
 def _movement_dict(m):
+    """Serialise one stock movement for the allocation response.
+
+    ``StockMovement`` is deliberately not a ``TimeStampedModel``: its audit
+    timestamp is ``occurred_at``. Reading ``created_at`` here raised
+    AttributeError and turned a successful allocation into a 500 — the stock had
+    already moved by then, so the desk saw "unexpected error" for a transfer that
+    did happen.
+    """
     if m is None:
         return None
+    stamp = getattr(m, "occurred_at", None) or getattr(m, "created_at", None)
     return {
         "id": m.pk, "reference": m.reference, "type": m.type,
         "quantity_delta": str(m.quantity_delta), "location": m.location.code,
-        "item": m.item.sku, "created_at": m.created_at.isoformat(),
+        "item": m.item.sku,
+        "occurred_at": stamp.isoformat() if stamp else None,
+        # Kept for existing consumers that read `created_at`.
+        "created_at": stamp.isoformat() if stamp else None,
     }
 
 

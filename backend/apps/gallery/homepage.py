@@ -14,13 +14,14 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import IsManagerOrAdmin
 from apps.core.storage import StorageUploadError, delete_quietly, verify_stored_upload
+from apps.core.serializers import ValidatedImageField
 from apps.core.validators import validate_image_upload
 from .models import GalleryItem
 from .serializers import GalleryItemSerializer
 
 
 class HomepageUploadSerializer(serializers.Serializer):
-    image = serializers.ImageField(required=False)
+    image = ValidatedImageField(required=False)
     alt_text = serializers.CharField(max_length=200, required=False, allow_blank=True)
 
     def validate_image(self, value):

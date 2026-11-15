@@ -15,6 +15,10 @@
   Cache-Control: public, max-age=0, must-revalidate
   Service-Worker-Allowed: /dashboard/
 
+/manifest.webmanifest
+  Content-Type: application/manifest+json; charset=utf-8
+  Cache-Control: public, max-age=0, must-revalidate
+
 /dashboard/manifest.webmanifest
   Content-Type: application/manifest+json; charset=utf-8
   Cache-Control: public, max-age=0, must-revalidate

@@ -43,9 +43,26 @@ test("hero uploads show progress through the progress-capable upload helper", ()
   assert.match(API, /uploadWithProgress,/, "helper is exported from the API object");
 });
 
-test("client-side hero validation keeps the 5 MB JPEG/PNG/WebP limit", () => {
-  assert.match(GALLERY, /file\.size>5\*1024\*1024/);
-  assert.match(GALLERY, /\['image\/jpeg','image\/png','image\/webp'\]/);
+test("client-side hero validation keeps the 5 MB limit and accepts JPEG/PNG/WebP", () => {
+  /* The inline literal whitelist this test used to pin
+     (['image/jpeg','image/png','image/webp']) was the bug: a browser derives
+     File.type from the file name with the OS MIME table, so the same JPEG
+     arrives as image/jpeg, image/jpg, image/pjpeg or "" — and a valid photo
+     was refused while PNG always worked. The rule now lives in one shared
+     helper, which still enforces exactly this limit and this format set. */
+  assert.match(GALLERY, /JONE\.dashboard\.imageFileIssue\(file, 5\)/,
+    "the hero uploader must use the shared rule with the 5 MB limit");
+  const heroInput = GALLERY.match(/name="image" type="file" accept="([^"]+)"/);
+  assert.ok(heroInput, "the hero picker must be a file input with an accept list");
+  [".jpg", ".jpeg", ".png", ".webp", "image/jpeg", "image/png", "image/webp"]
+    .forEach((token) => assert.ok(heroInput[1].includes(token), "accept must offer " + token));
+
+  // …and the shared rule really is the 5 MB / JPEG-PNG-WebP rule.
+  assert.match(DASHBOARD_JS, /function imageFileIssue\(file, maxMB\)/);
+  assert.match(DASHBOARD_JS, /var limit = maxMB \|\| 5;/);
+  ["jpg", "jpeg", "png", "webp"].forEach((ext) =>
+    assert.ok(DASHBOARD_JS.includes('"' + ext + '"'), "the shared rule must allow ." + ext));
+  assert.match(DASHBOARD_JS, /file\.size > limit \* 1024 \* 1024/);
 });
 
 test("the public hero builds its slideshow from every configured hero slot, in order", () => {

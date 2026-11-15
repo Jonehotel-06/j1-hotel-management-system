@@ -154,6 +154,14 @@
       "procurement_officer", "storekeeper", "receptionist"] },
 
     /* Guest services. */
+    /* Guest amenities and complementary breakfast were added without a row
+       here, so canOpenPage() failed closed for EVERY role and the two sidebar
+       entries they added could never appear — the pages were reachable only by
+       typing the URL. The lists are the roles the server's capability matrix
+       actually grants: guest_amenity.issue / breakfast.issue to the front desk
+       and the management tier, guest_amenity.allocate to the store keeper. */
+    "amenities.html": { roles: ["admin", "general_manager", "receptionist", "storekeeper"] },
+    "breakfast.html": { roles: ["admin", "general_manager", "receptionist"] },
     "service-requests.html": { roles: SERVICE_DEPARTMENTS },
     "laundry.html": { roles: LAUNDRY_DEPARTMENTS },
     "housekeeping.html": { roles: ["admin", "general_manager", "receptionist", "housekeeping"] },
@@ -1092,8 +1100,80 @@
          "true" (the backend field that deletes it, e.g. remove_image)
        - choosing a new file always supersedes a pending removal, so an old
          image can never be submitted by accident. */
-  const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+  /* Every MIME type a browser may report for an allowed photo, plus the
+     extensions the same photo may carry. Browsers derive `File.type` from the
+     file name using the OPERATING SYSTEM's MIME table, so the very same JPEG
+     arrives as "image/jpeg", "image/jpg", "image/pjpeg" or "" (unknown) —
+     while a PNG is essentially always "image/png". A strict whitelist on the
+     MIME string therefore rejected valid JPG/JPEG uploads and accepted PNGs,
+     which is exactly the reported asymmetry. Type is only ever a hint here; the
+     bytes are decoded by the preview probe below and by the backend. */
+  const IMAGE_TYPES = [
+    "image/jpeg", "image/jpg", "image/pjpeg", "image/x-citrix-jpeg",
+    "image/png", "image/x-png", "image/webp",
+  ];
+  const IMAGE_EXTENSIONS = ["jpg", "jpeg", "jpe", "jfif", "pjpeg", "png", "webp"];
   const IMAGE_EXT_LABEL = "JPG, PNG or WebP";
+
+  function imageExtension(name) {
+    var match = /\.([A-Za-z0-9]+)$/.exec(String(name || ""));
+    return match ? match[1].toLowerCase() : "";
+  }
+
+  /* Positive evidence that a file is NOT a photo. Anything outside this list is
+     merely "unrecognised" and is allowed through to the decode probe (and to the
+     server, which always decodes): refusing on an unrecognised MIME is what
+     broke JPG uploads in the first place. */
+  const NON_IMAGE_TYPE_PREFIXES = ["video/", "audio/", "text/", "font/"];
+  const NON_IMAGE_TYPES = [
+    "application/pdf", "application/zip", "application/x-zip-compressed",
+    "application/x-rar-compressed", "application/x-7z-compressed",
+    "application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/x-msdownload", "application/x-sh", "application/octet-stream.wrong",
+  ];
+
+  function looksLikeNonImage(type) {
+    if (!type) return false;
+    if (NON_IMAGE_TYPES.indexOf(type) !== -1) return true;
+    return NON_IMAGE_TYPE_PREFIXES.some(function (prefix) {
+      return type.indexOf(prefix) === 0;
+    });
+  }
+
+  /* Should this file be offered to the uploader at all?
+     Returns null when it is acceptable, or a sentence explaining why not.
+     The backend remains authoritative (it decodes the bytes); this exists so a
+     valid JPG is never blocked in the browser and an obvious mistake is
+     explained before anything is sent. */
+  function imageFileIssue(file, maxMB) {
+    if (!file) return "Select an image first.";
+    var limit = maxMB || 5;
+    var type = String(file.type || "").toLowerCase().trim();
+    var ext = imageExtension(file.name);
+    var typeOk = IMAGE_TYPES.indexOf(type) !== -1;
+    var extOk = IMAGE_EXTENSIONS.indexOf(ext) !== -1;
+    // An unrecognised or absent MIME is NOT evidence of a bad file — a camera
+    // file can arrive as "blob" with no type at all. Reject only on positive
+    // evidence: the name states a different format, or the type is a known
+    // non-image family. Everything else reaches the decode probe and the server.
+    if (!typeOk && !extOk && (ext !== "" || looksLikeNonImage(type))) {
+      return "Unsupported format. Use " + IMAGE_EXT_LABEL + ".";
+    }
+    if (!file.size) return "That file is empty. Choose the image again.";
+    if (file.size > limit * 1024 * 1024) {
+      return "That image is " + formatBytes(file.size) + ". The maximum is " + limit +
+        " MB — resize it (or ask an administrator about MAX_UPLOAD_MB) and try again.";
+    }
+    return null;
+  }
+
+  /* One shared accept list, so every file input offers the same formats. */
+  const IMAGE_ACCEPT = IMAGE_TYPES.concat(IMAGE_EXTENSIONS.map(function (ext) {
+    return "." + ext;
+  })).join(",");
 
   function formatBytes(bytes) {
     if (!bytes && bytes !== 0) return "";
@@ -1121,7 +1201,7 @@
     input.type = "file";
     input.id = "fm-" + f.name;
     input.name = f.name;
-    input.accept = f.accept || IMAGE_TYPES.join(",");
+    input.accept = f.accept || IMAGE_ACCEPT;
     input.className = "img-drop-input";
     if (f.required && !currentUrl) input.required = true;
 
@@ -1223,18 +1303,11 @@
     function accept(file) {
       clearError();
       if (!file) return;
-      // The browser derives file.type from the extension, so these checks are
-      // only a fast first pass — the real decode test follows, and the backend
-      // validates independently either way.
-      if (IMAGE_TYPES.indexOf(file.type) === -1) {
-        return reject("Unsupported format. Use " + IMAGE_EXT_LABEL + ".");
-      }
-      if (!file.size) {
-        return reject("That file is empty.");
-      }
-      if (file.size > maxMB * 1024 * 1024) {
-        return reject("That image is " + formatBytes(file.size) + ". The maximum is " + maxMB + " MB.");
-      }
+      // Type is a hint, never the verdict: imageFileIssue() accepts a valid
+      // .jpg/.jpeg whatever MIME the OS reports, and the decode probe below
+      // (plus the backend) proves the file really is an image.
+      const issue = imageFileIssue(file, maxMB);
+      if (issue) return reject(issue);
       releaseObjectUrl();
       state.file = file;
       state.objectUrl = URL.createObjectURL(file);
@@ -1619,6 +1692,10 @@
           } else if (f.type === "file") {
             if (el.files && el.files[0]) {
               values[f.name] = el.files[0];
+              // A file can only travel in a multipart body. If the caller asked
+              // for a plain JSON form, upgrade it here instead of throwing
+              // ("Cannot read properties of null") and losing the upload.
+              if (!formData) formData = new FormData();
               formData.append(f.name, el.files[0], el.files[0].name);
             }
           } else {
@@ -1708,10 +1785,31 @@
   function hasRole(role) {
     return !!(window.Auth && window.Auth.hasRole && window.Auth.hasRole(role));
   }
-  /** Rooms / room-types: staff may read, only manager+ may write. */
-  function canManageRooms() { return hasRole("manager"); }
+  /* Exact operational-role check, used for every MANAGEMENT-tier gate below.
+     Auth.hasRole() walks a seniority ladder (guest < receptionist <
+     general_manager < admin) and runs BOTH sides through the retired-role alias
+     table, so asking that ladder about the retired title "manager" only ever
+     worked by accident: the alias resolved it to "general_manager". The alias table is a data-migration detail,
+     not a permission model — these gates name the roles the server actually
+     accepts (backend MANAGER_ROLES = ADMIN, MANAGER, GENERAL_MANAGER), so the
+     control appears for exactly the roles whose request the API will honour. */
+  const MANAGEMENT_ROLES = ["admin", "general_manager"];
+  const ADMIN_ROLES = ["admin"];
+  function hasAnyRole(roles) {
+    if (window.Auth && typeof window.Auth.hasAnyRole === "function") {
+      return !!window.Auth.hasAnyRole(roles);
+    }
+    /* Fallback for an Auth that only knows the ladder: exact match on the
+       normalised role, never a rank comparison. */
+    const current = String(
+      (window.Auth && window.Auth.state && window.Auth.state.role) || ""
+    ).toLowerCase();
+    return !!current && roles.indexOf(current) !== -1;
+  }
+  /** Rooms / room-types: staff may read, only the management tier may write. */
+  function canManageRooms() { return hasAnyRole(MANAGEMENT_ROLES); }
   /** Account administration is admin-only. */
-  function canManageStaff() { return hasRole("admin"); }
+  function canManageStaff() { return hasAnyRole(ADMIN_ROLES); }
 
   /* --------------------------- Money formatting --------------------------- */
   function money(value, currency) {
@@ -2831,7 +2929,11 @@
     // List pagination (requests pages from the API; never slices in-browser)
     renderPagination, paginationHTML, pageSize,
     // Operational components
-    currentRole, hasRole, canManageRooms, canManageStaff, money,
+    currentRole, hasRole, hasAnyRole, canManageRooms, canManageStaff, money,
+    MANAGEMENT_ROLES, ADMIN_ROLES,
+    /* Image-upload contract shared by every dashboard uploader. */
+    imageFileIssue, imageExtension, IMAGE_ACCEPT, IMAGE_TYPES, IMAGE_EXTENSIONS,
+    IMAGE_EXT_LABEL, formatBytes,
     paymentModal, canRecordPayment, staffProfileModal, editStaffModal, roomTypeRoomsModal,
     extendStayModal,
     deskCash,

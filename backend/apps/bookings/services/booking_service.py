@@ -281,13 +281,56 @@ def upsert_guest(*, user=None, guest_data=None) -> Guest:
 EXACT_ROOM_GUARANTEED_SOURCES = (Booking.Source.WALK_IN, Booking.Source.PHONE)
 
 
-def _resolve_exact_room(*, room_id, room_type, source, is_staff) -> Room:
+def _room_is_physically_occupied_now(room, *, check_in) -> bool:
+    """True when "OCCUPIED" genuinely forbids THIS stay.
+
+    ``Room.status == OCCUPIED`` is a statement about the room *right now*: a
+    guest is physically in it. It is NOT a reservation, and it is never a
+    permanent block. Booking inventory is decided by the stay's dates
+    (``availability.overlap_q``), which is why an OCCUPIED room must remain
+    bookable for a stay that starts after today — that is exactly the state a
+    room is left in between a departure and housekeeping releasing it, and it is
+    the state every "first room of the type" ends up in after a busy night.
+
+    The previous rule refused every walk-in/phone booking of such a room with
+    "Room 302 is occupied" regardless of the requested dates. Because rooms are
+    allocated in ``room_number`` order, the FIRST room of each type is the one
+    that carries the stale flag, so the desk saw "the first room in every room
+    type is occupied" while the availability calendar showed it free.
+
+    The rule implemented here is therefore date-aware:
+      * a stay that begins after today is governed entirely by the calendar;
+      * a stay that includes today is refused while somebody is in the room,
+        UNLESS that stay's assignment ends today (checkout day: the room is
+        handed over after the departing guest leaves).
+    """
+    if room.status != Room.Status.OCCUPIED:
+        return False
+    today = hotel_today()
+    if check_in > today:
+        return False
+    # A live assignment that ends today or earlier frees the room for tonight.
+    releasing_today = BookingRoom.objects.filter(
+        room=room,
+        booking__status__in=availability.BLOCKING_STATUSES,
+        check_out__lte=today,
+    ).exists()
+    return not releasing_today
+
+
+def _resolve_exact_room(*, room_id, room_type, source, is_staff,
+                        check_in=None, check_out=None) -> Room:
     """Resolve and validate an explicitly requested physical room.
 
     Returns the room, or raises :class:`RoomUnavailableError` with a reason the
     desk can act on. The checks are deliberately ordered so the message names
     the REAL problem (wrong type / out of service / housekeeping / occupied /
     already reserved) instead of a generic "not available".
+
+    ``check_in`` is the stay's arrival date. It is required so the "occupied"
+    rule can never contradict the calendar (see
+    :func:`_room_is_physically_occupied_now`): availability and booking creation
+    must answer the same question with the same answer.
 
     For staff walk-in and phone bookings every refusal is terminal: no
     substitution is attempted anywhere in this module for those sources.
@@ -312,13 +355,17 @@ def _resolve_exact_room(*, room_id, room_type, source, is_staff) -> Room:
     if readiness_reason:
         raise RoomUnavailableError(readiness_reason)
     # A room somebody is physically in right now cannot be handed to a walk-in
-    # guest even when the reservation calendar happens to be clear for it.
+    # guest for a stay that includes tonight — but the flag must never override
+    # the calendar for a future stay (that mismatch is what made every first
+    # room of a type look occupied). See _room_is_physically_occupied_now().
     if (
-        room.status == Room.Status.OCCUPIED
-        and source in EXACT_ROOM_GUARANTEED_SOURCES
+        source in EXACT_ROOM_GUARANTEED_SOURCES
+        and check_in is not None
+        and _room_is_physically_occupied_now(room, check_in=check_in)
     ):
         raise RoomUnavailableError(
-            f"Room {room.room_number} is occupied. Choose another physical room; "
+            f"Room {room.room_number} is occupied tonight. Choose another physical "
+            "room, or book this room for dates after the current guest departs; "
             "no substitute was assigned."
         )
     return room
@@ -426,6 +473,8 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
             room_type=room_type,
             source=source,
             is_staff=is_staff,
+            check_in=check_in,
+            check_out=check_out,
         )
         if any(room.pk == requested_room.pk for room in free_rooms):
             # Happy path: the exact room that was selected is still free.
@@ -2119,9 +2168,14 @@ def reschedule_booking(booking: Booking, *, check_in, check_out, staff_user, req
         raise RoomUnavailableError("This booking has incomplete room assignments. Assign the rooms explicitly before changing dates.")
     if staff_booking:
         available_by_id = {room.pk: room for room in available_rooms}
+        # A stale "OCCUPIED" flag must not block a date change that the calendar
+        # allows: the room's own occupancy is decided by _room_is_physically_
+        # occupied_now() (today only, and only while somebody is really in it),
+        # so availability, creation and rescheduling all agree.
         unavailable = [
             a.room.room_number for a in assignments
-            if a.room_id not in available_by_id or available_by_id[a.room_id].status == Room.Status.OCCUPIED
+            if a.room_id not in available_by_id
+            or _room_is_physically_occupied_now(a.room, check_in=check_in)
         ]
         if unavailable:
             raise RoomUnavailableError(

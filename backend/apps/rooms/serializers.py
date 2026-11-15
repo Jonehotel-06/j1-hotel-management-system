@@ -38,20 +38,11 @@ class EmptyAwarePrimaryKeyRelatedField(serializers.PrimaryKeyRelatedField):
         return _EmptyAwareManyRelated(**list_kwargs)
 
 
-class ValidatedImageField(serializers.ImageField):
-    """ImageField that applies the project's shared upload validation.
-
-    DRF's ImageField only checks that Pillow can open the file; the project rule
-    set (extension allow-list, MAX_UPLOAD_MB, real image content) lives in
-    apps.core.validators and is applied by the model fields. Running it here too
-    means the API rejects a bad upload with a clean field error *before* anything
-    is sent to Backblaze.
-    """
-
-    def to_internal_value(self, data):
-        file = super().to_internal_value(data)
-        validate_image_upload(file)
-        return file
+# The shared field lives in apps.core.serializers so every upload surface (rooms,
+# gallery, homepage slots, …) decodes the content BEFORE Django's extension
+# validator can refuse a valid JPEG for having an unusual name. Re-exported here
+# because existing call sites import it from this module.
+from apps.core.serializers import ValidatedImageField  # noqa: E402  (re-export)
 
 
 def _absolute(serializer, image_field):

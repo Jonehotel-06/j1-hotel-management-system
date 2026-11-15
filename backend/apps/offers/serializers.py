@@ -2,6 +2,7 @@
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.core.serializers import ValidatedImageField
 from apps.core.storage import absolute_media_url
 from apps.rooms.models import RoomType
 
@@ -38,6 +39,7 @@ class OfferPublicSerializer(serializers.ModelSerializer):
 
 
 class OfferAdminSerializer(serializers.ModelSerializer):
+    image = ValidatedImageField(required=False, allow_null=True)
     room_type_ids = serializers.PrimaryKeyRelatedField(
         queryset=RoomType.objects.all(), many=True, required=False, source="room_types"
     )

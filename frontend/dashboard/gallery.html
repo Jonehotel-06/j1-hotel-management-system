@@ -11,13 +11,14 @@
 <title>Gallery | J-ONE Staff</title>
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
-<link rel="apple-touch-icon" href="../favicon/apple-touch-icon.png">
+<link rel="stylesheet" href="../css/main.css?v=1.1.25">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
+<meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="stylesheet" href="../css/main.css?v=1.1.23">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png">
 
 </head>
 <body>
@@ -100,17 +101,17 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.23"></script>
-<script src="../js/config.js?v=1.1.23"></script>
-<script src="../js/utils.js?v=1.1.23"></script>
-<script src="../js/icons.js?v=1.1.23"></script>
-<script src="../js/api.js?v=1.1.23"></script>
-<script src="../js/theme.js?v=1.1.23"></script>
-<script src="../js/ui.js?v=1.1.23"></script>
-<script src="../js/auth.js?v=1.1.23"></script>
-<script src="../js/hotel-data.js?v=1.1.23"></script>
-<script src="../js/navigation.js?v=1.1.23"></script>
-<script src="../js/dashboard.js?v=1.1.23"></script><script src="../js/table-fit.js?v=1.1.23"></script>
+<script src="../js/runtime-config.js?v=1.1.25"></script>
+<script src="../js/config.js?v=1.1.25"></script>
+<script src="../js/utils.js?v=1.1.25"></script>
+<script src="../js/icons.js?v=1.1.25"></script>
+<script src="../js/api.js?v=1.1.25"></script>
+<script src="../js/theme.js?v=1.1.25"></script>
+<script src="../js/ui.js?v=1.1.25"></script>
+<script src="../js/auth.js?v=1.1.25"></script>
+<script src="../js/hotel-data.js?v=1.1.25"></script>
+<script src="../js/navigation.js?v=1.1.25"></script>
+<script src="../js/dashboard.js?v=1.1.25"></script><script src="../js/table-fit.js?v=1.1.25"></script>
 <script>
   JONE.ui.initChrome();
   JONE.dashboard.boot("receptionist");
@@ -133,7 +134,7 @@
           '<div data-slot-image style="aspect-ratio:16/9;background:var(--color-surface);margin:.75rem 0;"></div>'+
           '<p class="caption">Status: '+(item?'Published':'Built-in default')+'</p>'+
           '<label>Alternative text <input class="input" name="alt_text" maxlength="200" value="'+JONE.esc(item&&item.alt_text||'')+'"></label>'+
-          '<label>Upload / replace <input class="input" name="image" type="file" accept="image/jpeg,image/png,image/webp"></label>'+
+          '<label>Upload / replace <input class="input" name="image" type="file" accept="image/jpeg,image/jpg,image/pjpeg,image/png,image/x-png,image/webp,.jpg,.jpeg,.jpe,.jfif,.png,.webp"></label>'+
           '<div data-slot-preview></div><progress data-slot-progress max="100" value="0" hidden style="width:100%;margin-top:.5rem;" aria-label="Upload progress"></progress><p class="caption" data-slot-status role="status" aria-live="polite"></p><div style="display:flex;gap:.5rem;margin-top:.7rem;">'+
           '<button class="btn btn-sm" type="submit">Save</button>'+(item?'<button class="btn btn-sm btn-outline" data-slot-remove type="button">Remove</button>':'')+'</div>';
         var image=card.querySelector('[data-slot-image]');
@@ -150,7 +151,11 @@
         });
         card.addEventListener('submit',async function(e){
           e.preventDefault(); var file=picker.files[0];
-          if(file && (file.size>5*1024*1024 || !['image/jpeg','image/png','image/webp'].includes(file.type))){ JONE.ui.toast('Choose a JPEG, PNG or WebP under 5 MB.','error');return; }
+          /* One shared rule (js/dashboard.js): a valid JPG/JPEG is accepted
+             whatever MIME the operating system reports, and the message names
+             the real problem instead of a blanket "choose a JPEG". */
+          var imageIssue = file ? JONE.dashboard.imageFileIssue(file, 5) : null;
+          if(imageIssue){ JONE.ui.toast(imageIssue,'error'); return; }
           var btn=card.querySelector('[type=submit]'); btn.disabled=true; btn.textContent='Saving…';
           var bar=card.querySelector('[data-slot-progress]'), status=card.querySelector('[data-slot-status]');
           var fd=new FormData(); if(file) fd.append('image',file);
@@ -259,8 +264,8 @@
 })();
 
 </script>
-<script src="../js/pwa.js?v=1.1.23"></script>
-<script src="../js/version.js?v=1.1.23"></script>
-<script src="../js/update-checker.js?v=1.1.23"></script>
+<script src="../js/pwa.js?v=1.1.25"></script>
+<script src="../js/version.js?v=1.1.25"></script>
+<script src="../js/update-checker.js?v=1.1.25"></script>
 </body>
 </html>

@@ -13,6 +13,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from apps.audit.services import log_action
 from apps.core.client_ip import normalize_ip_or_network
 from apps.core.exceptions import StaffSignInRestrictedError
+from apps.core.serializers import ValidatedImageField
 from apps.core.storage import absolute_media_url
 
 from .capabilities import capability_codes_for_user, has_capability
@@ -75,6 +76,10 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
+    # Content first: a valid JPEG named "blob" or "me.JFIF" is a photo, and its
+    # stored name is normalised to .jpg. See apps.core.serializers.
+    profile_image = ValidatedImageField(required=False, allow_null=True)
+
     class Meta:
         model = User
         fields = ["first_name", "middle_name", "last_name", "phone", "profile_image"]
@@ -463,6 +468,8 @@ class AdminStaffProfileSerializer(serializers.ModelSerializer):
 
 
 class AdminUserCreateSerializer(serializers.ModelSerializer):
+    profile_image = ValidatedImageField(required=False, allow_null=True)
+
     """Administrator-created staff accounts (roles above GUEST)."""
 
     password = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False, required=False, allow_blank=True)
@@ -673,6 +680,8 @@ class FrontDeskDeviceSerializer(serializers.ModelSerializer):
 
 
 class AdminUserUpdateSerializer(serializers.ModelSerializer):
+    profile_image = ValidatedImageField(required=False, allow_null=True)
+
     class Meta:
         model = User
         fields = [
