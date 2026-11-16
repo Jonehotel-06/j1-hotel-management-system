@@ -230,9 +230,12 @@
     /* The entry's own gate AND the target page's gate. A menu entry must never
        point a department at a page that will refuse it. */
     if (!canOpenPage(it.href)) return false;
-    if (it.capabilities && auth.state && auth.state.capabilitiesLoaded) {
-      return !!(auth.hasAnyCapability && auth.hasAnyCapability(it.capabilities));
-    }
+    /* ISSUE #6 FIX: capabilities refine what a user can DO on a page and are
+       enforced server-side for each action. canOpenPage (roles) is the gate
+       for showing the navigation link. A missing client-side capability must
+       not hide a sidebar link that the role gate already allows — the page
+       itself enforces capability checks. Do not return early on capabilities
+       alone; fall through to entry-level role checks instead. */
     if (it.role && !(auth.hasRole && auth.hasRole(it.role))) return false;
     if (it.minRole && !(auth.hasRole && auth.hasRole(it.minRole))) return false;
     if (it.roles && !(auth.hasAnyRole && auth.hasAnyRole(it.roles))) return false;

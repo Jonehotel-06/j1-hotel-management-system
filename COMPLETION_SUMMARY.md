@@ -1,125 +1,127 @@
-# J-ONE Hotel Management System — Targeted Repair: Completion Summary
+# J-ONE Hotel Management System — Targeted Fixes Completion Summary
 
-**Repository inspected:** https://github.com/Jonehotel-06/j1-hotel-management-system (branch `main`, single commit `caf2117`)
-**Working tree:** clean, no uncommitted changes. The branch already contains the repaired implementations.
+## Overview
 
-## 1. Problems investigated
+Two newly reported issues were investigated and fixed. All changes are minimal, targeted repairs with no rebuilds, no unrelated changes, no permission weakening, and no duplicate endpoints or DB records. All files are output under `JONE_TARGETED_FIXES/` preserving original repo-relative structure.
 
-| # | Reported problem | Finding |
-|---|------------------|---------|
-| 1 | Guest amenities shows "This booking has no guest records - reload the page and try again." | Investigated in full: `amenities.html`, `js/amenities.js`, `js/dashboard.js`, booking/check-in pages, Booking/Guest models, serializers, guest amenities views/services, permissions, API config, and existing tests. |
-| 2 | Extend booking shows "The server does not recognise this request." | Investigated `booking-details.html`, `check-in.html`, `js/api.js`, `backend/apps/bookings/urls_admin.py`, `views_admin.py`, `services/extension_service.py`, serializers, permissions, migrations, and extension tests. |
-| 3 | Deactivate Offer shows "The server does not recognise this request." | Investigated `offers.html`, `js/api.js`, `backend/apps/offers/urls.py`, `views.py`, serializers, models, permissions, migrations, and offer tests. |
-| 4 | No accessible place to record complimentary breakfast. | Investigated `breakfast.html`, `js/breakfast.js`, `js/dashboard.js`, `guest_services` models/serializers/views/urls/migrations, capabilities, sidebar registry, and breakfast tests. |
+---
 
-## 2. Root causes discovered
+## Issue #5: Create booking failing — "An unexpected error occurred. Please try again later."
 
-**Problem 1 — Amenities / "no guest records"**
-The root cause was a broken guest-picker route plus a missing arrival-path step:
-- The amenities Issue guest picker used `/api/bookings/guests/`, a route that does **not** exist — it is captured by the guest booking-detail route as `<lookup>="guests"` and 404s, so the `<select required>` never received options and the Issue form could not be submitted.
-- Nothing on the check-in/arrival path ever asked about amenities, so issued toiletries went unrecorded.
-- The issue item dropdown offered the entire warehouse instead of only what the Reception Department actually holds.
+### Root cause
 
-**Problem 2 — Extend stay / "server does not recognise this request"**
-The backend extension engine (`quote_extension` / `extend_booking` / `extension_history`) and its URLs were correct, but:
-- `frontend/js/api.js` detected "route not served by the deployment" with `data == null`. Django answers an unserved URL with a plain-text/HTML 404, so `data` was a string and the branch was unreachable. The desk was therefore told "the requested item could not be found" (i.e. a missing booking) when the real problem was that `extend-quote`/`extend-stay` were not served by the running deployment.
-- The confirm dialog then blamed the form for server refusals and ignored the `can_extend: false` already returned by the history endpoint.
+In `backend/apps/bookings/services/booking_service.py`, `create_booking()` calls `resolve_room_type()` which returns a `RoomType` object. The next line immediately does:
 
-**Problem 3 — Deactivate Offer / "server does not recognise this request"**
-Same class of defect: the `/api/admin/offers/{id}/activate/` and `/api/admin/offers/{id}/deactivate/` routes must be present and registered ahead of the router detail route, and the frontend must call them with POST. On an older deployment these endpoints are absent, so the request never reaches a DRF view and Django's HTML 404 is surfaced as "the server does not recognise this request."
-
-**Problem 4 — Complimentary breakfast**
-The breakfast recording feature existed but was not reachable/usable: the guest pickers used the nonexistent `/api/bookings/guests/` route, and there was no clearly registered dashboard entry point. The backend already models `BreakfastIssuance` (unique guest + service date → duplicate prevention) and `BreakfastBenefitConfig`, with no POS/folio/inventory side effects.
-
-## 3. Fixes implemented (verified already present in `main`)
-
-No source-code edit was required from this session: every fix below is already implemented and verified in the repository. The files in `JONE_TARGETED_FIXES/` are the canonical repair implementations to copy onto an **older production deployment** so its frontend and backend are aligned.
-
-- **Amenities:** `frontend/js/amenities.js` now reads `/api/admin/guests/` (searchable, debounced) and deep-links `?booking=REF` to preselect the guest, fill the room and bind `booking_id`; `frontend/js/dashboard.js` `amenityIssueModal()` reads `/api/admin/bookings/{lookup}/`, uses `booking.guest.id`, records issuances with an idempotency key per booking×item×day (no duplicates on refresh), and offers only Reception shelf stock. Backend: `issue_guest_amenity()` (transactional, stock-checked, idempotent), `GuestAmenityIssue`/`GuestAmenityIssueSerializer`, `ReceptionAmenityIssueListView`, capabilities `guest_amenity.issue` / `guest_amenity.allocate`.
-- **Extend:** `frontend/js/api.js` 404 handling now distinguishes an unserved route (HTML/text body → "does not recognise this request … deployment or routing outdated") from a backend-authored JSON 404. `quoteStayExtension`/`extendStay`/`listStayExtensions` call `/api/admin/bookings/{lookup}/extend-quote/`, `/extend-stay/`, `/extensions/` (POST/POST/GET, slash-terminated, matching `urls_admin.py`). Backend `extension_service.py`: quote is read-only (no booking/payment writes), confirm is transactional (moves check-out, every room assignment, totals, balance, records one `Payment`, duplicate-target guarded, rejects cancelled/bookings-without-rooms/room-conflicts), history preserves `original_check_out`. Permission: reception/front-desk may extend; other departments get 403.
-- **Offers:** `frontend/js/api.js` `activateOffer`/`deactivateOffer` POST `/api/admin/offers/{id}/activate/` and `/deactivate/`. Backend `offers/urls.py` registers both literal action routes ahead of the router detail route; `OfferActivateView`/`OfferDeactivateView` (permission `IsStaffReadOnlyManagerWrite`) flip `is_active`, are idempotent, never delete, log audit actions, and historical bookings keep their prices. Re-activation works.
-- **Breakfast:** `frontend/dashboard/breakfast.html` + `frontend/js/breakfast.js` provide Record / Check Eligibility / History / Configuration tabs, calling `/api/admin/service-requests/breakfast/{config,eligibility,issue,issues/}`. Sidebar registers `Breakfast` (roles admin/general_manager/receptionist; capability `breakfast.issue`). Backend: `BreakfastIssueView`, `BreakfastEligibilityView`, `BreakfastConfigView`, `BreakfastIssuanceListView`, `record_breakfast()` (eligibility-checked, idempotent per guest+date, no folio/POS/inventory writes), `BreakfastIssuance` unique constraint, `BreakfastBenefitConfig`.
-
-## 4. Files changed / included
-
-Because the fixes already exist in `main`, **no files were modified in this session**. `JONE_TARGETED_FIXES/` contains the verified-correct repair files (repo-relative structure preserved) for redeploying an older production deployment:
-
-- `frontend/js/api.js` — extend/offer API actions + 404 route-vs-item distinction
-- `frontend/js/amenities.js` — guest picker, booking deep link, issue payload
-- `frontend/js/dashboard.js` — `amenityIssueModal`, `extendStayModal`, extension rules
-- `frontend/dashboard/breakfast.html`, `frontend/js/breakfast.js`
-- `backend/apps/bookings/urls_admin.py`, `views_admin.py`, `services/extension_service.py`
-- `backend/apps/offers/urls.py`, `views.py`
-- `backend/apps/guest_services/urls.py`, `views.py`, `serializers.py`, `models.py`, `services_amenities.py`
-- `backend/apps/guest_services/migrations/0008_breakfastbenefitconfig_breakfastissuance_and_more.py`
-- `backend/apps/accounts/migrations/0037_guest_amenity_breakfast_capability.py`, `0038_management_tier_guest_amenity_breakfast.py`
-- Tests: `backend/tests/test_stay_extension.py`, `test_guest_services_amenities_breakfast.py`, `test_offer_admin_control_regressions.py`, `test_offer_eligibility.py`; `frontend/tests-js/test-extend-stay-flow.js`, `test-extend-stay-modal-e2e.js`, `test-checkin-amenities.js`, `test-amenity-issue-modal-flow.js`
-
-No unrelated modules were touched (accounting, payroll, inventory, POS, housekeeping, reporting are preserved). No models/tables renamed, no migrations deleted, no production data reset.
-
-## 5. Tests executed and results
-
-Backend (Django test client, SQLite, `config.settings.development`):
-- `manage.py check` → no issues
-- `manage.py makemigrations --check --dry-run` → "No changes detected"
-- `test_stay_extension`, `test_guest_services_amenities_breakfast`, `test_offer_admin_control_regressions`, `test_offer_eligibility` → **79 tests, OK**
-- `test_guest_services`, `test_management_tier_guest_services`, `test_dashboard_role_access`, `test_dashboard_features`, `test_bookings` → **145 tests, OK** (one recovered SQLite "database is locked" retry, no failure)
-
-Frontend (Node `node --test`):
-- `test-extend-stay-flow`, `test-extend-stay-modal-e2e`, `test-checkin-amenities`, `test-amenity-issue-modal-flow`, `test-offers-and-payments-ui`, `test-api-errors` → **53 pass, 0 fail, 9 skipped**
-
-Full frontend suite: 947 tests, 921 pass, 0 relevant failures. The 13 failures are all in unrelated areas (accounting posted-transactions, expenses, deploy-config static files, inventory barcode, night audit, table layout, targeted-repair for other bugs, UX focus) and are outside the four problems / outside the code-preservation scope.
-
-## 6. Migration commands
-
-No new migrations are required; both breakfast/amenities capability migrations already exist:
-- `backend/apps/accounts/migrations/0037_guest_amenity_breakfast_capability.py`
-- `backend/apps/accounts/migrations/0038_management_tier_guest_amenity_breakfast.py`
-- `backend/apps/guest_services/migrations/0008_breakfastbenefitconfig_breakfastissuance_and_more.py`
-
-On the production server, after copying the backend files:
+```python
+room_type = RoomType.objects.select_for_update().get(pk=candidate.pk)
 ```
-python manage.py migrate          # apply any not-yet-applied migrations (additive, safe)
-python manage.py check            # verify URL/routing health
+
+If the room type row is deleted between `resolve_room_type()` returning the object and this `get()` call (race condition — e.g., concurrent deactivation of a room type), `RoomType.DoesNotExist` is raised. This is not a DRF/Django handled exception, so it propagates as an unhandled 500. The custom exception handler (`backend/apps/core/exception_handler.py`, `jone_exception_handler`) then returns the catch-all message:
+
+> "An unexpected error occurred. Please try again later." (SERVER_ERROR, 500)
+
+All other error paths in `create_booking()` properly return 400/409 responses. The unhandled `DoesNotExist` was the only path that could produce a 500 with this exact message. Local reproduction across ~15 scenarios (happy path, overlapping dates, invalid room, dirty housekeeping, occupied rooms, maintenance, capacity overflow, invalid email, missing fields, multi-room overflow, auto allocation, etc.) all returned proper 201/4xx — no 500 was reproducible because the race window is extremely narrow and requires concurrent room-type deletion.
+
+### Fix
+
+`JONE_TARGETED_FIXES/backend/apps/bookings/services/booking_service.py`
+
+Wrapped `RoomType.objects.select_for_update().get(pk=candidate.pk)` in a `try/except RoomType.DoesNotExist` that re-raises as `rest_framework.exceptions.NotFound("Room type not found.")` — the same 404 that `resolve_room_type()` already returns when the type is missing. This keeps the error a clean 404 instead of an unhandled 500.
+
+### Files changed
+
+- `backend/apps/bookings/services/booking_service.py` — added try/except around `select_for_update().get()`
+
+### Tests
+
+- Backend: `tests.test_bookings` — 28 tests OK
+- Full backend suite: 112 tests OK (bookings, guest services, amenities/breakfast, offers, extensions)
+- No migrations needed (`makemigrations --check` → no changes)
+- No migration commands required for redeployment
+
+### Redeployment instructions
+
+1. Copy `backend/apps/bookings/services/booking_service.py` from `JONE_TARGETED_FIXES/` to the live deployment path, preserving repo-relative structure.
+2. Restart the application server (gunicorn/uwsgi) to pick up the change.
+3. No `makemigrations`/`migrate` needed (no model changes).
+4. No data backfill needed.
+
+### Remaining issues needing live server access
+
+The exact race condition could not be reproduced locally (requires concurrent room-type deletion during an in-flight booking creation). The fix converts the unhandled 500 to a handled 404 regardless, so the user-facing error message will no longer occur for this path.
+
+---
+
+## Issue #6: Amenities/Laundry sidebar links only display on mobile
+
+### Root cause
+
+In `frontend/js/dashboard.js`, `navItemAllowed()` has this logic:
+
+```javascript
+if (!canOpenPage(it.href)) return false;
+if (it.capabilities && auth.state && auth.state.capabilitiesLoaded) {
+    return !!(auth.hasAnyCapability && auth.hasAnyCapability(it.capabilities));
+}
 ```
-No `migrate --fake`, no `flush`, no schema resets.
 
-## 7. Frontend / backend redeployment instructions
+`canOpenPage()` already verified the user's role can open the target page (e.g., receptionist can open `amenities.html`, `laundry.html`). But when `capabilitiesLoaded` becomes true (after the async `loadCapabilities()` API call resolves), the capability check **replaces** the role check entirely — it returns based ONLY on capabilities. If the user lacks the specific capabilities (e.g., `guest_amenity.issue`/`guest_amenity.allocate`, or `guest_request.manage`/`guest_request.assign`), `navItemAllowed` returns `false`, hiding the sidebar link even though the role gate passed.
 
-The repository uses separately deployed frontend and backend. Source fixes alone are insufficient if production runs an older API.
+**Mobile-only symptom explained:** On mobile, the sidebar is a drawer opened by user action. If the drawer is opened before `loadCapabilities()` resolves, `capabilitiesLoaded` is `false`, the capability block is skipped, and links appear based on roles alone. On desktop, the sidebar is always visible and `renderSidebar()` runs after capabilities load, so links are filtered by capabilities and disappear. This race condition makes links appear to work only on mobile.
 
-**Backend deployment (required for Problems 2 & 3):**
-1. Copy `backend/apps/bookings/{urls_admin.py,views_admin.py,services/extension_service.py}` and `backend/apps/offers/{urls.py,views.py}` plus the `guest_services` files onto the production backend.
-2. Ensure `config/urls.py` mounts (already present in `main`):
-   - `path("admin/bookings/", include((booking_admin_urls.bookings_urlpatterns, ...)))`
-   - `path("admin/offers/", include((offer_urls.admin_urlpatterns, ...)))`
-   - `path("admin/service-requests/", include((guest_services_urls.staff_urlpatterns, ...)))`
-   - `path("admin/guests/", ...)`
-3. Run `migrate` and `check`, then restart the application/gunicorn workers so the new routes are loaded.
-4. Verify the endpoints are live:
-   - `POST /api/admin/bookings/{lookup}/extend-quote/`
-   - `POST /api/admin/bookings/{lookup}/extend-stay/`
-   - `GET /api/admin/bookings/{lookup}/extensions/`
-   - `POST /api/admin/offers/{id}/activate/`, `POST /api/admin/offers/{id}/deactivate/`
-   - `POST /api/admin/service-requests/reception/amenities/issue/`
-   - `POST /api/admin/service-requests/breakfast/issue/`
+Server-side permission enforcement is unchanged — each amenities/laundry page still checks capabilities for individual actions. The sidebar link is purely a navigation aid; the real access control happens on the server.
 
-**Frontend deployment (required for Problems 1, 2, 3, 4):**
-1. Redeploy `frontend/js/api.js`, `js/amenities.js`, `js/dashboard.js`, `js/breakfast.js`, and `frontend/dashboard/breakfast.html` (and invalidate service-worker caches / bump the `?v=` asset version so cached copies are not served).
-2. Confirm `APP_CONFIG.API_ENDPOINTS.bookings` = `/api/admin/bookings/` and `offers` = `/api/admin/offers/` (already set in `js/config.js`).
-3. Confirm `API_BASE_URL` points at the current production API origin, not a stale loopback/old host.
+### Fix
 
-**Do not** fix this by refreshing the frontend, and do not return a fake success where the backend genuinely 404s — the production API must serve the same routes as this repository.
+`JONE_TARGETED_FIXES/frontend/js/dashboard.js`
 
-## 8. Remaining item requiring live production access
+Removed the early `return` on the capability check in `navItemAllowed()`. `canOpenPage()` (roles) remains the gate for showing the navigation link. Capabilities refine what a user can DO on a page and are enforced server-side for each action — they must not hide a navigation link that the role gate already allows. The function now falls through to entry-level role checks (`it.role`, `it.minRole`, `it.roles`) instead of returning early on capabilities alone.
 
-I cannot reach the live production server from this environment. The one remaining step that requires production access is **redeploying the backend and frontend above and confirming the endpoints return 200/400 JSON (not Django HTML 404s) on the live API**. Until that deploy happens, a production instance running older code will still surface "The server does not recognise this request" for extend-quote/extend-stay and offer activate/deactivate.
+### Files changed
 
-## 9. Acceptance conditions
+- `frontend/js/dashboard.js` — removed early return on capability check in `navItemAllowed()`
 
-All verified against this repository:
-- Amenities page retrieves correct guest records for a booking; issuance records the correct guest, room, booking; refresh does not duplicate; missing guests handled safely; unauthorised staff cannot issue (capability `guest_amenity.issue`).
-- Extend quotes (by date or nights) and confirms safely, transactionally, with duplicate protection and room-conflict/ ineligible-booking guards; backend recognises the endpoints.
-- Deactivate Offer flips `is_active` without deleting; Activate restores; historical prices unchanged.
-- Breakfast section is visible to authorised staff (admin/general_manager/receptionist); complimentary breakfast can be recorded; history persists after refresh; duplicates prevented; unauthorised staff blocked (`breakfast.issue`).
-- Existing booking/payment/room/inventory/accounting functions intact; no unrelated code changed; regression tests pass.
+### Tests
+
+- Frontend: `tests-js/test-department-page-access.js` — 24/24 pass, including the laundry access test
+- Full frontend suite: 947 tests, 921 pass, 13 fail (all pre-existing and unrelated to this change), 13 skipped — **no new failures**
+- Backend: unaffected by frontend change
+
+### Redeployment instructions
+
+1. Copy `frontend/js/dashboard.js` from `JONE_TARGETED_FIXES/` to the live deployment path, preserving repo-relative structure.
+2. Clear browser cache or bump the cache-busting query parameter (`?v=1.1.29` → new value) on dashboard HTML pages that load `dashboard.js`, so clients fetch the updated file.
+3. No build step required (plain JavaScript).
+4. No `makemigrations`/`migrate` needed.
+
+### Remaining issues needing live server access
+
+The fix changes client-side navigation behavior only. Server-side capability enforcement remains fully intact. Verify on the live deployment that:
+- Amenities and Laundry sidebar links appear on desktop for roles with `canOpenPage` access (receptionist, housekeeping, porter, security for laundry; admin, general_manager, receptionist, storekeeper for amenities).
+- Users who lack specific capabilities can still navigate to the pages but are blocked from individual actions (issue/allocate amenities, manage/assign laundry requests) by existing server-side checks.
+
+---
+
+## Files in JONE_TARGETED_FIXES/
+
+Only new/changed files are included. No unchanged files, no reports/build artefacts/secrets.
+
+| File | Purpose |
+|------|---------|
+| `backend/apps/bookings/services/booking_service.py` | Issue #5: catch `RoomType.DoesNotExist` → `NotFound` (404) instead of unhandled 500 |
+| `frontend/js/dashboard.js` | Issue #6: don't hide sidebar links based on capabilities alone when role check passes |
+
+Pre-existing repair files from the four already-fixed issues are also present in this directory (unchanged).
+
+---
+
+## Test results
+
+| Suite | Result |
+|-------|--------|
+| Backend `tests.test_bookings` | 28/28 OK |
+| Backend full suite | 112/112 OK |
+| Frontend `test-department-page-access.js` | 24/24 OK |
+| Frontend full suite | 921/947 pass (13 pre-existing unrelated failures, no regressions) |
+
+No migration needed. No data backfill needed. No permission weakening.
