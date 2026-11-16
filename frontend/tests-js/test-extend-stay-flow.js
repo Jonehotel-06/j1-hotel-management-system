@@ -166,7 +166,7 @@ test("a 404 that never reached the API says so, instead of 'item not found'", as
   const err = await ctx.window.API.post("/api/admin/bookings/J1-1/extend-quote/", {}).catch((e) => e);
   assert.equal(err.status, 404);
   assert.match(err.message, /does not recognise this request/i);
-  assert.match(err.message, /deployment does not include this feature/i);
+  assert.match(err.message, /deployment or routing may be outdated/i);
   assert.ok(
     !/requested item could not be found/i.test(err.message),
     "the misleading sentence the desk reported must be gone"

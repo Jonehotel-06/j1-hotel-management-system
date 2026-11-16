@@ -112,7 +112,7 @@ test("api.js separates a missing record from an unserved route on 404", () => {
      The behavioural proof lives in tests-js/test-extend-stay-flow.js. */
   assert.match(src, /const unserved = data == null \|\| typeof data !== "object";/);
   assert.match(src, /\? NOT_FOUND_UNSERVED : NOT_FOUND_FALLBACK/);
-  assert.match(src, /deployment does not include this feature yet/);
+  assert.match(src, /deployment or routing may be outdated/);
 });
 
 test("the Terminals page can approve, install, request and revoke a device", () => {

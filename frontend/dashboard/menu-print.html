@@ -4,14 +4,14 @@
 /* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
 (function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
 </script>
-<link rel="stylesheet" href="../css/main.css?v=1.1.25">
+<link rel="stylesheet" href="../css/main.css?v=1.1.29">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
-<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png"><link rel="stylesheet" href="../css/dashboard.css?v=1.1.25">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png"><link rel="stylesheet" href="../css/dashboard.css?v=1.1.29">
 <style>
 .menu-print-sheet{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.menu-print-card{border:1px solid #bbb;padding:12px;break-inside:avoid;overflow-wrap:anywhere}.menu-print-card h3{margin:0 0 8px}.menu-print-facts{margin:0}.menu-print-facts dt{font-weight:bold}.menu-print-facts dd{margin:0 0 6px}.menu-print-sheet.is-one-per-page{display:block}.is-one-per-page .menu-print-card{break-after:page}.menu-print-table{width:100%}.menu-print-table td{overflow-wrap:anywhere}#menu-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}#menu-controls label{display:inline-flex;gap:5px;align-items:center}
 @page{size:A4;margin:16mm}@media print{body{background:white;color:black}body .dash-sidebar,body .dash-topbar,body #menu-controls,body #menu-results,body .caption,body .dash-nav-item{display:none!important}.dash,.dash-main,.dash-content,.panel{display:block!important;margin:0!important;padding:0!important;border:0!important;box-shadow:none!important}#print-area{display:block!important}#print-area h2{margin:0 0 14px}.menu-print-card{break-inside:avoid}}
@@ -19,7 +19,7 @@
 </head><body><div class="dash"><aside class="dash-sidebar" aria-label="Staff navigation"><nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav><div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" type="button" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,.2);">Sign out</button></div></aside><div class="dash-main"><header class="dash-topbar"><button class="dash-menu-toggle" type="button">Menu</button><h1>Menu Printing</h1></header><main class="dash-content"><section class="panel"><h2>Print Menu Lists</h2><p class="caption">This read-only screen never changes a price, a stock level or a POS setting. To print barcode <em>labels</em>, use the Barcode Label Printing screen.</p>
 <div id="menu-controls"><label>Search <input id="menu-search" class="input" type="search" placeholder="Name, SKU or barcode"></label><label>Category <select id="menu-category" class="input"><option value="">All categories</option></select></label><button id="menu-select-all" type="button">Select all filtered</button><label><input type="checkbox" data-column="price" checked> Price</label><label><input type="checkbox" data-column="area" checked> Category</label><label><input type="checkbox" data-column="code" checked> SKU/barcode</label><label><input type="checkbox" data-column="description"> Description</label><label><input id="menu-one-page" type="checkbox"> One item per page</label><button id="menu-reload" type="button">Reload</button><button id="menu-print" type="button">Print selected items</button><span id="menu-message" role="status"></span></div><div id="menu-results"></div><div id="print-area"><h2>J-ONE HOTEL &amp; LODGE · Menu (NGN)</h2><div id="menu-sheet"></div></div>
 </section></main></div></div>
-<script src="../js/runtime-config.js?v=1.1.25"></script><script src="../js/config.js?v=1.1.25"></script><script src="../js/utils.js?v=1.1.25"></script><script src="../js/icons.js?v=1.1.25"></script><script src="../js/api.js?v=1.1.25"></script><script src="../js/theme.js?v=1.1.25"></script><script src="../js/ui.js?v=1.1.25"></script><script src="../js/auth.js?v=1.1.25"></script><script src="../js/navigation.js?v=1.1.25"></script><script src="../js/dashboard.js?v=1.1.25"></script><script src="../js/menu-print.js?v=1.1.25"></script>
+<script src="../js/runtime-config.js?v=1.1.29"></script><script src="../js/config.js?v=1.1.29"></script><script src="../js/utils.js?v=1.1.29"></script><script src="../js/icons.js?v=1.1.29"></script><script src="../js/api.js?v=1.1.29"></script><script src="../js/theme.js?v=1.1.29"></script><script src="../js/ui.js?v=1.1.29"></script><script src="../js/auth.js?v=1.1.29"></script><script src="../js/navigation.js?v=1.1.29"></script><script src="../js/dashboard.js?v=1.1.29"></script><script src="../js/menu-print.js?v=1.1.29"></script>
 <script>
 (function(){'use strict';
 JONE.ui.initChrome(); JONE.dashboard.boot(["admin","general_manager","waiter","chef","kitchen_assistant"]);
@@ -30,7 +30,7 @@ async function load(){status.textContent='Loading menu…';document.getElementBy
 document.getElementById('menu-search').addEventListener('input',function(e){m.setQuery(state,e.target.value);render();});category.addEventListener('change',function(e){m.setCategory(state,e.target.value);render();});results.addEventListener('change',function(e){var key=e.target.getAttribute('data-menu-select');if(key!==null){var item=state.items.find(function(row){return m.keyOf(row)===key;});if(item)m.toggle(state,item,e.target.checked);render();}});
 document.getElementById('menu-select-all').addEventListener('click',function(){m.selectAllFiltered(state,true);render();});document.querySelectorAll('[data-column]').forEach(function(box){box.addEventListener('change',function(){m.setColumn(state,box.getAttribute('data-column'),box.checked);render();});});document.getElementById('menu-one-page').addEventListener('change',function(e){state.onePerPage=e.target.checked;render();});document.getElementById('menu-reload').addEventListener('click',load);document.getElementById('menu-print').addEventListener('click',function(){if(!m.summary(state).selected){status.textContent='Select at least one item before printing.';return;}render();window.print();});document.querySelector('[data-logout]').addEventListener('click',function(){Auth.logout();});load();
 })();
-</script><script src="../js/pwa.js?v=1.1.25"></script>
-<script src="../js/version.js?v=1.1.25"></script>
-<script src="../js/update-checker.js?v=1.1.25"></script>
+</script><script src="../js/pwa.js?v=1.1.29"></script>
+<script src="../js/version.js?v=1.1.29"></script>
+<script src="../js/update-checker.js?v=1.1.29"></script>
 </body></html>

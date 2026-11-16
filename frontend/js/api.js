@@ -130,7 +130,7 @@ const API = (() => {
   const NOT_FOUND_FALLBACK = "The requested item could not be found.";
   const NOT_FOUND_UNSERVED = (
     "The server does not recognise this request. If it persisted after a reload, " +
-    "the API deployment does not include this feature yet — report it to the administrator."
+    "the API deployment or routing may be outdated — report it to the administrator."
   );
 
   function friendlyMessage(status, data) {
