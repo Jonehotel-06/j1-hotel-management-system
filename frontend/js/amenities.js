@@ -11,9 +11,20 @@
 (function () {
   "use strict";
 
-  var API = window.JONE && window.JONE.api;
+  /* The API object: JONE.api when something exposes it under that
+     convention, and window.API (always set by js/api.js) as the reliable
+     fallback. Reading only JONE.api left API undefined, so init() returned
+     before the page did anything. */
+  var API = (window.JONE && window.JONE.api) || window.API;
   var UI = window.JONE && window.JONE.ui;
   var esc = window.JONE && window.JONE.esc;
+
+  /* API.get resolves to the response envelope {status, ok, data, message};
+     every read below needs the PAYLOAD, so unwrap it exactly the way
+     API.unwrap does. Reading the envelope as if it were the payload is how
+     the guest picker, the stock table and the deep link stayed empty on this
+     page. */
+  function unwrap(res) { return (res && res.data !== undefined) ? res.data : res; }
 
   function init() {
     if (!API || !UI) return;
@@ -80,7 +91,8 @@
   function loadItemSelects() {
     var selects = document.querySelectorAll("[data-amenity-item-select]");
     if (!selects.length) return;
-    API.get("/api/admin/inventory/items/?page_size=500").then(function (data) {
+    API.get("/api/admin/inventory/items/?page_size=500").then(function (res) {
+      var data = unwrap(res);
       var items = (data.results || data.items || []).filter(function (i) {
         return i.is_active !== false;
       });
@@ -101,7 +113,8 @@
     var sel = document.querySelector("[data-amenity-issue-item-select]");
     if (!sel) return;
     var keep = sel.value;
-    API.get("/api/admin/service-requests/reception/amenities/stock/").then(function (data) {
+    API.get("/api/admin/service-requests/reception/amenities/stock/").then(function (res) {
+      var data = unwrap(res);
       var rows = (data && data.balances) || [];
       var available = rows.filter(function (r) { return Number(r.quantity) > 0; });
       sel.innerHTML = '<option value="">— Select —</option>';
@@ -124,7 +137,8 @@
   function loadLocationSelect() {
     var sel = document.querySelector("[data-amenity-location-select]");
     if (!sel) return;
-    API.get("/api/admin/inventory/locations/?page_size=200").then(function (data) {
+    API.get("/api/admin/inventory/locations/?page_size=200").then(function (res) {
+      var data = unwrap(res);
       var locs = data.results || data.items || [];
       sel.innerHTML = '<option value="">— Select —</option>';
       locs.forEach(function (loc) {
@@ -163,7 +177,8 @@
        route as <lookup>="guests" and 404s, which is why this dropdown used to
        stay empty and the Issue form could never be submitted. */
     var url = "/api/admin/guests/?page_size=50" + (q ? "&search=" + encodeURIComponent(q) : "");
-    API.get(url).then(function (data) {
+    API.get(url).then(function (res) {
+      var data = unwrap(res);
       var guests = data.results || data.items || [];
       var keep = sel.value;
       sel.innerHTML = '<option value="">' + (q ? "— No match; refine the search —" : "— Search above, then select —") + "</option>";
@@ -192,7 +207,8 @@
       if (guestId) loadGuestSelect("");
       return;
     }
-    API.get("/api/admin/bookings/" + encodeURIComponent(bookingRef) + "/").then(function (booking) {
+    API.get("/api/admin/bookings/" + encodeURIComponent(bookingRef) + "/").then(function (res) {
+      var booking = unwrap(res);
       linkedBooking = booking || null;
       if (!booking || !form) return;
       if (form.booking_id) form.booking_id.value = booking.id || "";
@@ -226,7 +242,8 @@
     var container = document.querySelector("[data-amenity-stock-container]");
     if (!container) return;
     container.innerHTML = '<p class="text-muted">Loading…</p>';
-    API.get("/api/admin/service-requests/reception/amenities/stock/").then(function (data) {
+    API.get("/api/admin/service-requests/reception/amenities/stock/").then(function (res) {
+      var data = unwrap(res);
       if (!data.location) {
         container.innerHTML = '<div class="alert alert-warning">No Reception stock location found. Ask the Store Keeper to create one with code <strong>RECEPTION</strong>.</div>';
         return;
@@ -251,7 +268,8 @@
     var container = document.querySelector("[data-amenity-history-container]");
     if (!container) return;
     container.innerHTML = '<p class="text-muted">Loading…</p>';
-    API.get("/api/admin/service-requests/reception/amenities/issues/?page_size=100").then(function (data) {
+    API.get("/api/admin/service-requests/reception/amenities/issues/?page_size=100").then(function (res) {
+      var data = unwrap(res);
       var issues = data.results || [];
       if (!issues.length) {
         container.innerHTML = '<p class="text-muted">No amenity issuances recorded yet.</p>';
@@ -292,7 +310,8 @@
     }
     UI.confirm("Allocate this stock to the Reception Department?").then(function (ok) {
       if (!ok) return;
-      API.post("/api/admin/service-requests/reception/amenities/allocate/", payload).then(function (data) {
+      API.post("/api/admin/service-requests/reception/amenities/allocate/", payload).then(function (res) {
+        var data = unwrap(res);
         UI.toast(data.created ? "Stock allocated to Reception." : "Allocation already exists.", "success");
         form.reset();
         loadStock();
@@ -319,7 +338,8 @@
       UI.toast("Please fill in all required fields.", "warning");
       return;
     }
-    API.post("/api/admin/service-requests/reception/amenities/issue/", payload).then(function (data) {
+    API.post("/api/admin/service-requests/reception/amenities/issue/", payload).then(function (res) {
+      var data = unwrap(res);
       UI.toast(data.created ? "Amenity issued to guest." : "Issuance already recorded.", "success");
       form.reset();
       loadStock();

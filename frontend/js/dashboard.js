@@ -2284,11 +2284,38 @@
       return Promise.resolve(null);
     }
 
+    /* A failed booking-detail read must never be reported as "no guest
+       record": the booking exists, the REQUEST failed (an expired session, a
+       network blip, or a deployed API that is out of step with this frontend).
+       Swallowing the rejection and letting the guestId guard below fire is
+       exactly how the desk was told a booking had no guest when the real
+       problem was the read. Report the real failure instead. */
+    function bookingDetailFailed(err) {
+      toast("The booking details could not be loaded: " +
+        ((err && err.message) || "the request failed") +
+        ". Refresh the page and try again.", "error");
+      return null;
+    }
+
+    /* window.API.get resolves to the response ENVELOPE ({status, ok, data,
+       message}), not to the payload — every read below needs the payload, so
+       unwrap it exactly the way window.API.unwrap does. Reading the envelope
+       as if it were the booking is how the desk was told "no guest record" on
+       every click: the booking's fields live one level deeper, under data. */
+    const payload = (res) => (window.API.unwrap
+      ? window.API.unwrap(res)
+      : (res && res.data !== undefined ? res.data : res));
+
     const detail = lookup
-      ? window.API.get("/api/admin/bookings/" + encodeURIComponent(lookup) + "/").catch(() => null)
+      ? window.API.get("/api/admin/bookings/" + encodeURIComponent(lookup) + "/")
+          .then((res) => payload(res))
+          .catch(bookingDetailFailed)
       : Promise.resolve(null);
 
     return detail.then((booking) => {
+      /* A null booking from a lookup means the read failed and was already
+         reported above — do not fall through to the guest checks. */
+      if (lookup && booking === null) return null;
       const guestId = opts.guestId || (booking && booking.guest && booking.guest.id) || null;
       if (!guestId) {
         toast("This booking has no guest record — reload the page and try again.", "error");
@@ -2300,9 +2327,11 @@
       const bookingId = booking && booking.id;
 
       return Promise.all([
-        window.API.get(AMENITY_STOCK_PATH).catch((err) => ({ error: err })),
+        window.API.get(AMENITY_STOCK_PATH).then((res) => payload(res)).catch((err) => ({ error: err })),
         bookingId
-          ? window.API.get(AMENITY_ISSUES_PATH + "?booking_id=" + encodeURIComponent(bookingId)).catch(() => ({ results: [] }))
+          ? window.API.get(AMENITY_ISSUES_PATH + "?booking_id=" + encodeURIComponent(bookingId))
+              .then((res) => payload(res))
+              .catch(() => ({ results: [] }))
           : Promise.resolve({ results: [] }),
       ]).then(([stock, issues]) => {
         if (!stock || stock.error) {

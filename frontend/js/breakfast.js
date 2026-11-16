@@ -12,9 +12,19 @@
 (function () {
   "use strict";
 
-  var API = window.JONE && window.JONE.api;
+  /* The API object: JONE.api when something exposes it under that
+     convention, and window.API (always set by js/api.js) as the reliable
+     fallback. Reading only JONE.api left API undefined, so init() returned
+     before the page did anything. */
+  var API = (window.JONE && window.JONE.api) || window.API;
   var UI = window.JONE && window.JONE.ui;
   var esc = window.JONE && window.JONE.esc;
+
+  /* API.get resolves to the response envelope {status, ok, data, message};
+     every read below needs the PAYLOAD, so unwrap it exactly the way
+     API.unwrap does. Reading the envelope as if it were the payload is how
+     the guest picker and the config banner stayed empty on this page. */
+  function unwrap(res) { return (res && res.data !== undefined) ? res.data : res; }
 
   function init() {
     if (!API || !UI) return;
@@ -69,7 +79,8 @@
        swallowed by the guest booking detail route as <lookup>="guests", 404s,
        and the catch below left both pickers with no options — so a breakfast
        issuance could never be submitted either. */
-    API.get("/api/admin/guests/?page_size=200").then(function (data) {
+    API.get("/api/admin/guests/?page_size=200").then(function (res) {
+      var data = unwrap(res);
       var guests = data.results || data.items || [];
       selects.forEach(function (sel) {
         sel.innerHTML = '<option value="">— Select —</option>';
@@ -88,7 +99,8 @@
   function loadConfigBanner() {
     var status = document.querySelector("[data-breakfast-config-status]");
     if (!status) return;
-    API.get("/api/admin/service-requests/breakfast/config/").then(function (cfg) {
+    API.get("/api/admin/service-requests/breakfast/config/").then(function (res) {
+      var cfg = unwrap(res);
       status.textContent = cfg.is_enabled ? "ENABLED" : "DISABLED";
       if (cfg.is_enabled && cfg.service_start && cfg.service_end) {
         status.textContent += " (" + cfg.service_start + " – " + cfg.service_end + ")";
@@ -99,7 +111,8 @@
   }
 
   function loadConfig() {
-    API.get("/api/admin/service-requests/breakfast/config/").then(function (cfg) {
+    API.get("/api/admin/service-requests/breakfast/config/").then(function (res) {
+      var cfg = unwrap(res);
       var form = document.querySelector("[data-breakfast-config-form]");
       if (!form) return;
       var enabled = form.querySelector('[name="is_enabled"]');
@@ -144,7 +157,8 @@
       UI.toast("Please fill in all required fields.", "warning");
       return;
     }
-    API.post("/api/admin/service-requests/breakfast/issue/", payload).then(function (data) {
+    API.post("/api/admin/service-requests/breakfast/issue/", payload).then(function (res) {
+      var data = unwrap(res);
       UI.toast(data.created ? "Breakfast recorded." : "Already recorded for this date.", "success");
       form.reset();
       var today = new Date().toISOString().split("T")[0];
@@ -168,7 +182,8 @@
     var result = document.querySelector("[data-breakfast-eligibility-result]");
     result.innerHTML = '<p class="text-muted">Checking…</p>';
     API.get("/api/admin/service-requests/breakfast/eligibility/?guest_id=" + guestId + "&service_date=" + serviceDate)
-      .then(function (data) {
+      .then(function (res) {
+        var data = unwrap(res);
         if (data.eligible) {
           result.innerHTML = '<div class="alert alert-success"><strong>Eligible.</strong> This guest can receive breakfast on ' + esc(serviceDate) + ". Eligible guests: " + data.eligible_guests + ".</div>";
         } else {
@@ -186,7 +201,8 @@
     var container = document.querySelector("[data-breakfast-history-container]");
     if (!container) return;
     container.innerHTML = '<p class="text-muted">Loading…</p>';
-    API.get("/api/admin/service-requests/breakfast/issues/?page_size=100").then(function (data) {
+    API.get("/api/admin/service-requests/breakfast/issues/?page_size=100").then(function (res) {
+      var data = unwrap(res);
       var issues = data.results || [];
       if (!issues.length) {
         container.innerHTML = '<p class="text-muted">No breakfast issuances recorded yet.</p>';
