@@ -8,7 +8,7 @@ import logging
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Prefetch, Q
 from django.utils import timezone
 
@@ -517,7 +517,15 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
             if alt_type.pk != room_type.pk:
                 # Cross-type relocation (identical nightly rate) — re-lock the
                 # new type and re-price so the snapshot stays consistent.
-                room_type = RoomType.objects.select_for_update().get(pk=alt_type.pk)
+                # ISSUE #5 FIX: alt_type may be a RoomType whose row is deleted
+                # between find_substitute_room() and this get() (race condition).
+                # catch DoesNotExist and surface it as a 404 instead of a 500.
+                try:
+                    room_type = RoomType.objects.select_for_update().get(pk=alt_type.pk)
+                except RoomType.DoesNotExist:
+                    from rest_framework.exceptions import NotFound
+
+                    raise NotFound("Room type not found.")
                 quote = calculate_quote(
                     room_type=room_type, check_in=check_in, check_out=check_out, rooms=rooms,
                     adults=adults, children=children, offer_code=offer_code,
@@ -548,7 +556,8 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
     free_rooms = chosen_rooms
 
     pending = require_payment
-    booking = Booking.objects.create(
+    try:
+        booking = Booking.objects.create(
         booking_reference=_unique_booking_reference(),
         idempotency_key=idempotency_key,
         guest=guest,
@@ -579,6 +588,16 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
         ),
         created_by=actor if is_staff or (user and user.is_staff_member) else None,
     )
+    except IntegrityError as exc:
+        # A unique-constraint or other database integrity failure while writing
+        # the booking row is unexpected — surface it as a booking refusal,
+        # never as an unhandled 500 "An unexpected error occurred."
+        from rest_framework.exceptions import APIException
+
+        raise APIException(
+            "Could not create the booking — a database constraint was violated. "
+            "Please try again.",
+        ) from exc
     # The raw token is returned only once to the guest; only its digest is stored.
     booking.guest_access_token = booking.issue_guest_access_token()
     # Last line of defence against a double-booking: re-check every room we are
@@ -589,44 +608,70 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
         rooms=free_rooms, check_in=check_in, check_out=check_out,
         exclude_booking_id=booking.pk,
     )
-    BookingRoom.objects.bulk_create(
-        [
-            BookingRoom(booking=booking, room=room, check_in=check_in, check_out=check_out)
-            for room in free_rooms
-        ]
-    )
+    try:
+        BookingRoom.objects.bulk_create(
+            [
+                BookingRoom(booking=booking, room=room, check_in=check_in, check_out=check_out)
+                for room in free_rooms
+            ]
+        )
+    except IntegrityError as exc:
+        from rest_framework.exceptions import APIException
+
+        raise APIException(
+            "Could not assign rooms to the booking — a database constraint was violated. "
+            "Please try again.",
+        ) from exc
     if room_guests:
         assignments = list(booking.room_assignments.select_related("room").order_by("room__room_number"))
-        attach_room_guests(
-            booking=booking,
-            rooms_payload=_map_room_guests_to_assignments(room_guests, assignments),
-            actor=actor or user,
-            request=request,
-        )
+        try:
+            attach_room_guests(
+                booking=booking,
+                rooms_payload=_map_room_guests_to_assignments(room_guests, assignments),
+                actor=actor or user,
+                request=request,
+            )
+        except IntegrityError as exc:
+            from rest_framework.exceptions import APIException
+
+            raise APIException(
+                "Could not record room guests — a database constraint was violated. "
+                "Please try again.",
+            ) from exc
     # Immutable snapshot of a personal discount that was applied. Written once,
     # never re-read from the GuestDiscount row, so deactivating or editing the
     # discount later can never change this booking's historical amounts.
     if quote.guest_discount is not None and quote.discount > 0:
         from apps.offers.models import GuestDiscountApplication
 
-        GuestDiscountApplication.objects.create(
-            booking=booking,
-            guest_discount=quote.guest_discount,
-            guest=guest,
-            discount_type=quote.guest_discount.discount_type,
-            discount_value=quote.guest_discount.discount_value,
-            amount=quote.discount,
-            currency=booking.currency,
-            reason=quote.guest_discount.reason,
-        )
+        try:
+            GuestDiscountApplication.objects.create(
+                booking=booking,
+                guest_discount=quote.guest_discount,
+                guest=guest,
+                discount_type=quote.guest_discount.discount_type,
+                discount_value=quote.guest_discount.discount_value,
+                amount=quote.discount,
+                currency=booking.currency,
+                reason=quote.guest_discount.reason,
+            )
+        except IntegrityError as exc:
+            # A duplicate discount application row is unexpected but must not
+            # become an unhandled 500 — the booking itself was already written.
+            from rest_framework.exceptions import APIException
+
+            raise APIException(
+                "Could not record the applied discount. Please try again.",
+            ) from exc
 
     # Transient (not persisted) hand-off to the API layer: when the exact room
     # the guest picked could not be held, callers MUST surface this to them.
     booking.room_substitution = substitution
 
-    log_action(
-        actor=actor or user,
-        action="BOOKING_CREATED",
+    try:
+        log_action(
+            actor=actor or user,
+            action="BOOKING_CREATED",
         instance=booking,
         metadata={
             "reference": booking.booking_reference,
@@ -655,6 +700,8 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
         request=request,
         summary=f"Booking {booking.booking_reference} created ({booking.source})",
     )
+    except Exception:  # noqa: BLE001 — audit logging must never fail a created booking
+        logger.warning("Audit log failed for booking %s", booking.booking_reference, exc_info=True)
 
     guest_name = booking.guest.full_name
     notify_staff(
