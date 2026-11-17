@@ -46,23 +46,18 @@
     });
 
     // Load dropdowns
-    loadItemSelects();
-    loadLocationSelect();
-    loadGuestSelect();
-    loadIssueItemSelect();
-
-    // Guest search (server-side): the desk types a name instead of scrolling
-    // through every guest the hotel has ever had.
-    var guestSearch = document.querySelector("[data-amenity-guest-search]");
-    if (guestSearch) {
-      guestSearch.addEventListener("input", function () {
-        if (guestSearchTimer) clearTimeout(guestSearchTimer);
-        guestSearchTimer = setTimeout(function () { loadGuestSelect(guestSearch.value); }, 250);
-      });
+    var user = window.Auth && window.Auth.state && window.Auth.state.user;
+    var canAllocate = user && ["ADMIN", "GENERAL_MANAGER", "MANAGER", "STOREKEEPER"].indexOf(String(user.role).toUpperCase()) !== -1;
+    document.querySelector('[data-tab="allocate"]').hidden = !canAllocate;
+    if (canAllocate) { loadItemSelects(); loadLocationSelect(); }
+    var canIssue = !user || String(user.role).toUpperCase() !== "STOREKEEPER";
+    if (canIssue) {
+      ReceptionServices.guests(document.querySelector("[data-amenity-issue-form]"), {deepLink:true});
+      loadIssueItemSelect();
+    } else {
+      document.querySelector('[data-tab="issue"]').hidden = true;
+      document.querySelector('[data-tab="history"]').hidden = true;
     }
-
-    // ?booking=REF & friends: preselect the stay being recorded against.
-    applyDeepLink();
 
     // Refresh buttons
     var refreshStock = document.querySelector("[data-amenity-refresh]");
@@ -105,7 +100,7 @@
           sel.appendChild(opt);
         });
       });
-    }).catch(function () {});
+    }).catch(function (err) { UI.toast(err.message || "Unable to load selection. Refresh to retry.", "error"); });
   }
 
   /* Issue dropdown = the Reception Department's own shelf. */
@@ -116,7 +111,7 @@
     API.get("/api/admin/service-requests/reception/amenities/stock/").then(function (res) {
       var data = unwrap(res);
       var rows = (data && data.balances) || [];
-      var available = rows.filter(function (r) { return Number(r.quantity) > 0; });
+      var available = rows.filter(function (r) { return r.is_active !== false && Number(r.quantity) > 0; });
       sel.innerHTML = '<option value="">— Select —</option>';
       available.forEach(function (row) {
         var opt = document.createElement("option");
@@ -131,7 +126,7 @@
         sel.disabled = false;
         if (keep) sel.value = keep;
       }
-    }).catch(function () {});
+    }).catch(function (err) { UI.toast(err.message || "Unable to load selection. Refresh to retry.", "error"); });
   }
 
   function loadLocationSelect() {
@@ -148,92 +143,7 @@
         opt.textContent = loc.code + " — " + loc.name;
         sel.appendChild(opt);
       });
-    }).catch(function () {});
-  }
-
-  /* Guest picker.
-
-     It used to load 500 guests and hope the right one was in the first page,
-     with no search and no tie to the stay being checked in. Now:
-       · the list is a SEARCH result (name/email/phone, debounced), not a dumb
-         500-row page;
-       · a deep link (?booking=REF, as the check-in screen and the booking page
-         pass it) preselects the guest, fills the room and keeps the booking id,
-         so the issuance is attached to the stay it belongs to. */
-  var guestSearchTimer = null;
-  var linkedBooking = null;
-
-  function guestLabel(g) {
-    var name = ((g.first_name || "") + " " + (g.last_name || "")).trim() || g.full_name || "Guest";
-    return name + (g.email ? " (" + g.email + ")" : (g.phone ? " (" + g.phone + ")" : ""));
-  }
-
-  function loadGuestSelect(term) {
-    var sel = document.querySelector("[data-amenity-guest-select]");
-    if (!sel) return;
-    var q = String(term || "").trim();
-    /* /api/admin/guests/ is the staff guest list (searchable). The old path,
-       /api/bookings/guests/, does not exist: it falls through the guest booking
-       route as <lookup>="guests" and 404s, which is why this dropdown used to
-       stay empty and the Issue form could never be submitted. */
-    var url = "/api/admin/guests/?page_size=50" + (q ? "&search=" + encodeURIComponent(q) : "");
-    API.get(url).then(function (res) {
-      var data = unwrap(res);
-      var guests = data.results || data.items || [];
-      var keep = sel.value;
-      sel.innerHTML = '<option value="">' + (q ? "— No match; refine the search —" : "— Search above, then select —") + "</option>";
-      guests.forEach(function (g) {
-        var opt = document.createElement("option");
-        opt.value = g.id;
-        opt.textContent = guestLabel(g);
-        sel.appendChild(opt);
-      });
-      if (keep) sel.value = keep;
-      if (linkedBooking && linkedBooking.guest && linkedBooking.guest.id) sel.value = linkedBooking.guest.id;
-    }).catch(function () {});
-  }
-
-  /* ?booking=REF / ?guest=ID / ?room=N — the "record it later" path, and the
-     link the check-in screen can hand over when the desk skipped the prompt. */
-  function applyDeepLink() {
-    var params = new URLSearchParams(window.location.search);
-    var bookingRef = (params.get("booking") || params.get("ref") || "").trim();
-    var guestId = (params.get("guest") || "").trim();
-    var room = (params.get("room") || "").trim();
-    var context = document.querySelector("[data-amenity-issue-context]");
-    var form = document.querySelector("[data-amenity-issue-form]");
-    if (room && form && form.room_number) form.room_number.value = room;
-    if (!bookingRef) {
-      if (guestId) loadGuestSelect("");
-      return;
-    }
-    API.get("/api/admin/bookings/" + encodeURIComponent(bookingRef) + "/").then(function (res) {
-      var booking = unwrap(res);
-      linkedBooking = booking || null;
-      if (!booking || !form) return;
-      if (form.booking_id) form.booking_id.value = booking.id || "";
-      if (form.guest_id && booking.guest && booking.guest.id) {
-        // Keep the guest in the list even when the search box is untouched.
-        var sel = form.guest_id;
-        if (!Array.prototype.some.call(sel.options, function (o) { return String(o.value) === String(booking.guest.id); })) {
-          var opt = document.createElement("option");
-          opt.value = booking.guest.id;
-          opt.textContent = guestLabel(booking.guest);
-          sel.appendChild(opt);
-        }
-        sel.value = booking.guest.id;
-      }
-      var rooms = (booking.room_assignments || []).map(function (a) { return a.room_number; }).filter(Boolean);
-      if (!room && rooms.length && form.room_number) form.room_number.value = rooms.join(", ");
-      if (context) {
-        var guestName = booking.guest_name || (booking.guest && booking.guest.full_name) || "";
-        context.textContent = "Recording amenities against " + (booking.booking_reference || bookingRef) +
-          (guestName ? " — " + guestName : "") +
-          (rooms.length ? " (room " + rooms.join(", ") + ")" : "") + ".";
-      }
-    }).catch(function () {
-      if (context) context.textContent = "That booking could not be loaded; pick the guest manually.";
-    });
+    }).catch(function (err) { UI.toast(err.message || "Unable to load selection. Refresh to retry.", "error"); });
   }
 
   /* ------------------------------ Load data ------------------------------- */
@@ -241,7 +151,7 @@
   function loadStock() {
     var container = document.querySelector("[data-amenity-stock-container]");
     if (!container) return;
-    container.innerHTML = '<p class="text-muted">Loading…</p>';
+    container.innerHTML = ReceptionServices.loading();
     API.get("/api/admin/service-requests/reception/amenities/stock/").then(function (res) {
       var data = unwrap(res);
       if (!data.location) {
@@ -253,9 +163,9 @@
         container.innerHTML = '<p class="text-muted">No amenity stock allocated to Reception yet.</p>';
         return;
       }
-      var html = '<table class="table"><thead><tr><th>SKU</th><th>Name</th><th>Base Unit</th><th>Quantity</th></tr></thead><tbody>';
+      var html = '<p class="caption">Location: ' + esc(data.location.name) + ' (' + esc(data.location.code) + ')</p><table class="table"><thead><tr><th>SKU</th><th>Name</th><th>Base Unit</th><th>Quantity</th><th>Status</th></tr></thead><tbody>';
       balances.forEach(function (b) {
-        html += "<tr><td><code>" + esc(b.sku) + "</code></td><td>" + esc(b.name) + "</td><td>" + esc(b.base_unit) + "</td><td><strong>" + esc(b.quantity) + "</strong></td></tr>";
+        html += "<tr><td><code>" + esc(b.sku) + "</code></td><td>" + esc(b.name) + "</td><td>" + esc(b.base_unit) + "</td><td><strong>" + esc(b.quantity) + "</strong></td><td>" + (b.is_active === false ? "Inactive" : Number(b.quantity) <= 0 ? "Unavailable" : b.low_stock ? "Low stock" : "Available") + "</td></tr>";
       });
       html += "</tbody></table>";
       container.innerHTML = html;
@@ -267,7 +177,7 @@
   function loadHistory() {
     var container = document.querySelector("[data-amenity-history-container]");
     if (!container) return;
-    container.innerHTML = '<p class="text-muted">Loading…</p>';
+    container.innerHTML = ReceptionServices.loading();
     API.get("/api/admin/service-requests/reception/amenities/issues/?page_size=100").then(function (res) {
       var data = unwrap(res);
       var issues = data.results || [];
@@ -278,9 +188,9 @@
       var html = '<table class="table"><thead><tr><th>Reference</th><th>Guest</th><th>Room</th><th>Item</th><th>Qty</th><th>Balance After</th><th>Date</th></tr></thead><tbody>';
       issues.forEach(function (i) {
         html += "<tr><td><code>" + esc(i.reference) + "</code></td>";
-        html += "<td>" + esc(i.guest_name || i.guest) + "</td>";
+        html += "<td>" + esc(i.guest_name || "Guest name unavailable") + "</td>";
         html += "<td>" + esc(i.room_number || "—") + "</td>";
-        html += "<td><code>" + esc(i.item_sku || i.item) + "</code></td>";
+        html += "<td><code>" + esc(i.item_name || i.item_sku || "—") + "</code></td>";
         html += "<td>" + esc(i.quantity) + "</td>";
         html += "<td>" + esc(i.departmental_balance_after) + "</td>";
         html += "<td>" + esc(i.occurred_at || "") + "</td>";
@@ -308,9 +218,9 @@
       UI.toast("Please fill in all required fields.", "warning");
       return;
     }
-    UI.confirm("Allocate this stock to the Reception Department?").then(function (ok) {
+    UI.confirm({title:"Allocate stock", message:"Allocate this stock to the Reception Department?"}).then(function (ok) {
       if (!ok) return;
-      API.post("/api/admin/service-requests/reception/amenities/allocate/", payload).then(function (res) {
+      ReceptionServices.postOnce(form, "/api/admin/service-requests/reception/amenities/allocate/", payload).then(function (res) {
         var data = unwrap(res);
         UI.toast(data.created ? "Stock allocated to Reception." : "Allocation already exists.", "success");
         form.reset();
@@ -338,7 +248,7 @@
       UI.toast("Please fill in all required fields.", "warning");
       return;
     }
-    API.post("/api/admin/service-requests/reception/amenities/issue/", payload).then(function (res) {
+    ReceptionServices.postOnce(form, "/api/admin/service-requests/reception/amenities/issue/", payload).then(function (res) {
       var data = unwrap(res);
       UI.toast(data.created ? "Amenity issued to guest." : "Issuance already recorded.", "success");
       form.reset();

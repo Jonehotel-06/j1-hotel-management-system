@@ -12,6 +12,7 @@
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
 <link rel="stylesheet" href="../css/main.css?v=1.1.29">
+<link rel="stylesheet" href="../css/reception-services.css?v=1.1.29">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -20,7 +21,7 @@
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png">
 </head>
-<body>
+<body class="reception-services">
 <div class="dash">
   <aside class="dash-sidebar" aria-label="Staff navigation">
     <div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div>
@@ -85,7 +86,7 @@
           </div>
           <div class="card-body">
             <div data-amenity-stock-container>
-              <p class="text-muted">Loading…</p>
+              <div class="service-loading" role="status" aria-label="Loading"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
             </div>
           </div>
         </div>
@@ -99,21 +100,17 @@
             <form data-amenity-allocate-form>
               <div class="form-row">
                 <div class="form-group">
-                  <label>Stock Item *</label>
-                  <select name="item_id" required data-amenity-item-select></select>
+                  <label for="amenities-select-5857">Stock Item *</label><select id="amenities-select-5857" name="item_id" required data-amenity-item-select></select>
                 </div>
                 <div class="form-group">
-                  <label>Quantity *</label>
-                  <input type="number" name="quantity" step="0.0001" min="0.0001" required placeholder="e.g. 30">
+                  <label for="amenities-input-6052">Quantity *</label><input id="amenities-input-6052" type="number" name="quantity" step="0.0001" min="0.0001" required placeholder="e.g. 30">
                 </div>
                 <div class="form-group">
-                  <label>From Location *</label>
-                  <select name="from_location_id" required data-amenity-location-select></select>
+                  <label for="amenities-select-6274">From Location *</label><select id="amenities-select-6274" name="from_location_id" required data-amenity-location-select></select>
                 </div>
               </div>
               <div class="form-group">
-                <label>Notes</label>
-                <textarea name="notes" rows="2" placeholder="Optional notes"></textarea>
+                <label for="amenities-textarea-6502">Notes</label><textarea id="amenities-textarea-6502" name="notes" rows="2" placeholder="Optional notes"></textarea>
               </div>
               <div class="form-actions">
                 <button type="submit" class="btn btn-accent"><span data-icon="arrowRight" data-size="16"></span> Allocate to Reception</button>
@@ -130,20 +127,18 @@
           <div class="card-body">
             <p class="caption" data-amenity-issue-context></p>
             <form data-amenity-issue-form>
-              <input type="hidden" name="booking_id">
+              <div class="form-group"><label for="amenity-booking">Booking / stay</label><select id="amenity-booking" name="booking_id"></select></div><p class="service-context" data-guest-context aria-live="polite"></p>
               <div class="form-row">
                 <div class="form-group">
                   <label for="amenity-guest-search">Find guest</label>
-                  <input id="amenity-guest-search" type="search" placeholder="Name, email or phone"
-                         data-amenity-guest-search autocomplete="off">
+                  <input id="amenity-guest-search" type="search" placeholder="Name, booking reference or room"
+                         data-amenity-guest-search data-guest-search autocomplete="off">
                 </div>
                 <div class="form-group">
-                  <label>Guest *</label>
-                  <select name="guest_id" required data-amenity-guest-select></select>
+                  <label for="amenities-select-7875">Guest *</label><select id="amenities-select-7875" name="guest_id" required data-amenity-guest-select></select>
                 </div>
                 <div class="form-group">
-                  <label>Room Number</label>
-                  <input type="text" name="room_number" placeholder="e.g. 101">
+                  <label for="amenities-select-8067">Room Number</label><select id="amenities-select-8067" name="room_number" aria-label="Assigned room"></select>
                 </div>
                 <div class="form-group">
                   <label>Item *</label>
@@ -152,13 +147,11 @@
                   <select name="item_id" required data-amenity-issue-item-select></select>
                 </div>
                 <div class="form-group">
-                  <label>Quantity *</label>
-                  <input type="number" name="quantity" step="0.0001" min="0.0001" required placeholder="e.g. 2">
+                  <label for="amenities-input-8609">Quantity *</label><input id="amenities-input-8609" type="number" name="quantity" step="0.0001" min="0.0001" required placeholder="e.g. 2">
                 </div>
               </div>
               <div class="form-group">
-                <label>Notes</label>
-                <textarea name="notes" rows="2" placeholder="Optional notes"></textarea>
+                <label for="amenities-textarea-8847">Notes</label><textarea id="amenities-textarea-8847" name="notes" rows="2" placeholder="Optional notes"></textarea>
               </div>
               <div class="form-actions">
                 <button type="submit" class="btn btn-accent"><span data-icon="check" data-size="16"></span> Issue to Guest</button>
@@ -177,7 +170,7 @@
           </div>
           <div class="card-body">
             <div data-amenity-history-container>
-              <p class="text-muted">Loading…</p>
+              <div class="service-loading" role="status" aria-label="Loading"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
             </div>
           </div>
         </div>
@@ -198,6 +191,7 @@
 <script src="../js/navigation.js?v=1.1.29"></script>
 <script src="../js/pwa.js?v=1.1.29"></script>
 <script src="../js/dashboard.js?v=1.1.29"></script>
+<script src="../js/reception-services.js?v=1.1.29"></script>
 <script src="../js/amenities.js?v=1.1.29"></script>
 <script>
   /* Shell boot — the same guard every dashboard page runs. Without it this page

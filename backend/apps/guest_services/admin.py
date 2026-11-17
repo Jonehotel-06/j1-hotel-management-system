@@ -54,3 +54,38 @@ class LaundryOrderAdmin(admin.ModelAdmin):
     search_fields = ("reference", "guest_name", "guest_phone")
     date_hierarchy = "created_at"
     inlines = [LaundryItemInline]
+
+# Product configuration only: quantities still belong to inventory/procurement.
+from .models import MiniMartProduct, MiniMartSale, MiniMartSaleLine  # noqa: E402
+from apps.accounts.capabilities import has_capability  # noqa: E402
+
+
+@admin.register(MiniMartProduct)
+class MiniMartProductAdmin(admin.ModelAdmin):
+    list_display = ("item", "location", "selling_price", "is_active")
+    list_filter = ("is_active", "item__category", "location")
+    search_fields = ("item__name", "item__sku", "item__barcode")
+
+    def has_module_permission(self, request):
+        return request.user.is_active and request.user.is_staff and request.user.role in {"ADMIN", "GENERAL_MANAGER"} and has_capability(request.user, "inventory.manage")
+
+    def has_view_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_add_permission(self, request):
+        return self.has_module_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # Retire the configuration; preserve historical sale links.
+
+
+@admin.register(MiniMartSale, MiniMartSaleLine)
+class MiniMartEvidenceAdmin(ReadOnlyAdmin):
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser and request.user.is_active
+
+    def has_module_permission(self, request):
+        return self.has_view_permission(request)

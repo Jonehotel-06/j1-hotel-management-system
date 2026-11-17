@@ -12,6 +12,7 @@
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
 <link rel="stylesheet" href="../css/main.css?v=1.1.29">
+<link rel="stylesheet" href="../css/reception-services.css?v=1.1.29">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -20,7 +21,7 @@
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png">
 </head>
-<body>
+<body class="reception-services">
 <div class="dash">
   <aside class="dash-sidebar" aria-label="Staff navigation">
     <div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div>
@@ -73,7 +74,8 @@
         <strong>Breakfast Benefit:</strong> <span data-breakfast-config-status>Loading…</span>
       </div>
 
-      <!-- Tabs -->
+      <p class="caption">Complimentary breakfast follows the existing entitlement workflow. Recording service does not deduct ingredients; the Store Keeper records consumption through inventory.</p>
+<!-- Tabs -->
       <div class="tabs" role="tablist">
         <button class="tab active" data-tab="issue" role="tab" aria-selected="true">Record Breakfast</button>
         <button class="tab" data-tab="eligibility" role="tab" aria-selected="false">Check Eligibility</button>
@@ -86,19 +88,16 @@
         <div class="card">
           <div class="card-header"><h2>Record a Complementary Breakfast</h2></div>
           <div class="card-body">
-            <form data-breakfast-issue-form>
+            <form data-breakfast-issue-form><div class="form-group"><label for="breakfast-search">Find guest or room</label><input id="breakfast-search" type="search" data-guest-search placeholder="Search by name, booking or room"></div><div class="form-group"><label for="breakfast-booking">Booking / stay</label><select id="breakfast-booking" name="booking_id" required></select></div><p class="service-context" data-guest-context aria-live="polite"></p>
               <div class="form-row">
                 <div class="form-group">
-                  <label>Guest *</label>
-                  <select name="guest_id" required data-breakfast-guest-select></select>
+                  <label for="breakfast-select-6016">Guest *</label><select id="breakfast-select-6016" name="guest_id" required data-breakfast-guest-select></select>
                 </div>
                 <div class="form-group">
-                  <label>Service Date *</label>
-                  <input type="date" name="service_date" required>
+                  <label for="breakfast-input-6210">Service Date *</label><input id="breakfast-input-6210" type="date" name="service_date" required>
                 </div>
                 <div class="form-group">
-                  <label>Notes</label>
-                  <input type="text" name="notes" placeholder="Optional notes">
+                  <label for="breakfast-input-6389">Notes</label><input id="breakfast-input-6389" type="text" name="notes" placeholder="Optional notes">
                 </div>
               </div>
               <div class="form-actions">
@@ -114,15 +113,13 @@
         <div class="card">
           <div class="card-header"><h2>Check Guest Eligibility</h2></div>
           <div class="card-body">
-            <form data-breakfast-eligibility-form>
+            <form data-breakfast-eligibility-form><div class="form-group"><label for="elig-search">Find guest or room</label><input id="elig-search" type="search" data-guest-search placeholder="Search by name, booking or room"></div><div class="form-group"><label for="elig-booking">Booking / stay</label><select id="elig-booking" name="booking_id" required></select></div><p class="service-context" data-guest-context aria-live="polite"></p>
               <div class="form-row">
                 <div class="form-group">
-                  <label>Guest *</label>
-                  <select name="guest_id" required data-breakfast-elig-guest-select></select>
+                  <label for="breakfast-select-7577">Guest *</label><select id="breakfast-select-7577" name="guest_id" required data-breakfast-elig-guest-select></select>
                 </div>
                 <div class="form-group">
-                  <label>Service Date *</label>
-                  <input type="date" name="service_date" required>
+                  <label for="breakfast-input-7776">Service Date *</label><input id="breakfast-input-7776" type="date" name="service_date" required>
                 </div>
               </div>
               <div class="form-actions">
@@ -143,7 +140,7 @@
           </div>
           <div class="card-body">
             <div data-breakfast-history-container>
-              <p class="text-muted">Loading…</p>
+              <div class="service-loading" role="status" aria-label="Loading"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
             </div>
           </div>
         </div>
@@ -161,17 +158,14 @@
                   <label class="switch"><input type="checkbox" name="is_enabled" data-breakfast-config-enabled> <span>Enable complementary breakfast</span></label>
                 </div>
                 <div class="form-group">
-                  <label>Service Start (HH:MM)</label>
-                  <input type="text" name="service_start" placeholder="e.g. 07:30">
+                  <label for="breakfast-input-9580">Service Start (HH:MM)</label><input id="breakfast-input-9580" type="text" name="service_start" placeholder="e.g. 07:30">
                 </div>
                 <div class="form-group">
-                  <label>Service End (HH:MM)</label>
-                  <input type="text" name="service_end" placeholder="e.g. 10:00">
+                  <label for="breakfast-input-9783">Service End (HH:MM)</label><input id="breakfast-input-9783" type="text" name="service_end" placeholder="e.g. 10:00">
                 </div>
               </div>
               <div class="form-group">
-                <label>Notes</label>
-                <textarea name="notes" rows="3" placeholder="Optional configuration notes"></textarea>
+                <label for="breakfast-textarea-9999">Notes</label><textarea id="breakfast-textarea-9999" name="notes" rows="3" placeholder="Optional configuration notes"></textarea>
               </div>
               <div class="form-actions">
                 <button type="submit" class="btn btn-accent"><span data-icon="save" data-size="16"></span> Save Configuration</button>
@@ -196,6 +190,7 @@
 <script src="../js/navigation.js?v=1.1.29"></script>
 <script src="../js/pwa.js?v=1.1.29"></script>
 <script src="../js/dashboard.js?v=1.1.29"></script>
+<script src="../js/reception-services.js?v=1.1.29"></script>
 <script src="../js/breakfast.js?v=1.1.29"></script>
 <script>
   /* Shell boot — the same guard every dashboard page runs. Without it this page

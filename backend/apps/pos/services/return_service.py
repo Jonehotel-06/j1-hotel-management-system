@@ -140,7 +140,7 @@ def _eligible_queryset():
     now excluded at the source, so the list means "you can still act on this".
     """
     return (
-        PosOrder.objects.filter(status__in=RETURNABLE_STATUSES, mode__in=RETURNABLE_MODES)
+        PosOrder.objects.filter(status__in=RETURNABLE_STATUSES, mode__in=RETURNABLE_MODES, minimart_sale__isnull=True)
         .exclude(charge_transaction__isnull=True)
         .exclude(Q(returned_amount__gte=F("total_amount")) & Q(returned_amount__gt=0))
         .select_related("stay", "folio", "created_by", "table_session__table", "charge_transaction")
@@ -509,6 +509,12 @@ def record_unopened_return(
         .select_related("folio", "charge_transaction", "stay", "created_by")
         .get(pk=order.pk)
     )
+    # Mini Mart uses OTHER_OPERATING revenue and explicit retail stock links.
+    # The restaurant return path reverses FOOD_BEVERAGE and recipe/direct-sale
+    # stock: refusing only retail orders prevents an incorrect reversal without
+    # changing any restaurant/bar return behaviour.
+    if (order.metadata or {}).get("minimart"):
+        raise ValidationError("Mini Mart returns are not supported by the restaurant return workflow. Contact management for a controlled correction.")
     if idempotency_key:
         existing = PosOrderReturn.objects.select_for_update().filter(idempotency_key=idempotency_key).first()
         if existing:

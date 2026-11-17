@@ -115,6 +115,14 @@ def issue_guest_amenity(
     the immutable movement plus the ``GuestAmenityIssue`` evidence row. Raises
     ``ValueError`` when the Reception stock is insufficient.
     """
+    if booking is not None and booking.guest_id != guest.pk:
+        raise ValueError({"booking_id": "That booking does not belong to this guest."})
+    if booking is not None:
+        rooms = list(booking.room_assignments.values_list("room__room_number", flat=True))
+        if rooms:
+            if room_number and room_number not in rooms:
+                raise ValueError({"room_number": "Choose a room assigned to this booking."})
+            room_number = room_number or (rooms[0] if len(rooms) == 1 else "")
     location = reception_location()
     if location is None:
         raise ValueError({
@@ -129,15 +137,6 @@ def issue_guest_amenity(
     item = StockItem.objects.select_for_update().get(pk=item.pk)
     location = StockLocation.objects.select_for_update().get(pk=location.pk)
     balance = StockBalance.objects.select_for_update().filter(item=item, location=location).first()
-    before = Decimal(balance.quantity_on_hand) if balance else Decimal("0.0000")
-    if before < amount:
-        raise ValueError({
-            "quantity": (
-                f"Only {before.quantize(QTY)} {item.base_unit} of {item.sku} are allocated to the "
-                f"Reception Department; {amount.quantize(QTY)} requested. Ask the Store Keeper to allocate more."
-            )
-        })
-
     raw_key = str(idempotency_key or "").strip()
     if raw_key:
         key = scoped_key(prefix="guest-amenity-issue", scope=f"guest:{guest.pk}:item:{item.pk}", raw_key=raw_key)
@@ -146,7 +145,19 @@ def issue_guest_amenity(
 
     existing = GuestAmenityIssue.objects.select_for_update().filter(source_key=key).first()
     if existing is not None:
+        if (existing.quantity != amount or existing.booking_id != getattr(booking, "pk", None)
+                or existing.room_number != (room_number or "")):
+            raise ValueError({"idempotency_key": "This key already identifies a different amenity issuance."})
         return existing, False
+
+    before = Decimal(balance.quantity_on_hand) if balance else Decimal("0.0000")
+    if before < amount:
+        raise ValueError({
+            "quantity": (
+                f"Only {before.quantize(QTY)} {item.base_unit} of {item.sku} are allocated to the "
+                f"Reception Department; {amount.quantize(QTY)} requested. Ask the Store Keeper to allocate more."
+            )
+        })
 
     movement, _created = record_stock_movement(
         item=item, location=location, movement_type=StockMovement.Type.ISSUE,
@@ -201,6 +212,9 @@ def breakfast_eligibility(*, guest, booking, service_date):
     if booking is None:
         payload["reason"] = "No active booking is linked to this guest."
         return payload
+    if guest is not None and booking.guest_id != guest.pk:
+        payload["reason"] = "That booking does not belong to this guest."
+        return payload
     if booking.status in {"CHECKED_OUT", "CANCELLED", "EXPIRED", "NO_SHOW"}:
         payload["reason"] = (
             f"This booking is {booking.get_status_display().lower()}; breakfast benefits end at check-out."
@@ -234,6 +248,8 @@ def record_breakfast(*, guest, booking, service_date, items=None, actor=None, no
     for the same guest and service date already exists, or when the booking
     does not match the guest.
     """
+    from apps.bookings.models import Guest
+    Guest.objects.select_for_update().get(pk=guest.pk)
     eligibility = breakfast_eligibility(guest=guest, booking=booking, service_date=service_date)
     if not eligibility["eligible"]:
         raise ValueError({"service_date": eligibility["reason"]})

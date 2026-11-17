@@ -1056,7 +1056,9 @@ class ReceptionAmenityStockView(APIView):
             "location": {"id": location.pk, "code": location.code, "name": location.name},
             "balances": [
                 {"item_id": b.item_id, "sku": b.item.sku, "name": b.item.name,
-                 "base_unit": b.item.base_unit, "quantity": str(b.quantity_on_hand)}
+                 "base_unit": b.item.base_unit, "quantity": str(b.quantity_on_hand),
+                 "is_active": b.item.is_active, "low_stock": b.quantity_on_hand <= b.item.reorder_level,
+                 "reorder_level": str(b.item.reorder_level)}
                 for b in balances
             ],
         })
@@ -1190,7 +1192,10 @@ class BreakfastEligibilityView(APIView):
         if not service_date:
             raise ValidationError({"service_date": "Required."})
         from datetime import date
-        sd = date.fromisoformat(service_date)
+        try:
+            sd = date.fromisoformat(service_date)
+        except (TypeError, ValueError):
+            raise ValidationError({"service_date": "Use a valid YYYY-MM-DD date."})
 
         guest = None
         booking = None
@@ -1209,7 +1214,10 @@ class BreakfastEligibilityView(APIView):
         if guest is None:
             raise ValidationError({"guest_id": "Provide a guest_id or booking_id."})
         if booking is None:
-            booking = Booking.objects.filter(guest=guest).order_by("-check_in").first()
+            booking = (Booking.objects.filter(guest=guest, check_in__lte=sd, check_out__gte=sd)
+                       .exclude(status__in=["CHECKED_OUT", "CANCELLED", "EXPIRED", "NO_SHOW"])
+                       .order_by("-check_in", "pk").first()
+                       or Booking.objects.filter(guest=guest).order_by("-check_in").first())
 
         eligibility = breakfast_eligibility(guest=guest, booking=booking, service_date=sd)
         return success_response(eligibility)
@@ -1247,7 +1255,10 @@ class BreakfastIssueView(APIView):
         if guest is None:
             raise ValidationError({"guest_id": "Provide a guest_id or booking_id."})
         if booking is None:
-            booking = Booking.objects.filter(guest=guest).order_by("-check_in").first()
+            booking = (Booking.objects.filter(guest=guest, check_in__lte=sd, check_out__gte=sd)
+                       .exclude(status__in=["CHECKED_OUT", "CANCELLED", "EXPIRED", "NO_SHOW"])
+                       .order_by("-check_in", "pk").first()
+                       or Booking.objects.filter(guest=guest).order_by("-check_in").first())
 
         try:
             record, created = record_breakfast(
@@ -1271,7 +1282,7 @@ class BreakfastIssuanceListView(APIView):
     required_capability = "breakfast.issue"
 
     def get(self, request):
-        qs = BreakfastIssuance.objects.select_related("guest", "booking", "issued_by").all()
+        qs = BreakfastIssuance.objects.select_related("guest", "booking", "issued_by").prefetch_related("booking__room_assignments__room").all()
         if guest_id := request.query_params.get("guest_id"):
             qs = qs.filter(guest_id=guest_id)
         if booking_id := request.query_params.get("booking_id"):

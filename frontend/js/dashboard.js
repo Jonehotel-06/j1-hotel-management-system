@@ -32,6 +32,7 @@
          than the priced, settled service it is. */
       { label: "Laundry", href: "laundry.html", icon: "shirt", view: "laundry", capabilities: ["guest_request.manage", "guest_request.assign"] },
       { label: "Amenities", href: "amenities.html", icon: "star", view: "amenities", capabilities: ["guest_amenity.issue", "guest_amenity.allocate"] },
+      { label: "Mini Mart", href: "minimart.html", icon: "grid", view: "minimart", capabilities: ["guest_amenity.issue"] },
       { label: "Breakfast", href: "breakfast.html", icon: "coffee", view: "breakfast", capabilities: ["breakfast.issue"] },
       { label: "Barcode Labels", href: "barcode-labels.html", icon: "printer", view: "barcode-labels", capabilities: ["inventory.manage", "pos.order.manage"] },
       /* Task 02: menu-information printing is its OWN screen. It answers a
@@ -161,6 +162,7 @@
        actually grants: guest_amenity.issue / breakfast.issue to the front desk
        and the management tier, guest_amenity.allocate to the store keeper. */
     "amenities.html": { roles: ["admin", "general_manager", "receptionist", "storekeeper"] },
+    "minimart.html": { roles: ["admin", "general_manager", "receptionist"] },
     "breakfast.html": { roles: ["admin", "general_manager", "receptionist"] },
     "service-requests.html": { roles: SERVICE_DEPARTMENTS },
     "laundry.html": { roles: LAUNDRY_DEPARTMENTS },

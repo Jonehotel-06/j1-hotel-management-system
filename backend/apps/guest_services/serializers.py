@@ -476,14 +476,20 @@ def _validate_hhmm(value, field):
 class BreakfastIssuanceSerializer(serializers.ModelSerializer):
     guest_name = serializers.CharField(source="guest.full_name", read_only=True)
     guest_email = serializers.EmailField(source="guest.email", read_only=True, allow_null=True)
-    booking_reference = serializers.CharField(source="booking.reference", read_only=True)
+    booking_reference = serializers.CharField(source="booking.booking_reference", read_only=True)
+    room_number = serializers.SerializerMethodField()
+    check_in = serializers.DateField(source="booking.check_in", read_only=True)
+    check_out = serializers.DateField(source="booking.check_out", read_only=True)
+
+    def get_room_number(self, obj):
+        return ", ".join(a.room.room_number for a in obj.booking.room_assignments.all())
     issued_by_name = serializers.CharField(source="issued_by.full_name", read_only=True, allow_null=True)
 
     class Meta:
         model = BreakfastIssuance
         fields = [
             "id", "reference", "guest", "guest_name", "guest_email", "booking",
-            "booking_reference", "service_date", "issued_by", "issued_by_name",
+            "booking_reference", "room_number", "check_in", "check_out", "service_date", "issued_by", "issued_by_name",
             "eligible_guests", "items", "occurred_at", "notes", "created_at",
         ]
         read_only_fields = fields

@@ -202,7 +202,8 @@ test("the guest pickers use the staff guest list, not a route that does not exis
       file + ' must not request /api/bookings/guests/ — that path resolves to the guest booking ' +
         'detail view with <lookup>="guests" and returns no guest list'
     );
-    assert.match(js, /\/api\/admin\/guests\//, file + " must read the staff guest list");
+    assert.match(js, /(?:ReceptionServices|S)\.guests\(/, file + " must use the scoped guest/stay picker");
+    assert.match(source("js/reception-services.js"), /reception\/guests\//, "the picker reads actual guests and their booking relationships");
   }
 });
 
@@ -219,7 +220,8 @@ test("the issue form can attach the issuance to the stay it belongs to", () => {
   assert.match(html, /data-amenity-guest-search/, "the desk must be able to search guests by name");
   assert.match(html, /name="booking_id"/, "the staying booking travels with the issuance");
   const js = source("js/amenities.js");
-  assert.match(js, /applyDeepLink|function applyDeepLink/, "?booking=REF must preselect the stay");
+  assert.match(js, /deepLink:true/, "Amenities enables booking deep links");
+  assert.match(source("js/reception-services.js"), /params\.get\('booking'\)/, "?booking=REF must preselect the stay");
   assert.match(js, /booking_id/, "onIssue must send the booking it was told about");
 });
 

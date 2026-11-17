@@ -1,234 +1,59 @@
-/* js/breakfast.js */
-/* ==========================================================================
-   Complementary Breakfast dashboard page — record issuances, check eligibility,
-   view history, and manage configuration.
-
-   Tabs:
-   - Record Breakfast: record a breakfast served to an eligible guest
-   - Check Eligibility: verify a guest can receive breakfast on a date
-   - History: audit trail of all issuances
-   - Configuration: enable/disable, set service window, add notes
-   ========================================================================== */
+/* Complimentary breakfast: preserve entitlement-only, non-stock workflow. */
 (function () {
   "use strict";
-
-  /* The API object: JONE.api when something exposes it under that
-     convention, and window.API (always set by js/api.js) as the reliable
-     fallback. Reading only JONE.api left API undefined, so init() returned
-     before the page did anything. */
-  var API = (window.JONE && window.JONE.api) || window.API;
-  var UI = window.JONE && window.JONE.ui;
-  var esc = window.JONE && window.JONE.esc;
-
-  /* API.get resolves to the response envelope {status, ok, data, message};
-     every read below needs the PAYLOAD, so unwrap it exactly the way
-     API.unwrap does. Reading the envelope as if it were the payload is how
-     the guest picker and the config banner stayed empty on this page. */
-  function unwrap(res) { return (res && res.data !== undefined) ? res.data : res; }
-
+  const S = window.ReceptionServices, API = window.API, UI = JONE.ui, esc = JONE.esc;
+  function resetDate(form) { form.querySelector('[name=service_date]').value = JONE.hotelTodayISO(); }
   function init() {
-    if (!API || !UI) return;
-
-    // Set today's date as default
-    var todayInput = document.querySelector('[data-breakfast-issue-form] [name="service_date"]');
-    if (todayInput) todayInput.value = new Date().toISOString().split("T")[0];
-    var eligDateInput = document.querySelector('[data-breakfast-eligibility-form] [name="service_date"]');
-    if (eligDateInput) eligDateInput.value = new Date().toISOString().split("T")[0];
-
-    // Tab switching
-    document.querySelectorAll("[data-tab]").forEach(function (tab) {
-      tab.addEventListener("click", function () {
-        var name = tab.getAttribute("data-tab");
-        document.querySelectorAll("[data-tab]").forEach(function (t) {
-          t.classList.toggle("active", t === tab);
-          t.setAttribute("aria-selected", t === tab ? "true" : "false");
-        });
-        document.querySelectorAll("[data-panel]").forEach(function (p) {
-          p.classList.toggle("hidden", p.getAttribute("data-panel") !== name);
-        });
-        if (name === "history") loadHistory();
-        if (name === "config") loadConfig();
-      });
+    S.tabs(name => { if (name === 'history') history(); if (name === 'config') config(); });
+    ['[data-breakfast-issue-form]', '[data-breakfast-eligibility-form]'].forEach(selector => {
+      const form=document.querySelector(selector); resetDate(form); S.guests(form);
     });
-
-    // Load guest selects
-    loadGuestSelects();
-
-    // Load config banner
-    loadConfigBanner();
-
-    // Form handlers
-    var issueForm = document.querySelector("[data-breakfast-issue-form]");
-    if (issueForm) issueForm.addEventListener("submit", onIssue);
-    var eligForm = document.querySelector("[data-breakfast-eligibility-form]");
-    if (eligForm) eligForm.addEventListener("submit", onCheckEligibility);
-    var configForm = document.querySelector("[data-breakfast-config-form]");
-    if (configForm) configForm.addEventListener("submit", onSaveConfig);
-
-    // Refresh
-    var refreshHistory = document.querySelector("[data-breakfast-history-refresh]");
-    if (refreshHistory) refreshHistory.addEventListener("click", loadHistory);
+    document.querySelector('[data-breakfast-issue-form]').addEventListener('submit', issue);
+    document.querySelector('[data-breakfast-eligibility-form]').addEventListener('submit', eligibility);
+    document.querySelector('[data-breakfast-config-form]').addEventListener('submit', saveConfig);
+    document.querySelector('[data-breakfast-history-refresh]').addEventListener('click', history);
+    banner();
   }
-
-  /* ------------------------------ Dropdowns -------------------------------- */
-
-  function loadGuestSelects() {
-    var selects = document.querySelectorAll("[data-breakfast-guest-select], [data-breakfast-elig-guest-select]");
-    if (!selects.length) return;
-    /* Staff guest list. The old "/api/bookings/guests/" is not a route: it is
-       swallowed by the guest booking detail route as <lookup>="guests", 404s,
-       and the catch below left both pickers with no options — so a breakfast
-       issuance could never be submitted either. */
-    API.get("/api/admin/guests/?page_size=200").then(function (res) {
-      var data = unwrap(res);
-      var guests = data.results || data.items || [];
-      selects.forEach(function (sel) {
-        sel.innerHTML = '<option value="">— Select —</option>';
-        guests.forEach(function (g) {
-          var opt = document.createElement("option");
-          opt.value = g.id;
-          opt.textContent = (g.first_name || "") + " " + (g.last_name || "") + " (" + (g.email || "") + ")";
-          sel.appendChild(opt);
-        });
-      });
-    }).catch(function () {});
+  function selection(form) {
+    return {guest_id:Number(form.elements.guest_id.value), booking_id:Number(form.elements.booking_id.value),service_date:form.elements.service_date.value};
   }
-
-  /* ------------------------------ Config ---------------------------------- */
-
-  function loadConfigBanner() {
-    var status = document.querySelector("[data-breakfast-config-status]");
-    if (!status) return;
-    API.get("/api/admin/service-requests/breakfast/config/").then(function (res) {
-      var cfg = unwrap(res);
-      status.textContent = cfg.is_enabled ? "ENABLED" : "DISABLED";
-      if (cfg.is_enabled && cfg.service_start && cfg.service_end) {
-        status.textContent += " (" + cfg.service_start + " – " + cfg.service_end + ")";
-      }
-    }).catch(function () {
-      status.textContent = "Configuration not found";
-    });
+  async function banner() {
+    const status=document.querySelector('[data-breakfast-config-status]');
+    try { const c=S.unwrap(await API.get(S.base+'breakfast/config/')); status.textContent=(c.is_enabled?'Enabled':'Disabled')+(c.service_start?' · '+c.service_start+' – '+c.service_end:''); }
+    catch(e) { status.textContent=e.message || 'Unable to load breakfast configuration. Refresh to retry.'; }
   }
-
-  function loadConfig() {
-    API.get("/api/admin/service-requests/breakfast/config/").then(function (res) {
-      var cfg = unwrap(res);
-      var form = document.querySelector("[data-breakfast-config-form]");
-      if (!form) return;
-      var enabled = form.querySelector('[name="is_enabled"]');
-      if (enabled) enabled.checked = !!cfg.is_enabled;
-      var start = form.querySelector('[name="service_start"]');
-      if (start) start.value = cfg.service_start || "";
-      var end = form.querySelector('[name="service_end"]');
-      if (end) end.value = cfg.service_end || "";
-      var notes = form.querySelector('[name="notes"]');
-      if (notes) notes.value = cfg.notes || "";
-    }).catch(function () {});
+  async function issue(e) {
+    e.preventDefault(); const form=e.target, payload=selection(form); payload.notes=form.elements.notes.value;
+    if (!payload.guest_id || !payload.booking_id) return UI.toast('Select a guest and their booking.','warning');
+    try { const data=await S.postOnce(form,S.base+'breakfast/issue/',payload); UI.toast(data.created?'Breakfast recorded.':'Already recorded for this service date.','success'); history(); }
+    catch(err) { UI.toast(err.message || 'Breakfast could not be recorded.','error'); }
   }
-
-  function onSaveConfig(e) {
-    e.preventDefault();
-    var form = e.target;
-    var payload = {
-      is_enabled: form.is_enabled.checked,
-      service_start: form.service_start.value,
-      service_end: form.service_end.value,
-      notes: form.notes.value,
-    };
-    API.put("/api/admin/service-requests/breakfast/config/", payload).then(function () {
-      UI.toast("Breakfast configuration saved.", "success");
-      loadConfigBanner();
-    }).catch(function (err) {
-      UI.toast("Failed to save: " + (err.message || ""), "error");
-    });
+  async function eligibility(e) {
+    e.preventDefault(); const form=e.target, result=document.querySelector('[data-breakfast-eligibility-result]');
+    result.innerHTML=S.loading();
+    try {
+      const d=S.unwrap(await API.get(S.base+'breakfast/eligibility/?'+new URLSearchParams(selection(form))));
+      result.innerHTML='<div class="alert" role="status"><strong>'+(d.eligible?'Eligible':'Not eligible')+'</strong> · '+esc(d.eligible?'Breakfast entitlement: '+d.eligible_guests+' guest(s), '+d.check_in+' to '+d.check_out:d.reason)+'</div>';
+    } catch(err) { result.innerHTML=S.error(err); }
   }
-
-  /* ------------------------------ Issue ---------------------------------- */
-
-  function onIssue(e) {
-    e.preventDefault();
-    var form = e.target;
-    var payload = {
-      guest_id: parseInt(form.guest_id.value),
-      service_date: form.service_date.value,
-      notes: form.notes.value,
-    };
-    if (!payload.guest_id || !payload.service_date) {
-      UI.toast("Please fill in all required fields.", "warning");
-      return;
-    }
-    API.post("/api/admin/service-requests/breakfast/issue/", payload).then(function (res) {
-      var data = unwrap(res);
-      UI.toast(data.created ? "Breakfast recorded." : "Already recorded for this date.", "success");
-      form.reset();
-      var today = new Date().toISOString().split("T")[0];
-      form.service_date.value = today;
-    }).catch(function (err) {
-      UI.toast("Failed to record: " + (err.message || ""), "error");
-    });
+  async function history() {
+    const box=document.querySelector('[data-breakfast-history-container]'); box.innerHTML=S.loading();
+    try {
+      const rows=S.unwrap(await API.get(S.base+'breakfast/issues/')).results || [];
+      if (!rows.length) {box.innerHTML='<p class="text-muted">No breakfast services recorded yet.</p>';return;}
+      box.innerHTML='<table class="table"><thead><tr><th>Reference</th><th>Guest</th><th>Room</th><th>Booking / dates</th><th>Service date</th><th>Entitlement</th><th>Staff</th></tr></thead><tbody>'+rows.map(i => '<tr><td>'+esc(i.reference)+'</td><td>'+esc(i.guest_name || 'Name unavailable')+'</td><td>'+esc(i.room_number || 'Not assigned')+'</td><td>'+esc(i.booking_reference || '—')+'<br>'+esc(i.check_in || '')+' – '+esc(i.check_out || '')+'</td><td>'+esc(i.service_date)+'</td><td>'+esc(i.eligible_guests)+'</td><td>'+esc(i.issued_by_name || '—')+'</td></tr>').join('')+'</tbody></table>';
+    } catch(err) {box.innerHTML=S.error(err);}
   }
-
-  /* -------------------------- Eligibility -------------------------------- */
-
-  function onCheckEligibility(e) {
-    e.preventDefault();
-    var form = e.target;
-    var guestId = form.guest_id.value;
-    var serviceDate = form.service_date.value;
-    if (!guestId || !serviceDate) {
-      UI.toast("Please fill in all required fields.", "warning");
-      return;
-    }
-    var result = document.querySelector("[data-breakfast-eligibility-result]");
-    result.innerHTML = '<p class="text-muted">Checking…</p>';
-    API.get("/api/admin/service-requests/breakfast/eligibility/?guest_id=" + guestId + "&service_date=" + serviceDate)
-      .then(function (res) {
-        var data = unwrap(res);
-        if (data.eligible) {
-          result.innerHTML = '<div class="alert alert-success"><strong>Eligible.</strong> This guest can receive breakfast on ' + esc(serviceDate) + ". Eligible guests: " + data.eligible_guests + ".</div>";
-        } else {
-          result.innerHTML = '<div class="alert alert-warning"><strong>Not eligible.</strong> ' + esc(data.reason || "") + "</div>";
-        }
-      })
-      .catch(function (err) {
-        result.innerHTML = '<div class="alert alert-error">Failed to check: ' + esc(err.message || "") + "</div>";
-      });
+  async function config() {
+    try {
+      const c=S.unwrap(await API.get(S.base+'breakfast/config/')), form=document.querySelector('[data-breakfast-config-form]');
+      form.elements.is_enabled.checked=!!c.is_enabled; ['service_start','service_end','notes'].forEach(n => form.elements[n].value=c[n] || '');
+    } catch(err) {UI.toast(err.message,'error');}
   }
-
-  /* ------------------------------ History -------------------------------- */
-
-  function loadHistory() {
-    var container = document.querySelector("[data-breakfast-history-container]");
-    if (!container) return;
-    container.innerHTML = '<p class="text-muted">Loading…</p>';
-    API.get("/api/admin/service-requests/breakfast/issues/?page_size=100").then(function (res) {
-      var data = unwrap(res);
-      var issues = data.results || [];
-      if (!issues.length) {
-        container.innerHTML = '<p class="text-muted">No breakfast issuances recorded yet.</p>';
-        return;
-      }
-      var html = '<table class="table"><thead><tr><th>Reference</th><th>Guest</th><th>Booking</th><th>Date</th><th>Eligible Guests</th><th>Issued By</th></tr></thead><tbody>';
-      issues.forEach(function (i) {
-        html += "<tr><td><code>" + esc(i.reference) + "</code></td>";
-        html += "<td>" + esc(i.guest_name || i.guest) + "</td>";
-        html += "<td>" + esc(i.booking_reference || "—") + "</td>";
-        html += "<td>" + esc(i.service_date) + "</td>";
-        html += "<td>" + esc(i.eligible_guests) + "</td>";
-        html += "<td>" + esc(i.issued_by_name || "—") + "</td>";
-        html += "</tr>";
-      });
-      html += "</tbody></table>";
-      container.innerHTML = html;
-    }).catch(function (err) {
-      container.innerHTML = '<div class="alert alert-error">Failed to load history: ' + esc(err.message || "") + "</div>";
-    });
+  async function saveConfig(e) {
+    e.preventDefault(); const form=e.target, b=form.querySelector('[type=submit]'); if (b.disabled) return; b.disabled=true;
+    try { await API.put(S.base+'breakfast/config/',{is_enabled:form.elements.is_enabled.checked,service_start:form.elements.service_start.value,service_end:form.elements.service_end.value,notes:form.elements.notes.value}); UI.toast('Configuration saved.','success'); banner(); }
+    catch(err) {UI.toast(err.message,'error');} finally {b.disabled=false;}
   }
-
-  /* -------------------------------- Boot ---------------------------------- */
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  if (document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
 })();

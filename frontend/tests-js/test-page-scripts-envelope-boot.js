@@ -63,8 +63,8 @@ function jsonResponse(payload) {
 function stubFetch() {
   return async (url) => {
     const u = String(url);
-    if (u.includes("/api/admin/guests/")) {
-      return jsonResponse({ success: true, data: { results: [{ id: 3, first_name: "Ada", last_name: "Obi", email: "ada@example.com" }] } });
+    if (u.includes("/reception/guests/")) {
+      return jsonResponse({ success: true, data: { results: [{ id: 3, full_name: "Ada Obi", bookings: [{id:7,reference:"J1-TEST",check_in:"2026-11-16",check_out:"2026-11-18",status:"CHECKED_IN",rooms:["206"]}] }] } });
     }
     if (u.includes("/breakfast/config/")) {
       return jsonResponse({ success: true, data: { is_enabled: true, service_start: "2026-11-01", service_end: "2026-12-31" } });
@@ -103,7 +103,7 @@ async function bootPage(pageName, scriptName) {
   const { window } = dom;
   window.fetch = stubFetch();
   window.matchMedia = window.matchMedia || (() => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
-  for (const f of CORE.concat([scriptName])) {
+  for (const f of CORE.concat(["js/reception-services.js", scriptName])) {
     window.eval(fs.readFileSync(path.join(FRONTEND, f), "utf8"));
   }
   await new Promise((r) => setTimeout(r, 80));
@@ -129,7 +129,7 @@ test("breakfast.html: the guest picker and the config banner populate", { skip: 
   assert.ok(options.some((t) => t.includes("Ada Obi")),
     "the guest picker must populate from the API envelope: " + JSON.stringify(options));
   const banner = doc.querySelector("[data-breakfast-config-status]");
-  assert.ok(banner && /ENABLED/.test(banner.textContent),
+  assert.ok(banner && /Enabled/i.test(banner.textContent),
     "the config banner must render the config: " + (banner && banner.textContent));
 });
 

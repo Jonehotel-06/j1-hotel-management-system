@@ -1,10 +1,14 @@
 from django.urls import path
 
-from . import views
+from . import views, reception_views
 
 app_name = "guest_services"
 
 staff_urlpatterns = [
+    path("reception/guests/", reception_views.ReceptionGuestView.as_view(), name="reception-guests"),
+    path("reception/minimart/products/", reception_views.MiniMartProductsView.as_view(), name="minimart-products"),
+    path("reception/minimart/checkout/", reception_views.MiniMartCheckoutView.as_view(), name="minimart-checkout"),
+    path("reception/minimart/sales/", reception_views.MiniMartHistoryView.as_view(), name="minimart-sales"),
     path("laundry/", views.LaundryOrderListCreateView.as_view(), name="laundry-orders"),
     path("laundry/<str:reference>/assign/", views.LaundryOrderAssignView.as_view(), name="laundry-assign"),
     path("laundry/<str:reference>/status/", views.LaundryOrderStatusView.as_view(), name="laundry-status"),
