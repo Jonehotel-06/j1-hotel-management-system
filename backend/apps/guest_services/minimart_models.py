@@ -5,9 +5,32 @@ from django.db.models import Q
 from apps.core.models import TimeStampedModel
 
 
+class MiniMartCategory(TimeStampedModel):
+    """A hotel-configured retail category; names are deduplicated in the API."""
+
+    name = models.CharField(max_length=120, unique=True)
+    description = models.CharField(max_length=255, blank=True, default="")
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def save(self, *args, **kwargs):
+        self.name = str(self.name or "").strip()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
+
+
 class MiniMartProduct(TimeStampedModel):
     item = models.OneToOneField("inventory.StockItem", on_delete=models.PROTECT, related_name="minimart_product")
     location = models.ForeignKey("inventory.StockLocation", on_delete=models.PROTECT, related_name="minimart_products")
+    category = models.ForeignKey(
+        MiniMartCategory, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="minimart_products",
+    )
+    description = models.TextField(blank=True, default="")
     selling_price = models.DecimalField(max_digits=12, decimal_places=2)
     is_active = models.BooleanField(default=True, db_index=True)
 

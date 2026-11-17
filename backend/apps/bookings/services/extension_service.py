@@ -8,20 +8,22 @@ in the system, so it has to behave like one:
 * the room must genuinely be free for the extra nights (the same authoritative
   overlap rule the booking engine uses), otherwise the stay is refused rather
   than overbooked;
-* the amount is computed by the BACKEND from the rate the guest already agreed,
-  never from a figure the browser sent;
+* the amount is computed by the BACKEND from the agreed rate or a capability-
+  gated negotiated rate, never from a figure the browser sent; each added night
+  is itemised from the authoritative dates, room count and rate;
 * the money is recorded through the existing payment service, so the payment
   lands in the ledger, the receipt and the financial reports exactly like any
   other collection;
 * the previous checkout date is preserved on an append-only history row, so the
   desk can always reconstruct what the guest was originally booked for.
 
-Nothing here trusts a client-supplied amount, nightly rate or checkout date.
+Nothing here trusts a client-supplied total, itemised breakdown or checkout date.
 """
+from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
 import logging
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.audit.services import log_action
@@ -144,15 +146,46 @@ def _extension_rate(booking: Booking) -> Decimal:
     return _q(booking.price_per_night)
 
 
-def quote_extension(*, booking, new_check_out=None, additional_nights=None) -> dict:
+def nightly_breakdown(*, previous_check_out, nights, rate, rooms):
+    """Server-derived per-night evidence; no client totals or rows are trusted."""
+    rate = _q(rate)
+    rooms = max(1, int(rooms or 1))
+    nightly = _q(rate * rooms)
+    return [
+        {
+            "night_number": index + 1,
+            "date": (previous_check_out + timedelta(days=index)).isoformat(),
+            "nightly_rate": money(rate),
+            "rooms": rooms,
+            "amount": money(nightly),
+        }
+        for index in range(max(0, int(nights or 0)))
+    ]
+
+
+def _idempotent_extension_result(existing):
+    return {
+        "booking": existing.booking,
+        "extension": existing,
+        "idempotent": True,
+        "quote": {
+            "booking_reference": existing.booking.booking_reference,
+            "extension_amount": money(existing.extension_amount),
+            "new_check_out": existing.new_check_out.isoformat(),
+            "nightly_rate": money(existing.nightly_rate),
+            "additional_nights": existing.additional_nights,
+            "nightly_breakdown": list(getattr(existing, "breakdown", None) or []),
+        },
+    }
+
+
+def quote_extension(*, booking, new_check_out=None, additional_nights=None, nightly_rate=None) -> dict:
     """Price and validate an extension WITHOUT changing anything.
 
     The dashboard calls this to show the desk the extra nights and the amount
     payable before any money is taken; the confirm call re-runs every check
     inside its own transaction, so this is a preview and never the authority.
     """
-    from datetime import timedelta
-
     settings_obj = HotelSettings.get_settings()
     allowed, reason = can_extend(booking)
     if not allowed:
@@ -171,7 +204,9 @@ def quote_extension(*, booking, new_check_out=None, additional_nights=None) -> d
             f"{target} would make this one {total_nights}."
         )
 
-    rate = _extension_rate(booking)
+    rate = _q(nightly_rate) if nightly_rate is not None else _extension_rate(booking)
+    if rate < 0:
+        raise InvalidDatesError("The negotiated nightly rate cannot be negative.")
     rooms = max(1, int(booking.number_of_rooms or 1))
     amount = _q(Decimal(rate) * nights * rooms)
 
@@ -208,6 +243,9 @@ def quote_extension(*, booking, new_check_out=None, additional_nights=None) -> d
         "total_nights_after_extension": total_nights,
         "nightly_rate": money(rate),
         "number_of_rooms": rooms,
+        "nightly_breakdown": nightly_breakdown(
+            previous_check_out=previous_check_out, nights=nights, rate=rate, rooms=rooms
+        ),
         "extension_amount": money(amount),
         "currency": booking.currency,
         "amount_due_before_extension": money(_q(booking.amount_due)),
@@ -219,9 +257,41 @@ def quote_extension(*, booking, new_check_out=None, additional_nights=None) -> d
     }
 
 
-@transaction.atomic
 def extend_booking(*, booking, staff_user, new_check_out=None, additional_nights=None,
-                   amount_paid=None, provider="", notes="", request=None):
+                   amount_paid=None, provider="", notes="", request=None,
+                   nightly_rate=None, source_key=None):
+    """Idempotency envelope around the all-or-nothing extension transaction."""
+    if source_key:
+        existing = BookingExtension.objects.select_related("booking").filter(source_key=source_key).first()
+        if existing is not None:
+            if existing.booking_id != booking.pk:
+                raise BookingStateError("This retry key was already used for another booking.")
+            return _idempotent_extension_result(existing)
+    kwargs = dict(
+        booking=booking, staff_user=staff_user,
+        new_check_out=new_check_out, additional_nights=additional_nights,
+        amount_paid=amount_paid, provider=provider, notes=notes, request=request,
+        nightly_rate=nightly_rate, source_key=source_key,
+    )
+    try:
+        with transaction.atomic():
+            return _extend_booking_atomic(**kwargs)
+    except IntegrityError:
+        # A concurrent retry won the unique source-key race. Re-read outside
+        # the broken transaction so its original payment/history row is
+        # returned rather than charging the guest a second time.
+        if source_key:
+            existing = BookingExtension.objects.select_related("booking").filter(source_key=source_key).first()
+            if existing is not None:
+                if existing.booking_id != booking.pk:
+                    raise BookingStateError("This retry key was already used for another booking.")
+                return _idempotent_extension_result(existing)
+        raise
+
+
+def _extend_booking_atomic(*, booking, staff_user, new_check_out=None, additional_nights=None,
+                           amount_paid=None, provider="", notes="", request=None,
+                           nightly_rate=None, source_key=None):
     """Extend a stay, take the money and record the history.
 
     Everything happens in ONE transaction: the availability re-check, the
@@ -236,6 +306,15 @@ def extend_booking(*, booking, staff_user, new_check_out=None, additional_nights
     booking = Booking.objects.select_for_update().select_related(
         "guest", "room_type"
     ).get(pk=booking.pk)
+
+    if source_key:
+        existing = BookingExtension.objects.select_for_update().select_related("booking").filter(
+            source_key=source_key
+        ).first()
+        if existing is not None:
+            if existing.booking_id != booking.pk:
+                raise BookingStateError("This retry key was already used for another booking.")
+            return _idempotent_extension_result(existing)
 
     allowed, reason = can_extend(booking)
     if not allowed:
@@ -264,9 +343,14 @@ def extend_booking(*, booking, staff_user, new_check_out=None, additional_nights
             f"This stay has already been extended to {target}. Choose a later date."
         )
 
-    rate = _extension_rate(booking)
+    rate = _q(nightly_rate) if nightly_rate is not None else _extension_rate(booking)
+    if rate < 0:
+        raise InvalidDatesError("The negotiated nightly rate cannot be negative.")
     rooms = max(1, int(booking.number_of_rooms or 1))
     extension_amount = _q(Decimal(rate) * nights * rooms)
+    breakdown = nightly_breakdown(
+        previous_check_out=previous_check_out, nights=nights, rate=rate, rooms=rooms
+    )
 
     blocked, out_of_service = _blocked_rooms_for_extension(
         booking=booking, previous_check_out=previous_check_out, new_check_out=target
@@ -356,6 +440,8 @@ def extend_booking(*, booking, staff_user, new_check_out=None, additional_nights
         new_check_out=target,
         additional_nights=nights,
         nightly_rate=rate,
+        source_key=source_key or None,
+        breakdown=breakdown,
         extension_amount=extension_amount,
         amount_paid=paid,
         currency=booking.currency,

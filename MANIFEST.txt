@@ -1,25 +1,39 @@
-# Accounting agent — changed/created files (repository-relative, apply in this order)
-# M = modified, A = added. apply.sh reads this file.
-
-# --- backend: accounting/reconciliation + directly necessary procurement/payment
-M backend/apps/finance/models.py
-A backend/apps/finance/migrations/0017_accounting_payables_checks_and_payment_requests.py
-A backend/apps/finance/services/reconciliation_service.py
-M backend/apps/finance/services/night_audit_service.py
-A backend/apps/finance/services/procurement_payable_service.py
-A backend/apps/finance/services/supplier_payment_service.py
-M backend/apps/finance/services/expense_service.py
-M backend/apps/finance/services/approval_service.py
-M backend/apps/finance/serializers.py
-M backend/apps/finance/views.py
-M backend/apps/finance/urls.py
-
-# --- backend: tests for the repaired behaviour
-A backend/tests/test_accounting_agent_reconciliation.py
-A backend/tests/test_accounting_agent_procurement_payables.py
-A backend/tests/test_accounting_agent_supplier_payments.py
-
-# --- frontend: the Accounting dashboard and its endpoint map
-M frontend/dashboard/accounting.html
-M frontend/js/config.js
-A frontend/tests-js/test-accounting-agent-ui.js
+cd8567b8de40f72e698248442e8e237725014da789df679f49f9acef76fc363c  new      backend/apps/bookings/migrations/0008_booking_extension_source_key.py
+2ff9cbb3ed01b24521466844f8123fde7f15eb737fbfe2446925fa639a20fdfa  modified backend/apps/bookings/models.py
+ac5b0e3fbda125633960cae7e54d798d73060b2a7a5115219cac2b8dd70f0091  modified backend/apps/bookings/serializers_admin.py
+db04c9e90494724208c0ce1dfba047f0ada12452dd269cd3b5204ff9f1eb20b2  modified backend/apps/bookings/services/extension_service.py
+36eb8110eb6e76bd688816d9461bdfb0eda4b7fd17deaaa40be379378017139a  modified backend/apps/bookings/views_admin.py
+9681ebce7bc274efea093d152e946c2b8c9571c7358c2e8ae4c22f23dc886f2d  modified backend/apps/core/exception_handler.py
+dd5d2a985b67b0ddeea975ffc7e31747b7e7cf94528730f4249de898f8c2851e  new      backend/apps/core/log_redaction.py
+ca06aef3c54c72ceb4219f69bb5abf0aced0f68e72fa51f301827af55466e949  modified backend/apps/guest_services/admin.py
+680c7461686da8b8953e28d660aa2ae608c6d52c934ae1a016c328b9eb113582  new      backend/apps/guest_services/migrations/0010_minimart_categories_and_description.py
+85d4250c67c6bc000a892c9c24910c15ebf1c84358e611b21a79e5821e972d7c  new      backend/apps/guest_services/minimart_admin.py
+1ade8d6954d767f3c868fcaf43e4bbf2962bb7766f1250596529e711bc40b334  modified backend/apps/guest_services/minimart_models.py
+00a8b8d1f69d8bb8290779c7be350230864a76472036229fe129bae07ebe4f20  modified backend/apps/guest_services/models.py
+74e45041efa530bf48be3a00131b90a6e1631f4bd49d2bbd4bc33a1bc19442d5  modified backend/apps/guest_services/reception_views.py
+55a61ef786cd5b45e190da0cefada3574ee92749d0fb9f69ebf5d26c50e93f77  modified backend/apps/guest_services/serializers.py
+306aafc60bbc38dc20ae3100c80e583c33c9b24736f8615ee1d944902727a5da  modified backend/apps/guest_services/services_amenities.py
+849e730c0588ed06866259d0f213b8d600f3ee0577684277b5ea86485e5683d1  modified backend/apps/guest_services/urls.py
+35393e5d1c11da8cce55bc3a8d0972a993618544cc01eeca5cc353b7df120cd9  modified backend/apps/guest_services/views.py
+c7ec69d986f58c17ec92b483831f646eb39d92e841e81be9123f8b67a976d32b  modified backend/apps/inventory/apps.py
+bab4dcd61f96b2ab16e1f600f988e804a2642b974b200a9656c2c61a1e7b3ceb  new      backend/apps/inventory/migrations/0017_configurable_units_and_location_role.py
+6abafb0a32f9aaddb09083dd1c082a9ce38130c12d5955f86c0ebe0f70efe290  modified backend/apps/inventory/models.py
+8c4501eff13056cf8dad87b7cf113116462cf863184e654b20503aede85d4a28  modified backend/apps/inventory/serializers.py
+fbdcf7295d2241279ae83881bf1a6b2a67aedabb81dba2e53981beb4b5e97c19  modified backend/apps/inventory/services/inventory_service.py
+dc296af12c49b2e45c72153edeb494c9d6268f34c6567ccca175ce7fb5fba11c  modified backend/apps/inventory/urls.py
+34be1cd845c7a25c378db820e96f23022feef4a12c50721dde3621a354f95e24  modified backend/apps/inventory/views.py
+f9ab0d94ac604fa219519ec6a99a03fc35b8ccfacdcf96dd0c52b88606d3d7b5  modified backend/config/settings/base.py
+57228f0b53f6960a19a08bab2c5301f56c3c1e21015005a5bbd273490ec1bd95  modified backend/config/urls.py
+eaf1f69280cf48c7dad05e209cfe934244703485c60891cae68914dd9faa64d4  new      backend/tests/test_critical_repairs_runtime.py
+4e3ec3602a73f0afd620a562f0e8ab60aa1035efbdfee3a26424fb4ff330e35b  modified frontend/dashboard/amenities.html
+537be32dc720600fd149d129300c923a7ec5470ff1edcd9549d82fabfdcd225d  modified frontend/dashboard/breakfast.html
+05b9a71b29be3b8bd3d81bf8c5d0208e2905c583816f858ccc6322aa5494bf51  modified frontend/dashboard/inventory.html
+ff4e010a12a96bc74c01b9cde7dcc41c4d42e6dc9be93cb2fb3da752017c57c2  modified frontend/dashboard/minimart.html
+1c41dab565ea3295c960bb6bd422abc4017e2aef1afec0a042b969509e8b5679  modified frontend/js/amenities.js
+85a873710c18eae080391db322b94bf4da0c3164d03819572863977539e9099b  modified frontend/js/api.js
+548b048d2d0acae7a3c3415af84812a7cca097071d745e6b4073d3f9af6d4337  modified frontend/js/breakfast.js
+3cc1892e059117e760f0c5941dc274b9f1367d55b824bff01ea7c95b7672fc25  modified frontend/js/config.js
+48190e14773fc9621543baf7613282263636bd2b7030831da12ea7decb451c8e  modified frontend/js/dashboard.js
+b7e218fbe8fc4a6cc9254c7c419c8ce2a73a52db49db692df6c7605ae027f877  new      frontend/js/minimart-admin.js
+aad3607262848811fce4f2e77c2850b517781327c3fb3b8170110d560e5efb8d  modified frontend/js/minimart.js
+ac8f7ee518443eb5b5b4ee4b684ba8a105a3a89607a62325d45ffbd30cce2525  new      frontend/tests-js/test-critical-repairs-ui.js

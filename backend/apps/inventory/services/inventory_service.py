@@ -1,5 +1,6 @@
 """Locked, source-keyed stock ledger operations and procurement workflow."""
 from __future__ import annotations
+from functools import lru_cache
 
 import hashlib
 import json
@@ -8,7 +9,7 @@ import secrets
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import IntegrityError, transaction
+from django.db import DatabaseError, IntegrityError, transaction
 from django.db.models import Count, F, Q, Sum
 from django.utils import timezone
 
@@ -21,7 +22,7 @@ from ..models import (
     GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderPayment,
     StockBalance, StockBalanceAdjustment, StockConsumptionRequest, StockConsumptionRequestEvent, StockCount, StockCountEvent,
     StockCountLine, StockDepartment, StockIssueBatch, StockItem, StockLocation, StockMovement, StockRecipe,
-    StockRecipeLine, Supplier,
+    StockRecipeLine, StockUnit, Supplier,
 )
 
 logger = logging.getLogger("apps")
@@ -413,7 +414,8 @@ def _manual_issue_fingerprint(*, menu_item_id, location_id, department, recipien
 
 
 @transaction.atomic
-def transfer_stock(*, item, from_location, to_location, quantity, actor, transfer_key, notes=""):
+def transfer_stock(*, item, from_location, to_location, quantity, actor, transfer_key, notes="",
+                   department="", recipient="", source_reference="", metadata=None):
     assert_can_record_stock(actor, action="record stock in the inventory ledger")
     if from_location.pk == to_location.pk:
         raise ValidationError("Stock transfer locations must differ.")
@@ -427,11 +429,17 @@ def transfer_stock(*, item, from_location, to_location, quantity, actor, transfe
     list(StockLocation.objects.select_for_update().filter(pk__in=[row.pk for row in locations]).order_by("pk"))
     outbound, outbound_created = record_stock_movement(
         item=item, location=from_location, movement_type=StockMovement.Type.TRANSFER_OUT, quantity_delta=-quantity,
-        source_key=f"transfer:{transfer_key}:out", actor=actor, source_reference=transfer_key, notes=notes,
+        source_key=f"transfer:{transfer_key}:out", actor=actor,
+        source_reference=source_reference or transfer_key, notes=notes,
+        department=department, recipient=recipient, issue_method=StockMovement.IssueMethod.MANUAL,
+        metadata=metadata,
     )
     inbound, inbound_created = record_stock_movement(
         item=item, location=to_location, movement_type=StockMovement.Type.TRANSFER_IN, quantity_delta=quantity,
-        source_key=f"transfer:{transfer_key}:in", actor=actor, source_reference=transfer_key, notes=notes,
+        source_key=f"transfer:{transfer_key}:in", actor=actor,
+        source_reference=source_reference or transfer_key, notes=notes,
+        department=department, recipient=recipient, issue_method=StockMovement.IssueMethod.MANUAL,
+        metadata=metadata,
     )
     return (outbound, inbound), outbound_created or inbound_created
 
@@ -1212,12 +1220,42 @@ UNIT_LABELS = {
 MAX_LEDGER_QUANTITY = Decimal("10000000000")
 
 
+@lru_cache(maxsize=512)
+def _configured_unit_label(token: str):
+    """One bounded lookup per distinct configured unit token per process.
+
+    Serializers render this label for every stock row. A naive per-row lookup
+    turns a flat list endpoint into an N+1 query regression, so labels are
+    memoised and the cache is invalidated whenever a StockUnit row changes or
+    migrations finish. Missing tokens are cached too: an unconfigured unit must
+    not re-query the database for every row.
+    """
+    try:
+        return (
+            StockUnit.objects.filter(code__iexact=token)
+            .order_by("code")
+            .values_list("label", flat=True)
+            .first()
+        ) or ""
+    except DatabaseError:
+        # A label lookup must never break a serializer while migrations are
+        # being applied or during a transient database outage. Do not cache a
+        # transient outage as a permanent miss.
+        _configured_unit_label.cache_clear()
+        return ""
+
+
+def clear_unit_label_cache(**kwargs):
+    """Invalidate configured unit labels after writes/migrations."""
+    _configured_unit_label.cache_clear()
+
+
 def unit_label(unit) -> str:
-    """Display label for a stock unit token ("KG" → "Kilograms (kg)")."""
+    """Display label for a stock unit token, preferring configured labels."""
     token = canonical_unit(unit)
     if not token:
         return ""
-    return UNIT_LABELS.get(token, token.upper())
+    return _configured_unit_label(token) or UNIT_LABELS.get(token, token.upper())
 
 
 def is_container_unit(unit) -> bool:
@@ -2429,6 +2467,99 @@ def key_for_pos_return(*, return_reference, location_id, item_id):
 
 
 @transaction.atomic
+def record_stock_issuance(
+    *, item, source_location, destination_location=None, quantity, actor, unit=None,
+    conversion_factor=None, destination="", department="", recipient="", reason="",
+    remarks="", mode="MANUAL_STOCK_OUT", idempotency_key="",
+):
+    """Record one independent, source-keyed stock issue or store hand-over.
+
+    This is the single ledger path for BATCH 03 (kitchen issuance without a POS
+    dish) and BATCH 04 (manual stock-out). It creates no POS order, no recipe
+    and no financial transaction. A separate receiving store produces a
+    TRANSFER_OUT/TRANSFER_IN pair; consumption produces one ISSUE. Both use
+    the existing append-only ``StockMovement`` and locked ``StockBalance``.
+    """
+    assert_can_record_stock(actor, action="record stock issuance")
+    if not item.is_active:
+        raise ValidationError({"item_id": "Inactive stock items cannot be issued."})
+    if not source_location.is_active:
+        raise ValidationError({"source_location_id": "Choose an active source store."})
+    if destination_location is not None:
+        if destination_location.pk == source_location.pk:
+            raise ValidationError({"destination_location_id": "The receiving store must differ from the source store."})
+        if not destination_location.is_active:
+            raise ValidationError({"destination_location_id": "Choose an active receiving store."})
+    if item.is_reusable_asset and not str(recipient or "").strip():
+        raise ValidationError({"recipient": f"{item.name} is a reusable asset; name the person taking custody."})
+    if destination_location is not None and not str(recipient or "").strip():
+        raise ValidationError({"recipient": "Name the employee receiving the stock at the destination store."})
+
+    selected_unit = str(unit or "").strip()
+    # No implicit conversions on this path: a different counting unit requires
+    # the operator's explicitly stated factor. The item's own unit is identity.
+    if selected_unit and canonical_unit(selected_unit) != canonical_unit(item.base_unit) and conversion_factor in (None, ""):
+        raise ValidationError({
+            "conversion_factor": (
+                f"Enter how many {unit_label(item.base_unit).lower()} one {unit_label(selected_unit).lower()} "
+                "holds for this item, or record the quantity in the item's own unit."
+            )
+        })
+    base_quantity, evidence = resolve_entered_quantity(
+        quantity, item=item, unit=selected_unit or item.base_unit,
+        conversion_factor=conversion_factor, allow_declared_pack_size=False,
+    )
+    raw_key = str(idempotency_key or "").strip()
+    movement_key = scoped_key(
+        prefix="manual-stock-out", scope=f"staff:{getattr(actor, 'pk', 'system')}", raw_key=raw_key
+    ) or f"manual-stock-out:{secrets.token_hex(16)}"
+    transaction_reference = _reference("MSO")
+    department = _department(department)
+    recipient = str(recipient or "").strip()[:120]
+    remarks = str(remarks or "").strip()[:500]
+    reason = str(reason or "").strip().upper()
+    metadata = {
+        "record_type": "MANUAL_STOCK_OUT",
+        "mode": mode,
+        "transaction_reference": transaction_reference,
+        "reason": reason,
+        "destination": str(destination or "").strip()[:120],
+        "destination_location_id": destination_location.pk if destination_location else None,
+        "destination_location_name": destination_location.name if destination_location else "",
+        "quantity_evidence": evidence,
+        "fingerprint": hashlib.sha256(json.dumps({
+            "item": item.pk, "source": source_location.pk,
+            "destination": destination_location.pk if destination_location else None,
+            "quantity": str(base_quantity), "unit": selected_unit or item.base_unit,
+            "factor": str(conversion_factor or ""), "department": department,
+            "recipient": recipient, "reason": reason, "remarks": remarks, "mode": mode,
+        }, sort_keys=True).encode()).hexdigest(),
+    }
+    candidate_keys = (movement_key, f"transfer:{movement_key}:out")
+    existing = StockMovement.objects.select_for_update().filter(source_key__in=candidate_keys).order_by("pk").first()
+    if existing is not None:
+        if (existing.metadata or {}).get("fingerprint") != metadata["fingerprint"]:
+            raise ValidationError({"idempotency_key": "This key was already used for a different stock issuance."})
+        return existing, False
+    if destination_location is not None:
+        (outbound, _inbound), created = transfer_stock(
+            item=item, from_location=source_location, to_location=destination_location,
+            quantity=base_quantity, actor=actor, transfer_key=movement_key,
+            notes=remarks or f"{reason.title()} stock issuance",
+            department=department, recipient=recipient,
+            source_reference=transaction_reference, metadata=metadata,
+        )
+        return outbound, created
+    movement, created = issue_stock(
+        item=item, location=source_location, quantity=base_quantity, actor=actor,
+        source_key=movement_key, notes=remarks or f"{reason.title()} stock issuance",
+        source_reference=transaction_reference, movement_type=StockMovement.Type.ISSUE,
+        department=department, recipient=recipient,
+        issue_method=StockMovement.IssueMethod.MANUAL, metadata=metadata,
+    )
+    return movement, created
+
+
 def record_opening_stock(*, item, location, quantity, actor, source_key="", idempotency_key="", unit_cost=None, notes="", metadata=None):
     """Record an idempotent opening-balance stock movement."""
     assert_can_record_stock(actor, action="record stock in the inventory ledger")

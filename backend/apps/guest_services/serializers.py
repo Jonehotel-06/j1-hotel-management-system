@@ -424,6 +424,7 @@ class GuestAmenityIssueCreateSerializer(serializers.Serializer):
     room_number = serializers.CharField(required=False, allow_blank=True, max_length=40, default="")
     item_id = serializers.IntegerField()
     quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
+    location_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
 
@@ -439,6 +440,7 @@ class ReceptionAmenityAllocationSerializer(serializers.Serializer):
     item_id = serializers.IntegerField()
     quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
     from_location_id = serializers.IntegerField()
+    location_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     unit = serializers.CharField(required=False, allow_blank=True, max_length=30, default="")
     conversion_factor = serializers.DecimalField(
         required=False, allow_null=True, max_digits=14, decimal_places=4, min_value=Decimal("0.0001")
@@ -498,7 +500,9 @@ class BreakfastIssuanceSerializer(serializers.ModelSerializer):
 class BreakfastIssueSerializer(serializers.Serializer):
     """Record a complementary breakfast served to an eligible guest.
 
-    Creates NO POS order, NO folio charge and NO inventory movement.
+    Creates NO POS order, folio charge or revenue posting. Real stock lines
+    are deducted once through the inventory ledger; no duplicate expense is
+    posted because the goods were already recognised at receipt.
     """
 
     guest_id = serializers.IntegerField(required=False, allow_null=True)
@@ -507,6 +511,7 @@ class BreakfastIssueSerializer(serializers.Serializer):
     items = serializers.ListField(
         child=serializers.DictField(), required=False, allow_null=True, default=list
     )
+    location_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500, default="")
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=160, default="")
 

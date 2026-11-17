@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views, reception_views
+from . import minimart_admin
 
 app_name = "guest_services"
 
@@ -32,6 +33,17 @@ staff_urlpatterns = [
     path("breakfast/issues/", views.BreakfastIssuanceListView.as_view(), name="breakfast-issuances"),
     path("breakfast/issue/", views.BreakfastIssueView.as_view(), name="breakfast-issue"),
 ]
+
+# Catalogue management lives under the inventory namespace but uses the same
+# Mini Mart/inventory records as receptionist checkout. Sales remain read-only
+# to this surface; no competing stock or revenue system is introduced.
+minimart_admin_urlpatterns = [
+    path("categories/", minimart_admin.MiniMartCategoryListCreateView.as_view(), name="minimart-categories"),
+    path("categories/<int:pk>/", minimart_admin.MiniMartCategoryDetailView.as_view(), name="minimart-category-detail"),
+    path("products/", minimart_admin.MiniMartProductListCreateView.as_view(), name="minimart-products-admin"),
+    path("products/<int:pk>/", minimart_admin.MiniMartProductDetailView.as_view(), name="minimart-product-detail"),
+]
+
 
 qr_admin_urlpatterns = [
     path("", views.ServiceQRLinkListCreateView.as_view(), name="service-qr-links"),

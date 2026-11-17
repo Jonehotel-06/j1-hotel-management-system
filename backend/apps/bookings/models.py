@@ -304,6 +304,10 @@ class BookingExtension(TimeStampedModel):
     booking = models.ForeignKey(
         Booking, on_delete=models.PROTECT, related_name="extensions",
     )
+    # Client-supplied retry key, server-scoped per booking. Nullable for every
+    # historical extension; a repeated Confirm with the same key returns the
+    # original payment/history row instead of charging the guest twice.
+    source_key = models.CharField(max_length=180, unique=True, null=True, blank=True, db_index=True)
     # --- Dates -------------------------------------------------------------
     previous_check_out = models.DateField(
         help_text="The booking's checkout date BEFORE this extension.",
@@ -315,6 +319,9 @@ class BookingExtension(TimeStampedModel):
         max_digits=12, decimal_places=2,
         help_text="Nightly rate the extension was charged at (the rate already agreed on the booking).",
     )
+    #: Server-derived per-night evidence: date, nightly rate, rooms and amount.
+    #: The browser's display rows are never stored as financial authority.
+    breakdown = models.JSONField(default=list, blank=True)
     extension_amount = models.DecimalField(max_digits=12, decimal_places=2)
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
     currency = models.CharField(max_length=3, default="NGN")

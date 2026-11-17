@@ -529,4 +529,4 @@ class BreakfastIssuance(TimeStampedModel):
         raise ValidationError("Breakfast issuances are append-only and cannot be deleted.")
 
 # Keep this scoped feature separate without introducing another Django app.
-from .minimart_models import MiniMartProduct, MiniMartSale, MiniMartSaleLine  # noqa: E402,F401
+from .minimart_models import MiniMartCategory, MiniMartProduct, MiniMartSale, MiniMartSaleLine  # noqa: E402,F401

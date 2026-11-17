@@ -2559,6 +2559,9 @@
         '  <input class="input" id="ex-nights" type="number" min="1" max="365" step="1" placeholder="e.g. 2" data-ex-nights>',
         '  <div class="hint">Fill in the date OR the number of nights; the other box is cleared.</div>',
         '  <div class="field-error" data-ex-dates-error style="display:none;"></div></div>',
+        '<div class="field"><label class="field-label" for="ex-rate-edit">Negotiated nightly rate (optional)</label>',
+        '  <input class="input" id="ex-rate-edit" type="number" min="0" step="0.01" placeholder="Use the agreed booking rate" data-ex-rate-edit>',
+        '  <div class="hint">Only authorised front-desk staff may change this. Leave blank to use the rate already agreed on the booking; the server recalculates every night and the total.</div></div>',
         '<div class="pay-modal-summary" data-ex-quote style="display:none;">',
         '  <div class="pay-modal-hero"><span class="pay-modal-hero-label">Cost of the extension</span>',
         '    <span class="pay-modal-hero-amount" data-ex-amount>—</span></div>',
@@ -2569,6 +2572,10 @@
         '    <div class="pay-modal-fact"><dt>Total nights</dt><dd data-ex-totalnights>—</dd></div>',
         '    <div class="pay-modal-fact"><dt>Balance on booking</dt><dd data-ex-due>—</dd></div>',
         "  </dl>",
+        '  <details class="review-section" data-ex-breakdown-row style="margin-top:0.6rem;">',
+        '    <summary class="h4" style="cursor:pointer;">Nightly breakdown</summary>',
+        '    <div data-ex-breakdown style="margin-top:0.5rem;"></div>',
+        "  </details>",
         '  <div class="field-error" data-ex-conflicts style="display:none;white-space:pre-line;"></div>',
         "</div>",
         '<div class="field"><label class="field-label" for="ex-paid">Amount received</label>',
@@ -2629,6 +2636,31 @@
       /* A stay the server says cannot be extended at all (wrong status, no
          assigned room): its reason must survive later typing attempts. */
       let blockedReason = "";
+      /* One retry key per quoted set of dates/rate. The Confirm body stays the
+         documented contract; the key travels in the Idempotency-Key header so
+         a double click or a lost response cannot take the money twice. */
+      let retryKey = "", retrySignature = "", activeSignature = "";
+
+      function newRetryKey() {
+        const suffix = (window.crypto && window.crypto.randomUUID)
+          ? window.crypto.randomUUID()
+          : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+        return "extend-stay-" + suffix;
+      }
+      function quotedRequest() {
+        const request = extensionRequestPayload(q("[data-ex-date]").value, q("[data-ex-nights]").value);
+        const payload = request.error ? null : Object.assign({}, request.payload);
+        const rate = String(q("[data-ex-rate-edit]").value || "").trim();
+        if (payload && rate !== "") payload.nightly_rate = rate;
+        return { request, payload, signature: payload ? JSON.stringify(payload) : "" };
+      }
+      function ensureRetryKey(signature) {
+        if (!retryKey || retrySignature !== signature) {
+          retryKey = newRetryKey();
+          retrySignature = signature;
+        }
+        return retryKey;
+      }
 
       function showError(msg) {
         const box = q("[data-ex-error]");
@@ -2647,6 +2679,19 @@
         q("[data-ex-newco]").textContent = JONE.formatDate(quote.new_check_out, "mid");
         q("[data-ex-totalnights]").textContent = quote.total_nights_after_extension + " nights";
         q("[data-ex-due]").textContent = currencyText(quote.amount_due_before_extension);
+        const breakdownBox = q("[data-ex-breakdown]");
+        if (breakdownBox) {
+          const rows = Array.isArray(quote.nightly_breakdown) ? quote.nightly_breakdown : [];
+          breakdownBox.innerHTML = rows.length
+            ? '<table class="table" style="width:100%;"><thead><tr><th>Night</th><th>Date</th><th>Rate × rooms</th><th>Amount</th></tr></thead><tbody>' +
+              rows.map(function (row) {
+                return "<tr><td>" + JONE.esc(row.night_number || "") + "</td><td>" +
+                  JONE.esc(row.date ? JONE.formatDate(row.date, "mid") : "") + "</td><td>" +
+                  JONE.esc(currencyText(row.nightly_rate)) + " × " + JONE.esc(row.rooms || quote.number_of_rooms || 1) +
+                  "</td><td>" + JONE.esc(currencyText(row.amount)) + "</td></tr>";
+              }).join("") + "</tbody></table>"
+            : '<p class="muted">This deployment did not return a per-night breakdown. The server total above remains authoritative.</p>';
+        }
         const conflicts = q("[data-ex-conflicts]");
         if (quote.conflicts && quote.conflicts.length) {
           conflicts.textContent = quote.conflicts.join("\n");
@@ -2661,15 +2706,17 @@
          real cost and the real conflict before committing anything. */
       async function refreshQuote() {
         if (blockedReason) { quote = null; paintQuote(); return; }
-        const request = extensionRequestPayload(q("[data-ex-date]").value, q("[data-ex-nights]").value);
-        if (request.error) { quote = null; paintQuote(); showError(""); return; }
-        const payload = request.payload;
+        const prepared = quotedRequest();
+        if (prepared.request.error) { quote = null; activeSignature = ""; paintQuote(); showError(""); return; }
         if (quoting) return;
+        const signature = prepared.signature;
         quoting = true;
         submit.disabled = true;
         try {
-          const res = await window.API.quoteStayExtension(lookup, payload);
+          const res = await window.API.quoteStayExtension(lookup, prepared.payload);
           quote = (res && res.data) || null;
+          activeSignature = quote ? signature : "";
+          if (quote) ensureRetryKey(signature);
           /* The desk is told why the guest's own room cannot be extended into —
              naming the conflicting room beats a bare "unavailable". */
           showError("");
@@ -2682,6 +2729,7 @@
           }
         } catch (err) {
           quote = null;
+          activeSignature = "";
           const msg = (err && err.message) || "The extension could not be priced.";
           lastQuoteError = msg;
           const datesErr = q("[data-ex-dates-error]");
@@ -2703,6 +2751,7 @@
         q("[data-ex-date]").value = "";
         scheduleQuote();
       });
+      q("[data-ex-rate-edit]").addEventListener("input", () => scheduleQuote());
 
       // Original check-out, straight from the server's extension history.
       (async () => {
@@ -2724,7 +2773,7 @@
           blockedReason = notExtendable;
           const datesErr = q("[data-ex-dates-error]");
           if (datesErr) { datesErr.textContent = notExtendable; datesErr.style.display = "block"; }
-          ["[data-ex-date]", "[data-ex-nights]", "[data-ex-paid]"].forEach((sel) => {
+          ["[data-ex-date]", "[data-ex-nights]", "[data-ex-rate-edit]", "[data-ex-paid]"].forEach((sel) => {
             const el = q(sel);
             if (el) el.disabled = true;
           });
@@ -2763,13 +2812,20 @@
         }
         /* The same rule as the quote, re-applied so a stale field cannot slip a
            different date/night count past the price the desk was shown. */
-        const request = extensionRequestPayload(q("[data-ex-date]").value, q("[data-ex-nights]").value);
+        const prepared = quotedRequest();
+        const request = prepared.request;
         if (request.error) {
           showError(request.error);
           JONE.releaseGuard(submit);
           return;
         }
-        const payload = Object.assign({}, request.payload);
+        if (!quote || activeSignature !== prepared.signature) {
+          showError("The dates or rate changed. Wait for the updated server price before confirming.");
+          scheduleQuote();
+          JONE.releaseGuard(submit);
+          return;
+        }
+        const payload = Object.assign({}, prepared.payload);
         const paidRaw = String(q("[data-ex-paid]").value || "").trim();
         if (paidRaw !== "") {
           const moneyProblem = extensionPaymentError(paidRaw, quote.extension_amount);
@@ -2785,7 +2841,9 @@
 
         submit.disabled = true;
         try {
-          const res = await window.API.extendStay(lookup, payload);
+          const res = await window.API.extendStay(lookup, payload, {
+            headers: { "Idempotency-Key": ensureRetryKey(activeSignature) }
+          });
           const data = (res && res.data) || {};
           JONE.ui.toast(res && res.message ? res.message : "Stay extended.", "success");
           if (opts.onExtended) {

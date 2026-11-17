@@ -56,8 +56,30 @@ class LaundryOrderAdmin(admin.ModelAdmin):
     inlines = [LaundryItemInline]
 
 # Product configuration only: quantities still belong to inventory/procurement.
-from .models import MiniMartProduct, MiniMartSale, MiniMartSaleLine  # noqa: E402
+from .models import MiniMartCategory, MiniMartProduct, MiniMartSale, MiniMartSaleLine  # noqa: E402
 from apps.accounts.capabilities import has_capability  # noqa: E402
+
+
+@admin.register(MiniMartCategory)
+class MiniMartCategoryAdmin(admin.ModelAdmin):
+    list_display = ("name", "is_active", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("name",)
+
+    def has_module_permission(self, request):
+        return request.user.is_active and request.user.is_staff and request.user.role in {"ADMIN", "GENERAL_MANAGER"} and has_capability(request.user, "inventory.manage")
+
+    def has_view_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_add_permission(self, request):
+        return self.has_module_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # Deactivate only; PROTECT keeps a category's sale history.
 
 
 @admin.register(MiniMartProduct)

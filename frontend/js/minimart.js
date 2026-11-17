@@ -4,13 +4,16 @@
   const S=window.ReceptionServices, API=window.API, esc=JONE.esc, money=JONE.formatNaira;
   const path=S.base+'reception/minimart/', $=s=>document.querySelector(s);
   const pendingSlot='jone.minimart.pending';
-  let products=[], cart={}, page=1, busy=false, pending=null, refreshTimer;
+  let products=[], cart={}, page=1, busy=false, pending=null, refreshTimer, searchTimer;
   function message(text, failed) {
     $('[data-mart-message]').innerHTML=text?'<div class="alert'+(failed?' alert-error':'')+'" role="status">'+esc(text)+'</div>':'';
   }
   function filteredProducts() {
     const term=$('#mart-search').value.trim().toLowerCase(), category=$('#mart-category').value;
-    return products.filter(p=>(!category || p.category===category) && [p.name,p.sku,p.barcode || ''].join(' ').toLowerCase().includes(term));
+    return products.filter(p=>{
+      const matchesCategory=!category || (String(category).match(/^\d+$/) ? String(p.category_id || '')===category : p.category===category);
+      return matchesCategory && [p.name,p.sku,p.barcode || '',p.description || ''].join(' ').toLowerCase().includes(term);
+    });
   }
   function renderProducts() {
     const rows=filteredProducts();
@@ -43,10 +46,16 @@
     const box=$('[data-mart-products]');
     if (!products.length) box.innerHTML=S.loading();
     try {
-      const data=S.unwrap(await API.get(path+'products/')); products=data.results || [];
+      const term=$('#mart-search').value.trim(), category=$('#mart-category').value;
+      const query=new URLSearchParams();
+      if(term) query.set('search',term);
+      if(category) query.set(String(category).match(/^\d+$/)?'category_id':'category',category);
+      const data=S.unwrap(await API.get(path+'products/?'+query)); products=data.results || [];
       const cat=$('#mart-category'), keep=cat.value;
       cat.innerHTML='<option value="">All categories</option>';
-      [...new Set(products.map(p=>p.category).filter(Boolean))].sort().forEach(c=>cat.add(new Option(c,c)));cat.value=keep;
+      if(Array.isArray(data.categories)) data.categories.forEach(c=>cat.add(new Option(c.name,String(c.id))));
+      else [...new Set(products.map(p=>p.category).filter(Boolean))].sort().forEach(c=>cat.add(new Option(c,c)));
+      cat.value=keep;
       const sel=$('#mart-session'), session=sel.value;
       sel.innerHTML='<option value="">— Select your open cash session —</option>';
       (data.cash_sessions || []).forEach(s=>sel.add(new Option(s.reference+(s.location?' · '+s.location:''),s.reference)));
@@ -100,7 +109,8 @@
     try {pending=JSON.parse(sessionStorage.getItem(pendingSlot));} catch(_) {}
     if (pending) (pending.lines || []).forEach(l=>cart[l.product_id]=l.quantity);
     S.guests($('[data-mart-checkout]'));
-    $('#mart-search').addEventListener('input',renderProducts);$('#mart-category').addEventListener('change',renderProducts);
+    $('#mart-search').addEventListener('input',()=>{renderProducts();clearTimeout(searchTimer);searchTimer=setTimeout(refresh,250);});
+    $('#mart-category').addEventListener('change',()=>{renderProducts();refresh();});
     $('[data-mart-products]').addEventListener('click',e=>{const b=e.target.closest('[data-add]');if(b)setQuantity(b.dataset.add,(cart[b.dataset.add] || 0)+1);});
     $('[data-mart-cart]').addEventListener('click',e=>{
       if (busy || pending) return;
@@ -118,7 +128,7 @@
     $('[data-mart-prev]').addEventListener('click',()=>{if(page>1){page--;history();}});$('[data-mart-next]').addEventListener('click',()=>{page++;history();});
     refresh();history();
     refreshTimer=setInterval(()=>{if(!document.hidden)refresh();},30000);
-    window.addEventListener('beforeunload',()=>clearInterval(refreshTimer));
+    window.addEventListener('beforeunload',()=>{clearInterval(refreshTimer);clearTimeout(searchTimer);});
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();

@@ -9,19 +9,96 @@ Unexpected exceptions are logged with a full traceback internally while the
 client only ever receives a safe, generic message.
 """
 import logging
+import re
+import secrets
 
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import DataError, IntegrityError
+from django.db import DataError, DatabaseError, IntegrityError, OperationalError
 from django.http import Http404
 from rest_framework import exceptions as drf_exceptions
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
 
+from apps.core.request_context import bind_request_context, get_request_context
 from apps.core.storage import StorageUploadError
 
 logger = logging.getLogger("apps")
+
+_SECRET_PATH_SEGMENT = re.compile(
+    r"(token|password|passwd|secret|api[_-]?key|authorization|bearer|otp|pin|cvv)",
+    re.IGNORECASE,
+)
+_LONG_OPAQUE_SEGMENT = re.compile(r"^[A-Za-z0-9._~+/=-]{32,}$")
+
+
+def safe_request_path(path: str) -> str:
+    """A bounded path for logs, with opaque/credential-bearing segments masked.
+
+    Query strings, headers and request bodies are never logged. A path segment
+    that names a secret or looks like a JWT/session/API token is replaced, so a
+    route carrying a signed guest link cannot expose that link in diagnostics.
+    """
+    parts = []
+    for segment in str(path or "/").split("/"):
+        if _SECRET_PATH_SEGMENT.search(segment) or _LONG_OPAQUE_SEGMENT.fullmatch(segment):
+            parts.append("[REDACTED]")
+        else:
+            parts.append(segment[:60])
+    return "/".join(parts)[:220] or "/"
+
+
+def _request_diagnostics(context) -> str:
+    """Secret-free endpoint/method/request-ID/user context for one log line."""
+    request = (context or {}).get("request")
+    view = (context or {}).get("view")
+    request_id = get_request_context().get("request_id") or ""
+    method = getattr(request, "method", "UNKNOWN") if request is not None else "UNKNOWN"
+    path = safe_request_path(getattr(request, "path_info", "/") if request is not None else "/")
+    view_name = (
+        f"{type(view).__module__}.{type(view).__name__}" if view is not None else "unknown"
+    )
+    user = getattr(request, "user", None) if request is not None else None
+    user_id = getattr(user, "pk", None) if getattr(user, "is_authenticated", False) else None
+    return (
+        f"request_id={request_id or 'unavailable'} method={method} path={path} "
+        f"view={view_name} user_id={user_id if user_id is not None else 'anonymous'}"
+    )
+
+
+def _log_server_exception(exc, context, *, category):
+    logger.exception(
+        "Unhandled API exception category=%s exception=%s %s",
+        category,
+        type(exc).__name__,
+        _request_diagnostics(context),
+        exc_info=exc,
+    )
+
+
+def _error_category(code: str, status_code: int) -> str:
+    if code.startswith("DATABASE_") or code == "SERVER_ERROR" and status_code >= 500:
+        return "SERVER" if code == "SERVER_ERROR" else "DATABASE"
+    if code in {"VALIDATION_ERROR"}:
+        return "VALIDATION"
+    if code in {"FORBIDDEN", "UNAUTHORIZED"}:
+        return "PERMISSION"
+    if code in {"RESOURCE_NOT_FOUND", "METHOD_NOT_ALLOWED"}:
+        return "ROUTING"
+    if code in {"STORAGE_UPLOAD_FAILED", "PAYMENT_GATEWAY_ERROR"}:
+        return "INTEGRATION"
+    return "DOMAIN"
+
+
+def _bind_request_id(context):
+    request = (context or {}).get("request")
+    supplied = getattr(request, "request_id", "") if request is not None else ""
+    current = get_request_context().get("request_id") or ""
+    request_id = supplied or current or f"server-{secrets.token_hex(16)}"
+    if not current:
+        bind_request_context(request_id=request_id)
+    return request_id
 
 def _detail_text(detail, fallback):
     """Turn a DRF detail (often a dict) into one human sentence.
@@ -54,13 +131,26 @@ def _envelope(code, message, errors, status_code, headers=None):
     (found while proving the throttle guards, audit SEC-005). Forwarding the
     original response's headers keeps DRF's own contract intact.
     """
-    payload = {"success": False, "code": code, "message": message}
+    request_id = get_request_context().get("request_id") or ""
+    payload = {
+        "success": False,
+        "code": code,
+        "message": message,
+        "category": _error_category(str(code), status_code),
+    }
+    if request_id:
+        payload["request_id"] = request_id
     if errors:
         payload["errors"] = errors
-    return Response(payload, status=status_code, headers=headers)
+    response = Response(payload, status=status_code, headers=headers)
+    if request_id:
+        response["X-Request-ID"] = request_id
+    return response
 
 
 def jone_exception_handler(exc, context):
+    _bind_request_id(context)
+    diagnostics = _request_diagnostics(context)
     if isinstance(exc, Http404):
         exc = drf_exceptions.NotFound()
     elif isinstance(exc, DjangoPermissionDenied):
@@ -87,21 +177,56 @@ def jone_exception_handler(exc, context):
         # failure instead of a false "saved" response.
         return _envelope("STORAGE_UPLOAD_FAILED", str(exc), None, status.HTTP_502_BAD_GATEWAY)
     elif isinstance(exc, DataError):
-        view = (context or {}).get("view")
-        logger.warning("Database DataError in %s: %s", view, exc)
+        logger.warning(
+            "Database validation error exception=%s %s", type(exc).__name__, diagnostics,
+            exc_info=exc,
+        )
         return _envelope(
             "VALIDATION_ERROR",
             "One or more fields exceed the maximum allowed length or format.",
             None,
             status.HTTP_400_BAD_REQUEST,
         )
+    elif isinstance(exc, IntegrityError):
+        # A genuine integrity failure is still an unexpected 500 and is fully
+        # logged; it is identified as a DATABASE category so it can be told
+        # apart from application bugs without exposing SQL/constraint details.
+        _log_server_exception(exc, context, category="DATABASE_INTEGRITY")
+        return _envelope(
+            "DATABASE_INTEGRITY_ERROR",
+            "An unexpected error occurred. Please try again later.",
+            None,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+    elif isinstance(exc, OperationalError):
+        logger.error(
+            "Database operational failure exception=%s %s", type(exc).__name__, diagnostics,
+            exc_info=exc,
+        )
+        return _envelope(
+            "DATABASE_UNAVAILABLE",
+            "The database is temporarily unavailable. Please try again.",
+            None,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    elif isinstance(exc, DatabaseError):
+        logger.error(
+            "Database failure exception=%s %s", type(exc).__name__, diagnostics,
+            exc_info=exc,
+        )
+        return _envelope(
+            "DATABASE_ERROR",
+            "A database error prevented this request. Please try again.",
+            None,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
     response = drf_exception_handler(exc, context)
 
     if response is None:
-        # Unhandled server error: log everything, reveal nothing.
-        view = (context or {}).get("view")
-        logger.exception("Unhandled exception in %s", view, exc_info=exc)
+        # Unexpected server error: full, secret-redacted traceback and precise
+        # endpoint/correlation context internally; safe friendly text to the UI.
+        _log_server_exception(exc, context, category="SERVER")
         return _envelope(
             "SERVER_ERROR",
             "An unexpected error occurred. Please try again later.",

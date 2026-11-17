@@ -100,6 +100,17 @@
                   <label for="breakfast-input-6389">Notes</label><input id="breakfast-input-6389" type="text" name="notes" placeholder="Optional notes">
                 </div>
               </div>
+              <div class="form-group">
+                <label for="breakfast-stock-item">Optional stock consumption</label>
+                <div class="form-row">
+                  <div class="form-group"><label for="breakfast-stock-item">Stock item</label><select id="breakfast-stock-item" name="stock_item_id" data-breakfast-stock-item><option value="">No stock movement — entitlement record only</option></select></div>
+                  <div class="form-group"><label for="breakfast-stock-location">Store</label><select id="breakfast-stock-location" name="location_id" data-breakfast-stock-location><option value="">Select a store</option></select></div>
+                  <div class="form-group"><label for="breakfast-stock-quantity">Quantity</label><input id="breakfast-stock-quantity" name="stock_quantity" type="number" min="0.0001" step="0.0001" placeholder="e.g. 1"></div>
+                  <div class="form-group"><label for="breakfast-stock-unit">Unit counted</label><select id="breakfast-stock-unit" name="stock_unit" data-breakfast-stock-unit><option value="">Use the item's base unit</option></select></div>
+                  <div class="form-group"><label for="breakfast-stock-factor">Base units in one counted unit</label><input id="breakfast-stock-factor" name="stock_conversion_factor" type="number" min="0.0001" step="0.0001" placeholder="Only if different"></div>
+                </div>
+                <span class="caption">Complementary breakfast stays included in accommodation: no POS order, folio charge or second revenue/expense posting. When a real stock item is selected, its consumption is recorded once on the immutable inventory ledger.</span>
+              </div>
               <div class="form-actions">
                 <button type="submit" class="btn btn-accent"><span data-icon="check" data-size="16"></span> Record Breakfast</button>
               </div>

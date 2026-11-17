@@ -12,10 +12,39 @@
     document.querySelector('[data-breakfast-eligibility-form]').addEventListener('submit', eligibility);
     document.querySelector('[data-breakfast-config-form]').addEventListener('submit', saveConfig);
     document.querySelector('[data-breakfast-history-refresh]').addEventListener('click', history);
-    banner();
+    banner(); stockOptions();
   }
   function selection(form) {
     return {guest_id:Number(form.elements.guest_id.value), booking_id:Number(form.elements.booking_id.value),service_date:form.elements.service_date.value};
+  }
+  function listRows(res) {
+    const data=S.unwrap(res);
+    return Array.isArray(data) ? data : (data && (data.results || data.items)) || [];
+  }
+  async function stockOptions() {
+    const item=document.querySelector('[data-breakfast-stock-item]'), loc=document.querySelector('[data-breakfast-stock-location]'), unit=document.querySelector('[data-breakfast-stock-unit]');
+    if (!item || !loc || !API.list) return;
+    try {
+      const [items,locations,units]=await Promise.all([
+        API.list('inventoryItems',{active:'true',page_size:200}),
+        API.list('inventoryLocations',{active:'true',page_size:200}),
+        API.list('inventoryUnits',{active:'true',page_size:200}),
+      ]);
+      item.innerHTML='<option value="">No stock movement — entitlement record only</option>'+listRows(items).map(i=>'<option value="'+esc(i.id)+'">'+esc((i.sku||'')+' · '+(i.name||''))+'</option>').join('');
+      loc.innerHTML='<option value="">Select a store</option>'+listRows(locations).map(l=>'<option value="'+esc(l.id)+'">'+esc((l.code||'')+' · '+(l.name||''))+'</option>').join('');
+      unit.innerHTML='<option value="">Use the item\'s base unit</option>'+listRows(units).map(u=>'<option value="'+esc(u.code)+'">'+esc(u.label||u.code)+'</option>').join('');
+    } catch(err) { /* optional stock evidence must never block entitlement recording */ }
+  }
+  function stockPayload(form,payload) {
+    const itemId=Number(form.elements.stock_item_id && form.elements.stock_item_id.value || 0);
+    if (!itemId) return payload;
+    const qty=Number(form.elements.stock_quantity.value), loc=Number(form.elements.location_id.value);
+    if (!Number.isFinite(qty) || qty<=0 || !loc) return UI.toast('Select a store and a positive quantity for breakfast stock, or leave the stock item blank.','warning');
+    const line={item_id:itemId,quantity:String(qty)};
+    if (form.elements.stock_unit.value) line.unit=form.elements.stock_unit.value;
+    if (form.elements.stock_conversion_factor.value) line.conversion_factor=form.elements.stock_conversion_factor.value;
+    payload.items=[line]; payload.location_id=loc;
+    return payload;
   }
   async function banner() {
     const status=document.querySelector('[data-breakfast-config-status]');
@@ -23,9 +52,10 @@
     catch(e) { status.textContent=e.message || 'Unable to load breakfast configuration. Refresh to retry.'; }
   }
   async function issue(e) {
-    e.preventDefault(); const form=e.target, payload=selection(form); payload.notes=form.elements.notes.value;
+    e.preventDefault(); const form=e.target; let payload=selection(form); payload.notes=form.elements.notes.value;
     if (!payload.guest_id || !payload.booking_id) return UI.toast('Select a guest and their booking.','warning');
-    try { const data=await S.postOnce(form,S.base+'breakfast/issue/',payload); UI.toast(data.created?'Breakfast recorded.':'Already recorded for this service date.','success'); history(); }
+    payload=stockPayload(form,payload); if (!payload) return;
+    try { const data=await S.postOnce(form,S.base+'breakfast/issue/',payload); UI.toast(data.created?'Breakfast recorded'+(data.stock_movement_count?' with '+data.stock_movement_count+' stock movement(s)':'')+'.':'Already recorded for this service date.','success'); history(); }
     catch(err) { UI.toast(err.message || 'Breakfast could not be recorded.','error'); }
   }
   async function eligibility(e) {

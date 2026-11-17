@@ -6,6 +6,8 @@ app_name = "inventory"
 urlpatterns = [
     path("locations/", views.StockLocationListCreateView.as_view(), name="locations"),
     path("locations/<int:pk>/", views.StockLocationDetailView.as_view(), name="location-detail"),
+    path("units/", views.StockUnitListCreateView.as_view(), name="units"),
+    path("units/<int:pk>/", views.StockUnitDetailView.as_view(), name="unit-detail"),
     path("items/", views.StockItemListCreateView.as_view(), name="items"),
     path("items/<int:pk>/", views.StockItemDetailView.as_view(), name="item-detail"),
     path("items/<int:pk>/replenish/", views.StockItemReplenishView.as_view(), name="item-replenish"),
@@ -29,6 +31,9 @@ urlpatterns = [
     path("stock-counts/<str:reference>/submit/", views.StockCountSubmitView.as_view(), name="stock-count-submit"),
     path("stock-counts/<str:reference>/approve/", views.StockCountApproveView.as_view(), name="stock-count-approve"),
     path("issues/", views.StockIssueView.as_view(), name="issues"),
+    # Independent Store Keeper issuance: no POS dish/menu item is selected.
+    path("manual-stock-out/", views.StockIssuanceView.as_view(), name="manual-stock-out"),
+    path("kitchen-issues/", views.StockIssuanceView.as_view(), name="kitchen-issues"),
     path(
         "manual-ingredient-issues/",
         views.ManualIngredientIssueListCreateView.as_view(), name="manual-ingredient-issues",

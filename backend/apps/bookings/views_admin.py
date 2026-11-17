@@ -1,5 +1,7 @@
 # apps/bookings/views_admin.py
 """Staff booking & guest management endpoints (/api/admin/...)."""
+import hashlib
+import json
 import logging
 from datetime import datetime, timedelta
 
@@ -1135,6 +1137,29 @@ class AdminBookingRescheduleView(_BookingActionView):
         )
 
 
+def _extension_source_key(request, booking, data):
+    """Build a server-scoped retry key from the header/body key AND payload.
+
+    A reused browser key with changed dates or money is a different operation,
+    not a replay. No client-supplied key is trusted as the database key itself.
+    """
+    raw_key = str(data.get("idempotency_key") or request.headers.get("Idempotency-Key") or "").strip()[:128]
+    if not raw_key:
+        return None
+    signature = json.dumps({
+        "new_check_out": str(data.get("new_check_out") or ""),
+        "additional_nights": data.get("additional_nights"),
+        "nightly_rate": str(data.get("nightly_rate") or ""),
+        "amount_paid": str(data.get("amount_paid") or ""),
+        "provider": str(data.get("provider") or ""),
+        "notes": str(data.get("notes") or ""),
+    }, sort_keys=True, default=str)
+    digest = hashlib.sha256(
+        f"{booking.pk}:{request.user.pk}:{raw_key}:{signature}".encode("utf-8")
+    ).hexdigest()
+    return f"extension:{digest}"
+
+
 @extend_schema(tags=["Admin · Bookings"], summary="Preview the cost of extending a stay")
 class AdminBookingExtensionQuoteView(APIView):
     """Price an extension and check the room WITHOUT changing anything.
@@ -1158,6 +1183,7 @@ class AdminBookingExtensionQuoteView(APIView):
             booking=booking,
             new_check_out=data.get("new_check_out"),
             additional_nights=data.get("additional_nights"),
+            nightly_rate=data.get("nightly_rate"),
         )
         allowed, reason = extension_service.can_extend(booking)
         quote["can_extend"] = allowed
@@ -1187,7 +1213,7 @@ class AdminBookingExtensionConfirmView(APIView):
         serializer = BookingExtensionConfirmSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        extension = extension_service.extend_booking(
+        result = extension_service.extend_booking(
             booking=booking,
             staff_user=request.user,
             new_check_out=data.get("new_check_out"),
@@ -1196,10 +1222,14 @@ class AdminBookingExtensionConfirmView(APIView):
             provider=data.get("provider") or "CASH",
             notes=data.get("notes", ""),
             request=request,
+            nightly_rate=data.get("nightly_rate"),
+            source_key=_extension_source_key(request, booking, data),
         )
+        extension = result["extension"] if isinstance(result, dict) else result
         booking = _get_admin_booking(booking.booking_reference)
         payload = {
             "extension": BookingExtensionSerializer(extension).data,
+            "idempotent": bool(isinstance(result, dict) and result.get("idempotent")),
             "booking": AdminBookingDetailSerializer(
                 booking, context=_booking_detail_context(request, booking)
             ).data,

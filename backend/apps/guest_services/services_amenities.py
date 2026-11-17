@@ -9,9 +9,11 @@ creating a parallel stock database:
 * Amenity issuance deducts from the Reception location's balance via the
   immutable ``StockMovement`` ledger and records a human-readable
   ``GuestAmenityIssue`` beside it.
-* Breakfast is a guest-accommodation benefit: it records its own row and never
-  creates a POS order, a folio charge, restaurant revenue or an inventory
-  movement.
+* Breakfast remains a guest-accommodation benefit: it records its own row and
+  never creates a POS order, a folio charge or restaurant revenue. When the
+  kitchen names real stock items, their consumption is written to the SAME
+  immutable inventory ledger as any other internal issue. No second expense or
+  revenue journal is posted; the goods were already expensed at receipt.
 """
 from __future__ import annotations
 
@@ -19,18 +21,23 @@ import hashlib
 import secrets
 from decimal import Decimal, ROUND_HALF_UP
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 
 from apps.core.utils import hotel_today
 from apps.inventory.models import StockBalance, StockDepartment, StockItem, StockLocation, StockMovement
-from apps.inventory.services.inventory_service import record_stock_movement, scoped_key, transfer_stock
+from apps.inventory.services.inventory_service import (
+    canonical_unit, record_stock_movement, resolve_entered_quantity, scoped_key,
+    transfer_stock, unit_label,
+)
 
 from .models import BreakfastBenefitConfig, BreakfastIssuance, GuestAmenityIssue
 
 QTY = Decimal("0.0001")
 
-#: Stock-location code that holds the Reception Department's allocated stock.
+#: Legacy location code retained ONLY to discover an unflagged installation.
+#: The authoritative configured shelf is ``StockLocation.is_reception``.
 RECEPTION_LOCATION_CODE = "RECEPTION"
 
 
@@ -49,13 +56,16 @@ def _quantity(value, *, field="quantity", positive=False):
 
 
 def reception_location():
-    """The Reception Department's stock location (by code), else None."""
-    return StockLocation.objects.filter(code__iexact=RECEPTION_LOCATION_CODE, is_active=True).first()
+    """The active configured Reception shelf, with a legacy-code fallback."""
+    configured = StockLocation.objects.filter(is_reception=True, is_active=True).order_by("pk").first()
+    if configured is not None:
+        return configured
+    return StockLocation.objects.filter(code__iexact=RECEPTION_LOCATION_CODE, is_active=True).order_by("pk").first()
 
 
-def reception_amenity_stock(item):
-    """Current allocated balance of one item at the Reception location."""
-    location = reception_location()
+def reception_amenity_stock(item, location=None):
+    """Current allocated balance of one item at a selected/configured shelf."""
+    location = location or reception_location()
     if location is None:
         return None, Decimal("0.0000")
     balance = StockBalance.objects.filter(item=item, location=location).first()
@@ -64,7 +74,7 @@ def reception_amenity_stock(item):
 
 @transaction.atomic
 def allocate_reception_amenities(
-    *, item, quantity, from_location, unit=None, conversion_factor=None,
+    *, item, quantity, from_location, to_location=None, unit=None, conversion_factor=None,
     actor, notes="", idempotency_key="",
 ):
     """Store Keeper allocates amenity stock to the Reception Department.
@@ -77,14 +87,16 @@ def allocate_reception_amenities(
 
     if from_location is None:
         raise ValueError({"from_location_id": "Choose the store the amenities are issued from."})
-    target = reception_location()
+    target = to_location or reception_location()
     if target is None:
         raise ValueError({
-            "location": (
-                "The Reception Department has no active stock location. Create one with the "
-                f"code '{RECEPTION_LOCATION_CODE}' and then allocate amenity stock to it."
+            "location_id": (
+                "Choose an active configured department store, or ask an administrator "
+                "to mark a stock location as the Reception store."
             )
         })
+    if not target.is_active:
+        raise ValueError({"location_id": "The selected department store is inactive. Choose an active location."})
     if from_location.pk == target.pk:
         raise ValueError({"from_location_id": "The Reception Department already holds this stock."})
 
@@ -107,7 +119,7 @@ def allocate_reception_amenities(
 
 @transaction.atomic
 def issue_guest_amenity(
-    *, guest, booking, room_number, item, quantity, actor, notes="", idempotency_key="",
+    *, guest, booking, room_number, item, quantity, actor, notes="", idempotency_key="", location=None,
 ):
     """Issue one amenity line to a guest from the Reception allocation.
 
@@ -123,14 +135,16 @@ def issue_guest_amenity(
             if room_number and room_number not in rooms:
                 raise ValueError({"room_number": "Choose a room assigned to this booking."})
             room_number = room_number or (rooms[0] if len(rooms) == 1 else "")
-    location = reception_location()
+    location = location or reception_location()
     if location is None:
         raise ValueError({
-            "location": (
-                "The Reception Department has no active stock location. Ask the Store Keeper to "
-                f"create one with the code '{RECEPTION_LOCATION_CODE}' and allocate amenity stock to it."
+            "location_id": (
+                "Choose an active configured department store, or ask an administrator "
+                "to mark a stock location as the Reception store."
             )
         })
+    if not location.is_active:
+        raise ValueError({"location_id": "The selected department store is inactive. Choose an active location."})
     amount = _quantity(quantity, positive=True)
 
     # Lock the item, location and balance before checking the available quantity.
@@ -241,12 +255,15 @@ def breakfast_eligibility(*, guest, booking, service_date):
 
 
 @transaction.atomic
-def record_breakfast(*, guest, booking, service_date, items=None, actor=None, notes="", idempotency_key=""):
-    """Record a complementary breakfast issuance (no POS order, no charge).
+def record_breakfast(*, guest, booking, service_date, items=None, actor=None, notes="",
+                     idempotency_key="", location_id=None):
+    """Record one complementary breakfast and its optional stock consumption.
 
-    Raises ``ValueError`` when the guest is not eligible, when a duplicate claim
-    for the same guest and service date already exists, or when the booking
-    does not match the guest.
+    No POS order, guest folio charge, restaurant revenue or duplicate expense
+    is created: the benefit is already included in accommodation. Real stock
+    lines, when supplied, are deducted through source-keyed ISSUE movements on
+    the existing inventory ledger so the kitchen's on-hand balances remain
+    truthful. Descriptive-only lines remain evidence and never touch stock.
     """
     from apps.bookings.models import Guest
     Guest.objects.select_for_update().get(pk=guest.pk)
@@ -264,11 +281,12 @@ def record_breakfast(*, guest, booking, service_date, items=None, actor=None, no
 
     existing = BreakfastIssuance.objects.select_for_update().filter(source_key=key).first()
     if existing is not None:
+        existing.stock_movement_count = StockMovement.objects.filter(
+            source_reference=existing.reference,
+            metadata__breakfast_issuance=True,
+        ).count()
         return existing, False
 
-    # Duplicate claim for the same guest + service date is refused at the
-    # database level as well, so a concurrent retry cannot slip past the
-    # source-keyed check.
     if BreakfastIssuance.objects.filter(guest=guest, service_date=service_date).exists():
         raise ValueError({
             "service_date": (
@@ -277,21 +295,98 @@ def record_breakfast(*, guest, booking, service_date, items=None, actor=None, no
             )
         })
 
+    location = None
+    stock_lines = []
     normalized_items = []
-    for raw in (items or []):
+    for index, raw in enumerate(items or []):
         if not isinstance(raw, dict):
             continue
-        normalized_items.append({
+        row = {
             "item_id": raw.get("item_id"),
-            "item_sku": raw.get("item_sku", ""),
-            "item_name": raw.get("item_name", ""),
-            "quantity": str(raw.get("quantity", "")),
-            "unit": raw.get("unit", ""),
+            "item_sku": str(raw.get("item_sku") or ""),
+            "item_name": str(raw.get("item_name") or ""),
+            "quantity": str(raw.get("quantity") or ""),
+            "unit": str(raw.get("unit") or ""),
+            "notes": str(raw.get("notes") or "")[:255],
+        }
+        # A real stock line requires an item id and a positive quantity. Rows
+        # without them are preserved as human-readable service evidence.
+        if row["item_id"] and row["quantity"]:
+            stock_lines.append((index, raw, row))
+        normalized_items.append(row)
+
+    if stock_lines:
+        if not location_id:
+            raise ValueError({"location_id": "Choose the store breakfast stock is issued from."})
+        location = StockLocation.objects.select_for_update().filter(
+            pk=location_id, is_active=True
+        ).first()
+        if location is None:
+            raise ValueError({"location_id": "Choose an active stock location for breakfast consumption."})
+
+    # Reserve the immutable evidence reference BEFORE writing movements. The
+    # issuance row is created only after every stock line has validated and
+    # posted, so the append-only row is written once with its final evidence —
+    # no post-create SQL update can bypass the model's immutability guard.
+    reference = _reference("BKF")
+    movement_count = 0
+    for line_index, raw, row in stock_lines:
+        item = StockItem.objects.select_for_update().filter(pk=row["item_id"], is_active=True).first()
+        if item is None:
+            raise ValueError({"items": f"Stock item {row['item_id']} is unknown or inactive."})
+        selected_unit = str(raw.get("unit") or item.base_unit).strip()
+        conversion_factor = raw.get("conversion_factor")
+        if (canonical_unit(selected_unit) != canonical_unit(item.base_unit)
+                and conversion_factor in (None, "")):
+            raise ValueError({
+                "conversion_factor": (
+                    f"Enter how many {unit_label(item.base_unit).lower()} one "
+                    f"{unit_label(selected_unit).lower()} holds, or count in the item's base unit."
+                )
+            })
+        try:
+            base_quantity, evidence = resolve_entered_quantity(
+                row["quantity"], item=item, unit=selected_unit,
+                conversion_factor=conversion_factor, allow_declared_pack_size=False,
+            )
+            movement, created = record_stock_movement(
+                item=item, location=location,
+                movement_type=StockMovement.Type.ISSUE,
+                quantity_delta=-base_quantity,
+                source_key=f"breakfast-issue:{key}:{line_index}",
+                actor=actor, source_reference=reference,
+                notes=str(raw.get("notes") or f"Complementary breakfast for {guest.full_name}")[:500],
+                department=StockDepartment.KITCHEN, recipient=guest.full_name,
+                issue_method=StockMovement.IssueMethod.MANUAL,
+                metadata={
+                    "automated": True,
+                    "breakfast_issuance": True,
+                    "breakfast_reference": reference,
+                    "guest_id": guest.pk,
+                    "booking_reference": booking.booking_reference,
+                    "quantity_evidence": evidence,
+                    "no_revenue_posting": True,
+                },
+            )
+        except DjangoValidationError as exc:
+            raise ValueError({"items": str(exc)}) from exc
+        if created:
+            movement_count += 1
+        row.update({
+            "item_sku": item.sku,
+            "item_name": item.name,
+            "base_quantity": str(base_quantity),
+            "base_unit": item.base_unit,
+            "location_id": location.pk,
+            "location_name": location.name,
+            "stock_movement_reference": movement.reference,
+            "quantity_evidence": evidence,
         })
 
     record = BreakfastIssuance.objects.create(
-        reference=_reference("BKF"), source_key=key, guest=guest, booking=booking,
+        reference=reference, source_key=key, guest=guest, booking=booking,
         service_date=service_date, issued_by=actor, eligible_guests=eligibility["eligible_guests"],
         items=normalized_items, occurred_at=timezone.now(), notes=(notes or "")[:500],
     )
+    record.stock_movement_count = movement_count
     return record, True

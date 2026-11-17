@@ -39,11 +39,44 @@ class StockDepartment(models.TextChoices):
 
 
 
+class StockUnit(TimeStampedModel):
+    """A hotel-configured measurement token; conversions are never guessed.
+
+    ``StockItem.base_unit`` stays a token for existing ledger rows to remain
+    valid. This catalogue makes the choices configurable (cups, painter,
+    portions, pieces, sachets, cans, packs, bottles, cartons, tins, bags,
+    loaves, …) without hard-coding a list in the browser. A unit does NOT carry
+    a conversion factor: a different counting unit requires an explicitly
+    entered base-unit factor at recording time.
+    """
+
+    code = models.CharField(max_length=30, unique=True)
+    label = models.CharField(max_length=80)
+    description = models.CharField(max_length=255, blank=True, default="")
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    class Meta:
+        ordering = ["code"]
+
+    def save(self, *args, **kwargs):
+        self.code = str(self.code or "").strip().upper()
+        if not self.label:
+            self.label = self.code
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.code} · {self.label}"
+
+
 class StockLocation(TimeStampedModel):
     code = models.CharField(max_length=40, unique=True)
     name = models.CharField(max_length=120, unique=True)
     description = models.TextField(blank=True, default="")
     is_active = models.BooleanField(default=True, db_index=True)
+    #: The configured Reception Department shelf. The old ``RECEPTION`` code
+    #: remains a migration fallback for existing installations, but the UI and
+    #: services use this persisted flag so a location is never hard-coded.
+    is_reception = models.BooleanField(default=False, db_index=True)
 
     class Meta:
         ordering = ["name"]

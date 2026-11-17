@@ -596,7 +596,7 @@ class BookingExtensionSerializer(serializers.ModelSerializer):
         model = BookingExtension
         fields = [
             "id", "booking", "previous_check_out", "new_check_out",
-            "additional_nights", "nightly_rate", "extension_amount",
+            "additional_nights", "nightly_rate", "breakdown", "extension_amount",
             "amount_paid", "outstanding_balance", "is_fully_paid", "currency",
             "payment_method", "payment_reference", "processed_by",
             "processed_by_name", "notes", "status", "created_at", "updated_at",
@@ -621,6 +621,7 @@ class BookingExtensionQuoteSerializer(serializers.Serializer):
 
     new_check_out = serializers.DateField(required=False)
     additional_nights = serializers.IntegerField(min_value=1, max_value=365, required=False)
+    nightly_rate = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, max_value=99_999_999, required=False)
 
     def validate(self, attrs):
         if not attrs.get("new_check_out") and not attrs.get("additional_nights"):
@@ -650,6 +651,8 @@ class BookingExtensionConfirmSerializer(serializers.Serializer):
         choices=["CASH", "POS", "BANK_TRANSFER"], required=False, default="CASH",
     )
     notes = serializers.CharField(required=False, allow_blank=True, default="", max_length=255)
+    nightly_rate = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, max_value=99_999_999, required=False)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, default="", max_length=128)
 
     def validate(self, attrs):
         if not attrs.get("new_check_out") and not attrs.get("additional_nights"):

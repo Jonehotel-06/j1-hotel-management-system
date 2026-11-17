@@ -1,5 +1,6 @@
 """Bounded inventory/procurement API representations and command validation."""
 from decimal import Decimal, ROUND_HALF_UP
+import re
 
 from rest_framework import serializers
 
@@ -8,7 +9,8 @@ from apps.pos.models import MenuItem
 from .models import (
     GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderPayment,
     StockBalance, StockBalanceAdjustment, StockConsumptionRequest, StockCount, StockCountLine,
-    StockDepartment, StockIssueBatch, StockItem, StockLocation, StockMovement, StockRecipe, StockRecipeLine, Supplier,
+    StockDepartment, StockIssueBatch, StockItem, StockLocation, StockMovement, StockRecipe, StockRecipeLine,
+    StockUnit, Supplier,
 )
 from .services.inventory_service import canonical_unit, is_container_unit, unit_label
 
@@ -52,8 +54,58 @@ class InventoryMenuItemDirectorySerializer(serializers.Serializer):
 class StockLocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = StockLocation
-        fields = ["id", "code", "name", "description", "is_active", "created_at", "updated_at"]
+        fields = ["id", "code", "name", "description", "is_active", "is_reception", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        instance = self.instance
+        active = attrs.get("is_active", getattr(instance, "is_active", True))
+        reception = attrs.get("is_reception", getattr(instance, "is_reception", False))
+        if reception and not active:
+            raise serializers.ValidationError({"is_reception": "An inactive location cannot be the configured Reception store."})
+        return attrs
+
+    def _single_reception_location(self, instance):
+        if instance and instance.is_reception:
+            StockLocation.objects.filter(is_reception=True).exclude(pk=instance.pk).update(is_reception=False)
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        self._single_reception_location(instance)
+        return instance
+
+    def update(self, instance, validated_data):
+        if "is_active" in validated_data and not validated_data["is_active"]:
+            validated_data["is_reception"] = False
+        instance = super().update(instance, validated_data)
+        self._single_reception_location(instance)
+        return instance
+
+
+class StockUnitSerializer(serializers.ModelSerializer):
+    """Configured measurement token; code is the value sent as ``base_unit``."""
+
+    class Meta:
+        model = StockUnit
+        fields = ["id", "code", "label", "description", "is_active", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_code(self, value):
+        token = str(value or "").strip().upper()
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9 ./_-]*", token):
+            raise serializers.ValidationError("Use letters, numbers, spaces, dots, slashes, hyphens or underscores for a unit code.")
+        if len(token) > 30:
+            raise serializers.ValidationError("A unit code may be at most 30 characters.")
+        clash = StockUnit.objects.filter(code__iexact=token).exclude(pk=getattr(self.instance, "pk", None)).first()
+        if clash is not None:
+            raise serializers.ValidationError(f"{clash.code} is already configured. Edit that unit instead of creating a duplicate.")
+        return token
+
+    def validate_label(self, value):
+        label = str(value or "").strip()
+        if not label and self.initial_data:
+            return str(self.initial_data.get("code") or "").strip().upper()
+        return label[:80]
 
 
 class ProcurementLocationLookupSerializer(serializers.ModelSerializer):
@@ -457,6 +509,68 @@ class IssueStockSerializer(serializers.Serializer):
         max_digits=14, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True
     )
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
+
+
+class StockIssuanceCreateSerializer(serializers.Serializer):
+    """Independent stock issuance / manual stock-out (no POS dish selection)."""
+
+    REASONS = (
+        "KITCHEN", "BAR", "AMENITIES", "MINI_MART", "GENERAL",
+        "OPERATIONAL_CONSUMPTION", "DAMAGED", "EXPIRED", "OTHER",
+    )
+
+    item_id = serializers.IntegerField(min_value=1)
+    source_location_id = serializers.IntegerField(min_value=1)
+    destination_location_id = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0001"))
+    unit = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    conversion_factor = serializers.DecimalField(
+        max_digits=14, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True
+    )
+    destination = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    department = serializers.ChoiceField(choices=StockDepartment.choices, required=False, allow_blank=True, default="")
+    recipient = serializers.CharField(required=False, allow_blank=True, max_length=120)
+    reason = serializers.ChoiceField(choices=REASONS)
+    remarks = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
+
+    def validate(self, attrs):
+        if attrs.get("destination_location_id") == attrs.get("source_location_id"):
+            raise serializers.ValidationError({"destination_location_id": "Choose a different receiving store, or leave it blank for consumption."})
+        return attrs
+
+
+class StockIssuanceReadSerializer(serializers.Serializer):
+    """One immutable outgoing movement rendered as a stock-out transaction."""
+
+    def to_representation(self, movement):
+        meta = movement.metadata or {}
+        destination = meta.get("destination_location_name") or meta.get("destination") or ""
+        entered = meta.get("quantity_evidence") or {}
+        return {
+            "reference": meta.get("transaction_reference") or movement.reference,
+            "movement_reference": movement.reference,
+            "item_id": movement.item_id,
+            "item_sku": movement.item.sku,
+            "item_name": movement.item.name,
+            "source_location_id": movement.location_id,
+            "source_location": movement.location.name,
+            "destination_location_id": meta.get("destination_location_id"),
+            "destination": destination,
+            "quantity": str(abs(movement.quantity_delta)),
+            "entered_quantity": str(entered.get("entered_quantity") or abs(movement.quantity_delta)),
+            "unit": str(entered.get("entered_unit") or movement.item.base_unit),
+            "base_unit": movement.item.base_unit,
+            "base_unit_label": unit_label(movement.item.base_unit),
+            "department": movement.department,
+            "recipient": movement.recipient,
+            "reason": meta.get("reason") or "",
+            "remarks": movement.notes,
+            "occurred_at": movement.occurred_at,
+            "issued_by": getattr(getattr(movement.actor, "full_name", None), "strip", lambda: "")() or getattr(movement.actor, "email", ""),
+            "type": movement.type,
+            "mode": meta.get("mode") or "MANUAL_STOCK_OUT",
+        }
 
 
 class OpeningStockSerializer(serializers.Serializer):

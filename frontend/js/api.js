@@ -81,15 +81,27 @@ const API = (() => {
      `kind` is what lets the booking flow say "your request may have succeeded,
      press retry" (network/timeout) vs "the room is gone" (http 409). */
   class APIError extends Error {
-    constructor(status, message, data, kind = "http") {
+    constructor(status, message, data, kind = "http", requestId = "") {
       super(message);
       this.name = "APIError";
       this.status = status;
       this.data = data;
       this.kind = kind;
+      // Backend correlation id (or the id the browser generated before the
+      // request). It lets an administrator match a friendly UI failure to one
+      // server traceback without exposing that traceback to the browser.
+      this.requestId = requestId || (data && data.request_id) || "";
       // Contract error code (e.g. ROOM_UNAVAILABLE) when present.
       this.code = (data && data.code) || null;
     }
+  }
+
+  function withRequestTrace(err, requestId, responseHeaders) {
+    if (!(err instanceof APIError)) return err;
+    let serverId = "";
+    try { serverId = responseHeaders && responseHeaders.get("X-Request-ID") || ""; } catch (_) {}
+    err.requestId = (err.data && err.data.request_id) || serverId || requestId || err.requestId || "";
+    return err;
   }
 
   function firstErrorString(node) {
@@ -198,9 +210,14 @@ const API = (() => {
     if (!IS_DEV_HOST || !window.console) return;
     try {
       const pathOnly = String(url || "").replace(/\?.*$/, "");
-      const body = detail.bodyExcerpt === undefined ? "" : " body=" + String(detail.bodyExcerpt).slice(0, 300);
+      const rawBody = detail.bodyExcerpt === undefined ? "" : String(detail.bodyExcerpt);
+      const redactedBody = rawBody
+        .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]")
+        .replace(/"(password|token|access|refresh|secret|authorization|card_number|cvv|pin)"\s*:\s*"[^"]*"/gi, '"$1":"[REDACTED]"');
+      const body = rawBody ? " body=" + redactedBody.slice(0, 300) : "";
+      const requestId = detail.requestId ? ` request_id=${detail.requestId}` : "";
       console.warn(
-        `[J-ONE API] ${method} ${pathOnly} -> ${detail.label}${body}`,
+        `[J-ONE API] ${method} ${pathOnly} -> ${detail.label}${requestId}${body}`,
         detail.errorName || ""
       );
     } catch (_) { /* diagnostics must never throw */ }
@@ -232,6 +249,8 @@ const API = (() => {
 
   /* ----------------------------- Core request (single pass) ---------------- */
   async function requestOnce(path, opts = {}) {
+    const traceRequestId = newRequestId();
+    let responseHeaders = null;
     path = assertUsablePath(path);
     const {
       method = "GET",
@@ -264,10 +283,13 @@ const API = (() => {
       if (!(body instanceof FormData)) out.headers["Content-Type"] = "application/json";
     }
 
+    // Every request, including public and intentionally unauthenticated ones,
+    // carries a correlation id. The server validates/generates it and echoes it
+    // on both success and error responses.
+    out.headers["X-Request-ID"] = headers["X-Request-ID"] || traceRequestId;
     const token = tokenProvider();
     if (auth && token) {
       out.headers.Authorization = `Bearer ${token}`;
-      out.headers["X-Request-ID"] = out.headers["X-Request-ID"] || newRequestId();
       const terminalReference = getWorkstationReference();
       if (terminalReference) out.headers["X-JONE-Terminal"] = terminalReference;
     }
@@ -286,6 +308,7 @@ const API = (() => {
 
     try {
       const res = await fetch(url, { ...out, signal: ctrl.signal });
+      responseHeaders = res.headers || null;
       clearTimeout(timer);
       if (signal) signal.removeEventListener("abort", onAbort);
 
@@ -350,7 +373,7 @@ const API = (() => {
         data = await res.text().catch(() => null);
       }
       if (parseFailed || (res.ok && contentType.includes("application/json") && data == null)) {
-        debugLog(method, url, { label: `parse error (HTTP ${res.status})`, bodyExcerpt: "" });
+        debugLog(method, url, { label: `parse error (HTTP ${res.status})`, bodyExcerpt: "", requestId: traceRequestId });
         throw new APIError(
           res.status,
           "The server sent a response we couldn't read. Please try again.",
@@ -364,8 +387,27 @@ const API = (() => {
         debugLog(method, url, {
           label: `HTTP ${res.status}`,
           bodyExcerpt: data && typeof data === "object" ? JSON.stringify(data) : data,
+          requestId: traceRequestId,
         });
-        throw new APIError(res.status, friendlyMessage(res.status, data), data);
+        throw new APIError(res.status, friendlyMessage(res.status, data), data, "http", traceRequestId);
+      }
+      /* A failed operation is never allowed to masquerade as a successful
+         response, even if a proxy or a misbehaving endpoint answers HTTP 200
+         with the standard failure envelope. Surface it as an APIError with the
+         server's own meaningful message instead of unwrapping it as data. */
+      if (data && typeof data === "object" && !Array.isArray(data) && data.success === false) {
+        debugLog(method, url, {
+          label: `failed envelope on HTTP ${res.status}`,
+          bodyExcerpt: JSON.stringify(data),
+          requestId: traceRequestId,
+        });
+        throw new APIError(
+          res.status >= 400 ? res.status : 500,
+          friendlyMessage(res.status >= 400 ? res.status : 500, data),
+          data,
+          "contract",
+          traceRequestId
+        );
       }
 
       /* The backend wraps every response as {success, message?, data, pagination?}.
@@ -398,38 +440,42 @@ const API = (() => {
       if (signal) signal.removeEventListener("abort", onAbort);
       if (err.name === "AbortError" || err.name === "TimeoutError") {
         if (callerAborted) {
-          debugLog(method, url, { label: "aborted by caller", errorName: err.name });
-          throw new APIError(0, "The request was cancelled.", null, "abort");
+          debugLog(method, url, { label: "aborted by caller", errorName: err.name, requestId: traceRequestId });
+          throw new APIError(0, "The request was cancelled.", null, "abort", traceRequestId);
         }
         // OUR timeout. The request MAY have been processed by the server —
         // callers with idempotent retries (booking creation) can safely retry.
         debugLog(method, url, {
           label: `timeout after ${timeout}ms (server may have processed the request)`,
           errorName: err.name,
+          requestId: traceRequestId,
         });
         throw new APIError(
           0,
           "The request is taking longer than expected. It may still complete — please retry in a moment.",
           null,
-          "timeout"
+          "timeout",
+          traceRequestId
         );
       }
-      if (err instanceof APIError) throw err;
+      if (err instanceof APIError) throw withRequestTrace(err, traceRequestId, responseHeaders);
       // fetch() rejects on DNS failure, refused connections and CORS blocks:
       // the request never completed, so its outcome is genuinely unknown.
       debugLog(method, url, {
         label: "network failure (no response received)",
         errorName: err && err.name,
         bodyExcerpt: err && err.message ? String(err.message).slice(0, 120) : "",
+        requestId: traceRequestId,
       });
       if (typeof navigator !== "undefined" && navigator.onLine === false) {
-        throw new APIError(0, "You appear to be offline. An internet connection is required — please reconnect and try again.", null, "offline");
+        throw new APIError(0, "You appear to be offline. An internet connection is required — please reconnect and try again.", null, "offline", traceRequestId);
       }
       throw new APIError(
         0,
         "We couldn't reach our servers. Your connection or our service may be unavailable — please try again.",
         null,
-        "network"
+        "network",
+        traceRequestId
       );
     }
   }
@@ -450,7 +496,9 @@ const API = (() => {
       if (err instanceof APIError && err.status === 401 && !_retry && wasAuthenticated && refreshProvider) {
         const refreshed = await refreshProvider();
         if (refreshed) {
-          return request(path, opts, true);
+          const retryHeaders = Object.assign({}, opts.headers || {});
+          if (err.requestId) retryHeaders["X-Request-ID"] = err.requestId;
+          return request(path, Object.assign({}, opts, { headers: retryHeaders }), true);
         }
         // Refresh failed -> clear session and notify, preserving the original
         // destination for post-login return.
@@ -1260,11 +1308,12 @@ const API = (() => {
       const auth = opts.auth !== false;
       const token = tokenProvider();
       const xhr = new XMLHttpRequest();
+      const uploadTraceId = newRequestId();
       xhr.open(method, BASE + safePath, true);
       xhr.setRequestHeader("Accept", "application/json");
+      xhr.setRequestHeader("X-Request-ID", uploadTraceId);
       if (auth && token) {
         xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-        xhr.setRequestHeader("X-Request-ID", newRequestId());
         const terminalReference = getWorkstationReference();
         if (terminalReference) xhr.setRequestHeader("X-JONE-Terminal", terminalReference);
       }
@@ -1287,7 +1336,7 @@ const API = (() => {
           try {
             body = xhr.responseText ? JSON.parse(xhr.responseText) : null;
           } catch (_) {
-            reject(new APIError(xhr.status, "The server sent a response we couldn't read. Please try again.", null, "parse"));
+            reject(new APIError(xhr.status, "The server sent a response we couldn't read. Please try again.", null, "parse", uploadTraceId));
             return;
           }
         }
@@ -1311,20 +1360,20 @@ const API = (() => {
           }
           if (window.Auth && typeof window.Auth.onUnauthorized === "function") window.Auth.onUnauthorized();
         }
-        reject(new APIError(xhr.status, friendlyMessage(xhr.status, body), body));
+        reject(new APIError(xhr.status, friendlyMessage(xhr.status, body), body, "http", uploadTraceId));
       };
       xhr.onerror = () => {
         if (typeof navigator !== "undefined" && navigator.onLine === false) {
-          reject(new APIError(0, "You appear to be offline. An internet connection is required — please reconnect and try again.", null, "offline"));
+          reject(new APIError(0, "You appear to be offline. An internet connection is required — please reconnect and try again.", null, "offline", uploadTraceId));
           return;
         }
-        reject(new APIError(0, "We couldn't reach our servers. Your connection or our service may be unavailable — please try again.", null, "network"));
+        reject(new APIError(0, "We couldn't reach our servers. Your connection or our service may be unavailable — please try again.", null, "network", uploadTraceId));
       };
       xhr.ontimeout = () => {
-        reject(new APIError(0, "The request is taking longer than expected. It may still complete — please retry in a moment.", null, "timeout"));
+        reject(new APIError(0, "The request is taking longer than expected. It may still complete — please retry in a moment.", null, "timeout", uploadTraceId));
       };
       xhr.onabort = () => {
-        reject(new APIError(0, "The request was cancelled.", null, "abort"));
+        reject(new APIError(0, "The request was cancelled.", null, "abort", uploadTraceId));
       };
       xhr.send(formData);
     });

@@ -12,7 +12,7 @@ from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
 from apps.inventory.models import StockBalance
 from apps.finance.models import CashSession
-from .models import MiniMartProduct, MiniMartSale
+from .models import MiniMartCategory, MiniMartProduct, MiniMartSale
 from .minimart_service import assert_seller, complete_sale
 
 
@@ -70,18 +70,48 @@ class CheckoutSerializer(serializers.Serializer):
         return sorted(value, key=lambda line: line["product_id"])
 
 
-def catalogue():
-    products = MiniMartProduct.objects.filter(is_active=True, item__is_active=True, location__is_active=True,
-                                              item__item_type="SELLABLE_PRODUCT", item__currency="NGN").select_related("item", "location")
+def catalogue(search="", category_id="", category=""):
+    """Active, inventory-backed products with server-side name/category search."""
+    products = MiniMartProduct.objects.filter(
+        is_active=True, item__is_active=True, location__is_active=True,
+        item__item_type="SELLABLE_PRODUCT", item__currency="NGN",
+    ).select_related("item", "location", "category")
+    # An inactive configured category hides its products; legacy rows with no
+    # category FK keep their historical item.category text.
+    products = products.filter(Q(category__isnull=True) | Q(category__is_active=True))
+    if category_id:
+        products = products.filter(category_id=category_id)
+    if category:
+        products = products.filter(Q(category__name__iexact=category) | Q(item__category__iexact=category))
+    if search:
+        products = products.filter(
+            Q(item__name__icontains=search) | Q(item__sku__icontains=search)
+            | Q(item__barcode__iexact=search) | Q(category__name__icontains=search)
+            | Q(item__category__icontains=search) | Q(description__icontains=search)
+        ).distinct()
     rows = []
-    for p in products.order_by("item__category", "item__name", "pk"):
+    for p in products.order_by("item__name", "pk"):
         balance = StockBalance.objects.filter(item_id=p.item_id, location_id=p.location_id).first()
         qty = balance.quantity_on_hand if balance else Decimal("0")
-        rows.append({"id": p.pk, "name": p.item.name, "sku": p.item.sku, "barcode": p.item.barcode,
-                     "category": p.item.category, "price": str(p.selling_price), "quantity": str(qty),
-                     "unit": p.item.base_unit, "location": p.location.name, "status": "ACTIVE",
-                     "low_stock": qty <= p.item.reorder_level, "out_of_stock": qty < 1})
+        category_name = p.category.name if p.category_id else p.item.category
+        rows.append({
+            "id": p.pk, "name": p.item.name, "sku": p.item.sku, "barcode": p.item.barcode,
+            "category": category_name, "category_id": p.category_id,
+            "description": p.description, "purchase_cost": str(p.item.standard_cost),
+            "price": str(p.selling_price), "quantity": str(qty),
+            "unit": p.item.base_unit, "location": p.location.name,
+            "location_id": p.location_id, "reorder_level": str(p.item.reorder_level),
+            "status": "ACTIVE", "low_stock": qty <= p.item.reorder_level,
+            "out_of_stock": qty < 1,
+        })
     return rows
+
+
+def active_categories():
+    return [
+        {"id": row.pk, "name": row.name}
+        for row in MiniMartCategory.objects.filter(is_active=True).order_by("name")
+    ]
 
 
 def sale_payload(sale):
@@ -103,8 +133,15 @@ class MiniMartProductsView(APIView):
     def get(self, request):
         assert_seller(request.user)
         sessions = CashSession.objects.filter(cashier=request.user, status=CashSession.Status.OPEN)
-        return success_response({"results": catalogue(), "payment_methods": ["CASH"],
-                                 "cash_sessions": [{"reference": s.reference, "location": s.location} for s in sessions]})
+        search = str(request.query_params.get("search", "")).strip()[:120]
+        category_id = str(request.query_params.get("category_id", "")).strip()
+        category = str(request.query_params.get("category", "")).strip()
+        return success_response({
+            "results": catalogue(search=search, category_id=category_id, category=category),
+            "categories": active_categories(),
+            "payment_methods": ["CASH"],
+            "cash_sessions": [{"reference": s.reference, "location": s.location} for s in sessions],
+        })
 
 
 class MiniMartCheckoutView(APIView):

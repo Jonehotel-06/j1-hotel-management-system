@@ -23,6 +23,17 @@ from apps.rooms.models import Room
 from apps.stays.models import Stay, StayRoom
 
 from .models import ServiceQRLink, ServiceRequest, ServiceRequestEvent
+
+
+def _active_department_location(location_id):
+    """Resolve an explicit configured department shelf; None means the default."""
+    if location_id in (None, ""):
+        return None
+    from apps.inventory.models import StockLocation
+    location = StockLocation.objects.filter(pk=location_id, is_active=True).first()
+    if location is None:
+        raise ValidationError({"location_id": "Choose an active configured department store."})
+    return location
 from .qr_serializers import ServiceQRLinkCreateSerializer, ServiceQRLinkSerializer, ServiceQRRequestCreateSerializer
 from .serializers import (
     PortalServiceRequestCancelSerializer,
@@ -1014,6 +1025,7 @@ class ReceptionAmenityAllocationView(APIView):
         try:
             (outbound, inbound), created = allocate_reception_amenities(
                 item=item, quantity=attrs["quantity"], from_location=from_location,
+                to_location=_active_department_location(attrs.get("location_id")),
                 unit=attrs.get("unit") or None, conversion_factor=attrs.get("conversion_factor"),
                 actor=request.user, notes=attrs.get("notes") or "",
                 idempotency_key=attrs.get("idempotency_key") or "",
@@ -1046,14 +1058,13 @@ class ReceptionAmenityStockView(APIView):
 
     def get(self, request):
         from apps.inventory.models import StockBalance
-        location = None
         from .services_amenities import reception_location
-        location = reception_location()
+        location = _active_department_location(request.query_params.get("location_id")) or reception_location()
         if location is None:
             return success_response({"location": None, "balances": []})
         balances = StockBalance.objects.filter(location=location).select_related("item")
         return success_response({
-            "location": {"id": location.pk, "code": location.code, "name": location.name},
+            "location": {"id": location.pk, "code": location.code, "name": location.name, "is_reception": location.is_reception},
             "balances": [
                 {"item_id": b.item_id, "sku": b.item.sku, "name": b.item.name,
                  "base_unit": b.item.base_unit, "quantity": str(b.quantity_on_hand),
@@ -1098,6 +1109,7 @@ class GuestAmenityIssueView(APIView):
                 guest=guest, booking=booking, room_number=attrs.get("room_number") or "",
                 item=item, quantity=attrs["quantity"], actor=request.user,
                 notes=attrs.get("notes") or "", idempotency_key=attrs.get("idempotency_key") or "",
+                location=_active_department_location(attrs.get("location_id")),
             )
         except ValueError as exc:
             raise ValidationError(exc)
@@ -1265,12 +1277,14 @@ class BreakfastIssueView(APIView):
                 guest=guest, booking=booking, service_date=sd,
                 items=attrs.get("items") or [], actor=request.user,
                 notes=attrs.get("notes") or "", idempotency_key=attrs.get("idempotency_key") or "",
+                location_id=attrs.get("location_id"),
             )
         except ValueError as exc:
             raise ValidationError(exc)
 
         return success_response({
             "created": created,
+            "stock_movement_count": getattr(record, "stock_movement_count", 0),
             "issuance": BreakfastIssuanceSerializer(record).data,
         })
 

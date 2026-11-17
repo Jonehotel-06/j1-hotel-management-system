@@ -112,6 +112,56 @@
           <div class="form-actions"><button type="button" class="btn btn-outline" data-mart-prev>Previous</button><span data-mart-page></span><button type="button" class="btn btn-outline" data-mart-next>Next</button></div>
         </div>
       </section>
+      <section class="card mart-admin" data-mart-admin hidden aria-label="Mini Mart catalogue management">
+        <div class="card-header"><h2>Catalogue management</h2><button type="button" class="btn btn-outline" data-mart-admin-refresh>Refresh catalogue</button></div>
+        <div class="card-body">
+          <p class="caption">Administrators configure categories and inventory-backed products here. Reception checkout, stock depletion, POS evidence and finance posting remain server-owned. Deactivate, never delete, so historical sale lines stay readable.</p>
+          <div data-mart-admin-message aria-live="polite"></div>
+          <div class="form-row">
+            <div class="form-group">
+              <h3 class="h4">Categories</h3>
+              <form data-mart-admin-category-form>
+                <input type="hidden" name="category_id" value="">
+                <div class="form-group"><label for="mart-admin-category-name">Category name *</label><input class="input" id="mart-admin-category-name" name="name" required maxlength="120" autocomplete="off"></div>
+                <div class="form-group"><label for="mart-admin-category-description">Description</label><input class="input" id="mart-admin-category-description" name="description" maxlength="255"></div>
+                <div class="form-group"><label for="mart-admin-category-active">Status</label><select class="select" id="mart-admin-category-active" name="is_active"><option value="true">Active</option><option value="false">Inactive</option></select></div>
+                <div class="form-actions"><button class="btn btn-accent" type="submit">Save category</button><button class="btn btn-outline" type="button" data-mart-admin-reset-category>New category</button></div>
+              </form>
+              <div class="form-group"><label for="mart-admin-category-search">Find category</label><input class="input" id="mart-admin-category-search" data-mart-admin-category-search type="search" placeholder="Name or description"></div>
+              <div data-mart-admin-categories aria-live="polite"></div>
+            </div>
+            <div class="form-group">
+              <h3 class="h4">Products</h3>
+              <form data-mart-admin-product-form>
+                <input type="hidden" name="product_id" value="">
+                <div class="form-row">
+                  <div class="form-group"><label for="mart-admin-product-name">Product name *</label><input class="input" id="mart-admin-product-name" name="name" required maxlength="255"></div>
+                  <div class="form-group"><label for="mart-admin-product-sku">SKU *</label><input class="input" id="mart-admin-product-sku" name="sku" required maxlength="80"></div>
+                  <div class="form-group"><label for="mart-admin-product-barcode">Barcode</label><input class="input" id="mart-admin-product-barcode" name="barcode" maxlength="80"></div>
+                  <div class="form-group"><label for="mart-admin-category">Category</label><select class="select" id="mart-admin-category" name="category_id"></select></div>
+                  <div class="form-group"><label for="mart-admin-base-unit">Base unit *</label><select class="select" id="mart-admin-base-unit" name="base_unit" required></select></div>
+                  <div class="form-group"><label for="mart-admin-location">Stock store *</label><select class="select" id="mart-admin-location" name="location_id" required></select></div>
+                  <div class="form-group"><label for="mart-admin-purchase-cost">Purchase cost / base unit (NGN) *</label><input class="input" id="mart-admin-purchase-cost" name="purchase_cost" type="number" min="0" step="0.01" required></div>
+                  <div class="form-group"><label for="mart-admin-selling-price">Selling price (NGN) *</label><input class="input" id="mart-admin-selling-price" name="selling_price" type="number" min="0.01" step="0.01" required></div>
+                  <div class="form-group"><label for="mart-admin-reorder-level">Reorder level</label><input class="input" id="mart-admin-reorder-level" name="reorder_level" type="number" min="0" step="0.0001" value="0"></div>
+                  <div class="form-group"><label for="mart-admin-opening-quantity">Opening quantity (new products only)</label><input class="input" id="mart-admin-opening-quantity" name="opening_quantity" type="number" min="0.0001" step="0.0001"></div>
+                  <div class="form-group"><label for="mart-admin-opening-unit">Opening unit</label><select class="select" id="mart-admin-opening-unit" name="opening_unit"></select></div>
+                  <div class="form-group"><label for="mart-admin-opening-factor">Base units in one opening unit</label><input class="input" id="mart-admin-opening-factor" name="opening_conversion_factor" type="number" min="0.0001" step="0.0001" placeholder="Only if different from base unit"></div>
+                  <div class="form-group"><label for="mart-admin-product-active">Status</label><select class="select" id="mart-admin-product-active" name="is_active"><option value="true">Active</option><option value="false">Inactive</option></select></div>
+                </div>
+                <div class="form-group"><label for="mart-admin-product-description">Description</label><textarea class="textarea" id="mart-admin-product-description" name="description" rows="2"></textarea></div>
+                <div class="form-actions"><button class="btn btn-accent" type="submit">Save product</button><button class="btn btn-outline" type="button" data-mart-admin-reset-product>New product</button></div>
+              </form>
+              <div class="form-row">
+                <div class="form-group"><label for="mart-admin-product-search">Find product</label><input class="input" id="mart-admin-product-search" data-mart-admin-product-search type="search" placeholder="Name, SKU, barcode or category"></div>
+                <div class="form-group"><label for="mart-admin-category-filter">Category filter</label><select class="select" id="mart-admin-category-filter" data-mart-admin-category-filter></select></div>
+                <div class="form-group"><label for="mart-admin-active-filter">Status filter</label><select class="select" id="mart-admin-active-filter" data-mart-admin-active-filter><option value="">All statuses</option><option value="true">Active only</option></select></div>
+              </div>
+              <div data-mart-admin-products aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 </div>
@@ -130,6 +180,7 @@
 <script src="../js/dashboard.js?v=1.1.29"></script>
 <script src="../js/reception-services.js?v=1.1.29"></script>
 <script src="../js/minimart.js?v=1.1.29"></script>
+<script src="../js/minimart-admin.js?v=1.1.29"></script>
 <script>
   /* Shell boot — the same guard every dashboard page runs. Without it this page
      had no auth check, no sidebar and no user chip: it was reachable at a bare

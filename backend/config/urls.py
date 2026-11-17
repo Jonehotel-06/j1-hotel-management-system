@@ -109,6 +109,9 @@ api_patterns = [
     path("admin/service-qr-links/", include((guest_services_urls.qr_admin_urlpatterns, "guest_services_qr"), namespace="admin-service-qr-links")),
     path("admin/housekeeping/", include("apps.housekeeping.urls", namespace="admin-housekeeping")),
     path("admin/maintenance/", include("apps.maintenance.urls", namespace="admin-maintenance")),
+    # More specific prefix first: the catalogue management views live in the
+    # guest-services app but operate on the existing inventory/Mini Mart data.
+    path("admin/inventory/minimart/", include((guest_services_urls.minimart_admin_urlpatterns, "guest_services"), namespace="admin-minimart")),
     path("admin/inventory/", include("apps.inventory.urls", namespace="admin-inventory")),
     path("admin/staff-operations/", include("apps.staff_operations.urls", namespace="admin-staff-operations")),
     path("admin/rooms/", include((room_urls.admin_rooms_urlpatterns, "rooms"), namespace="admin-rooms")),

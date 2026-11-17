@@ -85,6 +85,7 @@
             <button class="btn btn-sm btn-outline" data-amenity-refresh><span data-icon="refresh" data-size="14"></span> Refresh</button>
           </div>
           <div class="card-body">
+            <div class="form-group"><label for="amenity-shelf">Configured department store</label><select id="amenity-shelf" data-amenity-shelf-select><option value="">Use the server's configured Reception store</option></select><span class="caption">Choose the active stock location marked as the Reception store in Inventory. No location code is hard-coded.</span></div>
             <div data-amenity-stock-container>
               <div class="service-loading" role="status" aria-label="Loading"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
             </div>
@@ -107,6 +108,9 @@
                 </div>
                 <div class="form-group">
                   <label for="amenities-select-6274">From Location *</label><select id="amenities-select-6274" name="from_location_id" required data-amenity-location-select></select>
+                </div>
+                <div class="form-group">
+                  <label for="amenities-department-store">Reception store</label><select id="amenities-department-store" name="location_id" data-amenity-department-location-select><option value="">Use configured default</option></select>
                 </div>
               </div>
               <div class="form-group">
@@ -145,6 +149,9 @@
                   <!-- Only what is actually on the Reception shelf: issuing an item
                        the department does not hold can only fail. -->
                   <select name="item_id" required data-amenity-issue-item-select></select>
+                </div>
+                <div class="form-group">
+                  <label for="amenities-issue-store">Department store</label><select id="amenities-issue-store" name="location_id" data-amenity-department-location-select><option value="">Use configured default</option></select>
                 </div>
                 <div class="form-group">
                   <label for="amenities-input-8609">Quantity *</label><input id="amenities-input-8609" type="number" name="quantity" step="0.0001" min="0.0001" required placeholder="e.g. 2">

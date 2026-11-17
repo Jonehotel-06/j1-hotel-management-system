@@ -22,7 +22,7 @@ from apps.core.responses import success_response
 from .models import (
     GoodsReceipt, GoodsReceiptLine, PurchaseOrder, PurchaseOrderLine, StockBalance, StockBalanceAdjustment,
     StockConsumptionRequest, StockCount, StockItem, StockLocation, StockMovement, StockRecipe,
-    StockIssueBatch, Supplier,
+    StockIssueBatch, StockUnit, Supplier,
 )
 from .serializers import (
     GoodsReceiptCreateSerializer, GoodsReceiptSerializer, IssueStockSerializer,
@@ -35,6 +35,7 @@ from .serializers import (
     SupplierReferenceInputSerializer,
     StockConsumptionRequestSerializer, StockReplenishSerializer, ReorderContextSerializer,
     StockCountCreateSerializer, StockCountSerializer, StockCountSubmitSerializer, StockItemSerializer,
+    StockIssuanceCreateSerializer, StockIssuanceReadSerializer, StockUnitSerializer,
     InventoryMenuItemDirectorySerializer,
     ProductProfitabilityRowSerializer, ProductProfitabilitySummarySerializer,
     StockIssueBatchSerializer, StockLocationSerializer, StockMovementSerializer,
@@ -52,7 +53,7 @@ from .services.inventory_service import (
     receive_goods, record_opening_stock, record_purchase_order_payment, record_stock_return,
     reject_purchase_order, replenish_stock_item, resolve_entered_quantity, retire_stock_recipe,
     reverse_pos_stock_consumption, scoped_key, start_stock_count, submit_purchase_order, submit_stock_count,
-    transfer_stock, unit_label, update_purchase_order,
+    record_stock_issuance, transfer_stock, unit_label, update_purchase_order,
 )
 
 
@@ -110,6 +111,16 @@ class StockRecordingMixin:
 
         if not has_capability(request.user, self.stock_recording_capability):
             raise PermissionDenied(STOCK_RECORDING_REFUSAL)
+
+
+def _positive_int_param(request, name):
+    """Return a validated positive query parameter or None; never 500 on text."""
+    raw = str(request.query_params.get(name) or "").strip()
+    if not raw:
+        return None
+    if not raw.isdigit() or int(raw) < 1:
+        raise ValidationError({name: "Use a positive numeric id."})
+    return int(raw)
 
 
 def _page(view, request, queryset, serializer):
@@ -175,6 +186,123 @@ class StockLocationDetailView(StockRecordingMixin, APIView):
         if location is None: raise NotFound("Stock location not found.")
         serializer=StockLocationSerializer(location, data=request.data, partial=True); serializer.is_valid(raise_exception=True); location=serializer.save()
         return success_response(StockLocationSerializer(location).data, message="Stock location updated.")
+
+
+@extend_schema(tags=["Admin · Inventory"], summary="List or create configured measurement units")
+class StockUnitListCreateView(StockRecordingMixin, APIView):
+    """Configurable unit catalogue; no browser-side hard-coded unit list."""
+
+    permission_classes = [HasCapability]
+    required_capability = "inventory.manage"
+
+    def get(self, request):
+        queryset = StockUnit.objects.all().order_by("code")
+        if request.query_params.get("active") == "true":
+            queryset = queryset.filter(is_active=True)
+        if search := (request.query_params.get("search") or "").strip():
+            queryset = queryset.filter(Q(code__icontains=search) | Q(label__icontains=search))
+        return success_response(StockUnitSerializer(queryset[:200], many=True).data)
+
+    def post(self, request):
+        serializer = StockUnitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        unit = serializer.save()
+        return success_response(
+            StockUnitSerializer(unit).data,
+            message="Measurement unit configured. Conversions still require an explicit factor.",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+@extend_schema(tags=["Admin · Inventory"], summary="Edit a configured measurement unit")
+class StockUnitDetailView(StockRecordingMixin, APIView):
+    permission_classes = [HasCapability]
+    required_capability = "inventory.manage"
+
+    def patch(self, request, pk):
+        unit = StockUnit.objects.filter(pk=pk).first()
+        if unit is None:
+            raise NotFound("Measurement unit not found.")
+        serializer = StockUnitSerializer(unit, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        unit = serializer.save()
+        return success_response(StockUnitSerializer(unit).data, message="Measurement unit updated.")
+
+
+@extend_schema(tags=["Admin · Inventory"], summary="List or record independent stock issuances")
+class StockIssuanceView(StockRecordingMixin, APIView):
+    """Kitchen issuance / manual stock-out through the one inventory ledger.
+
+    The ``kitchen-issues/`` alias selects the same service with a different
+    audit mode; neither route requires a POS dish, recipe or menu item.
+    """
+
+    permission_classes = [HasCapability]
+    required_capability = "inventory.manage"
+
+    def get(self, request):
+        queryset = (
+            StockMovement.objects.select_related("item", "location", "actor")
+            .filter(
+                issue_method=StockMovement.IssueMethod.MANUAL,
+                source_reference__startswith="MSO-",
+                type__in=[StockMovement.Type.ISSUE, StockMovement.Type.TRANSFER_OUT],
+            )
+            .order_by("-occurred_at", "-pk")
+        )
+        if search := (request.query_params.get("search") or "").strip():
+            queryset = queryset.filter(
+                Q(reference__icontains=search) | Q(source_reference__icontains=search)
+                | Q(item__name__icontains=search) | Q(item__sku__icontains=search)
+                | Q(recipient__icontains=search) | Q(notes__icontains=search)
+            )
+        if reason := (request.query_params.get("reason") or "").strip().upper():
+            queryset = queryset.filter(metadata__reason=reason)
+        item_id = _positive_int_param(request, "item_id")
+        if item_id:
+            queryset = queryset.filter(item_id=item_id)
+        location_id = _positive_int_param(request, "location_id")
+        if location_id:
+            queryset = queryset.filter(location_id=location_id)
+        return _page(self, request, queryset, StockIssuanceReadSerializer)
+
+    def post(self, request):
+        serializer = StockIssuanceCreateSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        item = StockItem.objects.filter(pk=data["item_id"]).first()
+        if item is None:
+            raise ValidationError({"item_id": "Unknown stock item."})
+        source_location = StockLocation.objects.filter(pk=data["source_location_id"]).first()
+        if source_location is None:
+            raise ValidationError({"source_location_id": "Unknown source store."})
+        destination_location = None
+        if data.get("destination_location_id"):
+            destination_location = StockLocation.objects.filter(pk=data["destination_location_id"]).first()
+            if destination_location is None:
+                raise ValidationError({"destination_location_id": "Unknown receiving store."})
+        mode = "KITCHEN_ISSUE" if "kitchen-issues" in (request.path or "") else "MANUAL_STOCK_OUT"
+        movement, created = record_stock_issuance(
+            item=item,
+            source_location=source_location,
+            destination_location=destination_location,
+            quantity=data["quantity"],
+            actor=request.user,
+            unit=data.get("unit") or "",
+            conversion_factor=data.get("conversion_factor"),
+            destination=data.get("destination") or "",
+            department=data.get("department") or "",
+            recipient=data.get("recipient") or "",
+            reason=data["reason"],
+            remarks=data.get("remarks") or "",
+            mode=mode,
+            idempotency_key=data.get("idempotency_key") or "",
+        )
+        return success_response(
+            {"created": created, "transaction": StockIssuanceReadSerializer(movement).data},
+            message="Stock issuance recorded." if created else "This stock issuance was already recorded.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="List or create stock catalog items")

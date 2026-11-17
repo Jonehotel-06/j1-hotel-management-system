@@ -702,6 +702,13 @@ CACHES = {
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        # Full tracebacks are preserved, but a provider payload or a token in
+        # an exception message must never become a credential in the log sink.
+        "redact_secrets": {
+            "()": "apps.core.log_redaction.SecretRedactingFilter",
+        },
+    },
     "formatters": {
         "standard": {
             "format": "%(asctime)s %(levelname)s [%(name)s] %(message)s",
@@ -711,6 +718,7 @@ LOGGING = {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "standard",
+            "filters": ["redact_secrets"],
         },
     },
     "root": {

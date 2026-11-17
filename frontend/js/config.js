@@ -324,6 +324,7 @@
 
     /* Inventory and procurement (capability-gated server-side). */
     inventoryLocations:           "/api/admin/inventory/locations/",
+    inventoryUnits:               "/api/admin/inventory/units/",
     inventoryItems:               "/api/admin/inventory/items/",
     /* Task 03: one indexed lookup per USB HID scan. Read-only by design — the
        scan identifies the stock item, it never records a movement. */
@@ -340,6 +341,12 @@
     inventoryProcessPendingConsumption: "/api/admin/inventory/consumption-requests/process-pending/",
     stockCounts:                  "/api/admin/inventory/stock-counts/",
     inventoryIssues:              "/api/admin/inventory/issues/",
+    /* Independent Store Keeper issuance: no POS dish is selected. Kitchen
+       issuance uses the same ledger service with a distinct audit mode. */
+    inventoryManualStockOut:      "/api/admin/inventory/manual-stock-out/",
+    inventoryKitchenIssues:       "/api/admin/inventory/kitchen-issues/",
+    minimartCategories:           "/api/admin/inventory/minimart/categories/",
+    minimartAdminProducts:        "/api/admin/inventory/minimart/products/",
     inventoryManualIssues:        "/api/admin/inventory/manual-ingredient-issues/",
     inventoryOpeningStock:        "/api/admin/inventory/opening-stock/",
     inventoryReturns:             "/api/admin/inventory/returns/",

@@ -73,8 +73,58 @@
     var issueForm = document.querySelector("[data-amenity-issue-form]");
     if (issueForm) issueForm.addEventListener("submit", onIssue);
 
-    // Load stock on init
-    loadStock();
+    departmentSelects().forEach(function (sel) {
+      sel.addEventListener("change", function () {
+        departmentSelects().forEach(function (other) { if (other !== sel) other.value = sel.value; });
+        loadStock();
+        if (canIssue) loadIssueItemSelect();
+      });
+    });
+
+    // Load the configured department shelf, then refresh the stock and issue
+    // picker against exactly that location.
+    loadDepartmentLocationSelect().then(function () {
+      loadStock();
+      if (canIssue) loadIssueItemSelect();
+    }).catch(function () { loadStock(); });
+  }
+
+  /* ---------------------- Configured department store --------------------- */
+
+  function departmentSelects() {
+    return document.querySelectorAll("[data-amenity-shelf-select],[data-amenity-department-location-select]");
+  }
+  function departmentLocationId() {
+    var selects = departmentSelects();
+    for (var i = 0; i < selects.length; i += 1) {
+      if (selects[i].value) return selects[i].value;
+    }
+    return "";
+  }
+  function withLocation(url) {
+    var id = departmentLocationId();
+    return id ? url + (url.indexOf("?") === -1 ? "?" : "&") + "location_id=" + encodeURIComponent(id) : url;
+  }
+  function loadDepartmentLocationSelect() {
+    var selects = departmentSelects();
+    if (!selects.length || !API) return Promise.resolve();
+    return API.get("/api/admin/inventory/locations/?page_size=200&active=true").then(function (res) {
+      var data = unwrap(res);
+      var locs = (data.results || data.items || []).filter(function (loc) { return loc.is_active !== false; });
+      var configured = locs.filter(function (loc) { return loc.is_reception; })[0] ||
+        locs.filter(function (loc) { return String(loc.code || "").toUpperCase() === "RECEPTION"; })[0];
+      selects.forEach(function (sel) {
+        var keep = sel.value;
+        sel.innerHTML = '<option value="">Use configured Reception store</option>';
+        locs.forEach(function (loc) {
+          var opt = document.createElement("option");
+          opt.value = loc.id;
+          opt.textContent = loc.code + " — " + loc.name + (loc.is_reception ? " (configured)" : "");
+          sel.appendChild(opt);
+        });
+        sel.value = keep || (configured ? String(configured.id) : "");
+      });
+    });
   }
 
   /* ------------------------------ Dropdowns -------------------------------- */
@@ -108,7 +158,7 @@
     var sel = document.querySelector("[data-amenity-issue-item-select]");
     if (!sel) return;
     var keep = sel.value;
-    API.get("/api/admin/service-requests/reception/amenities/stock/").then(function (res) {
+    API.get(withLocation("/api/admin/service-requests/reception/amenities/stock/")).then(function (res) {
       var data = unwrap(res);
       var rows = (data && data.balances) || [];
       var available = rows.filter(function (r) { return r.is_active !== false && Number(r.quantity) > 0; });
@@ -137,7 +187,7 @@
       var locs = data.results || data.items || [];
       sel.innerHTML = '<option value="">— Select —</option>';
       locs.forEach(function (loc) {
-        if (loc.code && loc.code.toUpperCase() === "RECEPTION") return; // don't allocate from Reception
+        if (loc.is_reception || (loc.code && loc.code.toUpperCase() === "RECEPTION")) return; // don't allocate from the configured Reception store
         var opt = document.createElement("option");
         opt.value = loc.id;
         opt.textContent = loc.code + " — " + loc.name;
@@ -152,10 +202,10 @@
     var container = document.querySelector("[data-amenity-stock-container]");
     if (!container) return;
     container.innerHTML = ReceptionServices.loading();
-    API.get("/api/admin/service-requests/reception/amenities/stock/").then(function (res) {
+    API.get(withLocation("/api/admin/service-requests/reception/amenities/stock/")).then(function (res) {
       var data = unwrap(res);
       if (!data.location) {
-        container.innerHTML = '<div class="alert alert-warning">No Reception stock location found. Ask the Store Keeper to create one with code <strong>RECEPTION</strong>.</div>';
+        container.innerHTML = '<div class="alert alert-warning">No department store is configured. Ask an administrator to mark an active stock location as the Reception store in Inventory.</div>';
         return;
       }
       var balances = data.balances || [];
@@ -214,6 +264,8 @@
       from_location_id: parseInt(form.from_location_id.value),
       notes: form.notes.value,
     };
+    var locationId = departmentLocationId();
+    if (locationId) payload.location_id = parseInt(locationId);
     if (!payload.item_id || !payload.quantity || !payload.from_location_id) {
       UI.toast("Please fill in all required fields.", "warning");
       return;
@@ -241,6 +293,8 @@
       quantity: form.quantity.value,
       notes: form.notes.value,
     };
+    var locationId = departmentLocationId();
+    if (locationId) payload.location_id = parseInt(locationId);
     /* Attach the issuance to the stay when we know it (deep link / check-in). */
     var bookingId = form.booking_id && form.booking_id.value ? parseInt(form.booking_id.value) : null;
     if (bookingId) payload.booking_id = bookingId;
