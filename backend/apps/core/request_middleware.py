@@ -66,3 +66,29 @@ class RequestContextMiddleware:
         finally:
             # Restore the prior context even when a view or exception handler fails.
             reset_request_context(token)
+
+
+class ApiVersionHeaderMiddleware:
+    """Tell the frontend which API revision answered it.
+
+    The dashboard and the API deploy independently (Cloudflare/Workers for the
+    static frontend, Northflank for Django). During the incident this repair
+    addresses, a frontend that already called new endpoints such as
+    ``/admin/inventory/units/`` was served by an older API image, and the
+    resulting 404s were indistinguishable from a genuinely missing record.
+    Echoing the revision lets the browser detect that mismatch and say so
+    instead of rendering an empty dropdown.
+
+    Set ``API_REVISION`` in the environment on release; it is intentionally
+    informational only — nothing is authorised by it.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+        self.revision = str(getattr(settings, "API_REVISION", "") or "")
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        if self.revision and (request.path_info or "").startswith("/api/"):
+            response["X-API-Revision"] = self.revision[:64]
+        return response

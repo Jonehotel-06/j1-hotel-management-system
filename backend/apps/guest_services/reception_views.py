@@ -21,27 +21,78 @@ class ReceptionGuestView(APIView):
     required_capabilities = ("guest_amenity.issue", "breakfast.issue")
     require_any_capability = True
 
+    #: Bookings that can never represent a guest currently staying with us.
+    #: Excluded from the picker so the desk cannot book breakfast or issue an
+    #: amenity against a stay that has already ended or been cancelled.
+    INACTIVE_BOOKING_STATUSES = ("CANCELLED", "EXPIRED", "NO_SHOW", "CHECKED_OUT")
+
     def get(self, request):
-        from apps.bookings.models import Guest
+        from apps.bookings.models import Booking, Guest
         from apps.core.utils import hotel_today
-        term = str(request.query_params.get("search", "")).strip()[:120]
+
+        # Case-insensitive, whitespace-tolerant term (``"  J1-2026…  "`` works).
+        term = " ".join(str(request.query_params.get("search", "") or "").split())[:120]
+        today = hotel_today()
+
         qs = Guest.objects.all()
-        for part in term.split():
-            qs = qs.filter(Q(first_name__icontains=part) | Q(last_name__icontains=part) |
-                           Q(bookings__booking_reference__icontains=part) |
-                           Q(bookings__room_assignments__room__room_number__icontains=part)).distinct()
+        if term:
+            # Every whitespace-separated token must match SOMETHING, so
+            # "ada obi" narrows to Ada Obi while a full or partial booking
+            # reference, an email or a phone number finds the same person.
+            for part in term.split():
+                qs = qs.filter(
+                    Q(first_name__icontains=part)
+                    | Q(last_name__icontains=part)
+                    | Q(email__icontains=part)
+                    | Q(phone__icontains=part)
+                    | Q(bookings__booking_reference__icontains=part)
+                    | Q(bookings__room_assignments__room__room_number__icontains=part)
+                ).distinct()
+
+        # ONE query for the guests plus ONE prefetch for their in-house stays:
+        # the previous loop issued a booking query and a room query per guest
+        # (an N+1 that made the picker slow exactly when a search matched many
+        # rows, which the desk read as "the search does not work").
+        guests = list(qs.order_by("first_name", "last_name", "pk")[:50])
+        active = (
+            Booking.objects.filter(
+                guest_id__in=[g.pk for g in guests],
+                check_in__lte=today,
+                check_out__gte=today,
+            )
+            .exclude(status__in=self.INACTIVE_BOOKING_STATUSES)
+            .prefetch_related("room_assignments__room")
+            .order_by("-check_in", "pk")
+        )
+        stays = {}
+        for booking in active:
+            stays.setdefault(booking.guest_id, []).append(booking)
+
         rows = []
-        for g in qs.order_by("first_name", "last_name", "pk")[:50]:
-            # Include booking IDs instead of guessing the latest future booking.
-            bookings = g.bookings.exclude(status__in=["CANCELLED", "EXPIRED", "NO_SHOW", "CHECKED_OUT"]).filter(
-                check_in__lte=hotel_today(), check_out__gte=hotel_today()
-            ).prefetch_related("room_assignments__room").order_by("-check_in", "pk")
-            rows.append({"id": g.pk, "full_name": g.full_name,
-                         "bookings": [{"id": b.pk, "reference": b.booking_reference, "status": b.status,
-                                       "check_in": b.check_in, "check_out": b.check_out,
-                                       "rooms": list(b.room_assignments.values_list("room__room_number", flat=True))}
-                                      for b in bookings]})
-        return success_response({"results": rows, "limit": 50})
+        for g in guests:
+            bookings = stays.get(g.pk, [])
+            rows.append({
+                "id": g.pk,
+                "full_name": g.full_name,
+                "email": getattr(g, "email", "") or "",
+                "phone": getattr(g, "phone", "") or "",
+                "bookings": [
+                    {
+                        "id": b.pk,
+                        "reference": b.booking_reference,
+                        "status": b.status,
+                        "check_in": b.check_in,
+                        "check_out": b.check_out,
+                        "rooms": [
+                            assignment.room.room_number
+                            for assignment in b.room_assignments.all()
+                            if assignment.room_id
+                        ],
+                    }
+                    for b in bookings
+                ],
+            })
+        return success_response({"results": rows, "limit": 50, "search": term})
 
 
 class CartLineSerializer(serializers.Serializer):

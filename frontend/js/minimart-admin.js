@@ -12,10 +12,27 @@
   var $ = function (selector) { return document.querySelector(selector); };
   var section, categories = [], units = [], locations = [], products = [];
 
+  /* Payload -> array of records.
+     The list endpoints answer { success, message, data: [...], pagination } so
+     after unwrapping the envelope the payload is ALREADY an array. Reading
+     `.results` first built every category list and both product/category
+     dropdowns from `undefined`, so a correctly-saved category never appeared
+     in the product form. */
   function rows(response) {
     var data = response && response.data !== undefined ? response.data : response;
     if (Array.isArray(data)) return data;
-    return (data && (data.results || data.items)) || [];
+    if (data && Array.isArray(data.results)) return data.results;
+    if (data && Array.isArray(data.items)) return data.items;
+    if (response && Array.isArray(response.results)) return response.results;
+    return [];
+  }
+  function debounce(fn, wait) {
+    var timer = null;
+    return function () {
+      var args = arguments, scope = this;
+      clearTimeout(timer);
+      timer = setTimeout(function () { fn.apply(scope, args); }, wait || 250);
+    };
   }
   function key() {
     return (window.crypto && window.crypto.randomUUID)
@@ -150,20 +167,115 @@
     });
     return values;
   }
+
+  /* ------------------------- Form visibility state -------------------------
+     The catalogue section holds two independent forms. They must BOTH start
+     hidden and only ever be revealed by their own button: the page opens on
+     the listing, "Add Category" reveals only the category form and "Add
+     Product" only the product form. Visibility is therefore owned by one
+     helper here — never by leftover inline styles, a stray `hidden` attribute
+     on a wrapper, or a validation pass — so no code path can open one form
+     because the other was being initialised. */
+  var PANELS = {
+    category: {
+      panel: "[data-mart-admin-category-panel]",
+      launcher: "[data-mart-admin-add-category]",
+      form: "[data-mart-admin-category-form]",
+    },
+    product: {
+      panel: "[data-mart-admin-product-panel]",
+      launcher: "[data-mart-admin-add-product]",
+      form: "[data-mart-admin-product-form]",
+    },
+  };
+
+  function setPanel(kind, open) {
+    var spec = PANELS[kind];
+    if (!spec) return;
+    var panel = $(spec.panel), launcher = $(spec.launcher);
+    if (panel) {
+      panel.hidden = !open;
+      panel.classList.toggle("hidden", !open);
+      panel.setAttribute("aria-hidden", open ? "false" : "true");
+    }
+    if (launcher) {
+      launcher.setAttribute("aria-expanded", open ? "true" : "false");
+      launcher.hidden = !!open;
+    }
+  }
+
+  function closePanels() {
+    setPanel("category", false);
+    setPanel("product", false);
+  }
+
+  function openPanel(kind) {
+    // Only ONE form is ever on screen, so a partially filled product form can
+    // never be submitted because the category form was "already open".
+    closePanels();
+    setPanel(kind, true);
+    var spec = PANELS[kind];
+    var form = spec && $(spec.form);
+    var first = form && form.querySelector("input:not([type=hidden]),select,textarea");
+    if (first && typeof first.focus === "function") first.focus();
+    message("");
+  }
+
+  function clearFieldErrors(form) {
+    if (!form) return;
+    if (typeof form.querySelectorAll !== "function") return;
+    form.querySelectorAll("[aria-invalid=true]").forEach(function (field) {
+      field.removeAttribute("aria-invalid");
+      field.removeAttribute("aria-describedby");
+    });
+    form.querySelectorAll("[data-mart-field-error]").forEach(function (node) {
+      node.textContent = "";
+    });
+  }
+
+  /* Render a 400 field-by-field so the offending input is highlighted inside
+     the correct form; the message stays visible until the next attempt. */
+  function showFieldErrors(form, err) {
+    var detail = (err && err.data && err.data.errors) || null;
+    var shown = false;
+    if (form && detail && typeof detail === "object") {
+      Object.keys(detail).forEach(function (field) {
+        var input = form.elements[field];
+        var text = detail[field];
+        if (Array.isArray(text)) text = text[0];
+        if (input && input.setAttribute) {
+          input.setAttribute("aria-invalid", "true");
+          shown = true;
+        }
+        var slot = form.querySelector('[data-mart-field-error="' + field + '"]');
+        if (slot) { slot.textContent = String(text == null ? "" : text); shown = true; }
+      });
+    }
+    return shown;
+  }
   async function submitCategory(e) {
     e.preventDefault();
     var form = e.target, id = form.elements.category_id.value;
+    var button = form.querySelector("[type=submit]");
+    if (button && button.disabled) return;   // duplicate-submission guard
     var values = compact({
       name: form.elements.name.value.trim(),
       description: form.elements.description.value.trim(),
       is_active: form.elements.is_active.value === "true",
     });
+    clearFieldErrors(form);
+    if (button) button.disabled = true;
     try {
       if (id) await API.update("minimartCategories", id, values);
       else await API.create("minimartCategories", values);
       toast("Mini Mart category saved.");
-      resetCategoryForm(); await loadCategories(); await loadProducts();
-    } catch (err) { toast((err && err.message) || "Category could not be saved.", true); }
+      resetCategoryForm();
+      setPanel("category", false);           // successful submit closes the form
+      await loadCategories(); await loadProducts();
+    } catch (err) {
+      toast((err && err.message) || "Category could not be saved.", true);
+      if (!showFieldErrors(form, err)) setPanel("category", true);
+    } finally { if (button) button.disabled = false; }
   }
   async function submitProduct(e) {
     e.preventDefault();
@@ -188,12 +300,21 @@
       values.idempotency_key = key();
     }
     values = compact(values);
+    clearFieldErrors(form);
+    var button = form.querySelector("[type=submit]");
+    if (button && button.disabled) return;   // duplicate-submission guard
+    if (button) button.disabled = true;
     try {
       if (id) await API.update("minimartAdminProducts", id, values);
       else await API.create("minimartAdminProducts", values);
       toast("Mini Mart product saved.");
-      resetProductForm(); await loadProducts();
-    } catch (err) { toast((err && err.message) || "Product could not be saved.", true); }
+      resetProductForm();
+      setPanel("product", false);            // successful submit closes the form
+      await loadOptions(); await loadProducts();
+    } catch (err) {
+      toast((err && err.message) || "Product could not be saved.", true);
+      if (!showFieldErrors(form, err)) setPanel("product", true);
+    } finally { if (button) button.disabled = false; }
   }
   function bindActions(box, attr, getList, run) {
     if (!box) return;
@@ -210,17 +331,35 @@
     if (!section || !API || !API.list || !API.create || !API.update) return;
     if (!allowed()) { section.hidden = true; return; }
     section.hidden = false;
-    $("[data-mart-admin-category-form]").addEventListener("submit", submitCategory);
-    $("[data-mart-admin-product-form]").addEventListener("submit", submitProduct);
-    $("[data-mart-admin-reset-category]").addEventListener("click", resetCategoryForm);
-    $("[data-mart-admin-reset-product]").addEventListener("click", resetProductForm);
-    $("[data-mart-admin-category-search]").addEventListener("input", function () { loadCategories(); });
-    $("[data-mart-admin-product-search]").addEventListener("input", function () { loadProducts(); });
-    $("[data-mart-admin-category-filter]").addEventListener("change", function () { loadProducts(); });
-    $("[data-mart-admin-active-filter]").addEventListener("change", function () { loadProducts(); });
-    $("[data-mart-admin-refresh]").addEventListener("click", function () { loadOptions(); loadCategories(); loadProducts(); });
+    /* Both forms start hidden: the page opens on the listing interface. The
+       markup ships them inside [hidden] panels and this line makes the state
+       explicit even if a stale cached stylesheet or a previous session left a
+       wrapper visible. */
+    closePanels();
+
+    function on(selector, event, handler) {
+      var node = $(selector);
+      if (node) node.addEventListener(event, handler);
+    }
+
+    on("[data-mart-admin-category-form]", "submit", submitCategory);
+    on("[data-mart-admin-product-form]", "submit", submitProduct);
+    on("[data-mart-admin-reset-category]", "click", function () { resetCategoryForm(); clearFieldErrors($("[data-mart-admin-category-form]")); });
+    on("[data-mart-admin-reset-product]", "click", function () { resetProductForm(); clearFieldErrors($("[data-mart-admin-product-form]")); });
+    on("[data-mart-admin-add-category]", "click", function () { resetCategoryForm(); openPanel("category"); });
+    on("[data-mart-admin-add-product]", "click", function () { resetProductForm(); openPanel("product"); });
+    on("[data-mart-admin-cancel-category]", "click", function () { resetCategoryForm(); closePanels(); });
+    on("[data-mart-admin-cancel-product]", "click", function () { resetProductForm(); closePanels(); });
+
+    /* Search is debounced: one request per typing pause instead of one per
+       keystroke, and in-flight work is never multiplied. */
+    on("[data-mart-admin-category-search]", "input", debounce(loadCategories, 250));
+    on("[data-mart-admin-product-search]", "input", debounce(loadProducts, 250));
+    on("[data-mart-admin-category-filter]", "change", loadProducts);
+    on("[data-mart-admin-active-filter]", "change", loadProducts);
+    on("[data-mart-admin-refresh]", "click", function () { loadOptions(); loadCategories(); loadProducts(); });
     bindActions($("[data-mart-admin-categories]"), "data-mart-admin-edit-category",
-      function () { return categories; }, function (row) { fillCategoryForm(row); });
+      function () { return categories; }, function (row) { fillCategoryForm(row); openPanel("category"); });
     bindActions($("[data-mart-admin-categories]"), "data-mart-admin-toggle-category",
       function () { return categories; }, async function (row, active) {
         if (!row) return;
@@ -228,7 +367,7 @@
         catch (err) { toast((err && err.message) || "Category could not be updated.", true); }
       });
     bindActions($("[data-mart-admin-products]"), "data-mart-admin-edit-product",
-      function () { return products; }, function (row) { fillProductForm(row); });
+      function () { return products; }, function (row) { fillProductForm(row); openPanel("product"); });
     bindActions($("[data-mart-admin-products]"), "data-mart-admin-toggle-product",
       function () { return products; }, async function (row, active) {
         if (!row) return;

@@ -4,6 +4,18 @@
   const API = window.API, esc = JONE.esc;
   const base = "/api/admin/service-requests/";
   function unwrap(r) { return r && r.data !== undefined ? r.data : r; }
+  /* Payload -> array of records, tolerating both contract shapes:
+     a bare paginated array (data: [...]) and a named key ({results: [...]}).
+     Reading `.results` first silently produced `undefined` for the paginated
+     endpoints, which is why several pickers rendered empty. */
+  function listOf(r) {
+    const data = unwrap(r);
+    if (Array.isArray(data)) return data;
+    if (data && Array.isArray(data.results)) return data.results;
+    if (data && Array.isArray(data.items)) return data.items;
+    if (r && Array.isArray(r.results)) return r.results;
+    return [];
+  }
   function loading() { return '<div class="service-loading" role="status" aria-label="Loading"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><span class="visually-hidden">Loading data</span></div>'; }
   function error(err) { return '<div class="alert alert-error" role="alert">' + esc(err.message || "Unable to load data. Please retry.") + '</div>'; }
   function key() { return window.crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(36).slice(2); }
@@ -37,7 +49,7 @@
     const room = form.querySelector('[name=room_number]');
     const context = form.querySelector('[data-guest-context]');
     const search = form.querySelector('[data-guest-search]');
-    let rows = [], seq = 0, timer;
+    let rows = [], seq = 0, timer, lastTerm = "";
     function contextChange() {
       const g = rows.find(g => String(g.id) === select.value);
       const b = g && g.bookings.find(b => String(b.id) === booking.value);
@@ -55,27 +67,64 @@
       if (g && g.bookings.length === 1) booking.value = g.bookings[0].id;
       contextChange();
     }
+    /* One in-flight read at a time: `seq` discards the response of a superseded
+       search so a slow early keystroke can never overwrite the newer results. */
     async function load(term) {
       const current = ++seq, keep = select.value;
+      const cleaned = String(term || "").trim();
+      lastTerm = cleaned;
       select.disabled = true;
+      if (context && cleaned) context.textContent = "Searching for “" + cleaned + "”…";
       try {
-        const data = unwrap(await API.get(base + "reception/guests/?search=" + encodeURIComponent(term || "")));
+        const data = unwrap(await API.get(base + "reception/guests/?search=" + encodeURIComponent(cleaned)));
         if (current !== seq) return;
-        rows = data.results || [];
+        rows = listOf(data);
         select.innerHTML = '<option value="">— Select guest (search to refine) —</option>';
-        rows.forEach(g => select.add(new Option(g.full_name + (g.bookings.length ? " · Room " + g.bookings.map(b => b.rooms.join(", ")).join(" / ") : ""),g.id)));
-        if (keep) select.value = keep;
+        rows.forEach(g => select.add(new Option(
+          g.full_name + ((g.bookings && g.bookings.length) ? " · Room " + g.bookings.map(b => (b.rooms || []).join(", ")).filter(Boolean).join(" / ") : ""),
+          g.id
+        )));
+        if (keep && rows.some(g => String(g.id) === String(keep))) select.value = keep;
+        if (!rows.length) {
+          /* Empty state: clear the dependent pickers FIRST, then write the
+             explanation last so guestChange() cannot overwrite it. */
+          guestChange();
+          select.innerHTML = '<option value="">' + (cleaned ? "No guest matches “" + cleaned + "”" : "No guests are currently in house") + '</option>';
+          if (context) context.textContent = cleaned
+            ? "No guest, booking reference or room number matches “" + cleaned + "”."
+            : "No guest with a current stay was found. Check the booking reference and try again.";
+          return;
+        }
         guestChange();
       } catch(err) {
         if (current !== seq) return;
+        rows = [];
         select.innerHTML = '<option value="">Unable to load guests — search again to retry</option>';
-        if (context) context.textContent = err.message;
+        if (context) context.textContent = err.message || "Guests could not be loaded.";
       } finally { if (current === seq) select.disabled = false; }
     }
     select.addEventListener('change', guestChange);
     booking.addEventListener('change', contextChange);
     form.addEventListener('reset', () => setTimeout(guestChange, 0));
-    if (search) search.addEventListener('input', () => {clearTimeout(timer); timer=setTimeout(() => load(search.value),250);});
+    if (search) {
+      /* Debounced (250 ms) so typing a reference sends one request per pause,
+         not one per character. */
+      search.addEventListener('input', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => load(search.value), 250);
+      });
+      /* Enter must not submit a half-typed form: run the search instead. */
+      search.addEventListener('keydown', (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        clearTimeout(timer);
+        load(search.value);
+      });
+      /* Native "x" on type=search, and Escape, both clear back to the full list. */
+      const clearSearch = () => { clearTimeout(timer); search.value = ""; load(""); };
+      search.addEventListener('search', () => { if (!search.value) clearSearch(); });
+      search.addEventListener('keydown', (event) => { if (event.key === "Escape") clearSearch(); });
+    }
     load("").then(async () => {
       if (!opts || !opts.deepLink) return;
       const params = new URLSearchParams(location.search), ref = params.get('booking') || params.get('ref');
@@ -90,5 +139,5 @@
     });
     return {reload:load};
   }
-  window.ReceptionServices = {base,unwrap,loading,error,key,tabs,postOnce,guests};
+  window.ReceptionServices = {base,unwrap,listOf,loading,error,key,tabs,postOnce,guests};
 })();

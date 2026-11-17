@@ -11,7 +11,7 @@ import secrets
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 from rest_framework import serializers, status
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.views import APIView
@@ -41,6 +41,12 @@ class MiniMartCategorySerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "product_count", "created_at", "updated_at"]
 
     def get_product_count(self, obj):
+        # The list view annotates ``product_total`` in ONE aggregate query.
+        # Falling back to ``.count()`` only runs for a single-object read
+        # (create/update response), so a 200-category page is 1 query, not 201.
+        annotated = getattr(obj, "product_total", None)
+        if annotated is not None:
+            return annotated
         return obj.minimart_products.count()
 
     def validate_name(self, value):
@@ -125,10 +131,24 @@ class MiniMartProductWriteSerializer(serializers.Serializer):
         return attrs
 
 
-def product_payload(product):
+#: Sentinel distinguishing "the caller resolved this product's balance and it
+#: does not exist" from "the caller did not resolve it, look it up".
+_BALANCE_UNRESOLVED = object()
+
+
+def product_payload(product, balance=_BALANCE_UNRESOLVED):
+    """Serialise one Mini Mart product.
+
+    ``balance`` may be supplied by a caller that already fetched every balance
+    for the page. A caller that knows a balance row does not exist passes
+    ``None``; ``_BALANCE_UNRESOLVED`` means "query it". This keeps the product
+    list at a fixed number of queries instead of one lookup per row — the N+1
+    that made the catalogue slow on a real-size product list.
+    """
     item = product.item
     location = product.location
-    balance = StockBalance.objects.filter(item=item, location=location).first()
+    if balance is _BALANCE_UNRESOLVED:
+        balance = StockBalance.objects.filter(item=item, location=location).first()
     quantity = balance.quantity_on_hand if balance else Decimal("0.0000")
     category_name = product.category.name if product.category_id else item.category
     return {
@@ -189,7 +209,10 @@ class _CatalogueView(APIView):
 
 class MiniMartCategoryListCreateView(_CatalogueView):
     def get(self, request):
-        queryset = MiniMartCategory.objects.all().order_by("name")
+        queryset = (
+            MiniMartCategory.objects.annotate(product_total=Count("minimart_products"))
+            .order_by("name")
+        )
         if request.query_params.get("active") == "true":
             queryset = queryset.filter(is_active=True)
         if search := (request.query_params.get("search") or "").strip():
@@ -220,6 +243,20 @@ class MiniMartCategoryDetailView(_CatalogueView):
         return success_response(MiniMartCategorySerializer(category).data, message="Mini Mart category updated.")
 
 
+def _product_rows(products):
+    """Serialise a page of products with ONE balance query for the whole page."""
+    balances = {}
+    pairs = {(p.item_id, p.location_id) for p in products}
+    if pairs:
+        item_ids = {item_id for item_id, _ in pairs}
+        location_ids = {location_id for _, location_id in pairs}
+        for row in StockBalance.objects.filter(
+            item_id__in=item_ids, location_id__in=location_ids
+        ).only("item_id", "location_id", "quantity_on_hand"):
+            balances[(row.item_id, row.location_id)] = row
+    return [product_payload(p, balances.get((p.item_id, p.location_id))) for p in products]
+
+
 class MiniMartProductListCreateView(_CatalogueView):
     def get(self, request):
         queryset = MiniMartProduct.objects.select_related("item", "location", "category").all().order_by("item__name", "pk")
@@ -234,7 +271,7 @@ class MiniMartProductListCreateView(_CatalogueView):
                 | Q(item__barcode__iexact=search) | Q(category__name__icontains=search)
                 | Q(description__icontains=search)
             )
-        return _page(self, request, queryset, lambda rows: [product_payload(row) for row in rows])
+        return _page(self, request, queryset, lambda rows: _product_rows(rows))
 
     @transaction.atomic
     def post(self, request):

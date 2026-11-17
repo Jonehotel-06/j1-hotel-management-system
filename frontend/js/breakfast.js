@@ -17,10 +17,9 @@
   function selection(form) {
     return {guest_id:Number(form.elements.guest_id.value), booking_id:Number(form.elements.booking_id.value),service_date:form.elements.service_date.value};
   }
-  function listRows(res) {
-    const data=S.unwrap(res);
-    return Array.isArray(data) ? data : (data && (data.results || data.items)) || [];
-  }
+  /* Delegate to the shared helper so paginated arrays ({data: [...]}) and
+     named-key payloads ({results: [...]}) are both supported. */
+  function listRows(res) { return S.listOf(res); }
   async function stockOptions() {
     const item=document.querySelector('[data-breakfast-stock-item]'), loc=document.querySelector('[data-breakfast-stock-location]'), unit=document.querySelector('[data-breakfast-stock-unit]');
     if (!item || !loc || !API.list) return;
@@ -69,7 +68,8 @@
   async function history() {
     const box=document.querySelector('[data-breakfast-history-container]'); box.innerHTML=S.loading();
     try {
-      const rows=S.unwrap(await API.get(S.base+'breakfast/issues/')).results || [];
+      const payload=S.unwrap(await API.get(S.base+'breakfast/issues/'));
+      const rows=Array.isArray(payload) ? payload : ((payload && payload.results) || []);
       if (!rows.length) {box.innerHTML='<p class="text-muted">No breakfast services recorded yet.</p>';return;}
       box.innerHTML='<table class="table"><thead><tr><th>Reference</th><th>Guest</th><th>Room</th><th>Booking / dates</th><th>Service date</th><th>Entitlement</th><th>Staff</th></tr></thead><tbody>'+rows.map(i => '<tr><td>'+esc(i.reference)+'</td><td>'+esc(i.guest_name || 'Name unavailable')+'</td><td>'+esc(i.room_number || 'Not assigned')+'</td><td>'+esc(i.booking_reference || '—')+'<br>'+esc(i.check_in || '')+' – '+esc(i.check_out || '')+'</td><td>'+esc(i.service_date)+'</td><td>'+esc(i.eligible_guests)+'</td><td>'+esc(i.issued_by_name || '—')+'</td></tr>').join('')+'</tbody></table>';
     } catch(err) {box.innerHTML=S.error(err);}

@@ -120,18 +120,23 @@
           <div class="form-row">
             <div class="form-group">
               <h3 class="h4">Categories</h3>
+              <div class="form-actions"><button class="btn btn-accent" type="button" data-mart-admin-add-category aria-expanded="false" aria-controls="mart-admin-category-panel"><span data-icon="plus" data-size="16"></span> Add Category</button></div>
+              <div id="mart-admin-category-panel" data-mart-admin-category-panel hidden>
               <form data-mart-admin-category-form>
                 <input type="hidden" name="category_id" value="">
                 <div class="form-group"><label for="mart-admin-category-name">Category name *</label><input class="input" id="mart-admin-category-name" name="name" required maxlength="120" autocomplete="off"></div>
                 <div class="form-group"><label for="mart-admin-category-description">Description</label><input class="input" id="mart-admin-category-description" name="description" maxlength="255"></div>
                 <div class="form-group"><label for="mart-admin-category-active">Status</label><select class="select" id="mart-admin-category-active" name="is_active"><option value="true">Active</option><option value="false">Inactive</option></select></div>
-                <div class="form-actions"><button class="btn btn-accent" type="submit">Save category</button><button class="btn btn-outline" type="button" data-mart-admin-reset-category>New category</button></div>
+                <div class="form-actions"><button class="btn btn-accent" type="submit">Save category</button><button class="btn btn-outline" type="button" data-mart-admin-reset-category>New category</button><button class="btn btn-outline" type="button" data-mart-admin-cancel-category>Cancel</button></div>
               </form>
+              </div>
               <div class="form-group"><label for="mart-admin-category-search">Find category</label><input class="input" id="mart-admin-category-search" data-mart-admin-category-search type="search" placeholder="Name or description"></div>
               <div data-mart-admin-categories aria-live="polite"></div>
             </div>
             <div class="form-group">
               <h3 class="h4">Products</h3>
+              <div class="form-actions"><button class="btn btn-accent" type="button" data-mart-admin-add-product aria-expanded="false" aria-controls="mart-admin-product-panel"><span data-icon="plus" data-size="16"></span> Add Product</button></div>
+              <div id="mart-admin-product-panel" data-mart-admin-product-panel hidden>
               <form data-mart-admin-product-form>
                 <input type="hidden" name="product_id" value="">
                 <div class="form-row">
@@ -150,8 +155,9 @@
                   <div class="form-group"><label for="mart-admin-product-active">Status</label><select class="select" id="mart-admin-product-active" name="is_active"><option value="true">Active</option><option value="false">Inactive</option></select></div>
                 </div>
                 <div class="form-group"><label for="mart-admin-product-description">Description</label><textarea class="textarea" id="mart-admin-product-description" name="description" rows="2"></textarea></div>
-                <div class="form-actions"><button class="btn btn-accent" type="submit">Save product</button><button class="btn btn-outline" type="button" data-mart-admin-reset-product>New product</button></div>
+                <div class="form-actions"><button class="btn btn-accent" type="submit">Save product</button><button class="btn btn-outline" type="button" data-mart-admin-reset-product>New product</button><button class="btn btn-outline" type="button" data-mart-admin-cancel-product>Cancel</button></div>
               </form>
+              </div>
               <div class="form-row">
                 <div class="form-group"><label for="mart-admin-product-search">Find product</label><input class="input" id="mart-admin-product-search" data-mart-admin-product-search type="search" placeholder="Name, SKU, barcode or category"></div>
                 <div class="form-group"><label for="mart-admin-category-filter">Category filter</label><select class="select" id="mart-admin-category-filter" data-mart-admin-category-filter></select></div>

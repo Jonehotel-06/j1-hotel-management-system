@@ -15,6 +15,7 @@ import secrets
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DataError, DatabaseError, IntegrityError, OperationalError
+from django.db.utils import InternalError, NotSupportedError, ProgrammingError
 from django.http import Http404
 from rest_framework import exceptions as drf_exceptions
 from rest_framework import status
@@ -89,6 +90,77 @@ def _error_category(code: str, status_code: int) -> str:
     if code in {"STORAGE_UPLOAD_FAILED", "PAYMENT_GATEWAY_ERROR"}:
         return "INTEGRATION"
     return "DOMAIN"
+
+
+# ---------------------------------------------------------------------------
+# Telling a BROKEN DEPLOYMENT apart from an OUTAGE.
+#
+# A missing table or column means the Python models and the physical database
+# schema disagree: a migration present in the repository was never applied to
+# this database. The database itself is healthy and every other query works, so
+# reporting "the database is temporarily unavailable" is actively misleading —
+# it hides an unapplied migration behind a transient sounding message, and the
+# retry it invites can never work.
+#
+# THE CLASS IS NOT ENOUGH TO DECIDE THIS. Which exception class a driver raises
+# for a missing table/column is engine-specific, and the two engines this
+# project actually uses disagree:
+#
+#   MySQL   -> django.db.utils.ProgrammingError  ("Unknown column ... / Table
+#               ... doesn't exist")
+#   SQLite  -> django.db.utils.OperationalError   ("no such column: ...",
+#               "no such table: ...")
+#
+# SQLite raises the SAME class it raises for "server has gone away", so a
+# class-only test reported schema drift as a 503 outage on SQLite — verified by
+# pointing the repaired API at a database with ``inventory.0017`` and
+# ``guest_services.0010`` unapplied. The fix is therefore class + driver
+# message: an OperationalError/InternalError is treated as schema drift only
+# when the message is one of the recognised missing-table/missing-column forms.
+# Everything else — refused connections, lock wait timeouts, deadlocks, gone
+# away — stays a genuine 503 outage and keeps its retry semantics.
+#
+# Schema drift is logged at ERROR with the full traceback (so the missing
+# column/table is visible on the first request) and answered with HTTP 500
+# DATABASE_SCHEMA_ERROR, which is what a permanent server-side fault is.
+# ---------------------------------------------------------------------------
+SCHEMA_ERROR_TYPES = (ProgrammingError, InternalError, NotSupportedError)
+
+SCHEMA_ERROR_CODES = frozenset({"DATABASE_SCHEMA_ERROR"})
+
+# Driver messages that mean "this database is missing an object the code needs".
+# Matched case-insensitively against ``str(exc)``. Kept deliberately narrow so
+# a connectivity or contention failure can never be mistaken for drift.
+#
+#   SQLite : "no such table: x", "no such column: x"
+#   MySQL  : (1146, "Table 'db.x' doesn't exist"), (1054, "Unknown column 'x'")
+#   Postgres (not used here, but the DAL is generic): "relation ... does not
+#            exist", 'column "x" does not exist'
+_SCHEMA_DRIFT_MESSAGE_PATTERNS = (
+    re.compile(r"no such table", re.IGNORECASE),
+    re.compile(r"no such column", re.IGNORECASE),
+    re.compile(r"unknown column", re.IGNORECASE),
+    re.compile(r"doesn'?t exist", re.IGNORECASE),
+    re.compile(r"\bundefined (table|column)\b", re.IGNORECASE),
+    re.compile(r"\brelation .* does not exist", re.IGNORECASE),
+    re.compile(r"\bcolumn .* does not exist", re.IGNORECASE),
+)
+
+
+def _is_schema_drift(exc) -> bool:
+    """True when this database error means a migration is missing.
+
+    ``ProgrammingError``/``InternalError``/``NotSupportedError`` are drift by
+    definition on every engine. ``OperationalError`` is drift ONLY when the
+    driver message names a missing table/column — on SQLite that is the only
+    signal available, and on MySQL it merely corroborates.
+    """
+    if isinstance(exc, SCHEMA_ERROR_TYPES):
+        return True
+    if not isinstance(exc, OperationalError):
+        return False
+    message = str(exc)
+    return any(pattern.search(message) for pattern in _SCHEMA_DRIFT_MESSAGE_PATTERNS)
 
 
 def _bind_request_id(context):
@@ -198,7 +270,32 @@ def jone_exception_handler(exc, context):
             None,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+    elif _is_schema_drift(exc):
+        # Schema drift, NOT an outage: the models expect a column/table this
+        # database does not have yet (an unapplied migration). Logged loudly
+        # with the real message so it is diagnosable at a glance; the client
+        # only learns that this endpoint is not ready — never SQL details.
+        #
+        # NOTE: on SQLite this branch catches an OperationalError whose message
+        # names the missing table/column, which is why the test is the helper
+        # above and not a bare isinstance. See _is_schema_drift.
+        logger.error(
+            "Database schema mismatch (unapplied migration?) exception=%s %s",
+            type(exc).__name__,
+            diagnostics,
+            exc_info=exc,
+        )
+        return _envelope(
+            "DATABASE_SCHEMA_ERROR",
+            "This screen is temporarily unavailable because the database schema "
+            "is out of date. An administrator must apply the pending migrations.",
+            None,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
     elif isinstance(exc, OperationalError):
+        # Genuine connectivity/contention failure (server gone away, pool
+        # exhausted, lock wait timeout). This is the ONLY case where the
+        # client is told the database is temporarily unavailable.
         logger.error(
             "Database operational failure exception=%s %s", type(exc).__name__, diagnostics,
             exc_info=exc,

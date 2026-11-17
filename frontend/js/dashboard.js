@@ -761,6 +761,18 @@
     },
     // Real column count from the table's own header, so loading/empty/error
     // rows always span the full width regardless of the table layout.
+    /* Payload -> array of records.
+       Paginated contract endpoints hand back `data: [...]` (already an array),
+       while a few named-key endpoints hand back `{results: [...]}`. Reading
+       `.results` first discarded the paginated array and rendered an empty
+       table for data that had in fact loaded. */
+    rows(payload) {
+      if (Array.isArray(payload)) return payload;
+      if (payload && Array.isArray(payload.results)) return payload.results;
+      if (payload && Array.isArray(payload.items)) return payload.items;
+      if (payload && Array.isArray(payload.data)) return payload.data;
+      return [];
+    },
     colCount(el) {
       const table = el && el.closest ? el.closest("table") : null;
       const headRow = table && table.querySelector("thead tr");
@@ -801,7 +813,7 @@
       DATA.loading(container, "table");
       try {
         const res = await loadFn();
-        const list = (res && (res.results || (Array.isArray(res) ? res : res.items))) || [];
+        const list = DATA.rows(res);
         if (!list.length) {
           DATA.empty(container, icon, emptyTitle, emptyMsg, colspan || cells);
           return [];
@@ -2270,7 +2282,7 @@
 
   /** What was already recorded for this booking, as "Soap ×2" strings (pure). */
   function amenityIssueSummary(issues) {
-    const rows = (issues && issues.results) || [];
+    const rows = DATA.rows(issues);
     if (!rows.length) return "";
     return rows.map((row) => (row.item_name || row.item_sku || "Item") + " \u00d7 " + row.quantity).join(", ");
   }

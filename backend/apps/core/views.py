@@ -47,16 +47,71 @@ def _database_is_available():
     return True
 
 
-def _readiness_response():
+def _schema_status():
+    """Cheap, read-only schema summary for the readiness body.
+
+    A drifted schema is reported but does NOT by itself fail readiness by
+    default. Removing every replica from the load balancer because one newly
+    deployed endpoint is ahead of the database would turn a partial outage into
+    a total one — and in this project's deployment model the schema migration
+    is a deliberately manual, post-deploy job. Operators (and an opt-in
+    ``?strict=1`` probe) can still treat drift as not-ready; the detail is
+    always in the body so the exact missing table/column is visible without
+    reading a traceback.
+    """
+    from apps.core.health import pending_migration_count, schema_drift_report
+
+    report = schema_drift_report()
+    return {
+        "ok": report["ok"],
+        "checked_models": report["checked_models"],
+        "missing_tables": report["missing_tables"][:20],
+        "missing_columns": [f"{table}.{column}" for table, column in report["missing_columns"][:20]],
+        "pending_migrations": pending_migration_count(),
+    }
+
+
+def _readiness_response(request=None):
+    """Readiness body.
+
+    The DEFAULT body is byte-for-byte the established contract
+    ``{"success", "status", "database"}`` because existing orchestrator probes
+    and the deployment tests assert it exactly. The schema detail that would
+    have caught this incident is opt-in, so adding it can never break a
+    deployed health check:
+
+      ``?schema=1``  add a ``schema`` object naming any drift
+      ``?strict=1``  additionally answer 503 when the schema is behind the code
+                     (use this for a deploy gate, not for a liveness probe)
+    """
     db_ok = _database_is_available()
+    payload = {
+        "success": db_ok,
+        "status": "ok" if db_ok else "degraded",
+        "database": "up" if db_ok else "down",
+    }
+    want_schema = False
+    if request is not None:
+        params = request.GET
+        want_schema = any(
+            str(params.get(key, "")).lower() in {"1", "true", "yes"}
+            for key in ("schema", "strict")
+        )
+    if db_ok and want_schema:
+        try:
+            schema = _schema_status()
+        except Exception:  # noqa: BLE001 - a probe must never 500
+            schema = {"ok": True, "unknown": True}
+        payload["schema"] = schema
+        strict = str(request.GET.get("strict", "")).lower() in {"1", "true", "yes"}
+        if strict and schema.get("ok") is False:
+            payload["success"] = False
+            payload["status"] = "schema-out-of-date"
+            return Response(payload, status=drf_status.HTTP_503_SERVICE_UNAVAILABLE)
     # The explicit ``success`` flag lets the project renderer preserve the
     # compact top-level probe contract instead of nesting it under ``data``.
     return Response(
-        {
-            "success": db_ok,
-            "status": "ok" if db_ok else "degraded",
-            "database": "up" if db_ok else "down",
-        },
+        payload,
         status=drf_status.HTTP_200_OK if db_ok else drf_status.HTTP_503_SERVICE_UNAVAILABLE,
     )
 
@@ -78,7 +133,7 @@ def health_liveness(request):
 @permission_classes([AllowAny])
 def health_readiness(request):
     """Report whether the API is ready to serve authoritative hotel data."""
-    return _readiness_response()
+    return _readiness_response(request)
 
 
 @extend_schema(
@@ -90,4 +145,4 @@ def health_readiness(request):
 @permission_classes([AllowAny])
 def health_check(request):
     """Keep the established endpoint contract for existing load balancers."""
-    return _readiness_response()
+    return _readiness_response(request)

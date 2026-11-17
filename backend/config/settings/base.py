@@ -71,6 +71,7 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
     "apps.core.request_middleware.RequestContextMiddleware",
+    "apps.core.request_middleware.ApiVersionHeaderMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
@@ -83,6 +84,16 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "config.urls"
+
+# ---------------------------------------------------------------------------
+# API revision echo
+# ---------------------------------------------------------------------------
+# Set this on every release (e.g. the git SHA or a date stamp). It is returned
+# as X-API-Revision so the independently deployed dashboard can detect that it
+# is talking to an API image older than the one it was built against, instead
+# of silently rendering an empty list. Informational only — never used for
+# authorisation.
+API_REVISION = config("API_REVISION", default="")
 
 # The backend is a pure JSON API; Django templates are only used by the
 # Django admin fallback UI and drf-spectacular's Swagger UI page.
@@ -111,6 +122,26 @@ def configure_mysql_options(options: dict, *, force_tls: bool = False) -> dict:
     """Enforce utf8mb4, strict SQL mode, and mysqlclient-compatible TLS options."""
     options.setdefault("charset", "utf8mb4")
     options.setdefault("init_command", "SET sql_mode='STRICT_TRANS_TABLES'")
+    # Bounded connection/handshake behaviour. Without these, a database that
+    # accepts a TCP connection but never completes the MySQL handshake (pool
+    # exhausted, host unreachable, failover in progress) parks a gunicorn
+    # worker on the socket until the proxy times out — the browser sees a 502
+    # or a hung page instead of a fast, honest 503. They are read/write
+    # timeouts, not query retries: nothing is ever re-executed automatically,
+    # so a slow financial write can never be applied twice.
+    for key, env_default in (
+        ("connect_timeout", "10"),
+        ("read_timeout", "30"),
+        ("write_timeout", "30"),
+    ):
+        if key in options:
+            continue
+        try:
+            value = int(config(f"DB_{key.upper()}", default=env_default))
+        except (TypeError, ValueError):
+            value = int(env_default)
+        if value > 0:
+            options[key] = value
     # Managed providers such as Northflank emit `?ssl-mode=REQUIRED` (hyphen) or
     # `mysqls://...`, whereas mysqlclient 2.2+ expects `ssl_mode` (underscore).
     if "ssl-mode" in options:

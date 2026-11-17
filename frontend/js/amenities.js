@@ -26,6 +26,23 @@
      page. */
   function unwrap(res) { return (res && res.data !== undefined) ? res.data : res; }
 
+  /* Payload -> array of records.
+     The paginated list endpoints answer { success, message, data: [...],
+     pagination: {...} }, so after unwrap() the payload is ALREADY an array.
+     Only endpoints that name a key (`{results: [...]}`) or a legacy client
+     that hands over the whole envelope still need unwrapping. Reading
+     `.results` first meant every dropdown on this page was built from an
+     ARRAY value `.results` (undefined) and therefore stayed empty: stock items
+     could not be selected, and the store-location list never appeared. */
+  function listOf(res) {
+    var data = unwrap(res);
+    if (Array.isArray(data)) return data;
+    if (data && Array.isArray(data.results)) return data.results;
+    if (data && Array.isArray(data.items)) return data.items;
+    if (res && Array.isArray(res.results)) return res.results;
+    return [];
+  }
+
   function init() {
     if (!API || !UI) return;
 
@@ -62,6 +79,37 @@
     // Refresh buttons
     var refreshStock = document.querySelector("[data-amenity-refresh]");
     if (refreshStock) refreshStock.addEventListener("click", loadStock);
+
+    /* Stock search: filters the already-loaded shelf, so it is instant and
+       costs no API traffic. Debounced to one re-render per pause, and the
+       container is delegated so the "Clear search" button added by
+       renderStock() works without re-binding after every render. */
+    var stockSearch = document.querySelector("[data-amenity-stock-search]");
+    if (stockSearch) {
+      stockSearch.addEventListener("input", function () {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(renderStock, 200);
+      });
+      stockSearch.addEventListener("search", function () {
+        // Native clear ("x") in a type=search input.
+        clearTimeout(searchTimer);
+        renderStock();
+      });
+      stockSearch.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          stockSearch.value = "";
+          renderStock();
+        }
+      });
+    }
+    var stockContainer = document.querySelector("[data-amenity-stock-container]");
+    if (stockContainer) {
+      stockContainer.addEventListener("click", function (event) {
+        if (!event.target.closest("[data-amenity-stock-clear]")) return;
+        if (stockSearch) { stockSearch.value = ""; stockSearch.focus(); }
+        renderStock();
+      });
+    }
     var refreshHistory = document.querySelector("[data-amenity-history-refresh]");
     if (refreshHistory) refreshHistory.addEventListener("click", loadHistory);
 
@@ -109,8 +157,7 @@
     var selects = departmentSelects();
     if (!selects.length || !API) return Promise.resolve();
     return API.get("/api/admin/inventory/locations/?page_size=200&active=true").then(function (res) {
-      var data = unwrap(res);
-      var locs = (data.results || data.items || []).filter(function (loc) { return loc.is_active !== false; });
+      var locs = listOf(res).filter(function (loc) { return loc.is_active !== false; });
       var configured = locs.filter(function (loc) { return loc.is_reception; })[0] ||
         locs.filter(function (loc) { return String(loc.code || "").toUpperCase() === "RECEPTION"; })[0];
       selects.forEach(function (sel) {
@@ -137,8 +184,7 @@
     var selects = document.querySelectorAll("[data-amenity-item-select]");
     if (!selects.length) return;
     API.get("/api/admin/inventory/items/?page_size=500").then(function (res) {
-      var data = unwrap(res);
-      var items = (data.results || data.items || []).filter(function (i) {
+      var items = listOf(res).filter(function (i) {
         return i.is_active !== false;
       });
       selects.forEach(function (sel) {
@@ -183,8 +229,7 @@
     var sel = document.querySelector("[data-amenity-location-select]");
     if (!sel) return;
     API.get("/api/admin/inventory/locations/?page_size=200").then(function (res) {
-      var data = unwrap(res);
-      var locs = data.results || data.items || [];
+      var locs = listOf(res);
       sel.innerHTML = '<option value="">— Select —</option>';
       locs.forEach(function (loc) {
         if (loc.is_reception || (loc.code && loc.code.toUpperCase() === "RECEPTION")) return; // don't allocate from the configured Reception store
@@ -198,28 +243,63 @@
 
   /* ------------------------------ Load data ------------------------------- */
 
+  /* --------------------------- Stock + search ----------------------------- */
+
+  /* Last successful shelf payload. Search re-renders from this snapshot so
+     typing never re-hits the API (debounced or not) and the balances on screen
+     always come from the server, never from a client-side recomputation. */
+  var shelf = null;
+  var searchTimer = null;
+
+  function stockMatches(row, term) {
+    if (!term) return true;
+    var haystack = [row.name, row.sku, row.base_unit].join(" ").toLowerCase();
+    return haystack.indexOf(term) !== -1;
+  }
+
+  function renderStock() {
+    var container = document.querySelector("[data-amenity-stock-container]");
+    if (!container || !shelf) return;
+    if (!shelf.location) {
+      container.innerHTML = '<div class="alert alert-warning">No department store is configured. Ask an administrator to mark an active stock location as the Reception store in Inventory.</div>';
+      return;
+    }
+    var searchInput = document.querySelector("[data-amenity-stock-search]");
+    /* Case-insensitive and whitespace-tolerant: a clerk pasting " amn-soap "
+       must still find AMN-SOAP. */
+    var term = searchInput ? String(searchInput.value || "").trim().toLowerCase() : "";
+    var balances = (shelf.balances || []).filter(function (row) { return stockMatches(row, term); });
+
+    var head = '<p class="caption">Location: ' + esc(shelf.location.name) + ' (' + esc(shelf.location.code) + ')</p>';
+    if (!shelf.balances.length) {
+      container.innerHTML = head + '<p class="text-muted">No amenity stock allocated to Reception yet.</p>';
+      return;
+    }
+    if (!balances.length) {
+      container.innerHTML = head + '<p class="text-muted" data-amenity-stock-empty>No stock items match “' + esc(term) + '”. <button type="button" class="btn btn-sm btn-outline" data-amenity-stock-clear>Clear search</button></p>';
+      return;
+    }
+    var html = head + '<table class="table"><thead><tr><th>SKU</th><th>Name</th><th>Base Unit</th><th>Quantity</th><th>Status</th></tr></thead><tbody>';
+    balances.forEach(function (b) {
+      html += "<tr><td><code>" + esc(b.sku) + "</code></td><td>" + esc(b.name) + "</td><td>" + esc(b.base_unit) + "</td><td><strong>" + esc(b.quantity) + "</strong></td><td>" + (b.is_active === false ? "Inactive" : Number(b.quantity) <= 0 ? "Unavailable" : b.low_stock ? "Low stock" : "Available") + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    if (term) {
+      html += '<p class="caption">Showing ' + balances.length + " of " + shelf.balances.length + ' item(s). <button type="button" class="btn btn-sm btn-outline" data-amenity-stock-clear>Clear search</button></p>';
+    }
+    container.innerHTML = html;
+  }
+
   function loadStock() {
     var container = document.querySelector("[data-amenity-stock-container]");
     if (!container) return;
     container.innerHTML = ReceptionServices.loading();
     API.get(withLocation("/api/admin/service-requests/reception/amenities/stock/")).then(function (res) {
       var data = unwrap(res);
-      if (!data.location) {
-        container.innerHTML = '<div class="alert alert-warning">No department store is configured. Ask an administrator to mark an active stock location as the Reception store in Inventory.</div>';
-        return;
-      }
-      var balances = data.balances || [];
-      if (!balances.length) {
-        container.innerHTML = '<p class="text-muted">No amenity stock allocated to Reception yet.</p>';
-        return;
-      }
-      var html = '<p class="caption">Location: ' + esc(data.location.name) + ' (' + esc(data.location.code) + ')</p><table class="table"><thead><tr><th>SKU</th><th>Name</th><th>Base Unit</th><th>Quantity</th><th>Status</th></tr></thead><tbody>';
-      balances.forEach(function (b) {
-        html += "<tr><td><code>" + esc(b.sku) + "</code></td><td>" + esc(b.name) + "</td><td>" + esc(b.base_unit) + "</td><td><strong>" + esc(b.quantity) + "</strong></td><td>" + (b.is_active === false ? "Inactive" : Number(b.quantity) <= 0 ? "Unavailable" : b.low_stock ? "Low stock" : "Available") + "</td></tr>";
-      });
-      html += "</tbody></table>";
-      container.innerHTML = html;
+      shelf = { location: data.location || null, balances: (data && data.balances) || [] };
+      renderStock();
     }).catch(function (err) {
+      shelf = null;
       container.innerHTML = '<div class="alert alert-error">Failed to load stock: ' + esc(err.message || "") + "</div>";
     });
   }
@@ -259,10 +339,10 @@
     e.preventDefault();
     var form = e.target;
     var payload = {
-      item_id: parseInt(form.item_id.value),
-      quantity: form.quantity.value,
-      from_location_id: parseInt(form.from_location_id.value),
-      notes: form.notes.value,
+      item_id: parseInt(fieldValue(form, "item_id"), 10),
+      quantity: fieldValue(form, "quantity"),
+      from_location_id: parseInt(fieldValue(form, "from_location_id"), 10),
+      notes: fieldValue(form, "notes"),
     };
     var locationId = departmentLocationId();
     if (locationId) payload.location_id = parseInt(locationId);
@@ -283,20 +363,29 @@
     });
   }
 
+  /* Every read goes through the form's element map so an optional field that a
+     future markup change removes (or a cached older page) cannot throw and
+     strand the clerk with a dialog that silently does nothing. */
+  function fieldValue(form, name) {
+    var field = form && (form.elements ? form.elements[name] : form[name]);
+    return field && field.value != null ? field.value : "";
+  }
+
   function onIssue(e) {
     e.preventDefault();
     var form = e.target;
     var payload = {
-      guest_id: parseInt(form.guest_id.value),
-      room_number: form.room_number.value,
-      item_id: parseInt(form.item_id.value),
-      quantity: form.quantity.value,
-      notes: form.notes.value,
+      guest_id: parseInt(fieldValue(form, "guest_id"), 10),
+      room_number: fieldValue(form, "room_number"),
+      item_id: parseInt(fieldValue(form, "item_id"), 10),
+      quantity: fieldValue(form, "quantity"),
+      notes: fieldValue(form, "notes"),
     };
     var locationId = departmentLocationId();
     if (locationId) payload.location_id = parseInt(locationId);
     /* Attach the issuance to the stay when we know it (deep link / check-in). */
-    var bookingId = form.booking_id && form.booking_id.value ? parseInt(form.booking_id.value) : null;
+    var rawBooking = fieldValue(form, "booking_id");
+    var bookingId = rawBooking ? parseInt(rawBooking, 10) : null;
     if (bookingId) payload.booking_id = bookingId;
     if (!payload.guest_id || !payload.item_id || !payload.quantity) {
       UI.toast("Please fill in all required fields.", "warning");
