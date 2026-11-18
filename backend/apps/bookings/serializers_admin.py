@@ -176,7 +176,11 @@ class AdminBookingCreateSerializer(serializers.Serializer):
     offer_code = serializers.CharField(required=False, allow_blank=True, default="")
     special_requests = serializers.CharField(required=False, allow_blank=True, default="")
     internal_notes = serializers.CharField(required=False, allow_blank=True, default="")
-    guest = serializers.DictField(child=serializers.CharField(allow_blank=True), required=True)
+    guest = serializers.DictField(child=serializers.CharField(allow_blank=True), required=False, default=dict)
+    # Returning guest: reuse an existing Guest record instead of duplicating it.
+    # When guest_id is supplied, the guest dict may be empty (the record's
+    # details are reused) or carry editable overrides for this booking only.
+    guest_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     # People staying in the additional rooms (same contract as the public
     # booking form). Optional and only meaningful when rooms > 1.
     room_guests = RoomGuestInputSerializer(many=True, required=False, default=list)
@@ -202,13 +206,19 @@ class AdminBookingCreateSerializer(serializers.Serializer):
         from django.core.exceptions import ValidationError as DjangoValidationError
         from django.core.validators import validate_email
 
+        if value is None:
+            value = {}
         if not isinstance(value, dict):
             raise serializers.ValidationError("Guest details must be an object.")
         cleaned = {
             k: (str(v).strip() if v is not None else "")
             for k, v in value.items()
         }
-        required = ["first_name", "last_name", "email", "phone"]
+        # Returning-guest flow: when guest_id selects an existing record, the
+        # guest dict may be empty — validate() fills it from that record.
+        # Without guest_id the four contact fields remain mandatory.
+        guest_id = self.initial_data.get("guest_id") if isinstance(self.initial_data, dict) else None
+        required = [] if guest_id else ["first_name", "last_name", "email", "phone"]
         errors = {
             key: ["This field is required."]
             for key in required
@@ -247,6 +257,27 @@ class AdminBookingCreateSerializer(serializers.Serializer):
         return cleaned
 
     def validate(self, attrs):
+        # Returning guest: resolve the selected record and fill any missing
+        # contact fields from it so the service reuses (never duplicates) it.
+        guest_id = attrs.get("guest_id")
+        if guest_id:
+            from .models import Guest as GuestModel
+
+            existing = GuestModel.objects.filter(pk=guest_id).first()
+            if existing is None:
+                raise serializers.ValidationError({"guest_id": ["Unknown guest."]})
+            guest_data = dict(attrs.get("guest") or {})
+            for key, value in (
+                ("first_name", existing.first_name), ("last_name", existing.last_name),
+                ("email", existing.email), ("phone", existing.phone),
+                ("address", existing.address), ("city", existing.city),
+                ("state", existing.state), ("country", existing.country),
+            ):
+                if not guest_data.get(key):
+                    guest_data[key] = value or ""
+            attrs["guest"] = guest_data
+        elif not (attrs.get("guest") or {}).get("email"):
+            raise serializers.ValidationError({"guest": ["Guest details are required."]})
         room_id = attrs.get("room_id")
         if room_id:
             from .services.booking_service import resolve_room_type

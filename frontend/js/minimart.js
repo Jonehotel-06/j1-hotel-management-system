@@ -28,7 +28,8 @@
       return '<div class="mart-cart-line"><strong>'+esc(p.name)+'</strong><span>'+money(p.price)+' × '+cart[id]+' = '+money(Number(p.price)*cart[id])+'</span><div class="mart-quantity"><button type="button" class="btn btn-outline" data-adjust="'+id+'" data-delta="-1" aria-label="Decrease '+esc(p.name)+'">−</button><input type="number" min="1" max="'+Math.floor(Number(p.quantity))+'" step="1" value="'+cart[id]+'" data-quantity="'+id+'" aria-label="Quantity of '+esc(p.name)+'"><button type="button" class="btn btn-outline" data-adjust="'+id+'" data-delta="1" aria-label="Increase '+esc(p.name)+'">+</button><button type="button" class="btn btn-outline" data-remove="'+id+'">Remove</button></div></div>';
     }).join(''):'<p class="text-muted">Your cart is empty. Select a product to begin.</p>';
     $('[data-mart-total]').textContent='Subtotal / payable: '+money(total);
-    $('[data-mart-checkout] [type=submit]').disabled=busy || !!pending || !ids.length || !$('#mart-session').value;
+    const method=$('#mart-payment').value;
+    $('[data-mart-checkout] [type=submit]').disabled=busy || !!pending || !ids.length || (method==='CASH' && !$('#mart-session').value);
     $('[data-mart-clear]').disabled=busy || !!pending;
     $('[data-mart-recovery]').hidden=!pending;
     $('[data-mart-recover]').disabled=busy;
@@ -88,11 +89,33 @@
     if (isGuest && !form.elements.guest_id.value) return message('Select an existing guest.',true);
     const invalid=Object.keys(cart).some(id=>{const p=products.find(p=>String(p.id)===id);return !p || p.out_of_stock || cart[id]>Number(p.quantity);});
     if (invalid) return message('Cart stock changed. Review quantities and refresh stock.',true);
-    pending={expected_total:Object.keys(cart).reduce((sum,id)=>sum+Number(products.find(p=>String(p.id)===id).price)*cart[id],0).toFixed(2),idempotency_key:S.key(),cash_session_reference:$('#mart-session').value,
+    const method=$('#mart-payment').value, reference=$('#mart-reference').value.trim();
+    const declared=String($('#mart-amount').value || '').trim();
+    const total=Object.keys(cart).reduce((sum,id)=>sum+Number(products.find(p=>String(p.id)===id).price)*cart[id],0);
+    if (method!=='CASH' && !reference) return message('Enter the transaction reference printed on the customer\'s proof of payment.',true);
+    if (declared && (!(Number(declared)>0) || Number(declared)>total)) return message('Amount received must be greater than zero and no more than the total.',true);
+    pending={expected_total:total.toFixed(2),idempotency_key:S.key(),payment_method:method,
              lines:Object.keys(cart).map(id=>({product_id:Number(id),quantity:cart[id]}))};
+    if (method==='CASH') pending.cash_session_reference=$('#mart-session').value;
+    if (method!=='CASH') pending.transaction_reference=reference;
+    if (declared) pending.payment_amount=Number(declared).toFixed(2);
     if (isGuest) {pending.guest_id=Number(form.elements.guest_id.value);if (form.elements.booking_id.value) pending.booking_id=Number(form.elements.booking_id.value);}
     try {sessionStorage.setItem(pendingSlot,JSON.stringify(pending));} catch(_) {}
     await send(pending);
+  }
+  /* Only the fields the chosen method actually needs stay visible: a cash sale
+     needs the cashier's drawer, an electronic one needs the customer's
+     reference. The amount field is opt-in because most sales are paid in full. */
+  function syncMethodFields() {
+    const method=$('#mart-payment').value, cash=method==='CASH';
+    document.querySelector('[data-mart-session-field]').hidden=!cash;
+    document.querySelector('[data-mart-reference-field]').hidden=cash;
+    document.querySelector('[data-mart-amount-field]').hidden=cash;
+    const submit=document.querySelector('[data-mart-submit]');
+    const labels={CASH:'Confirm cash received & complete sale',CARD:'Confirm POS payment & complete sale',
+                  BANK_TRANSFER:'Confirm transfer received & complete sale',PAYSTACK:'Verify Paystack payment & complete sale'};
+    submit.textContent=labels[method] || labels.CASH;
+    renderCart();
   }
   async function history() {
     const box=$('[data-mart-history]'), params=new URLSearchParams(new FormData($('[data-mart-history-filter]')));
@@ -122,6 +145,8 @@
     $('[data-mart-clear]').addEventListener('click',()=>{if(!busy&&!pending){cart={};renderCart();}});
     $('#mart-customer').addEventListener('change',()=>{$('[data-mart-guest-fields]').hidden=$('#mart-customer').value!=='GUEST';});
     $('#mart-session').addEventListener('change',renderCart);
+    $('#mart-payment').addEventListener('change',syncMethodFields);
+    syncMethodFields();
     $('[data-mart-checkout]').addEventListener('submit',checkout);$('[data-mart-refresh]').addEventListener('click',refresh);
     $('[data-mart-recover]').addEventListener('click',()=>{if(pending)send(pending);});
     $('[data-mart-history-filter]').addEventListener('submit',e=>{e.preventDefault();page=1;history();});

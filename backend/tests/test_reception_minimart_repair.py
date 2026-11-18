@@ -61,7 +61,8 @@ class MiniMartAPITests(RetailFixtures, BaseAPITestCase):
         self.assertEqual(row['location'],self.store.name)
         self.assertNotIn('standard_cost',str(data))
         self.assertNotIn('supplier',str(data))
-        self.assertEqual(data['payment_methods'],['CASH'])
+        # Batch 5: the catalogue advertises every supported method.
+        self.assertEqual(data['payment_methods'],['CASH','CARD','BANK_TRANSFER','PAYSTACK'])
 
     def test_cash_sale_updates_existing_ledgers_once(self):
         response=self.checkout()

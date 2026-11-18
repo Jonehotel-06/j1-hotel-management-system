@@ -189,12 +189,26 @@ class ProductionSettingsBootAndFailFastTests(SimpleTestCase):
 
     def test_docker_entrypoint_and_healthcheck_preserve_non_destructive_safety(self):
         cmd_script = (BACKEND_DIR / "docker" / "docker-cmd.sh").read_text(encoding="utf-8")
-        for forbidden in ("manage.py migrate", "manage.py flush", "seed_demo"):
+        # Batch 6 changed ONE deliberate rule: the web role now applies pending
+        # migrations on startup (never makemigrations/flush/loaddata) so a
+        # deployment can no longer serve an unmigrated schema. Everything that
+        # would reshape or erase data stays forbidden, and the migrate call must
+        # be `--noinput` and gated so a failure aborts startup.
+        for forbidden in ("makemigrations", "manage.py flush", "loaddata", "seed_demo", "dropdb"):
             lines = [
                 ln for ln in cmd_script.splitlines()
                 if forbidden in ln and not ln.lstrip().startswith("#")
             ]
             self.assertEqual(lines, [], f"docker-cmd.sh must never execute {forbidden}: {lines}")
+        migrate_lines = [
+            ln for ln in cmd_script.splitlines()
+            if "manage.py migrate" in ln and not ln.lstrip().startswith("#")
+        ]
+        self.assertTrue(migrate_lines, "the web role must apply pending migrations on startup")
+        for line in migrate_lines:
+            self.assertIn("--noinput", line, "migrations must never prompt in a container")
+        self.assertIn("set -eu", cmd_script, "a failed migration must abort startup")
+        self.assertIn("Refusing to start the application server", cmd_script)
         for role in ("worker)", "beat|scheduler)", "web|api)"):
             self.assertIn(role, cmd_script)
 

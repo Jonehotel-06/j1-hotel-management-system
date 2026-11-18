@@ -10,7 +10,14 @@
 # Database safety:
 #   - Named volume `mysql_data` persists data across `docker compose down` and
 #     image rebuilds (`docker compose up -d --build`).
-#   - Migrations are NEVER auto-executed on container startup.
+#   - Pending Django migrations ARE applied automatically at startup by the
+#     API container's entrypoint (docker/docker-cmd.sh): it waits for the
+#     database, runs `manage.py migrate --noinput`, and refuses to start
+#     Gunicorn if a migration fails. It never runs makemigrations, flush or
+#     loaddata. Only the `api` service migrates — the worker and beat services
+#     wait for the API to report healthy, so replicas cannot race each other.
+#     Set RUN_MIGRATIONS=false on the api service to apply migrations from a
+#     separate release job instead.
 #   - Database and Redis ports are isolated on the internal network by default.
 # ===========================================================================
 

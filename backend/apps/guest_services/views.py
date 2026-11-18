@@ -1075,6 +1075,103 @@ class ReceptionAmenityStockView(APIView):
         })
 
 
+class ReceptionAmenitySourceStockView(APIView):
+    """Issuing-store stock, readable by the Store Keeper who allocates.
+
+    The Allocate form used to build its two pickers from
+    ``/api/admin/inventory/items/`` and ``/api/admin/inventory/locations/``,
+    which both require ``inventory.manage`` — the catalogue workspace
+    capability, not the allocation capability. That left a user who legitimately
+    holds ``guest_amenity.allocate`` with permanently empty, unsearchable
+    dropdowns. This endpoint answers exactly the question the Allocate form
+    asks: *which active, non-Reception stores currently hold which active items,
+    and how much* — read-only, capability-scoped, paginated and searchable in
+    the same envelope every other list endpoint uses.
+    """
+
+    permission_classes = [HasCapability]
+    required_capability = "guest_amenity.allocate"
+
+    def get(self, request):
+        from apps.inventory.models import StockBalance, StockItem, StockLocation
+        from .services_amenities import reception_location
+
+        target = reception_location()
+        search = (request.query_params.get("search") or "").strip()[:120]
+        location_id = (request.query_params.get("location_id") or "").strip()
+        item_id = (request.query_params.get("item_id") or "").strip()
+
+        locations = StockLocation.objects.filter(is_active=True)
+        if target is not None:
+            locations = locations.exclude(pk=target.pk)
+        # A configured Reception store must not be offered as the source: an
+        # allocation from Reception to Reception is not a transfer.
+        locations = locations.exclude(is_reception=True).order_by("code")
+        if search:
+            locations = locations.filter(Q(code__icontains=search) | Q(name__icontains=search))
+        locations = list(locations[:500])
+
+        items = StockItem.objects.filter(is_active=True).order_by("name")
+        if search:
+            items = items.filter(
+                Q(sku__icontains=search) | Q(name__icontains=search) | Q(category__icontains=search)
+            )
+        # Only items a store actually holds can be allocated: showing a zero
+        # balance here is what made the operator pick an item and then receive
+        # the ledger's shortage refusal.
+        held = StockBalance.objects.filter(
+            item__is_active=True,
+            quantity_on_hand__gt=0,
+            location__is_active=True,
+            location__is_reception=False,
+        )
+        if target is not None:
+            held = held.exclude(location_id=target.pk)
+        rows = held.select_related("item", "location")
+        if location_id.isdigit():
+            rows = rows.filter(location_id=int(location_id))
+        if item_id.isdigit():
+            rows = rows.filter(item_id=int(item_id))
+        if search:
+            rows = rows.filter(
+                Q(item__sku__icontains=search) | Q(item__name__icontains=search)
+                | Q(item__category__icontains=search)
+                | Q(location__code__icontains=search) | Q(location__name__icontains=search)
+            )
+        rows = rows.order_by("item__name", "location__code", "pk")
+        try:
+            limit = min(max(int(request.query_params.get("limit") or 500), 1), 1000)
+        except (TypeError, ValueError):
+            limit = 500
+
+        return success_response({
+            "reception_location": (
+                {"id": target.pk, "code": target.code, "name": target.name} if target else None
+            ),
+            "locations": [
+                {"id": loc.pk, "code": loc.code, "name": loc.name, "is_reception": loc.is_reception}
+                for loc in locations
+            ],
+            "items": [
+                {
+                    "id": item.pk, "sku": item.sku, "name": item.name,
+                    "category": item.category, "base_unit": item.base_unit,
+                }
+                for item in items[:limit]
+            ],
+            "stock": [
+                {
+                    "item_id": row.item_id, "sku": row.item.sku, "name": row.item.name,
+                    "category": row.item.category, "base_unit": row.item.base_unit,
+                    "location_id": row.location_id, "location_code": row.location.code,
+                    "location_name": row.location.name, "quantity": str(row.quantity_on_hand),
+                }
+                for row in rows[:limit]
+            ],
+            "limit": limit,
+        })
+
+
 class GuestAmenityIssueView(APIView):
     """Receptionist issues amenity to a guest from Reception allocation."""
 

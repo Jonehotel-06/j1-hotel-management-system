@@ -424,6 +424,7 @@ class PosTender(TimeStampedModel):
         CASH = "CASH", "Cash"
         CARD = "CARD", "Card / POS terminal"
         BANK_TRANSFER = "BANK_TRANSFER", "Bank transfer"
+        PAYSTACK = "PAYSTACK", "Paystack"
 
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"

@@ -103,10 +103,21 @@ class CartLineSerializer(serializers.Serializer):
 class CheckoutSerializer(serializers.Serializer):
     expected_total = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal("0.01"))
     idempotency_key = serializers.CharField(max_length=80)
-    cash_session_reference = serializers.CharField(max_length=64)
+    # Cash sales require the acting cashier's open session; electronic sales
+    # do not (they settle through bank/card clearing, not the cash drawer).
+    cash_session_reference = serializers.CharField(max_length=64, required=False, allow_blank=True, default="")
     guest_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     booking_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     lines = CartLineSerializer(many=True, allow_empty=False, max_length=100)
+    # Payment method + amount actually received. Defaults preserve the
+    # historical cash-only contract for older clients.
+    payment_method = serializers.ChoiceField(
+        choices=["CASH", "CARD", "BANK_TRANSFER", "PAYSTACK"], required=False, default="CASH"
+    )
+    payment_amount = serializers.DecimalField(
+        max_digits=12, decimal_places=2, min_value=Decimal("0.01"), required=False, default=None
+    )
+    transaction_reference = serializers.CharField(max_length=120, required=False, allow_blank=True, default="")
 
     def to_internal_value(self, data):
         unknown = set(data) - set(self.fields)
@@ -119,6 +130,17 @@ class CheckoutSerializer(serializers.Serializer):
         if len(ids) != len(set(ids)):
             raise serializers.ValidationError("Combine duplicate products into one cart line.")
         return sorted(value, key=lambda line: line["product_id"])
+
+    def validate(self, attrs):
+        method = attrs.get("payment_method") or "CASH"
+        if method == "CASH" and not str(attrs.get("cash_session_reference") or "").strip():
+            raise serializers.ValidationError({"cash_session_reference": "Cash sales require your open cash session."})
+        if method in ("CARD", "BANK_TRANSFER", "PAYSTACK") and not str(attrs.get("transaction_reference") or "").strip():
+            raise serializers.ValidationError({"transaction_reference": "A transaction reference is required for this payment method."})
+        amount = attrs.get("payment_amount")
+        if amount is not None and amount > attrs["expected_total"]:
+            raise serializers.ValidationError({"payment_amount": "Amount received cannot exceed the sale total."})
+        return attrs
 
 
 def catalogue(search="", category_id="", category=""):
@@ -172,6 +194,8 @@ def sale_payload(sale):
             "customer_type": "GUEST" if sale.guest_id else "WALK_IN", "guest_name": order.guest_name,
             "room_number": sale.room_number, "booking_reference": sale.booking.booking_reference if sale.booking_id else None,
             "total": str(order.net_total), "payment_method": tender.method if tender else None,
+            "payment_reference": (tender.external_reference or tender.reference) if tender else None,
+            "amount_paid": str(tender.amount) if tender else "0.00",
             "payment_status": order.settlement_status, "staff_name": order.created_by.full_name if order.created_by else "—",
             "lines": [{"name": l.order_line.item_name, "quantity": l.order_line.quantity,
                        "price": str(l.order_line.unit_price), "total": str(l.order_line.line_total)}
@@ -190,7 +214,7 @@ class MiniMartProductsView(APIView):
         return success_response({
             "results": catalogue(search=search, category_id=category_id, category=category),
             "categories": active_categories(),
-            "payment_methods": ["CASH"],
+            "payment_methods": ["CASH", "CARD", "BANK_TRANSFER", "PAYSTACK"],
             "cash_sessions": [{"reference": s.reference, "location": s.location} for s in sessions],
         })
 

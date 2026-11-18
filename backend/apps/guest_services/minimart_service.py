@@ -1,4 +1,11 @@
-"""Atomic cash retail checkout. No browser totals, stock writes or paid flags accepted."""
+"""Atomic retail checkout. No browser totals, stock writes or paid flags accepted.
+
+Supports Cash, Card/POS, Bank Transfer and Paystack through the existing
+POS tender + immutable ledger path. Cash settles through the acting
+cashier's open session; electronic methods settle through bank/card
+clearing and require a transaction reference. Paystack references are
+verified against the gateway before the sale counts as paid.
+"""
 import hashlib
 import json
 import secrets
@@ -37,11 +44,19 @@ def complete_sale(*, actor, data):
         if existing.payload_fingerprint != fingerprint:
             raise ValidationError("This checkout key was already used for a different cart.")
         return existing, False
-    session = CashSession.objects.select_for_update().filter(
-        reference=data["cash_session_reference"], cashier=actor, status=CashSession.Status.OPEN,
-    ).first()
-    if session is None:
-        raise ValidationError({"cash_session_reference": "Use your own open cashier session."})
+    method = str(data.get("payment_method") or "CASH").upper()
+    if method not in ("CASH", "CARD", "BANK_TRANSFER", "PAYSTACK"):
+        raise ValidationError({"payment_method": "Invalid payment method."})
+    session = None
+    if method == "CASH":
+        session = CashSession.objects.select_for_update().filter(
+            reference=data.get("cash_session_reference") or "", cashier=actor, status=CashSession.Status.OPEN,
+        ).first()
+        if session is None:
+            raise ValidationError({"cash_session_reference": "Use your own open cashier session."})
+    transaction_reference = str(data.get("transaction_reference") or "").strip()[:120]
+    if method in ("CARD", "BANK_TRANSFER", "PAYSTACK") and not transaction_reference:
+        raise ValidationError({"transaction_reference": "A transaction reference is required for this payment method."})
     guest = booking = None
     rooms = ""
     if data.get("guest_id"):
@@ -111,5 +126,40 @@ def complete_sale(*, actor, data):
     order.delivered_at = timezone.now()
     order.save(update_fields=["charge_transaction", "status", "delivered_at", "updated_at"])
     PosOrderEvent.objects.create(order=order, type=PosOrderEvent.Type.DELIVERED, actor=actor, details={"minimart_sale_id": sale.pk})
-    capture_direct_tender(order=order, method="CASH", amount=total, actor=actor, cash_session=session, idempotency_key=key)
+    # Amount actually received (defaults to the full total for legacy cash
+    # clients). Partial payments are preserved: capture_direct_tender caps
+    # the tender at the outstanding balance and marks the order PARTIALLY_PAID.
+    tender_amount = Decimal(str(data.get("payment_amount") or total))
+    if tender_amount <= Decimal("0.00") or tender_amount > total:
+        raise ValidationError({"payment_amount": "Amount received must be greater than zero and no more than the sale total."})
+    if method == "PAYSTACK":
+        _verify_paystack_reference(transaction_reference, tender_amount)
+    capture_direct_tender(
+        order=order, method=method, amount=tender_amount, actor=actor,
+        cash_session=session, external_reference=transaction_reference,
+        idempotency_key=key,
+    )
     return sale, True
+
+
+def _verify_paystack_reference(reference: str, expected_amount: Decimal):
+    """Verify a Paystack reference before the sale counts as paid."""
+    from apps.payments.services import paystack as paystack_service
+
+    configured, _mode = paystack_service.secret_key_status()
+    if not configured:
+        raise ValidationError({
+            "transaction_reference": "Paystack is not configured on this server, so this reference cannot be verified. Use another payment method or ask an administrator to configure Paystack."
+        })
+    try:
+        data = paystack_service.verify_transaction(reference)
+    except Exception as exc:
+        raise ValidationError({"transaction_reference": f"Paystack verification failed for {reference}: {exc}"}) from exc
+    if str((data or {}).get("status") or "").lower() != "success":
+        raise ValidationError({"transaction_reference": "Paystack does not report this transaction as successful."})
+    try:
+        paid_kobo = int((data or {}).get("amount") or 0)
+    except (TypeError, ValueError):
+        paid_kobo = 0
+    if paid_kobo and Decimal(paid_kobo) / Decimal("100") != expected_amount:
+        raise ValidationError({"transaction_reference": "Paystack amount does not match the amount received."})

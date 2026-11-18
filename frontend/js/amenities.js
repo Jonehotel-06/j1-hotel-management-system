@@ -66,7 +66,11 @@
     var user = window.Auth && window.Auth.state && window.Auth.state.user;
     var canAllocate = user && ["ADMIN", "GENERAL_MANAGER", "MANAGER", "STOREKEEPER"].indexOf(String(user.role).toUpperCase()) !== -1;
     document.querySelector('[data-tab="allocate"]').hidden = !canAllocate;
-    if (canAllocate) { loadItemSelects(); loadLocationSelect(); }
+    if (canAllocate) { loadItemSelects(); wireAllocateSearch(); }
+    // Choosing the issuing store narrows the item list to what it holds.
+    document.querySelectorAll("[data-amenity-location-select]").forEach(function (sel) {
+      sel.addEventListener("change", function () { loadItemSelects((document.querySelector("[data-amenity-allocate-search]") || {}).value || ""); });
+    });
     var canIssue = !user || String(user.role).toUpperCase() !== "STOREKEEPER";
     if (canIssue) {
       ReceptionServices.guests(document.querySelector("[data-amenity-issue-form]"), {deepLink:true});
@@ -156,8 +160,14 @@
   function loadDepartmentLocationSelect() {
     var selects = departmentSelects();
     if (!selects.length || !API) return Promise.resolve();
-    return API.get("/api/admin/inventory/locations/?page_size=200&active=true").then(function (res) {
-      var locs = listOf(res).filter(function (loc) { return loc.is_active !== false; });
+    /* Department shelves come from the amenity endpoint, not the catalogue
+       endpoint: the catalogue requires `inventory.manage`, which the front desk
+       does not hold, so this list used to stay empty for the receptionist even
+       though she may issue from the shelf. */
+    return sourceStock({}).then(function (data) {
+      var locs = ((data && data.locations) || []).concat(
+        data && data.reception_location ? [data.reception_location] : []
+      );
       var configured = locs.filter(function (loc) { return loc.is_reception; })[0] ||
         locs.filter(function (loc) { return String(loc.code || "").toUpperCase() === "RECEPTION"; })[0];
       selects.forEach(function (sel) {
@@ -176,27 +186,123 @@
 
   /* ------------------------------ Dropdowns -------------------------------- */
 
-  /* The ALLOCATE dropdown needs the whole catalogue (the store keeper is
-     choosing what to send to Reception). The ISSUE dropdown must NOT: it can
-     only offer what Reception actually holds, otherwise the desk picks a soap
-     and gets a 400 after the guest has been promised it. */
-  function loadItemSelects() {
-    var selects = document.querySelectorAll("[data-amenity-item-select]");
-    if (!selects.length) return;
-    API.get("/api/admin/inventory/items/?page_size=500").then(function (res) {
-      var items = listOf(res).filter(function (i) {
-        return i.is_active !== false;
+  /* One capability-scoped read that answers what the Allocate form needs:
+     the active issuing stores, the active items and the on-hand quantity of
+     each item in each store. The catalogue endpoints required
+     `inventory.manage`, so the allocate pickers were empty for anyone who only
+     held `guest_amenity.allocate`, and a hard-coded `page_size=500` was capped
+     server-side at 100 — which silently truncated the item list. */
+  var sourceCache = null;
+  function sourceStock(params) {
+    var query = [];
+    Object.keys(params || {}).forEach(function (key) {
+      var value = params[key];
+      if (value !== "" && value !== null && value !== undefined) {
+        query.push(encodeURIComponent(key) + "=" + encodeURIComponent(value));
+      }
+    });
+    var url = "/api/admin/service-requests/reception/amenities/source-stock/";
+    if (query.length) url += "?" + query.join("&");
+    return API.get(url).then(function (res) { return unwrap(res) || {}; });
+  }
+
+  function stockKey(itemId, locationId) { return String(itemId) + ":" + String(locationId); }
+
+  /* Source store picker + item picker, driven by the live stock rows. A store
+     that holds nothing selectable is still listed (it is a real store) but the
+     item list only offers what that store actually holds, and each option
+     states the quantity on hand, so a shortage is visible before submitting. */
+  function loadItemSelects(search) {
+    var itemSelects = document.querySelectorAll("[data-amenity-item-select]");
+    var locationSelects = document.querySelectorAll("[data-amenity-location-select]");
+    if (!itemSelects.length && !locationSelects.length) return Promise.resolve();
+    return sourceStock({ search: search || "", limit: 1000 }).then(function (data) {
+      sourceCache = data;
+      var rows = (data && data.stock) || [];
+      var locs = (data && data.locations) || [];
+      var items = (data && data.items) || [];
+
+      // Source store picker: only stores that currently hold allocatable stock,
+      // plus any store already chosen (so a search never clears a selection).
+      locationSelects.forEach(function (sel) {
+        var keep = sel.value;
+        sel.innerHTML = '<option value="">— Select store —</option>';
+        var seen = {};
+        rows.forEach(function (row) {
+          if (seen[row.location_id]) return;
+          seen[row.location_id] = true;
+          var held = rows.filter(function (r) { return r.location_id === row.location_id; }).length;
+          sel.appendChild(new Option(
+            row.location_code + " — " + row.location_name + " (" + held + " item" + (held === 1 ? "" : "s") + " in stock)",
+            row.location_id
+          ));
+        });
+        if (!rows.length) {
+          locs.forEach(function (loc) {
+            sel.appendChild(new Option(loc.code + " — " + loc.name + " (no allocatable stock)", loc.id));
+          });
+        }
+        if (keep && sel.querySelector('option[value="' + keep + '"]')) sel.value = keep;
       });
-      selects.forEach(function (sel) {
-        sel.innerHTML = '<option value="">— Select —</option>';
-        items.forEach(function (item) {
-          var opt = document.createElement("option");
-          opt.value = item.id;
-          opt.textContent = item.sku + " — " + item.name + " (" + item.base_unit + ")";
+
+      // Item picker: options reflect the chosen source store when one is set.
+      var chosenStore = "";
+      locationSelects.forEach(function (sel) { if (!chosenStore && sel.value) chosenStore = sel.value; });
+      var visible = chosenStore
+        ? rows.filter(function (r) { return String(r.location_id) === String(chosenStore); })
+        : rows;
+      itemSelects.forEach(function (sel) {
+        var keep = sel.value;
+        sel.innerHTML = '<option value="">— Select item —</option>';
+        var seen = {};
+        visible.forEach(function (row) {
+          if (seen[row.item_id]) return;
+          // Sum the same item across stores only when no store is chosen.
+          var qty = chosenStore
+            ? row.quantity
+            : rows.filter(function (r) { return r.item_id === row.item_id; })
+                .reduce(function (sum, r) { return sum + Number(r.quantity || 0); }, 0);
+          seen[row.item_id] = true;
+          var opt = new Option(
+            row.sku + " — " + row.name + " (" + qty + " " + row.base_unit + " in stock)",
+            row.item_id
+          );
+          if (Number(qty) <= 0) opt.disabled = true;
           sel.appendChild(opt);
         });
+        if (!visible.length) {
+          // Nothing is held anywhere yet: still allow choosing an item so the
+          // server can say exactly which store is short.
+          items.forEach(function (item) {
+            sel.appendChild(new Option(item.sku + " — " + item.name + " (not in stock)", item.id));
+          });
+        }
+        if (keep && sel.querySelector('option[value="' + keep + '"]')) sel.value = keep;
       });
-    }).catch(function (err) { UI.toast(err.message || "Unable to load selection. Refresh to retry.", "error"); });
+
+      // Quantity hint for the operator.
+      var hint = document.querySelector("[data-amenity-allocate-hint]");
+      if (hint) {
+        hint.textContent = rows.length
+          ? "Showing items with stock in the issuing stores. Pick the store first to narrow the item list."
+          : "No issuing store currently holds allocatable stock. Receive or transfer stock in first.";
+      }
+      return data;
+    }).catch(function (err) {
+      UI.toast(err.message || "Unable to load stock selection. Refresh to retry.", "error");
+    });
+  }
+
+  /* Debounced server-side search for both allocate pickers. */
+  var pickerTimer = null;
+  function wireAllocateSearch() {
+    var input = document.querySelector("[data-amenity-allocate-search]");
+    if (!input) return;
+    input.addEventListener("input", function () {
+      clearTimeout(pickerTimer);
+      pickerTimer = setTimeout(function () { loadItemSelects(input.value.trim()); }, 250);
+    });
+    input.addEventListener("search", function () { loadItemSelects(input.value.trim()); });
   }
 
   /* Issue dropdown = the Reception Department's own shelf. */
@@ -222,22 +328,6 @@
         sel.disabled = false;
         if (keep) sel.value = keep;
       }
-    }).catch(function (err) { UI.toast(err.message || "Unable to load selection. Refresh to retry.", "error"); });
-  }
-
-  function loadLocationSelect() {
-    var sel = document.querySelector("[data-amenity-location-select]");
-    if (!sel) return;
-    API.get("/api/admin/inventory/locations/?page_size=200").then(function (res) {
-      var locs = listOf(res);
-      sel.innerHTML = '<option value="">— Select —</option>';
-      locs.forEach(function (loc) {
-        if (loc.is_reception || (loc.code && loc.code.toUpperCase() === "RECEPTION")) return; // don't allocate from the configured Reception store
-        var opt = document.createElement("option");
-        opt.value = loc.id;
-        opt.textContent = loc.code + " — " + loc.name;
-        sel.appendChild(opt);
-      });
     }).catch(function (err) { UI.toast(err.message || "Unable to load selection. Refresh to retry.", "error"); });
   }
 

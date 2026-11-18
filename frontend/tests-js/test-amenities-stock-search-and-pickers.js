@@ -68,6 +68,28 @@ const ITEMS = [
   { id: 11, sku: "AMN-TISSUE", name: "Tissue Roll", base_unit: "ROLL", is_active: true },
   { id: 12, sku: "AMN-OLD", name: "Retired Item", base_unit: "PIECE", is_active: false },
 ];
+/* The Allocate form reads the amenity-scoped source endpoint: the issuing
+   stores, the catalogue and the on-hand quantity per store. The catalogue
+   endpoints (inventory/locations, inventory/items) require `inventory.manage`
+   and answer with a paginated ARRAY capped at 100 rows, which is why the
+   allocate dropdowns used to be empty for anyone holding only the allocate
+   capability, and why `page_size=500` silently truncated. */
+const SOURCE = {
+  reception_location: { id: 2, code: "RECEPTION", name: "Reception Store", is_reception: true },
+  locations: [
+    { id: 1, code: "MAIN", name: "Main Store", is_active: true, is_reception: false },
+  ],
+  items: [
+    { id: 10, sku: "AMN-SOAP", name: "Guest Soap", category: "Amenities", base_unit: "BAR" },
+    { id: 11, sku: "AMN-TISSUE", name: "Tissue Roll", category: "Amenities", base_unit: "ROLL" },
+    { id: 12, sku: "AMN-OLD", name: "Retired Item", category: "Amenities", base_unit: "PIECE" },
+  ],
+  stock: [
+    { item_id: 10, sku: "AMN-SOAP", name: "Guest Soap", category: "Amenities", base_unit: "BAR", location_id: 1, location_code: "MAIN", location_name: "Main Store", quantity: "40.0000" },
+    { item_id: 11, sku: "AMN-TISSUE", name: "Tissue Roll", category: "Amenities", base_unit: "ROLL", location_id: 1, location_code: "MAIN", location_name: "Main Store", quantity: "12.0000" },
+  ],
+};
+
 const STOCK = {
   location: { id: 2, code: "RECEPTION", name: "Reception Store", is_reception: true },
   balances: [
@@ -91,6 +113,7 @@ function boot(opts = {}) {
       let data = [];
       if (url.indexOf("/inventory/locations/") !== -1) data = LOCATIONS;
       else if (url.indexOf("/inventory/items/") !== -1) data = ITEMS;
+      else if (url.indexOf("amenities/source-stock/") !== -1) data = opts.source || SOURCE;
       else if (url.indexOf("amenities/stock/") !== -1) data = opts.stock || STOCK;
       else if (url.indexOf("amenities/issues/") !== -1) data = { results: [] };
       else if (url.indexOf("reception/guests/") !== -1) data = { results: [] };
@@ -125,23 +148,27 @@ test("the stock table renders rows instead of an error banner", { skip: SKIP }, 
   assert.ok(box.innerHTML.indexOf("Unavailable") !== -1, "zero stock marked unavailable");
 });
 
-test("the allocate item dropdown is populated from the paginated array", { skip: SKIP }, async () => {
+test("the allocate item dropdown is populated from the amenity source endpoint", { skip: SKIP }, async () => {
   const { doc } = boot();
   await settle();
   const select = doc.querySelector("[data-amenity-item-select]");
-  assert.equal(select.children.length, 3, "placeholder + two ACTIVE items (inactive excluded)");
   const labels = Array.from(select.children).map((o) => o.textContent);
-  assert.ok(labels.some((t) => t.indexOf("Guest Soap") !== -1));
-  assert.ok(!labels.some((t) => t.indexOf("Retired Item") !== -1), "inactive item hidden");
+  assert.ok(labels.some((t) => t.indexOf("Guest Soap") !== -1), "in-stock item offered: " + labels.join(" | "));
+  assert.ok(labels.some((t) => t.indexOf("40 BAR in stock") !== -1), "quantity on hand is stated");
+  assert.ok(
+    !Array.from(select.children).some((o) => o.textContent.indexOf("Retired Item") !== -1),
+    "an item no store holds is not offered as allocatable stock"
+  );
 });
 
-test("the store-location dropdowns are populated and exclude the Reception shelf", { skip: SKIP }, async () => {
+test("the store-location dropdowns list real issuing stores and exclude the Reception shelf", { skip: SKIP }, async () => {
   const { doc } = boot();
   await settle();
   const from = doc.querySelector("[data-amenity-location-select]");
   const shelf = doc.querySelector("[data-amenity-shelf-select]");
   assert.equal(from.children.length, 2, "placeholder + MAIN only");
   assert.equal(from.children[1].value, "1");
+  assert.ok(from.children[1].textContent.indexOf("MAIN") !== -1);
   assert.equal(shelf.children.length, 3, "placeholder + both locations");
   const shelfLabels = Array.from(shelf.children).map((o) => o.textContent).join(" | ");
   assert.ok(shelfLabels.indexOf("(configured)") !== -1, "configured Reception store flagged");

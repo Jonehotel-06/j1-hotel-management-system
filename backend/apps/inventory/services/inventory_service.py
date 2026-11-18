@@ -143,6 +143,37 @@ def _locked_balance(*, item, location):
         return StockBalance.objects.select_for_update().get(item=item, location=location)
 
 
+def _assert_store_has_stock(*, item, location, base_quantity):
+    """Read-only shortage pre-check naming requested vs available stock.
+
+    Batches that hand stock to a department (manual stock-out, kitchen issue,
+    amenities allocation) used to surface only the ledger's generic
+    "would make on-hand stock negative" refusal. This names the item, the
+    selected store, the requested quantity and what is actually held there, in
+    the item's base unit, so the operator can replenish or pick another store.
+
+    It is a DIAGNOSTIC only: it never writes, never adjusts a balance, and is
+    always followed by the authoritative locked check inside
+    ``record_stock_movement``, so concurrent issues can still never go negative.
+    """
+    balance = StockBalance.objects.filter(item=item, location=location).first()
+    available = Decimal(balance.quantity_on_hand if balance else 0).quantize(QTY)
+    requested = Decimal(base_quantity).quantize(QTY)
+    if requested > available:
+        raise ValidationError({
+            # A refusal that must stay actionable AND keep the vocabulary the
+            # existing inventory tests and clients already match on
+            # ("negative stock"), now with the requested/available figures.
+            "quantity": (
+                f"Insufficient stock for {item.name} ({item.sku}) at {location.code} — {location.name}: "
+                f"this would make on-hand stock negative. "
+                f"Requested {requested} {item.base_unit}; available {available} {item.base_unit}. "
+                "Replenish this store, transfer stock in, or record the quantity actually available."
+            )
+        })
+    return available
+
+
 @transaction.atomic
 def record_stock_movement(
     *, item, location, movement_type, quantity_delta, source_key, actor=None,
@@ -184,7 +215,19 @@ def record_stock_movement(
     balance = _locked_balance(item=item, location=location)
     new_quantity = (Decimal(balance.quantity_on_hand) + quantity_delta).quantize(QTY)
     if new_quantity < Decimal("0.0000") and not allow_negative:
-        raise ValidationError({"quantity_delta": "Movement would make on-hand stock negative."})
+        # Genuine shortage at THIS store: name the requested quantity, the
+        # available quantity, the base unit and the selected store so the
+        # operator can act (replenish, pick another store, or correct the
+        # quantity) instead of guessing. Stock is never forced negative.
+        requested = abs(quantity_delta).quantize(QTY)
+        available = Decimal(balance.quantity_on_hand).quantize(QTY)
+        raise ValidationError({
+            "quantity_delta": (
+                f"Insufficient stock at {location.code} ({location.name}): "
+                f"requested {requested} {item.base_unit}, available {available} {item.base_unit}. "
+                "Choose another store, reduce the quantity, or replenish stock first."
+            )
+        })
     for _ in range(8):
         try:
             with transaction.atomic():
@@ -257,6 +300,7 @@ def issue_stock(
         raise ValidationError({
             "notes": "A reusable asset can only be written off with a reason. Use the notes field to say what happened."
         })
+    _assert_store_has_stock(item=item, location=location, base_quantity=quantity)
     return record_stock_movement(
         item=item, location=location, movement_type=movement_type, quantity_delta=-quantity,
         source_key=source_key, actor=actor, source_reference=source_reference, notes=notes,
@@ -427,6 +471,7 @@ def transfer_stock(*, item, from_location, to_location, quantity, actor, transfe
     # the item/balance rows and source keys make a retry converge.
     locations = sorted([from_location, to_location], key=lambda row: row.pk)
     list(StockLocation.objects.select_for_update().filter(pk__in=[row.pk for row in locations]).order_by("pk"))
+    _assert_store_has_stock(item=item, location=from_location, base_quantity=quantity)
     outbound, outbound_created = record_stock_movement(
         item=item, location=from_location, movement_type=StockMovement.Type.TRANSFER_OUT, quantity_delta=-quantity,
         source_key=f"transfer:{transfer_key}:out", actor=actor,
@@ -2509,6 +2554,11 @@ def record_stock_issuance(
         quantity, item=item, unit=selected_unit or item.base_unit,
         conversion_factor=conversion_factor, allow_declared_pack_size=False,
     )
+    # Genuine-shortage pre-check at THIS store: reporting requested vs available
+    # in the item's base unit turns an opaque ledger rejection into an actionable
+    # message. The authoritative guard inside record_stock_movement still runs
+    # under the balance row lock, so this can never permit negative stock.
+    _assert_store_has_stock(item=item, location=source_location, base_quantity=base_quantity)
     raw_key = str(idempotency_key or "").strip()
     movement_key = scoped_key(
         prefix="manual-stock-out", scope=f"staff:{getattr(actor, 'pk', 'system')}", raw_key=raw_key

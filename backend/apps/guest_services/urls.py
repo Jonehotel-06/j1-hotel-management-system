@@ -26,6 +26,9 @@ staff_urlpatterns = [
     # Receptionist guest amenities + complementary breakfast
     path("reception/amenities/allocate/", views.ReceptionAmenityAllocationView.as_view(), name="reception-amenities-allocate"),
     path("reception/amenities/stock/", views.ReceptionAmenityStockView.as_view(), name="reception-amenities-stock"),
+    # Source stores + items for the Allocate form, readable with the ALLOCATE
+    # capability alone (the catalogue endpoints need the wider inventory.manage).
+    path("reception/amenities/source-stock/", views.ReceptionAmenitySourceStockView.as_view(), name="reception-amenities-source-stock"),
     path("reception/amenities/issues/", views.GuestAmenityIssueListView.as_view(), name="guest-amenity-issues"),
     path("reception/amenities/issue/", views.GuestAmenityIssueView.as_view(), name="guest-amenity-issue"),
     path("breakfast/config/", views.BreakfastConfigView.as_view(), name="breakfast-config"),

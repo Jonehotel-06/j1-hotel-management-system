@@ -426,6 +426,8 @@
       });
     }
 
+    /* Shared handle for the returning-guest custom field below. */
+    var returningGuestApi = { read: function(){ return null; }, select: function(){} };
     var out = await JONE.dashboard.formModal({
       title: "New booking (walk-in / phone)",
       submitText: "Create booking",
@@ -531,6 +533,91 @@
         },
         { name: "special_requests", label: "Special requests", type: "textarea", rows: 2, value: "" },
         { name: "internal_notes", label: "Internal notes", type: "textarea", rows: 2, value: "" },
+        /* Returning guest (Priority Two): search the existing guest records by
+           name, phone or email and REUSE one of them instead of retyping the
+           same person into a second profile. The selected record's id is sent
+           with the booking, so the server links the new booking to that guest
+           and never merges two different people by email. */
+        {
+          name: "guest_lookup", label: "Returning guest (optional)", type: "custom",
+          help: "Search by name, phone number or email. Selecting a guest reuses their existing record \u2014 their previous bookings, payments and history stay attached. Leave empty to register a new guest.",
+          render: function(mount, form){
+            var box = document.createElement("div");
+            box.className = "op-picker";
+            box.innerHTML = '<input class="input" type="search" data-returning-search placeholder="Name, phone or email" autocomplete="off" aria-label="Search existing guests">' +
+              '<p class="caption" data-returning-status style="margin:.3rem 0 0;">Type at least 2 characters to search.</p>' +
+              '<div data-returning-results style="display:grid;gap:.3rem;max-height:11rem;overflow:auto;"></div>' +
+              '<div data-returning-chosen hidden style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;"></div>';
+            mount.appendChild(box);
+            var input = box.querySelector("[data-returning-search]");
+            var status = box.querySelector("[data-returning-status]");
+            var results = box.querySelector("[data-returning-results]");
+            var chosenBox = box.querySelector("[data-returning-chosen]");
+            var selected = null, timer = null, seq = 0;
+            returningGuestApi.read = function(){ return selected; };
+            function paintChosen(){
+              if (!selected) { chosenBox.hidden = true; chosenBox.innerHTML = ""; return; }
+              chosenBox.hidden = false;
+              chosenBox.innerHTML = '<strong style="flex:1 1 14rem;">Using ' + JONE.esc(selected.full_name) +
+                (selected.email ? " \u00b7 " + JONE.esc(selected.email) : "") + "</strong>";
+              var clear = document.createElement("button");
+              clear.type = "button"; clear.className = "btn btn-sm btn-ghost"; clear.textContent = "Clear";
+              clear.addEventListener("click", function(){ selectGuest(null); input.value = ""; results.innerHTML = ""; input.focus(); });
+              chosenBox.appendChild(clear);
+            }
+            function fillGuestFields(guest){
+              var map = { guest_first_name: "first_name", guest_last_name: "last_name", guest_email: "email", guest_phone: "phone" };
+              Object.keys(map).forEach(function(field){
+                var el = form.elements[field]; if (!el) return;
+                if (!guest) { el.readOnly = false; return; }
+                var parts = String(guest.full_name || "").split(" ");
+                var value = guest[map[field]] !== undefined ? guest[map[field]]
+                          : (field === "guest_first_name" ? (parts.shift() || "") : parts.join(" "));
+                if (value) el.value = value;
+                el.readOnly = false;
+              });
+            }
+            function selectGuest(guest){
+              selected = guest || null;
+              paintChosen();
+              if (selected) fillGuestFields(selected);
+              results.innerHTML = "";
+              status.textContent = selected
+                ? "This booking will be linked to the existing guest record (" + (selected.bookings_count || 0) + " previous booking" + (Number(selected.bookings_count) === 1 ? "" : "s") + ")."
+                : "Type at least 2 characters to search.";
+            }
+            returningGuestApi.select = selectGuest;
+            function row(guest){
+              var button = document.createElement("button");
+              button.type = "button"; button.className = "op-picker-option";
+              button.textContent = guest.full_name + (guest.phone ? " \u00b7 " + guest.phone : "") + (guest.email ? " \u00b7 " + guest.email : "") +
+                (Number(guest.bookings_count) ? " \u00b7 " + guest.bookings_count + " previous booking" + (Number(guest.bookings_count) === 1 ? "" : "s") : " \u00b7 new guest");
+              button.addEventListener("click", function(){ selectGuest(guest); });
+              return button;
+            }
+            function search(){
+              var term = String(input.value || "").trim();
+              if (term.length < 2) { status.textContent = "Type at least 2 characters to search."; results.innerHTML = ""; return; }
+              var current = ++seq;
+              status.textContent = "Searching\u2026";
+              window.API.list("guests", { search: term, page_size: 20 }).then(function(res){
+                if (current !== seq) return;
+                var rows = (window.API.normalizeList(res && res.data, res && res.pagination).items) || [];
+                results.innerHTML = "";
+                if (!rows.length) { status.textContent = "No guest matches \u201c" + term + "\u201d. Leave the fields below empty and a new guest record will be created."; return; }
+                status.textContent = rows.length + " matching guest" + (rows.length === 1 ? "" : "s") + ". Select the right person.";
+                rows.forEach(function(g){ results.appendChild(row(g)); });
+              }).catch(function(){
+                if (current !== seq) return;
+                status.textContent = "Guest search is unavailable right now. You can still type the guest details below.";
+              });
+            }
+            input.addEventListener("input", function(){ clearTimeout(timer); timer = setTimeout(search, 250); });
+          },
+          /* The selected guest id travels as ONE field so a booking can never
+             be linked to a guest the operator did not choose. */
+          getValue: function(){ var g = returningGuestApi.read(); return g ? { guest_id: g.id } : {}; }
+        },
         { name: "guest_first_name", label: "Guest first name", required: true },
         { name: "guest_last_name", label: "Guest last name", required: true },
         { name: "guest_email", label: "Guest email", type: "email", required: true },
@@ -627,6 +714,9 @@
             phone: String(v.guest_phone || "").trim()
           }
         };
+        /* An existing guest was chosen: send the record id so the server links
+           the booking to THAT guest instead of matching by email. */
+        if (v.guest_id) payload.guest_id = Number(v.guest_id);
         if (v.offer_code && String(v.offer_code).trim()) payload.offer_code = String(v.offer_code).trim();
         /* C2: per-room guests for multi-room bookings — name + email per
            additional room, sent at creation so every occupant is recorded

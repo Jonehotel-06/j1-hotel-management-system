@@ -152,7 +152,9 @@ test("every dashboard page is graded by the access registry", () => {
      which is precisely what this tripwire exists to catch, and why those two
      screens were invisible in the sidebar and unguarded at a bare URL. All 47
      are now gated and registered. */
-  assert.equal(PAGES.length, 48, "the dashboard has 48 pages (including Mini Mart); a new page needs a gate AND a registry entry");
+  /* 49 with the Reception Event Management screen (events.html), which ships
+     with BOTH a JONE.dashboard.boot gate and a registry entry. */
+  assert.equal(PAGES.length, 49, "the dashboard has 49 pages (including Mini Mart and Events); a new page needs a gate AND a registry entry");
 });
 
 test("the registry holds no stale page names and no empty rule", () => {

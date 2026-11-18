@@ -12,7 +12,6 @@
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
 <link rel="stylesheet" href="../css/main.css?v=1.1.29">
-<link rel="stylesheet" href="../css/reception-services.css?v=1.1.29">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -20,6 +19,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="J-ONE Staff">
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png">
+<link rel="stylesheet" href="../css/reception-services.css?v=1.1.29">
 </head>
 <body class="reception-services">
 <div class="dash">
@@ -100,6 +100,12 @@
           <div class="card-header"><h2>Allocate Amenities to Reception</h2></div>
           <div class="card-body">
             <form data-amenity-allocate-form>
+              <div class="form-group">
+                <label for="amenity-allocate-search">Search stock</label>
+                <input id="amenity-allocate-search" type="search" placeholder="Item name, SKU, category or store code"
+                       data-amenity-allocate-search autocomplete="off">
+                <p class="caption" data-amenity-allocate-hint aria-live="polite"></p>
+              </div>
               <div class="form-row">
                 <div class="form-group">
                   <label for="amenities-select-5857">Stock Item *</label><select id="amenities-select-5857" name="item_id" required data-amenity-item-select></select>

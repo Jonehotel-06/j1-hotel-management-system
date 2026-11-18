@@ -129,6 +129,7 @@ api_patterns = [
     path("admin/users/", include("apps.accounts.urls_admin", namespace="admin-users")),
     path("admin/audit-logs/", include("apps.audit.urls_admin", namespace="admin-audit")),
     path("admin/reviews/", include("apps.reviews.urls_admin", namespace="admin-reviews")),
+    path("admin/events/", include("apps.events.urls", namespace="admin-events")),
     re_path(r"^media/(?P<path>.*)$", serve_media_file, name="api-media-serve"),
 ]
 

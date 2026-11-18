@@ -9,6 +9,11 @@
 #
 # Two-stage build: compiles C extensions (mysqlclient) in an isolated builder
 # stage so compilers and header files are excluded from the runtime image.
+#
+# Startup: the runtime CMD is docker/docker-cmd.sh. For the web role it waits
+# for the database, applies pending migrations (`manage.py migrate --noinput`)
+# and only then execs Gunicorn, aborting startup if a migration fails. It never
+# runs makemigrations, flush or loaddata. See that script for the full contract.
 # ===========================================================================
 
 # ---------------------------------------------------------------------------

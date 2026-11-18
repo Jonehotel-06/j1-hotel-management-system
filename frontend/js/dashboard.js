@@ -31,6 +31,11 @@
          opened the same page, and laundry looked like a guest request rather
          than the priced, settled service it is. */
       { label: "Laundry", href: "laundry.html", icon: "shirt", view: "laundry", capabilities: ["guest_request.manage", "guest_request.assign"] },
+      /* Batch 1: event spaces (Inside Bar / Outside Bar / Hotel Compound) are
+         booked and settled at Reception, so Events sits with the front-desk
+         operations. The financial work reuses the existing payment/ledger
+         services; the page only orchestrates. */
+      { label: "Events", href: "events.html", icon: "calendar", view: "events", capabilities: ["booking.manage", "payment.capture"] },
       { label: "Amenities", href: "amenities.html", icon: "star", view: "amenities", capabilities: ["guest_amenity.issue", "guest_amenity.allocate"] },
       { label: "Mini Mart", href: "minimart.html", icon: "grid", view: "minimart", capabilities: ["guest_amenity.issue"] },
       { label: "Breakfast", href: "breakfast.html", icon: "coffee", view: "breakfast", capabilities: ["breakfast.issue"] },
@@ -161,6 +166,7 @@
        typing the URL. The lists are the roles the server's capability matrix
        actually grants: guest_amenity.issue / breakfast.issue to the front desk
        and the management tier, guest_amenity.allocate to the store keeper. */
+    "events.html": { roles: ["admin", "general_manager", "receptionist"] },
     "amenities.html": { roles: ["admin", "general_manager", "receptionist", "storekeeper"] },
     "minimart.html": { roles: ["admin", "general_manager", "receptionist"] },
     "breakfast.html": { roles: ["admin", "general_manager", "receptionist"] },

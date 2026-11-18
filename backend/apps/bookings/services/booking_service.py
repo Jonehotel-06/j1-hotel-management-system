@@ -192,16 +192,25 @@ def search_availability(*, check_in, check_out, guests=1, rooms=1, room_type_val
 # ---------------------------------------------------------------------------
 # Guest records
 # ---------------------------------------------------------------------------
-def upsert_guest(*, user=None, guest_data=None) -> Guest:
+def upsert_guest(*, user=None, guest_data=None, guest_id=None) -> Guest:
     """Find-or-create the Guest record used for a booking.
 
     Logged-in guests reuse their profile-linked record; contact details sent
     with the booking may update it. Staff-supplied data (no user account)
-    matches an existing standalone record by email.
+    matches an existing standalone record by email. An explicit ``guest_id``
+    (returning-guest selection at Reception) always wins: that exact record
+    is reused and never duplicated, so two different guests can never be
+    silently merged by an email match.
     """
     data = guest_data or {}
     email_lookup = str(data.get("email") or "").strip()
-    if user is not None:
+    if guest_id:
+        guest = Guest.objects.select_for_update().filter(pk=guest_id).first()
+        if guest is None:
+            from django.core.exceptions import ValidationError as DjangoValidationError
+
+            raise DjangoValidationError({"guest_id": ["Unknown guest."]})
+    elif user is not None:
         guest = getattr(user, "guest_profile", None)
     else:
         guest = Guest.objects.filter(
@@ -357,7 +366,7 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
                    offer_code=None, special_requests="", internal_notes="", user=None,
                    guest_data=None, source=Booking.Source.WEBSITE, require_payment=True,
                    actor=None, request=None, room_id=None, idempotency_key=None,
-                   room_guests=None) -> Booking:
+                   room_guests=None, guest_id=None) -> Booking:
     """Create a reservation.
 
     ``room_id`` requests one EXACT physical room ("Book this room — Room 203").
@@ -390,7 +399,7 @@ def create_booking(*, room_type_value, check_in, check_out, rooms, adults, child
     # is part of the authoritative price, so the pricing engine must know who
     # is booking. Everything here runs inside the same atomic block, so an
     # unsuccessful booking never leaves a stray guest behind.
-    guest = upsert_guest(user=user, guest_data=guest_data)
+    guest = upsert_guest(user=user, guest_data=guest_data, guest_id=guest_id)
 
     # A submitted email alone does not establish ownership of a guest record.
     # Staff can select guests; public customers must authenticate to use a

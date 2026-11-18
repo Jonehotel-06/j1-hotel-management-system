@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<script>
+/* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
+(function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Events | J-ONE Staff</title>
+<meta name="theme-color" content="#373435">
+<link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
+<link rel="stylesheet" href="../css/main.css?v=1.1.29">
+<link rel="manifest" href="/dashboard/manifest.webmanifest">
+<meta name="application-name" content="J-ONE Staff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="J-ONE Staff">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon-180.png">
+<link rel="stylesheet" href="../css/reception-services.css?v=1.1.29">
+</head>
+<body class="reception-services">
+<div class="dash">
+  <aside class="dash-sidebar" aria-label="Staff navigation">
+    <div class="dash-sidebar-brand"><img src="../assets/icons/logo-official.svg" alt="" width="30" height="42"><span><span class="brand-word">J-ONE</span><br><span class="brand-sub">Staff Console</span></span></div>
+    <nav class="dash-sidebar-nav" data-dash-nav aria-label="Staff"></nav>
+    <div class="dash-sidebar-footer"><div data-dash-user></div><button class="btn btn-sm btn-outline" data-logout style="width:100%;justify-content:center;color:#D6D5D3;border-color:rgba(255,255,255,.2);"><span data-icon="logOut" data-size="16"></span> Sign out</button></div>
+  </aside>
+  <div class="dash-main">
+    <header class="dash-topbar">
+      <button class="btn-icon btn-ghost dash-menu-toggle" data-dash-menu-toggle aria-label="Open navigation"><span data-icon="menu" data-size="22"></span></button>
+      <h1>Event Management</h1>
+      <div class="dash-topbar-actions">
+        <span data-icon="calendar" data-size="16" style="color:var(--color-text-muted);"></span>
+        <span style="font-size:.85rem;color:var(--color-text-muted);">Inside Bar · Outside Bar · Hotel Compound</span>
+      </div>
+    </header>
+    <main class="dash-content">
+      <!-- Tabs -->
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="events" role="tab" aria-selected="true">Events</button>
+        <button class="tab" data-tab="new" role="tab" aria-selected="false">Register Event</button>
+      </div>
+
+      <!-- Events list -->
+      <section class="tab-panel" data-panel="events">
+        <div class="card">
+          <div class="card-header">
+            <h2>Registered events</h2>
+            <button class="btn btn-sm btn-outline" data-events-refresh><span data-icon="refresh" data-size="14"></span> Refresh</button>
+          </div>
+          <div class="card-body">
+            <form data-events-filter>
+              <div class="form-row">
+                <div class="form-group"><label for="ev-from">From</label><input id="ev-from" name="date_from" type="date"></div>
+                <div class="form-group"><label for="ev-to">To</label><input id="ev-to" name="date_to" type="date"></div>
+                <div class="form-group"><label for="ev-location">Location</label><select id="ev-location" name="location_id"><option value="">All locations</option></select></div>
+                <div class="form-group"><label for="ev-payment">Payment status</label><select id="ev-payment" name="payment_status">
+                  <option value="">Any payment status</option>
+                  <option value="UNPAID">Unpaid</option>
+                  <option value="PARTIALLY_PAID">Partially paid</option>
+                  <option value="PAID">Paid</option>
+                </select></div>
+                <div class="form-group"><label for="ev-status">Event status</label><select id="ev-status" name="status">
+                  <option value="">Any event status</option>
+                  <option value="UPCOMING">Upcoming</option>
+                  <option value="ONGOING">Ongoing</option>
+                  <option value="COMPLETED">Completed</option>
+                  <option value="CANCELLED">Cancelled</option>
+                </select></div>
+                <div class="form-group"><label for="ev-search">Search</label><input id="ev-search" name="search" type="search" placeholder="Reference, guest, phone or type" autocomplete="off"></div>
+              </div>
+              <div class="form-actions"><button class="btn btn-outline" type="submit">Apply filters</button></div>
+            </form>
+            <div data-events-container aria-live="polite">
+              <div class="service-loading" role="status" aria-label="Loading"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Register event -->
+      <section class="tab-panel hidden" data-panel="new">
+        <div class="card">
+          <div class="card-header"><h2>Register an event</h2></div>
+          <div class="card-body">
+            <p class="caption">The guest may be an existing record or a new one. The hotel's charge is recognised as an event receivable; only money actually received is recorded as a collection.</p>
+            <form data-event-form>
+              <fieldset>
+                <legend>Guest</legend>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="ev-guest-search">Find existing guest</label>
+                    <input id="ev-guest-search" type="search" data-event-guest-search placeholder="Name, phone, email or booking reference" autocomplete="off">
+                  </div>
+                  <div class="form-group">
+                    <label for="ev-guest">Existing guest</label>
+                    <select id="ev-guest" name="guest_id"><option value="">— Register a new guest below —</option></select>
+                    <span class="caption" data-event-guest-note>Selecting an existing guest reuses that record; its details fill the fields below and no duplicate guest is created.</span>
+                  </div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group"><label for="ev-first">Guest first name *</label><input id="ev-first" name="first_name" type="text" autocomplete="off"></div>
+                  <div class="form-group"><label for="ev-last">Guest last name *</label><input id="ev-last" name="last_name" type="text" autocomplete="off"></div>
+                  <div class="form-group"><label for="ev-phone">Phone number *</label><input id="ev-phone" name="phone" type="tel" autocomplete="off"></div>
+                  <div class="form-group"><label for="ev-email">Email (optional)</label><input id="ev-email" name="email" type="email" autocomplete="off"></div>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>Event</legend>
+                <div class="form-row">
+                  <div class="form-group"><label for="ev-space">Event location *</label><select id="ev-space" name="location_id" required></select></div>
+                  <div class="form-group"><label for="ev-type">Event type *</label><input id="ev-type" name="event_type" type="text" required placeholder="e.g. Birthday party, Meeting" autocomplete="off"></div>
+                  <div class="form-group"><label for="ev-date">Event date *</label><input id="ev-date" name="event_date" type="date" required></div>
+                  <div class="form-group"><label for="ev-guests">Expected guests *</label><input id="ev-guests" name="expected_guests" type="number" min="1" step="1" value="1" required></div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group"><label for="ev-start">Start time *</label><input id="ev-start" name="start_time" type="time" required></div>
+                  <div class="form-group"><label for="ev-end">End time *</label><input id="ev-end" name="end_time" type="time" required></div>
+                  <div class="form-group"><label for="ev-charge">Amount charged by the hotel (₦) *</label><input id="ev-charge" name="total_charged" type="number" min="0" step="0.01" required placeholder="e.g. 150000.00"></div>
+                </div>
+                <div class="form-group"><label for="ev-notes">Additional notes</label><textarea id="ev-notes" name="notes" rows="2" placeholder="Setup requests, contact person, etc."></textarea></div>
+              </fieldset>
+
+              <fieldset>
+                <legend>Payment received now (optional)</legend>
+                <p class="caption">Leave the amount at 0 to register the event unpaid; the outstanding balance stays visible and can be collected later.</p>
+                <div class="form-row">
+                  <div class="form-group"><label for="ev-paid">Amount paid now (₦)</label><input id="ev-paid" name="amount_paid" type="number" min="0" step="0.01" value="0"></div>
+                  <div class="form-group"><label for="ev-method">Payment method</label><select id="ev-method" name="payment_method">
+                    <option value="CASH">Cash</option>
+                    <option value="BANK_TRANSFER">Bank Transfer</option>
+                    <option value="POS">POS / Card</option>
+                    <option value="PAYSTACK">Paystack</option>
+                    <option value="OTHER">Other approved method</option>
+                  </select></div>
+                  <div class="form-group"><label for="ev-reference">Payment reference</label><input id="ev-reference" name="payment_reference" type="text" placeholder="POS slip / transfer / Paystack reference" autocomplete="off"></div>
+                </div>
+                <div class="form-group">
+                  <label for="ev-override-reason">Conflict override reason</label>
+                  <input id="ev-override-reason" name="override_reason" type="text" placeholder="Only if an authorised manager overrides an overlapping booking" autocomplete="off">
+                  <span class="caption">Overlaps for the same space are refused. An override needs the refund-approval capability and a recorded reason.</span>
+                </div>
+              </fieldset>
+
+              <div class="form-actions">
+                <button class="btn btn-accent" type="submit" data-event-submit><span data-icon="check" data-size="16"></span> Register event</button>
+              </div>
+              <div data-event-form-message aria-live="polite"></div>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+<div class="mobile-drawer" aria-hidden="true"><div class="mobile-drawer-backdrop"></div><div class="mobile-drawer-content" data-drawer-close></div></div>
+<script src="../js/runtime-config.js?v=1.1.29"></script>
+<script src="../js/config.js?v=1.1.29"></script>
+<script src="../js/utils.js?v=1.1.29"></script>
+<script src="../js/icons.js?v=1.1.29"></script>
+<script src="../js/api.js?v=1.1.29"></script>
+<script src="../js/theme.js?v=1.1.29"></script>
+<script src="../js/ui.js?v=1.1.29"></script>
+<script src="../js/auth.js?v=1.1.29"></script>
+<script src="../js/hotel-data.js?v=1.1.29"></script>
+<script src="../js/navigation.js?v=1.1.29"></script>
+<script src="../js/pwa.js?v=1.1.29"></script>
+<script src="../js/dashboard.js?v=1.1.29"></script>
+<script src="../js/reception-services.js?v=1.1.29"></script>
+<script src="../js/thermal-receipt.js?v=1.1.29"></script>
+<script src="../js/events.js?v=1.1.29"></script>
+<script>
+  JONE.ui.initChrome();
+  JONE.dashboard.boot(["admin","general_manager","receptionist"]);
+  document.querySelector("[data-logout]") && document.querySelector("[data-logout]").addEventListener("click", function(){ window.Auth.logout(); });
+</script>
+<script src="../js/version.js?v=1.1.29"></script>
+<script src="../js/update-checker.js?v=1.1.29"></script>
+</body>
+</html>
