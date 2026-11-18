@@ -76,6 +76,7 @@ api_patterns = [
     path("hotel/", include((hotel_urls.public_urlpatterns, "hotel"), namespace="hotel")),
     path("facilities/", include((hotel_urls.facilities_public_urlpatterns, "hotel"), namespace="facilities")),
     path("gallery/", include("apps.gallery.urls", namespace="gallery")),
+    path("rooms-gallery/", include("apps.tv_rooms_gallery.urls")),
     path("offers/", include("apps.offers.urls", namespace="offers")),
     # Availability MUST be registered before the room-type slug route, or the
     # url "availability" would be captured by <slug:slug>/.

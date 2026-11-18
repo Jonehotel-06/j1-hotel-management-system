@@ -50,6 +50,7 @@ LOCAL_APPS = [
     "apps.rooms",
     "apps.offers",
     "apps.gallery",
+    "apps.tv_rooms_gallery",
     "apps.bookings",
     "apps.stays",
     "apps.payments",
