@@ -15,7 +15,15 @@
   var API = window.API;
   var esc = (window.JONE && window.JONE.esc) || function (v) { return String(v == null ? "" : v); };
   var money = (window.JONE && window.JONE.formatNaira) || function (v) { return "₦" + v; };
-  var base = S.base + "events/";
+  /* Events live under their own staff namespace (/api/admin/events/), NOT
+     under the service-requests base (S.base). Deriving "events/" from S.base
+     produced /api/admin/service-requests/events/... which the backend does
+     not serve: the locations call 404'd (Django HTML) and the list call was
+     captured by the service-request detail route as reference "events",
+     surfacing as "Service request not found". Resolve from the single
+     endpoint map with a literal fallback so the path can never drift again. */
+  var EVENTS_EP = (window.APP_CONFIG && window.APP_CONFIG.API_ENDPOINTS && window.APP_CONFIG.API_ENDPOINTS.events) || "/api/admin/events/";
+  var base = String(EVENTS_EP).replace(/\/?$/, "/");
   var $ = function (sel) { return document.querySelector(sel); };
 
   var locations = [];
@@ -77,12 +85,25 @@
         locations.forEach(function (loc) {
           form.appendChild(new Option(loc.name, loc.id));
         });
+        if (!locations.length) {
+          form.innerHTML = '<option value="">No active event spaces — ask an administrator to configure one</option>';
+        }
       }
       return locations;
     }).catch(function (err) {
       var form = $("#ev-space");
-      if (form) form.innerHTML = '<option value="">Event spaces could not be loaded — refresh to retry</option>';
-      message(err.message || "Event locations could not be loaded.", true);
+      if (form) form.innerHTML = '<option value="">Event spaces could not be loaded</option>';
+      var filter = $("#ev-location");
+      if (filter) filter.innerHTML = '<option value="">Event spaces could not be loaded</option>';
+      /* The message carries a working retry: clicking it re-issues the exact
+         failed request instead of asking for a full page refresh. */
+      var box = $("[data-event-form-message]");
+      if (box) {
+        box.innerHTML = '<div class="alert alert-error" role="status">' + esc(err.message || "Event locations could not be loaded.") +
+          ' <button class="btn btn-sm btn-outline" type="button" data-event-locations-retry>Retry</button></div>';
+        var retry = box.querySelector("[data-event-locations-retry]");
+        if (retry) retry.addEventListener("click", function () { message(""); loadLocations(); });
+      }
     });
   }
 
@@ -194,7 +215,10 @@
       currentEvents = S.listOf(res);
       renderEvents(currentEvents);
     }).catch(function (err) {
-      box.innerHTML = '<div class="alert alert-error" role="status">' + esc(err.message || "Events could not be loaded.") + "</div>";
+      box.innerHTML = '<div class="alert alert-error" role="status">' + esc(err.message || "Events could not be loaded.") +
+        ' <button class="btn btn-sm btn-outline" type="button" data-events-retry>Retry</button></div>';
+      var retry = box.querySelector("[data-events-retry]");
+      if (retry) retry.addEventListener("click", loadEvents);
     });
   }
 
@@ -454,7 +478,7 @@
     var filter = $("[data-events-filter]");
     if (filter) filter.addEventListener("submit", function (e) { e.preventDefault(); loadEvents(); });
     var refresh = $("[data-events-refresh]");
-    if (refresh) refresh.addEventListener("click", loadEvents);
+    if (refresh) refresh.addEventListener("click", function () { loadLocations(); loadEvents(); });
 
     var container = $("[data-events-container]");
     if (container) {

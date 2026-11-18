@@ -28,8 +28,11 @@
       return '<div class="mart-cart-line"><strong>'+esc(p.name)+'</strong><span>'+money(p.price)+' × '+cart[id]+' = '+money(Number(p.price)*cart[id])+'</span><div class="mart-quantity"><button type="button" class="btn btn-outline" data-adjust="'+id+'" data-delta="-1" aria-label="Decrease '+esc(p.name)+'">−</button><input type="number" min="1" max="'+Math.floor(Number(p.quantity))+'" step="1" value="'+cart[id]+'" data-quantity="'+id+'" aria-label="Quantity of '+esc(p.name)+'"><button type="button" class="btn btn-outline" data-adjust="'+id+'" data-delta="1" aria-label="Increase '+esc(p.name)+'">+</button><button type="button" class="btn btn-outline" data-remove="'+id+'">Remove</button></div></div>';
     }).join(''):'<p class="text-muted">Your cart is empty. Select a product to begin.</p>';
     $('[data-mart-total]').textContent='Subtotal / payable: '+money(total);
-    const method=$('#mart-payment').value;
-    $('[data-mart-checkout] [type=submit]').disabled=busy || !!pending || !ids.length || (method==='CASH' && !$('#mart-session').value);
+    const method=$('#mart-payment').value, room=method==='ROOM_CHARGE';
+    /* A room charge is only possible for an in-house guest on a real booking,
+       so the button stays disabled until that association exists. */
+    const roomReady=!room || ($('#mart-customer').value==='GUEST' && $('#mart-guest').value && $('#mart-booking').value);
+    $('[data-mart-checkout] [type=submit]').disabled=busy || !!pending || !ids.length || (method==='CASH' && !$('#mart-session').value) || !roomReady;
     $('[data-mart-clear]').disabled=busy || !!pending;
     $('[data-mart-recovery]').hidden=!pending;
     $('[data-mart-recover]').disabled=busy;
@@ -92,13 +95,17 @@
     const method=$('#mart-payment').value, reference=$('#mart-reference').value.trim();
     const declared=String($('#mart-amount').value || '').trim();
     const total=Object.keys(cart).reduce((sum,id)=>sum+Number(products.find(p=>String(p.id)===id).price)*cart[id],0);
-    if (method!=='CASH' && !reference) return message('Enter the transaction reference printed on the customer\'s proof of payment.',true);
-    if (declared && (!(Number(declared)>0) || Number(declared)>total)) return message('Amount received must be greater than zero and no more than the total.',true);
+    const room=method==='ROOM_CHARGE';
+    if (room && (!isGuest || !form.elements.guest_id.value || !form.elements.booking_id.value)) {
+      return message('A room charge needs the in-house guest and their current booking. Select both, then confirm.',true);
+    }
+    if (!room && method!=='CASH' && !reference) return message('Enter the transaction reference printed on the customer\'s proof of payment.',true);
+    if (!room && declared && (!(Number(declared)>0) || Number(declared)>total)) return message('Amount received must be greater than zero and no more than the total.',true);
     pending={expected_total:total.toFixed(2),idempotency_key:S.key(),payment_method:method,
              lines:Object.keys(cart).map(id=>({product_id:Number(id),quantity:cart[id]}))};
     if (method==='CASH') pending.cash_session_reference=$('#mart-session').value;
-    if (method!=='CASH') pending.transaction_reference=reference;
-    if (declared) pending.payment_amount=Number(declared).toFixed(2);
+    if (!room && method!=='CASH') pending.transaction_reference=reference;
+    if (!room && declared) pending.payment_amount=Number(declared).toFixed(2);
     if (isGuest) {pending.guest_id=Number(form.elements.guest_id.value);if (form.elements.booking_id.value) pending.booking_id=Number(form.elements.booking_id.value);}
     try {sessionStorage.setItem(pendingSlot,JSON.stringify(pending));} catch(_) {}
     await send(pending);
@@ -107,13 +114,22 @@
      needs the cashier's drawer, an electronic one needs the customer's
      reference. The amount field is opt-in because most sales are paid in full. */
   function syncMethodFields() {
-    const method=$('#mart-payment').value, cash=method==='CASH';
+    const method=$('#mart-payment').value, cash=method==='CASH', room=method==='ROOM_CHARGE';
     document.querySelector('[data-mart-session-field]').hidden=!cash;
-    document.querySelector('[data-mart-reference-field]').hidden=cash;
-    document.querySelector('[data-mart-amount-field]').hidden=cash;
+    document.querySelector('[data-mart-reference-field]').hidden=cash || room;
+    document.querySelector('[data-mart-amount-field]').hidden=cash || room;
+    const hint=document.querySelector('[data-mart-room-charge-hint]');
+    if (hint) hint.hidden=!room;
+    /* A room charge is a guest-only workflow: switch the customer type and show
+       the guest picker rather than silently posting to a walk-in. */
+    if (room) {
+      const type=$('#mart-customer');
+      if (type.value!=='GUEST') {type.value='GUEST';type.dispatchEvent(new Event('change'));}
+    }
     const submit=document.querySelector('[data-mart-submit]');
     const labels={CASH:'Confirm cash received & complete sale',CARD:'Confirm POS payment & complete sale',
-                  BANK_TRANSFER:'Confirm transfer received & complete sale',PAYSTACK:'Verify Paystack payment & complete sale'};
+                  BANK_TRANSFER:'Confirm transfer received & complete sale',PAYSTACK:'Verify Paystack payment & complete sale',
+                  ROOM_CHARGE:'Charge to guest room & complete sale'};
     submit.textContent=labels[method] || labels.CASH;
     renderCart();
   }
@@ -145,6 +161,10 @@
     $('[data-mart-clear]').addEventListener('click',()=>{if(!busy&&!pending){cart={};renderCart();}});
     $('#mart-customer').addEventListener('change',()=>{$('[data-mart-guest-fields]').hidden=$('#mart-customer').value!=='GUEST';});
     $('#mart-session').addEventListener('change',renderCart);
+    /* Room-charge readiness depends on the guest + booking pair, so redraw the
+       checkout button whenever either picker changes. */
+    $('#mart-guest').addEventListener('change',renderCart);
+    $('#mart-booking').addEventListener('change',renderCart);
     $('#mart-payment').addEventListener('change',syncMethodFields);
     syncMethodFields();
     $('[data-mart-checkout]').addEventListener('submit',checkout);$('[data-mart-refresh]').addEventListener('click',refresh);

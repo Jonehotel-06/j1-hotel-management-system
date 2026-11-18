@@ -97,7 +97,9 @@
                 <option value="CARD">POS / Card</option>
                 <option value="BANK_TRANSFER">Bank Transfer</option>
                 <option value="PAYSTACK">Paystack</option>
-              </select><span class="caption">Cash settles through your open cash session. Card, transfer and Paystack need the reference the customer paid with; a Paystack reference is verified with the gateway before the sale counts as paid.</span></div>
+                <option value="ROOM_CHARGE">Room charge (guest folio)</option>
+              </select><span class="caption">Cash settles through your open cash session. Card, transfer and Paystack need the reference the customer paid with; a Paystack reference is verified with the gateway before the sale counts as paid. A room charge posts to the in-house guest's folio and is settled with their bill — it is never recorded as cash paid.</span></div>
+              <p class="service-context" data-mart-room-charge-hint hidden>Room charge: select the in-house guest and their current booking below. The amount is added to that guest's folio; nothing is collected at the desk.</p>
               <div class="form-group" data-mart-session-field><label for="mart-session">Your open cash session</label><select id="mart-session" name="cash_session_reference" required></select></div>
               <div class="form-group" data-mart-reference-field hidden><label for="mart-reference">Transaction reference *</label><input id="mart-reference" name="transaction_reference" type="text" maxlength="120" placeholder="POS slip / transfer / Paystack reference" autocomplete="off"><span class="caption">The reference on the customer's proof of payment. It is recorded with the sale and shown on the receipt.</span></div>
               <div class="form-group" data-mart-amount-field hidden><label for="mart-amount">Amount received</label><input id="mart-amount" name="payment_amount" type="number" step="0.01" min="0.01" placeholder="Leave blank for the full total"><span class="caption">Enter less than the total only when part of the sale is settled later; the balance stays outstanding on the sale.</span></div>

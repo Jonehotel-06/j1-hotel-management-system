@@ -279,6 +279,7 @@
 
     /* Guest-service and operations queues (capability-gated server-side). */
     serviceRequests:       "/api/admin/service-requests/",
+    events:                "/api/admin/events/",        // reception event spaces + registrations (apps.events)
     serviceQrLinks:        "/api/admin/service-qr-links/",
     serviceQrContext:      "/api/service-qr/context/",
     serviceQrRequests:     "/api/service-qr/requests/",

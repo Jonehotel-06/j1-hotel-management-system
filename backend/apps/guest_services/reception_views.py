@@ -110,9 +110,10 @@ class CheckoutSerializer(serializers.Serializer):
     booking_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     lines = CartLineSerializer(many=True, allow_empty=False, max_length=100)
     # Payment method + amount actually received. Defaults preserve the
-    # historical cash-only contract for older clients.
+    # historical cash-only contract for older clients. ROOM_CHARGE settles to
+    # the guest's folio instead of a tender (no cash changes hands at the desk).
     payment_method = serializers.ChoiceField(
-        choices=["CASH", "CARD", "BANK_TRANSFER", "PAYSTACK"], required=False, default="CASH"
+        choices=["CASH", "CARD", "BANK_TRANSFER", "PAYSTACK", "ROOM_CHARGE"], required=False, default="CASH"
     )
     payment_amount = serializers.DecimalField(
         max_digits=12, decimal_places=2, min_value=Decimal("0.01"), required=False, default=None
@@ -137,6 +138,19 @@ class CheckoutSerializer(serializers.Serializer):
             raise serializers.ValidationError({"cash_session_reference": "Cash sales require your open cash session."})
         if method in ("CARD", "BANK_TRANSFER", "PAYSTACK") and not str(attrs.get("transaction_reference") or "").strip():
             raise serializers.ValidationError({"transaction_reference": "A transaction reference is required for this payment method."})
+        if method == "ROOM_CHARGE":
+            # A room charge is a folio receivable, never a tender: it needs a
+            # guest with an in-house stay and must not carry tender fields.
+            if not attrs.get("guest_id"):
+                raise serializers.ValidationError({"guest_id": "Select the hotel guest for a room charge."})
+            if not attrs.get("booking_id"):
+                raise serializers.ValidationError({"booking_id": "Select the guest's current booking for a room charge."})
+            if str(attrs.get("cash_session_reference") or "").strip():
+                raise serializers.ValidationError({"cash_session_reference": "A room charge does not use a cash session."})
+            if str(attrs.get("transaction_reference") or "").strip():
+                raise serializers.ValidationError({"transaction_reference": "A room charge does not use a transaction reference."})
+            if attrs.get("payment_amount") is not None:
+                raise serializers.ValidationError({"payment_amount": "A room charge collects no payment at the desk."})
         amount = attrs.get("payment_amount")
         if amount is not None and amount > attrs["expected_total"]:
             raise serializers.ValidationError({"payment_amount": "Amount received cannot exceed the sale total."})
@@ -190,12 +204,26 @@ def active_categories():
 def sale_payload(sale):
     order = sale.order
     tender = order.tenders.order_by("pk").first()
+    # A room-charge sale has no tender by design: it is a folio receivable.
+    # Report it honestly instead of as an unpaid tender-less sale.
+    if tender:
+        payment_method = tender.method
+        payment_reference = tender.external_reference or tender.reference
+        amount_paid = str(tender.amount)
+    elif order.folio_id:
+        payment_method = "ROOM_CHARGE"
+        payment_reference = order.folio.reference
+        amount_paid = "0.00"
+    else:
+        payment_method = None
+        payment_reference = None
+        amount_paid = "0.00"
     return {"reference": order.reference, "created_at": sale.created_at,
             "customer_type": "GUEST" if sale.guest_id else "WALK_IN", "guest_name": order.guest_name,
             "room_number": sale.room_number, "booking_reference": sale.booking.booking_reference if sale.booking_id else None,
-            "total": str(order.net_total), "payment_method": tender.method if tender else None,
-            "payment_reference": (tender.external_reference or tender.reference) if tender else None,
-            "amount_paid": str(tender.amount) if tender else "0.00",
+            "total": str(order.net_total), "payment_method": payment_method,
+            "payment_reference": payment_reference,
+            "amount_paid": amount_paid,
             "payment_status": order.settlement_status, "staff_name": order.created_by.full_name if order.created_by else "—",
             "lines": [{"name": l.order_line.item_name, "quantity": l.order_line.quantity,
                        "price": str(l.order_line.unit_price), "total": str(l.order_line.line_total)}
@@ -214,7 +242,7 @@ class MiniMartProductsView(APIView):
         return success_response({
             "results": catalogue(search=search, category_id=category_id, category=category),
             "categories": active_categories(),
-            "payment_methods": ["CASH", "CARD", "BANK_TRANSFER", "PAYSTACK"],
+            "payment_methods": ["CASH", "CARD", "BANK_TRANSFER", "PAYSTACK", "ROOM_CHARGE"],
             "cash_sessions": [{"reference": s.reference, "location": s.location} for s in sessions],
         })
 
@@ -228,7 +256,7 @@ class MiniMartCheckoutView(APIView):
         serializer.is_valid(raise_exception=True)
         sale, created = complete_sale(actor=request.user, data=serializer.validated_data)
         # Re-read order after the tender service updates its settlement status.
-        sale = MiniMartSale.objects.select_related("order", "booking").get(pk=sale.pk)
+        sale = MiniMartSale.objects.select_related("order", "booking", "order__folio").get(pk=sale.pk)
         return success_response({"created": created, "sale": sale_payload(sale), "products": catalogue()})
 
 

@@ -5,6 +5,11 @@ POS tender + immutable ledger path. Cash settles through the acting
 cashier's open session; electronic methods settle through bank/card
 clearing and require a transaction reference. Paystack references are
 verified against the gateway before the sale counts as paid.
+
+Room charge is NOT a tender: the sale becomes a receivable on the in-house
+guest's existing main folio, using the same folio posting path room service
+and laundry already use. It never marks the order paid — the guest still owes
+the amount on their folio.
 """
 import hashlib
 import json
@@ -32,6 +37,35 @@ def assert_seller(actor):
         raise PermissionDenied("Authorized front-desk sales access is required.")
 
 
+def _room_charge_context(*, guest, booking, actor):
+    """Resolve the in-house stay and its open main folio for a room charge.
+
+    Mirrors the eligibility rules room service already enforces: the guest must
+    be genuinely IN_HOUSE on the selected booking and the folio must be OPEN.
+    A folio charge is a receivable, so a guest who has checked out (or a
+    walk-in) cannot be charged.
+    """
+    from apps.finance.models import Folio
+    from apps.finance.services.folio_service import get_or_create_main_folio_for_stay
+    from apps.stays.models import Stay
+    from django.core.exceptions import ObjectDoesNotExist
+
+    if guest is None or booking is None:
+        raise ValidationError({"guest_id": "A room charge needs the in-house guest and their booking."})
+    try:
+        stay = booking.stay
+    except ObjectDoesNotExist:
+        raise ValidationError({"booking_id": "This guest has not checked in, so there is no folio to charge."})
+    stay = Stay.objects.select_for_update().get(pk=stay.pk)
+    if stay.status != Stay.Status.IN_HOUSE:
+        raise ValidationError({"booking_id": "Only an in-house guest can be charged to a room."})
+    folio, _ = get_or_create_main_folio_for_stay(stay=stay, actor=actor)
+    folio = Folio.objects.select_for_update().get(pk=folio.pk)
+    if folio.status != Folio.Status.OPEN:
+        raise ValidationError({"booking_id": "The guest's folio is not open, so it cannot take this charge."})
+    return stay, folio
+
+
 @transaction.atomic
 def complete_sale(*, actor, data):
     assert_seller(actor)
@@ -45,7 +79,7 @@ def complete_sale(*, actor, data):
             raise ValidationError("This checkout key was already used for a different cart.")
         return existing, False
     method = str(data.get("payment_method") or "CASH").upper()
-    if method not in ("CASH", "CARD", "BANK_TRANSFER", "PAYSTACK"):
+    if method not in ("CASH", "CARD", "BANK_TRANSFER", "PAYSTACK", "ROOM_CHARGE"):
         raise ValidationError({"payment_method": "Invalid payment method."})
     session = None
     if method == "CASH":
@@ -71,6 +105,9 @@ def complete_sale(*, actor, data):
             rooms = ", ".join(booking.room_assignments.select_related("room").values_list("room__room_number", flat=True))
     elif data.get("booking_id"):
         raise ValidationError({"guest_id": "Select the guest for this booking."})
+    stay = folio = None
+    if method == "ROOM_CHARGE":
+        stay, folio = _room_charge_context(guest=guest, booking=booking, actor=actor)
     ids = sorted(line["product_id"] for line in data["lines"])
     products = list(MiniMartProduct.objects.select_for_update().filter(pk__in=ids).order_by("pk"))
     if len(products) != len(ids):
@@ -94,7 +131,13 @@ def complete_sale(*, actor, data):
     order = PosOrder.objects.create(
         reference=f"MM-{timezone.now():%Y%m%d}-{secrets.token_hex(8).upper()}",
         mode=PosOrder.Mode.TAKEAWAY, created_by=actor, guest_name=guest.full_name if guest else "Walk-in customer",
-        subtotal=total, total_amount=total, settlement_status=PosOrder.SettlementStatus.UNPAID,
+        subtotal=total, total_amount=total,
+        # A room charge settles through the guest folio, exactly like room
+        # service: nothing has been paid, so it must never read UNPAID-as-if-a-
+        # tender-is-owed nor PAID.
+        settlement_status=(PosOrder.SettlementStatus.NOT_APPLICABLE if method == "ROOM_CHARGE"
+                           else PosOrder.SettlementStatus.UNPAID),
+        stay=stay, folio=folio,
         metadata={"minimart": True},
     )
     sale = MiniMartSale.objects.create(order=order, guest=guest, booking=booking, room_number=rooms,
@@ -117,15 +160,25 @@ def complete_sale(*, actor, data):
         transaction_type=FinancialTransaction.Type.POS_CHARGE, source_key=f"pos-charge:{order.reference}",
         idempotency_key=f"pos-charge:{order.reference}", actor=actor, source_reference=order.reference,
         narrative=f"Mini Mart sale {order.reference}", currency="NGN", business_date=hotel_today(),
-        metadata={"pos_order_id": order.pk, "minimart_sale_id": sale.pk},
-        lines=[{"account_code": accounting.ACCOUNTS_RECEIVABLE, "direction": FinancialLine.Direction.DEBIT, "amount": total},
+        metadata={"pos_order_id": order.pk, "minimart_sale_id": sale.pk,
+                  "folio_reference": folio.reference if folio else ""},
+        lines=[{"account_code": accounting.ACCOUNTS_RECEIVABLE, "direction": FinancialLine.Direction.DEBIT,
+                "amount": total, "folio": folio, "description": f"Mini Mart sale {order.reference}"},
                {"account_code": accounting.OTHER_OPERATING_REVENUE, "direction": FinancialLine.Direction.CREDIT, "amount": total}],
+        # The receivable must land on the guest's statement so the folio balance
+        # (not a phantom paid sale) reflects what the guest owes.
+        postings=([{"line_index": 0, "folio": folio, "kind": "CHARGE", "effect": "DEBIT", "amount": str(total),
+                    "description": f"Mini Mart {order.reference}", "source_reference": order.reference}]
+                  if folio else []),
     )
     order.charge_transaction = charge
     order.status = PosOrder.Status.DELIVERED
     order.delivered_at = timezone.now()
     order.save(update_fields=["charge_transaction", "status", "delivered_at", "updated_at"])
     PosOrderEvent.objects.create(order=order, type=PosOrderEvent.Type.DELIVERED, actor=actor, details={"minimart_sale_id": sale.pk})
+    if method == "ROOM_CHARGE":
+        # Charged to the folio — no tender, no cash movement, nothing marked paid.
+        return sale, True
     # Amount actually received (defaults to the full total for legacy cash
     # clients). Partial payments are preserved: capture_direct_tender caps
     # the tender at the outstanding balance and marks the order PARTIALLY_PAID.
