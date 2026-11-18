@@ -131,6 +131,7 @@ test("breakfast.html: the guest picker and the config banner populate", { skip: 
   const banner = doc.querySelector("[data-breakfast-config-status]");
   assert.ok(banner && /Enabled/i.test(banner.textContent),
     "the config banner must render the config: " + (banner && banner.textContent));
+  window.close();
 });
 
 test("amenities.html: the guest picker, the issue picker and the stock table populate", { skip: SKIP }, async () => {

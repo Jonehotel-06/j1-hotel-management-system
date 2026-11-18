@@ -3,8 +3,9 @@ import secrets
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
-from django.db.models import Case, Count, F, IntegerField, Q, Sum, Value, When
+from django.db.models import Case, Count, F, IntegerField, Min, Q, Sum, Value, When
 from django.utils.dateparse import parse_date
+from django.db.models.functions import Lower, Trim, Upper
 
 from apps.core.utils import hotel_date_bounds
 from drf_spectacular.utils import extend_schema
@@ -54,6 +55,11 @@ from .services.inventory_service import (
     reject_purchase_order, replenish_stock_item, resolve_entered_quantity, retire_stock_recipe,
     reverse_pos_stock_consumption, scoped_key, start_stock_count, submit_purchase_order, submit_stock_count,
     record_stock_issuance, transfer_stock, unit_label, update_purchase_order,
+)
+
+from .services.stock_routing import (
+    KITCHEN_ISSUE, LEGACY_KITCHEN, MANUAL_STOCK_OUT, kitchen_issue_query,
+    legacy_kitchen_query, locations_with_role, manual_stock_out_query,
 )
 
 
@@ -170,6 +176,10 @@ class StockLocationListCreateView(StockRecordingMixin, APIView):
     def get(self, request):
         queryset=StockLocation.objects.all().order_by("name")
         if request.query_params.get("active") == "true": queryset=queryset.filter(is_active=True)
+        kitchen = request.query_params.get("kitchen")
+        if kitchen in ("true", "false"):
+            matches = locations_with_role(StockLocation.OperationalRole.KITCHEN)
+            queryset = queryset.filter(matches) if kitchen == "true" else queryset.exclude(matches)
         if search:=request.query_params.get("search"):
             queryset=queryset.filter(Q(code__icontains=search)|Q(name__icontains=search))
         return _page(self, request, queryset, StockLocationSerializer)
@@ -240,14 +250,13 @@ class StockIssuanceView(StockRecordingMixin, APIView):
     permission_classes = [HasCapability]
     required_capability = "inventory.manage"
 
+    mode = MANUAL_STOCK_OUT
+
     def get(self, request):
+        workflow = (kitchen_issue_query() | legacy_kitchen_query()) if self.mode == KITCHEN_ISSUE else manual_stock_out_query()
         queryset = (
             StockMovement.objects.select_related("item", "location", "actor")
-            .filter(
-                issue_method=StockMovement.IssueMethod.MANUAL,
-                source_reference__startswith="MSO-",
-                type__in=[StockMovement.Type.ISSUE, StockMovement.Type.TRANSFER_OUT],
-            )
+            .filter(workflow, type__in=[StockMovement.Type.ISSUE, StockMovement.Type.TRANSFER_OUT])
             .order_by("-occurred_at", "-pk")
         )
         if search := (request.query_params.get("search") or "").strip():
@@ -266,6 +275,7 @@ class StockIssuanceView(StockRecordingMixin, APIView):
             queryset = queryset.filter(location_id=location_id)
         return _page(self, request, queryset, StockIssuanceReadSerializer)
 
+    @transaction.atomic
     def post(self, request):
         serializer = StockIssuanceCreateSerializer(data=request.data or {})
         serializer.is_valid(raise_exception=True)
@@ -281,7 +291,6 @@ class StockIssuanceView(StockRecordingMixin, APIView):
             destination_location = StockLocation.objects.filter(pk=data["destination_location_id"]).first()
             if destination_location is None:
                 raise ValidationError({"destination_location_id": "Unknown receiving store."})
-        mode = "KITCHEN_ISSUE" if "kitchen-issues" in (request.path or "") else "MANUAL_STOCK_OUT"
         movement, created = record_stock_issuance(
             item=item,
             source_location=source_location,
@@ -295,9 +304,16 @@ class StockIssuanceView(StockRecordingMixin, APIView):
             recipient=data.get("recipient") or "",
             reason=data["reason"],
             remarks=data.get("remarks") or "",
-            mode=mode,
+            mode=self.mode,
             idempotency_key=data.get("idempotency_key") or "",
         )
+        if created:
+            log_action(actor=request.user, action=f"{self.mode}_RECORDED", instance=movement, request=request,
+                       metadata={"reference": movement.source_reference, "item": item.sku,
+                                 "source_location_id": source_location.pk,
+                                 "destination_location_id": movement.metadata.get("destination_location_id"),
+                                 "quantity": str(abs(movement.quantity_delta)), "department": movement.department,
+                                 "movement_type": movement.type})
         return success_response(
             {"created": created, "transaction": StockIssuanceReadSerializer(movement).data},
             message="Stock issuance recorded." if created else "This stock issuance was already recorded.",
@@ -496,25 +512,48 @@ class StockBalanceListView(APIView):
     }
 
     def get(self, request):
-        queryset=StockBalance.objects.select_related("item", "location").order_by("item__sku", "location__code")
-        if item_id:=request.query_params.get("item_id"): queryset=queryset.filter(item_id=item_id)
-        if location_id:=request.query_params.get("location_id"): queryset=queryset.filter(location_id=location_id)
-        if request.query_params.get("reorder") == "true": queryset=queryset.filter(quantity_on_hand__lte=F("item__reorder_level"))
-        if item_type:=request.query_params.get("item_type"): queryset=queryset.filter(item__item_type=item_type)
-        if category:=(request.query_params.get("category") or "").strip():
-            queryset=queryset.filter(item__category__iexact=category)
-        if active:=request.query_params.get("active"):
-            queryset=queryset.filter(item__is_active=(active == "true"))
-        search=(request.query_params.get("search") or "").strip()
-        if search:
-            queryset=queryset.filter(
+        params = request.query_params
+        queryset = StockBalance.objects.select_related("item", "location")
+        if item_id := _positive_int_param(request, "item_id"):
+            queryset = queryset.filter(item_id=item_id)
+        if location_id := _positive_int_param(request, "location_id"):
+            queryset = queryset.filter(location_id=location_id)
+        if params.get("reorder") == "true":
+            queryset = queryset.filter(quantity_on_hand__lte=F("item__reorder_level"))
+        if item_type := params.get("item_type"):
+            queryset = queryset.filter(item__item_type=item_type)
+        if active := params.get("active"):
+            queryset = queryset.filter(item__is_active=(active == "true"))
+        if search := (params.get("search") or "").strip():
+            queryset = queryset.filter(
                 Q(item__sku__icontains=search) | Q(item__name__icontains=search)
                 | Q(item__category__icontains=search) | Q(item__barcode__icontains=search)
                 | Q(location__code__icontains=search) | Q(location__name__icontains=search)
             )
-        ordering=self.ORDERINGS.get(request.query_params.get("ordering") or "")
-        if ordering: queryset=queryset.order_by(*ordering)
-        return _page(self, request, queryset, StockBalanceSerializer)
+        # Facets are scoped to the same search, locations and stock visibility,
+        # but not the selected category or page. Never combine dissimilar units.
+        needs_facets = params.get("include_categories") == "true"
+        facets = queryset if needs_facets else None
+        category = (params.get("category") or "").strip().lower()
+        if category or params.get("uncategorized") == "true":
+            queryset = queryset.alias(category_key=Lower(Trim("item__category"))).filter(category_key=category)
+        ordering = self.ORDERINGS.get(params.get("ordering"), self.ORDERINGS["sku"])
+        response = _page(self, request, queryset.order_by(*ordering), StockBalanceSerializer)
+        if needs_facets:
+            groups = (facets.order_by().values(category_key=Lower(Trim("item__category")),
+                                                unit=Upper(Trim("item__base_unit")))
+                      .annotate(label=Min(Trim("item__category")), quantity=Sum("quantity_on_hand"))
+                      .order_by("category_key", "unit"))
+            categories = {}
+            for group in groups:
+                key = group["category_key"]
+                entry = categories.setdefault(key, {"key": key, "label": group["label"] or "Uncategorized", "units": []})
+                entry["units"].append({"unit": group["unit"], "quantity": str(group["quantity"].quantize(Decimal("0.0001")))})
+            response.data["data"] = {
+                "results": response.data["data"], "categories": list(categories.values()),
+                "locations": list(StockLocation.objects.order_by("name", "pk").values("id", "code", "name")),
+            }
+        return response
 
 
 @extend_schema(tags=["Admin · Inventory"], summary="Correct one stock balance (administrator only)")
@@ -641,6 +680,10 @@ class StockMovementListView(APIView):
         if item_id:=request.query_params.get("item_id"): queryset=queryset.filter(item_id=item_id)
         if location_id:=request.query_params.get("location_id"): queryset=queryset.filter(location_id=location_id)
         if movement_type:=request.query_params.get("type"): queryset=queryset.filter(type=movement_type)
+        workflows = {KITCHEN_ISSUE: kitchen_issue_query, LEGACY_KITCHEN: legacy_kitchen_query,
+                     MANUAL_STOCK_OUT: manual_stock_out_query}
+        if workflow := workflows.get(request.query_params.get("workflow")):
+            queryset = queryset.filter(workflow())
         if department:=request.query_params.get("department"): queryset=queryset.filter(department=department)
         if item_type:=request.query_params.get("item_type"): queryset=queryset.filter(item__item_type=item_type)
         start = request.query_params.get("start")

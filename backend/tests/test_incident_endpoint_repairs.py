@@ -27,7 +27,9 @@ from rest_framework.test import APITestCase
 
 from apps.accounts.models import User
 from apps.bookings.models import Booking, Guest
+from apps.bookings.services.booking_service import check_in_booking
 from apps.core.utils import hotel_today
+from apps.guest_services.services_amenities import allocate_reception_amenities
 from apps.guest_services.models import (
     BreakfastIssuance, GuestAmenityIssue, MiniMartCategory, MiniMartProduct,
 )
@@ -58,24 +60,19 @@ class IncidentEndpointTests(APITestCase):
             standard_cost=Decimal("100.00"), reorder_level=Decimal("2.0000"),
             category="Beverages",
         )
-        for location, qty, key in (
-            (self.main, "20", "inc-open-main"),
-            (self.reception, "5", "inc-open-reception"),
-        ):
-            record_stock_movement(
-                item=self.water, location=location,
-                movement_type=StockMovement.Type.OPENING,
-                quantity_delta=Decimal(qty), source_key=key, actor=self.keeper,
-            )
-
+        record_stock_movement(
+            item=self.water, location=self.main, movement_type=StockMovement.Type.OPENING,
+            quantity_delta=Decimal("25"), source_key="inc-open-main", actor=self.keeper,
+        )
+        allocate_reception_amenities(item=self.water, quantity="5", from_location=self.main, actor=self.keeper)
         self.room_type = make_room_type(name="Incident Standard")
         self.room = make_room(self.room_type, "204")
         self.guest = make_guest(email="inc-guest@test.dev", first_name="Ada", last_name="Obi")
         self.booking = make_booking(
             self.guest, self.room_type, rooms=[self.room],
             check_in=hotel_today(), check_out=hotel_today() + timedelta(days=2),
-            status=Booking.Status.CHECKED_IN,
         )
+        check_in_booking(self.booking, staff_user=self.receptionist)
         self.client.force_authenticate(user=self.admin)
 
     def payload(self, response):
@@ -240,14 +237,10 @@ class IncidentEndpointTests(APITestCase):
             {"INC-WATER": Decimal("5.0000")},
         )
 
-    def test_amenities_stock_honours_an_explicit_location(self):
-        response = self.client.get(
-            "/api/admin/service-requests/reception/amenities/stock/",
-            {"location_id": self.main.pk})
-        self.assertEqual(response.status_code, 200)
-        body = self.payload(response)
-        self.assertEqual(body["location"]["id"], self.main.pk)
-        self.assertEqual(Decimal(body["balances"][0]["quantity"]), Decimal("20.0000"))
+    def test_amenities_stock_refuses_an_explicit_non_reception_location(self):
+        response = self.client.get("/api/admin/service-requests/reception/amenities/stock/", {"location_id": self.main.pk})
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("location_id", response.json()["errors"])
 
     def test_amenities_issues_list_filters_by_booking(self):
         response = self.client.get(

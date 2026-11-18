@@ -15,7 +15,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
-from apps.core.utils import hotel_today
+from apps.core.utils import hotel_today, parse_whole_count
 
 from ..models import LaundryItem, LaundryOrder
 
@@ -82,7 +82,7 @@ def create_laundry_order(*, actor, items, stay=None, room=None, notes="", idempo
         if not description:
             raise ValidationError({"items": f"Item {index + 1} needs a description."})
         try:
-            quantity = int(raw.get("quantity") or 1)
+            quantity = parse_whole_count(raw.get("quantity", 1), maximum=32767)
         except (TypeError, ValueError) as exc:
             raise ValidationError({"items": f"Item {index + 1} quantity must be a whole number."}) from exc
         if quantity <= 0:

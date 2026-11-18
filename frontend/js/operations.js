@@ -168,7 +168,7 @@
           // `onSelect(row)` lets a caller react to the chosen record (e.g. the
           // replenishment dialog shows that item's unit and balance). Optional:
           // every existing picker keeps working unchanged.
-          if (typeof options.onSelect === "function") options.onSelect(row);
+          if (typeof options.onSelect === "function") options.onSelect(row, mount.closest("form"));
         });
         wrap.appendChild(input);
         wrap.appendChild(chosen);
@@ -310,6 +310,7 @@
             if (typeof part.field.when === "function") {
               part.wrap.hidden = !part.field.when(line.record, line.values);
             }
+            if (typeof part.field.configure === "function") part.field.configure(part.control, line.record, line.values);
             if (part.hint) part.hint.textContent = part.field.hint(line.record, line.values) || "";
           });
         }
@@ -341,7 +342,7 @@
             hint = document.createElement("div"); hint.className = "caption op-line-picker-hint";
             wrap.appendChild(hint);
           }
-          parts.push({ wrap: wrap, field: field, hint: hint });
+          parts.push({ wrap: wrap, field: field, control: control, hint: hint });
         });
         row.appendChild(controls);
         if (parts.length) refreshHint();

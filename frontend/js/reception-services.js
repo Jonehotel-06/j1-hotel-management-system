@@ -58,30 +58,39 @@
         ((b && b.rooms) || []).forEach(n => room.add(new Option(n,n)));
         if (b && b.rooms.length === 1) room.value = b.rooms[0];
       }
-      if (context) context.textContent = b ? g.full_name + " · " + b.reference + " · Room " + (b.rooms.join(", ") || "not assigned") + " · " + b.check_in + " to " + b.check_out + " · " + b.status : (g ? "No current stay selected. Select a booking where applicable." : "Select a guest to view their stay.");
+      const occupants = b && (b.occupants || []).map(person => person.name + " (" + person.rooms.join(", ") + ")").join(", ");
+      if (context) context.textContent = b ? g.full_name + " · " + b.reference + " · Room " + (b.rooms.join(", ") || "not assigned") + " · " + b.check_in + " to " + b.check_out + " · " + b.status + (occupants ? " · Named occupants: " + occupants : "") : (g ? "No current stay selected. Select a booking where applicable." : "Select a guest to view their stay.");
     }
-    function guestChange() {
+    function guestChange(keepBooking, keepRoom) {
       const g = rows.find(g => String(g.id) === select.value);
       booking.innerHTML = '<option value="">— No current stay —</option>';
       ((g && g.bookings) || []).forEach(b => booking.add(new Option(b.reference + " · " + b.rooms.join(", ") + " · " + b.check_in + " – " + b.check_out, b.id)));
       if (g && g.bookings.length === 1) booking.value = g.bookings[0].id;
+      if (keepBooking && g && g.bookings.some(b => String(b.id) === keepBooking)) booking.value = keepBooking;
       contextChange();
+      if(room && keepRoom && Array.from(room.options).some(o=>o.value===keepRoom)) room.value=keepRoom;
     }
     /* One in-flight read at a time: `seq` discards the response of a superseded
        search so a slow early keystroke can never overwrite the newer results. */
     async function load(term) {
-      const current = ++seq, keep = select.value;
+      const current = ++seq, keep = select.value, keepBooking=booking.value, keepRoom=room&&room.value;
       const cleaned = String(term || "").trim();
       lastTerm = cleaned;
       select.disabled = true;
       if (context && cleaned) context.textContent = "Searching for “" + cleaned + "”…";
       try {
-        const data = unwrap(await API.get(base + "reception/guests/?search=" + encodeURIComponent(cleaned)));
+        const parameters=new URLSearchParams({search:cleaned});
+        if(opts && opts.scope === "breakfast"){
+          parameters.set("scope","breakfast");
+          const serviceDate=form.elements.service_date;
+          if(serviceDate && serviceDate.value)parameters.set("service_date",serviceDate.value);
+        }
+        const data = unwrap(await API.get(base + "reception/guests/?" + parameters));
         if (current !== seq) return;
         rows = listOf(data);
         select.innerHTML = '<option value="">— Select guest (search to refine) —</option>';
         rows.forEach(g => select.add(new Option(
-          g.full_name + ((g.bookings && g.bookings.length) ? " · Room " + g.bookings.map(b => (b.rooms || []).join(", ")).filter(Boolean).join(" / ") : ""),
+          g.full_name + (g.breakfast_served ? " (breakfast recorded)" : "") + ((g.bookings && g.bookings.length) ? " · Room " + g.bookings.map(b => (b.rooms || []).join(", ")).filter(Boolean).join(" / ") : ""),
           g.id
         )));
         if (keep && rows.some(g => String(g.id) === String(keep))) select.value = keep;
@@ -95,10 +104,11 @@
             : "No guest with a current stay was found. Check the booking reference and try again.";
           return;
         }
-        guestChange();
+        guestChange(keepBooking,keepRoom);
       } catch(err) {
         if (current !== seq) return;
         rows = [];
+        guestChange();
         select.innerHTML = '<option value="">Unable to load guests — search again to retry</option>';
         if (context) context.textContent = err.message || "Guests could not be loaded.";
       } finally { if (current === seq) select.disabled = false; }
@@ -137,7 +147,7 @@
         if (room && params.get('room') && g.bookings[0].rooms.includes(params.get('room'))) room.value=params.get('room');
       } catch(err) { if (context) context.textContent=err.message; }
     });
-    return {reload:load};
+    return {reload:load, refresh:()=>load(lastTerm)};
   }
   window.ReceptionServices = {base,unwrap,listOf,loading,error,key,tabs,postOnce,guests};
 })();

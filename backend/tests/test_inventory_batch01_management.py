@@ -263,28 +263,28 @@ class StockAtHandAdjustmentTests(Batch01Base):
     def test_an_administrator_correction_is_recorded_with_actor_quantities_and_reason(self):
         self.auth(self.admin)
         response = self.client.post(self._adjust_url(), {
-            "quantity": "7.5", "reason": "Physical count: three bottles broken", "notes": "Week 44 count",
+            "quantity": "7", "reason": "Physical count: three bottles broken", "notes": "Week 44 count",
             "idempotency_key": "b1-adj-1",
         }, format="json")
         self.assertEqual(response.status_code, 201, response.content)
         adjustment = StockBalanceAdjustment.objects.get()
         self.assertEqual(adjustment.actor, self.admin)
         self.assertEqual(adjustment.previous_quantity, Decimal("10.0000"))
-        self.assertEqual(adjustment.new_quantity, Decimal("7.5000"))
-        self.assertEqual(adjustment.quantity_delta, Decimal("-2.5000"))
+        self.assertEqual(adjustment.new_quantity, Decimal("7.0000"))
+        self.assertEqual(adjustment.quantity_delta, Decimal("-3.0000"))
         self.assertEqual(adjustment.reason, "Physical count: three bottles broken")
         self.assertEqual(adjustment.base_unit, "PIECE")
         self.assertIsNotNone(adjustment.created_at)
         self.assertEqual(adjustment.movement.type, StockMovement.Type.ADJUSTMENT)
-        self.assertEqual(adjustment.movement.quantity_delta, Decimal("-2.5000"))
+        self.assertEqual(adjustment.movement.quantity_delta, Decimal("-3.0000"))
         self.balance.refresh_from_db()
-        self.assertEqual(self.balance.quantity_on_hand, Decimal("7.5000"))
+        self.assertEqual(self.balance.quantity_on_hand, Decimal("7.0000"))
         # The audit trail names the administrator and both quantities.
         entry = AuditLog.objects.filter(action="STOCK_BALANCE_ADJUSTED").first()
         self.assertIsNotNone(entry)
         self.assertEqual(entry.actor, self.admin)
         self.assertEqual(entry.changes["previous_quantity"], "10.0000")
-        self.assertEqual(entry.changes["new_quantity"], "7.5000")
+        self.assertEqual(entry.changes["new_quantity"], "7.0000")
         self.assertEqual(entry.metadata["reason"], "Physical count: three bottles broken")
 
     def test_the_correction_is_an_append_only_movement_and_history_keeps_its_values(self):

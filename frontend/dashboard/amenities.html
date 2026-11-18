@@ -81,11 +81,11 @@
       <section class="tab-panel" data-panel="stock">
         <div class="card">
           <div class="card-header">
-            <h2>Reception Department Stock</h2>
+            <h2>Eligible Reception Amenity Stock</h2>
             <button class="btn btn-sm btn-outline" data-amenity-refresh><span data-icon="refresh" data-size="14"></span> Refresh</button>
           </div>
           <div class="card-body">
-            <div class="form-group"><label for="amenity-shelf">Configured department store</label><select id="amenity-shelf" data-amenity-shelf-select><option value="">Use the server's configured Reception store</option></select><span class="caption">Choose the active stock location marked as the Reception store in Inventory. No location code is hard-coded.</span></div>
+            <div class="form-group"><label for="amenity-shelf">Configured department store</label><select id="amenity-shelf" data-amenity-shelf-select><option value="">Use the server's configured Reception store</option></select><span class="caption">Only stock specifically issued from Main Store for guest amenities is available here. Retail stock is excluded.</span></div>
             <div class="form-group"><label for="amenity-stock-search">Search stock</label><input id="amenity-stock-search" type="search" data-amenity-stock-search placeholder="Item name, SKU or barcode" autocomplete="off" aria-describedby="amenity-stock-search-hint"><span class="caption" id="amenity-stock-search-hint">Filters the shelf below as you type. No page refresh needed.</span></div>
             <div data-amenity-stock-container>
               <div class="service-loading" role="status" aria-label="Loading"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
@@ -97,7 +97,7 @@
       <!-- Allocate tab -->
       <section class="tab-panel hidden" data-panel="allocate">
         <div class="card">
-          <div class="card-header"><h2>Allocate Amenities to Reception</h2></div>
+          <div class="card-header"><h2>Issue Amenities from Main Store to Reception</h2></div>
           <div class="card-body">
             <form data-amenity-allocate-form>
               <div class="form-group">
@@ -114,7 +114,7 @@
                   <label for="amenities-input-6052">Quantity *</label><input id="amenities-input-6052" type="number" name="quantity" step="0.0001" min="0.0001" required placeholder="e.g. 30">
                 </div>
                 <div class="form-group">
-                  <label for="amenities-select-6274">From Location *</label><select id="amenities-select-6274" name="from_location_id" required data-amenity-location-select></select>
+                  <label for="amenities-select-6274">Main Store *</label><select id="amenities-select-6274" name="from_location_id" required data-amenity-location-select></select>
                 </div>
                 <div class="form-group">
                   <label for="amenities-department-store">Reception store</label><select id="amenities-department-store" name="location_id" data-amenity-department-location-select><option value="">Use configured default</option></select>
@@ -183,7 +183,7 @@
             <button class="btn btn-sm btn-outline" data-amenity-history-refresh><span data-icon="refresh" data-size="14"></span> Refresh</button>
           </div>
           <div class="card-body">
-            <div data-amenity-history-container>
+            <div class="table-wrap" tabindex="0" data-amenity-history-container>
               <div class="service-loading" role="status" aria-label="Loading"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
             </div>
           </div>

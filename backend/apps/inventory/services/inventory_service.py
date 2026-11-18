@@ -25,6 +25,10 @@ from ..models import (
     StockRecipeLine, StockUnit, Supplier,
 )
 
+from .stock_routing import (
+    KITCHEN_DEPARTMENTS, KITCHEN_ISSUE, MANUAL_STOCK_OUT, kitchen_destination, location_role,
+)
+
 logger = logging.getLogger("apps")
 
 QTY = Decimal("0.0001")
@@ -45,11 +49,14 @@ TRIGGER_CATCH_UP = "CATCH_UP"
 DIRECT_SALE_SOURCE = "DIRECT_SALE"
 
 
-def _quantity(value, *, field="quantity", positive=False):
+def _quantity(value, *, field="quantity", positive=False, exact=False):
     try:
-        amount = Decimal(str(value)).quantize(QTY, rounding=ROUND_HALF_UP)
+        typed = Decimal(str(value))
+        amount = typed.quantize(QTY, rounding=ROUND_HALF_UP)
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise ValidationError({field: "Enter a valid quantity to four decimal places."}) from exc
+    if not amount.is_finite() or (exact and amount != typed):
+        raise ValidationError({field: "Enter a valid quantity to four decimal places."})
     if positive and amount <= Decimal("0.0000"):
         raise ValidationError({field: "Quantity must be greater than zero."})
     if not positive and amount == Decimal("0.0000"):
@@ -156,7 +163,7 @@ def _assert_store_has_stock(*, item, location, base_quantity):
     always followed by the authoritative locked check inside
     ``record_stock_movement``, so concurrent issues can still never go negative.
     """
-    balance = StockBalance.objects.filter(item=item, location=location).first()
+    balance = StockBalance.objects.select_for_update().filter(item=item, location=location).first()
     available = Decimal(balance.quantity_on_hand if balance else 0).quantize(QTY)
     requested = Decimal(base_quantity).quantize(QTY)
     if requested > available:
@@ -202,11 +209,11 @@ def record_stock_movement(
     source_key = str(source_key or "").strip()
     if not source_key:
         raise ValidationError("A stable stock movement source key is required.")
+    item = StockItem.objects.select_for_update().get(pk=item.pk)
+    location = StockLocation.objects.select_for_update().get(pk=location.pk)
     existing = StockMovement.objects.select_for_update().filter(source_key=source_key).first()
     if existing:
         return existing, False
-    item = StockItem.objects.select_for_update().get(pk=item.pk)
-    location = StockLocation.objects.select_for_update().get(pk=location.pk)
     if not item.is_active:
         raise ValidationError("Inactive stock items cannot receive new movements.")
     if not location.is_active:
@@ -287,8 +294,14 @@ def issue_stock(
     assert_can_record_stock(actor, action="record stock in the inventory ledger")
     if movement_type not in {StockMovement.Type.ISSUE, StockMovement.Type.MAINTENANCE_ISSUE, StockMovement.Type.WRITE_OFF}:
         raise ValidationError("This issue operation only supports controlled outgoing stock movement types.")
-    quantity = _quantity(quantity, positive=True)
     department = _department(department)
+    if (movement_type == StockMovement.Type.ISSUE and department in KITCHEN_DEPARTMENTS
+            and not preparation_batch and (metadata or {}).get("mode") != KITCHEN_ISSUE):
+        raise ValidationError({"department": "Use Kitchen Issues for stock issued to the Kitchen."})
+    item = StockItem.objects.select_for_update().get(pk=item.pk)
+    location = StockLocation.objects.select_for_update().get(pk=location.pk)
+    require_whole_count(quantity, unit=item.base_unit)
+    quantity = _quantity(quantity, positive=True)
     recipient = str(recipient or "").strip()[:120]
     if item.is_reusable_asset and not recipient:
         # A towel or a plate leaving the store is custody, not consumption: the
@@ -300,6 +313,12 @@ def issue_stock(
         raise ValidationError({
             "notes": "A reusable asset can only be written off with a reason. Use the notes field to say what happened."
         })
+    existing = StockMovement.objects.select_for_update().filter(source_key=source_key).first()
+    if existing is not None:
+        if (existing.item_id, existing.location_id, existing.type, existing.quantity_delta, existing.department,
+                existing.recipient) != (item.pk, location.pk, movement_type, -quantity, department, recipient):
+            raise ValidationError({"idempotency_key": "This key already identifies a different stock issue."})
+        return existing, False
     _assert_store_has_stock(item=item, location=location, base_quantity=quantity)
     return record_stock_movement(
         item=item, location=location, movement_type=movement_type, quantity_delta=-quantity,
@@ -339,9 +358,6 @@ def create_manual_ingredient_issue(
     menu_item = MenuItem.objects.filter(pk=menu_item_id, is_active=True).first()
     if menu_item is None:
         raise ValidationError({"menu_item_id": "Choose an active existing POS dish."})
-    location = StockLocation.objects.select_for_update().filter(pk=location_id, is_active=True).first()
-    if location is None:
-        raise ValidationError({"location_id": "Choose an active stock location."})
     department = _department(department)
     recipient = str(recipient or "").strip()[:120]
     if not recipient:
@@ -365,10 +381,14 @@ def create_manual_ingredient_issue(
         raise ValidationError({"lines": "An ingredient may appear once per batch."})
     items = {
         item.pk: item
-        for item in StockItem.objects.select_for_update().filter(pk__in=item_ids, is_active=True)
+        for item in StockItem.objects.select_for_update().filter(pk__in=item_ids, is_active=True).order_by("pk")
     }
     if len(items) != len(item_ids):
         raise ValidationError({"lines": "One or more stock items are inactive or missing."})
+
+    location = StockLocation.objects.select_for_update().filter(pk=location_id, is_active=True).first()
+    if location is None:
+        raise ValidationError({"location_id": "Choose an active stock location."})
 
     fingerprint = _manual_issue_fingerprint(
         menu_item_id=menu_item.pk, location_id=location.pk, department=department,
@@ -463,25 +483,41 @@ def transfer_stock(*, item, from_location, to_location, quantity, actor, transfe
     assert_can_record_stock(actor, action="record stock in the inventory ledger")
     if from_location.pk == to_location.pk:
         raise ValidationError("Stock transfer locations must differ.")
-    quantity = _quantity(quantity, positive=True)
     transfer_key = str(transfer_key or "").strip()
     if not transfer_key:
         raise ValidationError("A stable transfer key is required.")
-    # Lock locations consistently before both legs; the movement service locks
-    # the item/balance rows and source keys make a retry converge.
-    locations = sorted([from_location, to_location], key=lambda row: row.pk)
-    list(StockLocation.objects.select_for_update().filter(pk__in=[row.pk for row in locations]).order_by("pk"))
+    item = StockItem.objects.select_for_update().get(pk=item.pk)
+    locked = {row.pk: row for row in StockLocation.objects.select_for_update()
+              .filter(pk__in=[from_location.pk, to_location.pk]).order_by("pk")}
+    from_location, to_location = locked[from_location.pk], locked[to_location.pk]
+    if (location_role(to_location) == StockLocation.OperationalRole.KITCHEN
+            and (metadata or {}).get("mode") != KITCHEN_ISSUE):
+        raise ValidationError({"to_location_id": "Use Kitchen Issues to transfer stock into the Kitchen Store."})
+    require_whole_count(quantity, unit=item.base_unit)
+    quantity = _quantity(quantity, positive=True)
+    # Read both legs before checking today's balance: even when a prior
+    # transfer used the very last unit, a transport retry must return it.
+    out_key, in_key = f"transfer:{transfer_key}:out", f"transfer:{transfer_key}:in"
+    prior = {row.source_key: row for row in StockMovement.objects.select_for_update()
+             .filter(source_key__in=(out_key, in_key))}
+    if prior:
+        outbound, inbound = prior.get(out_key), prior.get(in_key)
+        if (not outbound or not inbound or outbound.item_id != item.pk or inbound.item_id != item.pk
+                or outbound.location_id != from_location.pk or inbound.location_id != to_location.pk
+                or outbound.quantity_delta != -quantity or inbound.quantity_delta != quantity):
+            raise ValidationError({"idempotency_key": "This key already identifies a different or incomplete stock transfer."})
+        return (outbound, inbound), False
     _assert_store_has_stock(item=item, location=from_location, base_quantity=quantity)
     outbound, outbound_created = record_stock_movement(
         item=item, location=from_location, movement_type=StockMovement.Type.TRANSFER_OUT, quantity_delta=-quantity,
-        source_key=f"transfer:{transfer_key}:out", actor=actor,
+        source_key=out_key, actor=actor,
         source_reference=source_reference or transfer_key, notes=notes,
         department=department, recipient=recipient, issue_method=StockMovement.IssueMethod.MANUAL,
         metadata=metadata,
     )
     inbound, inbound_created = record_stock_movement(
         item=item, location=to_location, movement_type=StockMovement.Type.TRANSFER_IN, quantity_delta=quantity,
-        source_key=f"transfer:{transfer_key}:in", actor=actor,
+        source_key=in_key, actor=actor,
         source_reference=source_reference or transfer_key, notes=notes,
         department=department, recipient=recipient, issue_method=StockMovement.IssueMethod.MANUAL,
         metadata=metadata,
@@ -520,6 +556,7 @@ def _validate_po_lines(lines):
     normalized = []
     for raw, item_id in zip(values, item_ids):
         item = items[item_id]
+        require_whole_count(raw.get("quantity_ordered"), unit=item.base_unit, field="quantity_ordered")
         normalized.append({
             "item": item,
             "quantity_ordered": _quantity(raw.get("quantity_ordered"), field="quantity_ordered", positive=True),
@@ -1100,7 +1137,7 @@ def _validate_receipt_retry(existing, *, po, raw_lines, received_on, supplier_de
 def receive_goods(*, purchase_order, receipt_lines, actor, source_key, received_on=None, supplier_delivery_reference="", notes=""):
     """Receive bounded PO quantities and append stock receipts exactly once."""
     assert_can_record_stock(actor, action="record received stock")
-    po = PurchaseOrder.objects.select_for_update().select_related("supplier", "delivery_location").get(pk=purchase_order.pk)
+    po = PurchaseOrder.objects.select_for_update().get(pk=purchase_order.pk)
     source_key = str(source_key or "").strip()
     if not source_key: raise ValidationError("A stable receipt source key is required.")
     raw_lines = list(receipt_lines or ())
@@ -1118,11 +1155,18 @@ def receive_goods(*, purchase_order, receipt_lines, actor, source_key, received_
         try: line_ids.append(int(raw["purchase_order_line_id"]))
         except (KeyError, TypeError, ValueError) as exc: raise ValidationError({"lines": "Each receipt line needs purchase_order_line_id."}) from exc
     if len(set(line_ids)) != len(line_ids): raise ValidationError({"lines": "A purchase-order line may appear once per receipt."})
-    po_lines = {line.pk: line for line in PurchaseOrderLine.objects.select_for_update().select_related("item").filter(purchase_order=po, pk__in=line_ids)}
+    po_lines = {line.pk: line for line in PurchaseOrderLine.objects.select_for_update().filter(purchase_order=po, pk__in=line_ids).order_by("pk")}
     if len(po_lines) != len(line_ids): raise ValidationError({"lines": "One or more purchase-order lines do not belong to this order."})
+    items = {item.pk: item for item in StockItem.objects.select_for_update().filter(
+        pk__in={line.item_id for line in po_lines.values()},
+    ).order_by("pk")}
+    for line in po_lines.values():
+        line.item = items[line.item_id]
     normalized=[]
     for raw, line_id in zip(raw_lines, line_ids):
         po_line=po_lines[line_id]
+        for field in ("quantity_received", "quantity_damaged", "quantity_rejected"):
+            require_whole_count(raw.get(field) or 0, unit=po_line.item.base_unit, field=field)
         qty = _nonnegative_quantity(raw.get("quantity_received"), field="quantity_received")
         damaged = _nonnegative_quantity(raw.get("quantity_damaged", 0), field="quantity_damaged")
         rejected = _nonnegative_quantity(raw.get("quantity_rejected", 0), field="quantity_rejected")
@@ -1316,6 +1360,32 @@ def canonical_unit(unit) -> str:
     return UNIT_ALIASES.get(token, token)
 
 
+# Only units that are normally indivisible stock counts. Measured units (even
+# shots, which the existing converter treats as volume) and unknown/custom
+# units retain decimals. Partial packages are allowed as conversion inputs if
+# they resolve to a whole number of individually counted base units.
+WHOLE_COUNT_BASE_UNITS = PACK_UNITS | {
+    "pc", "unit", "dozen", "pair", "bottle", "can", "tin", "sachet", "plate", "glass",
+    "towel", "sheet", "portion", "portions", "serving", "servings", "item", "items",
+    "loaf", "loaves", "tube", "tubes", "bar", "bars",
+}
+
+
+def is_whole_count_unit(unit):
+    return canonical_unit(unit) in WHOLE_COUNT_BASE_UNITS
+
+
+def require_whole_count(value, *, unit, field="quantity"):
+    if not is_whole_count_unit(unit):
+        return
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValidationError({field: "Enter a valid quantity."}) from exc
+    if not number.is_finite() or number != number.to_integral_value():
+        raise ValidationError({field: f"Enter a whole number of {unit_label(unit).lower()}; this item is counted, not measured."})
+
+
 def _family_member(unit):
     """``(family, ratio)`` for a unit inside one family, else ``(None, None)``.
 
@@ -1329,7 +1399,7 @@ def _family_member(unit):
     return None, None
 
 
-def convert_stock_quantity(quantity, *, from_unit=None, to_unit=None, conversion_factor=None, item=None) -> Decimal:
+def convert_stock_quantity(quantity, *, from_unit=None, to_unit=None, conversion_factor=None, item=None, whole_count=False) -> Decimal:
     """Convert a typed quantity into a stock item's base unit, exactly.
 
     Every path either produces an exact :class:`~decimal.Decimal` result or
@@ -1346,25 +1416,34 @@ def convert_stock_quantity(quantity, *, from_unit=None, to_unit=None, conversion
       is supplied and its ``units_per_pack`` gives the container size;
     * anything else raises ``ValidationError`` naming both units.
     """
-    amount = _quantity(quantity, field="quantity", positive=True)
+    def converted(value):
+        if whole_count:
+            require_whole_count(value, unit=to_unit)
+            if value != value.quantize(QTY):
+                raise ValidationError({"quantity": "This conversion exceeds four decimal places in the stock unit. Enter the exact base quantity."})
+        return value.quantize(QTY, rounding=ROUND_HALF_UP)
+
+    if whole_count and (not from_unit or canonical_unit(from_unit) == canonical_unit(to_unit)):
+        require_whole_count(quantity, unit=to_unit)
+    amount = _quantity(quantity, field="quantity", positive=True, exact=whole_count)
     if conversion_factor is not None and str(conversion_factor).strip() != "":
-        factor = _quantity(conversion_factor, field="conversion_factor", positive=True)
-        return (amount * factor).quantize(QTY, rounding=ROUND_HALF_UP)
+        factor = _quantity(conversion_factor, field="conversion_factor", positive=True, exact=whole_count)
+        return converted(amount * factor)
     src = canonical_unit(from_unit)
     dst = canonical_unit(to_unit)
     if not src or not dst or src == dst:
-        return amount.quantize(QTY, rounding=ROUND_HALF_UP)
+        return converted(amount)
     src_family, src_factor = _family_member(src)
     dst_family, dst_factor = _family_member(dst)
     if src_family and src_family == dst_family:
-        return (amount * src_factor / dst_factor).quantize(QTY, rounding=ROUND_HALF_UP)
+        return converted(amount * src_factor / dst_factor)
     if item is not None and getattr(item, "units_per_pack", None):
         base_unit = canonical_unit(getattr(item, "base_unit", ""))
         pack_size = _quantity(item.units_per_pack, field="units_per_pack", positive=True)
         if src in PACK_UNITS and dst == base_unit:
-            return (amount * pack_size).quantize(QTY, rounding=ROUND_HALF_UP)
+            return converted(amount * pack_size)
         if dst in PACK_UNITS and src == base_unit:
-            return (amount / pack_size).quantize(QTY, rounding=ROUND_HALF_UP)
+            return converted(amount / pack_size)
     raise ValidationError({
         "unit": (
             f"'{from_unit}' cannot be converted to '{to_unit}'. Record this line in the item's own "
@@ -1402,7 +1481,7 @@ def resolve_entered_quantity(
     base_token = canonical_unit(getattr(item, "base_unit", ""))
     factor = None
     if conversion_factor is not None and str(conversion_factor).strip() != "":
-        factor = _quantity(conversion_factor, field="conversion_factor", positive=True)
+        factor = _quantity(conversion_factor, field="conversion_factor", positive=True, exact=True)
     if factor is not None and unit_token and unit_token == base_token:
         raise ValidationError({
             "conversion_factor": (
@@ -1449,7 +1528,7 @@ def resolve_entered_quantity(
     base_quantity = convert_stock_quantity(
         quantity, from_unit=unit, to_unit=getattr(item, "base_unit", ""),
         conversion_factor=factor,
-        item=item if allow_declared_pack_size else None,
+        item=item if allow_declared_pack_size else None, whole_count=True,
     )
     if base_quantity <= 0 or base_quantity >= MAX_LEDGER_QUANTITY:
         raise ValidationError({
@@ -1519,8 +1598,9 @@ def adjust_stock_balance(
     cannot exist.
     """
     assert_can_record_stock(actor, action="record stock in the inventory ledger")
-    balance = StockBalance.objects.select_for_update().select_related("item", "location").get(pk=balance.pk)
-    item, location = balance.item, balance.location
+    item = StockItem.objects.select_for_update().get(pk=balance.item_id)
+    location = StockLocation.objects.select_for_update().get(pk=balance.location_id)
+    balance = StockBalance.objects.select_for_update().get(pk=balance.pk)
     # A retried request (lost reply, double submit) must return the correction
     # it already made, not a confusing "nothing changed" refusal. The key is
     # therefore resolved BEFORE the rules that the first, successful call has
@@ -1538,6 +1618,7 @@ def adjust_stock_balance(
         raise ValidationError({"item_id": "Inactive stock items cannot be adjusted."})
     if not location.is_active:
         raise ValidationError({"location_id": "Inactive stock locations cannot be adjusted."})
+    require_whole_count(new_quantity, unit=item.base_unit)
     try:
         corrected = Decimal(str(new_quantity)).quantize(QTY, rounding=ROUND_HALF_UP)
     except (InvalidOperation, TypeError, ValueError) as exc:
@@ -2515,7 +2596,7 @@ def key_for_pos_return(*, return_reference, location_id, item_id):
 def record_stock_issuance(
     *, item, source_location, destination_location=None, quantity, actor, unit=None,
     conversion_factor=None, destination="", department="", recipient="", reason="",
-    remarks="", mode="MANUAL_STOCK_OUT", idempotency_key="",
+    remarks="", mode=MANUAL_STOCK_OUT, idempotency_key="",
 ):
     """Record one independent, source-keyed stock issue or store hand-over.
 
@@ -2526,6 +2607,31 @@ def record_stock_issuance(
     the existing append-only ``StockMovement`` and locked ``StockBalance``.
     """
     assert_can_record_stock(actor, action="record stock issuance")
+    item = StockItem.objects.select_for_update().get(pk=item.pk)
+    location_ids = [source_location.pk] + ([destination_location.pk] if destination_location else [])
+    locked = {row.pk: row for row in StockLocation.objects.select_for_update()
+              .filter(pk__in=location_ids).order_by("pk")}
+    source_location = locked[source_location.pk]
+    if destination_location:
+        destination_location = locked[destination_location.pk]
+    department = _department(department)
+    reason = str(reason or "").strip().upper()
+    destination = str(destination or "").strip()[:120]
+    kitchen_store = (destination_location is not None and
+                     location_role(destination_location) == StockLocation.OperationalRole.KITCHEN)
+    if mode == KITCHEN_ISSUE:
+        if destination_location is not None and not kitchen_store:
+            raise ValidationError({"destination_location_id": "Select a configured Kitchen Store for a kitchen transfer."})
+        if department and department not in KITCHEN_DEPARTMENTS:
+            raise ValidationError({"department": "Kitchen Issues must be issued to a kitchen department."})
+        if reason != "KITCHEN":
+            raise ValidationError({"reason": "Choose Kitchen for a Kitchen Issue."})
+        department = department or StockDepartment.KITCHEN
+    elif mode == MANUAL_STOCK_OUT:
+        if kitchen_store or department in KITCHEN_DEPARTMENTS or reason == "KITCHEN" or kitchen_destination(destination):
+            raise ValidationError({"destination": "Kitchen-bound stock must be recorded under Kitchen Issues."})
+    else:
+        raise ValidationError({"mode": "Unknown stock issuance workflow."})
     if not item.is_active:
         raise ValidationError({"item_id": "Inactive stock items cannot be issued."})
     if not source_location.is_active:
@@ -2554,41 +2660,43 @@ def record_stock_issuance(
         quantity, item=item, unit=selected_unit or item.base_unit,
         conversion_factor=conversion_factor, allow_declared_pack_size=False,
     )
-    # Genuine-shortage pre-check at THIS store: reporting requested vs available
-    # in the item's base unit turns an opaque ledger rejection into an actionable
-    # message. The authoritative guard inside record_stock_movement still runs
-    # under the balance row lock, so this can never permit negative stock.
-    _assert_store_has_stock(item=item, location=source_location, base_quantity=base_quantity)
     raw_key = str(idempotency_key or "").strip()
     movement_key = scoped_key(
         prefix="manual-stock-out", scope=f"staff:{getattr(actor, 'pk', 'system')}", raw_key=raw_key
     ) or f"manual-stock-out:{secrets.token_hex(16)}"
-    transaction_reference = _reference("MSO")
-    department = _department(department)
+    transaction_reference = _reference("KIS" if mode == KITCHEN_ISSUE else "MSO")
     recipient = str(recipient or "").strip()[:120]
     remarks = str(remarks or "").strip()[:500]
-    reason = str(reason or "").strip().upper()
+    fingerprint_fields = {
+        "item": item.pk, "source": source_location.pk,
+        "destination": destination_location.pk if destination_location else None,
+        "quantity": str(base_quantity), "unit": selected_unit or item.base_unit,
+        "factor": str(conversion_factor or ""), "department": department,
+        "recipient": recipient, "reason": reason, "remarks": remarks, "mode": mode,
+    }
+
+    def fingerprint(fields):
+        return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
+
     metadata = {
-        "record_type": "MANUAL_STOCK_OUT",
+        "record_type": mode,
         "mode": mode,
         "transaction_reference": transaction_reference,
         "reason": reason,
-        "destination": str(destination or "").strip()[:120],
+        "destination": destination or ("Kitchen (direct issue)" if mode == KITCHEN_ISSUE else ""),
         "destination_location_id": destination_location.pk if destination_location else None,
         "destination_location_name": destination_location.name if destination_location else "",
         "quantity_evidence": evidence,
-        "fingerprint": hashlib.sha256(json.dumps({
-            "item": item.pk, "source": source_location.pk,
-            "destination": destination_location.pk if destination_location else None,
-            "quantity": str(base_quantity), "unit": selected_unit or item.base_unit,
-            "factor": str(conversion_factor or ""), "department": department,
-            "recipient": recipient, "reason": reason, "remarks": remarks, "mode": mode,
-        }, sort_keys=True).encode()).hexdigest(),
+        "fingerprint": fingerprint({**fingerprint_fields, "destination_name": destination}),
     }
     candidate_keys = (movement_key, f"transfer:{movement_key}:out")
     existing = StockMovement.objects.select_for_update().filter(source_key__in=candidate_keys).order_by("pk").first()
     if existing is not None:
-        if (existing.metadata or {}).get("fingerprint") != metadata["fingerprint"]:
+        prior = existing.metadata or {}
+        legacy = (existing.source_reference.startswith("MSO-")
+                  and prior.get("fingerprint") == fingerprint(fingerprint_fields)
+                  and str(prior.get("destination") or "") == destination)
+        if prior.get("fingerprint") != metadata["fingerprint"] and not legacy:
             raise ValidationError({"idempotency_key": "This key was already used for a different stock issuance."})
         return existing, False
     if destination_location is not None:
@@ -2614,6 +2722,7 @@ def record_opening_stock(*, item, location, quantity, actor, source_key="", idem
     """Record an idempotent opening-balance stock movement."""
     assert_can_record_stock(actor, action="record stock in the inventory ledger")
     key = source_key or idempotency_key
+    require_whole_count(quantity, unit=item.base_unit)
     quantity = _quantity(quantity, positive=True)
     cost = _cost(unit_cost) if unit_cost not in (None, "") else item.standard_cost
     return record_stock_movement(
@@ -2682,9 +2791,12 @@ def record_stock_return(
     """
     assert_can_record_stock(actor, action="record a stock return")
     key = source_key or idempotency_key
+    require_whole_count(quantity, unit=item.base_unit)
     quantity = _quantity(quantity, positive=True)
     cost = _cost(unit_cost) if unit_cost not in (None, "") else item.standard_cost
     is_outward = str(direction or "IN").upper() in ("OUT", "OUTWARD", "SUPPLIER")
+    if is_outward and _department(department) in KITCHEN_DEPARTMENTS:
+        raise ValidationError({"department": "Use Kitchen Issues for stock issued to the Kitchen."})
     evidence = None
     if not is_outward:
         limit = _issue_returnable_balance(item=item, source_reference=source_reference)
@@ -2759,7 +2871,7 @@ def submit_stock_count(*, stock_count, counts, actor):
             return stock_count
         raise ValidationError(f"Stock count cannot submit from {stock_count.status}.")
     raw_counts = list(counts or ())
-    lines = {line.pk: line for line in StockCountLine.objects.select_for_update().filter(stock_count=stock_count)}
+    lines = {line.pk: line for line in StockCountLine.objects.select_for_update().select_related("item").filter(stock_count=stock_count)}
     if len(raw_counts) != len(lines):
         raise ValidationError({"lines": "A counted quantity is required for every stock-count line."})
     seen = set()
@@ -2768,13 +2880,14 @@ def submit_stock_count(*, stock_count, counts, actor):
         except (KeyError, TypeError, ValueError) as exc: raise ValidationError({"lines": "Each count needs line_id."}) from exc
         if line_id in seen or line_id not in lines: raise ValidationError({"lines": "Count lines must each appear exactly once."})
         seen.add(line_id)
+        line = lines[line_id]
+        require_whole_count(raw.get("counted_quantity"), unit=line.item.base_unit, field="counted_quantity")
         try:
             counted = Decimal(str(raw.get("counted_quantity"))).quantize(QTY)
         except (InvalidOperation, TypeError, ValueError) as exc:
             raise ValidationError({"counted_quantity": "A valid counted quantity is required."}) from exc
         if counted < 0:
             raise ValidationError({"counted_quantity": "Counted quantity cannot be negative."})
-        line = lines[line_id]
         line.counted_quantity = counted
         line.variance = (counted - Decimal(line.expected_quantity)).quantize(QTY)
         line.save(update_fields=["counted_quantity", "variance"])

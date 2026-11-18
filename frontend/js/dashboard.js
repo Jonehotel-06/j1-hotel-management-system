@@ -1547,6 +1547,8 @@
           input.className = "input";
           input.type = f.type || "text";
           if (f.step) input.step = f.step;
+          if (f.min != null) input.min = f.min;
+          if (f.max != null) input.max = f.max;
           if (f.accept) input.accept = f.accept;
         }
         input.id = "fm-" + f.name;
@@ -2212,12 +2214,12 @@
             one immutable issuance + one stock movement per item
 
      Rules kept:
-       · only items with Reception stock are offered, so the desk can never
-         promise a soap the department does not hold;
+       · only stock with Main Store issuance evidence at the Reception shelf
+         is offered; other shelf balances are not available for hand-over;
        · a quantity can never exceed the shelf — the server checks again and
          its message is the one shown;
        · every line is submitted with a stable idempotency key
-         (booking + item + service date), so a double tap or a lost reply can
+         (booking + room + item + service date), so a double tap or a lost reply can
          never record (or deduct) the same amenity twice;
        · a failure is reported as a failure. The modal stays open with the
          items that did go through listed, and nothing claims success.
@@ -2276,6 +2278,10 @@
         problems.push("That item is no longer on the Reception shelf — reload and try again.");
         return;
       }
+      if (window.JONE.isWholeQuantityUnit && window.JONE.isWholeQuantityUnit(row.unit) && !Number.isInteger(wanted)) {
+        problems.push("Enter a whole quantity of " + row.name + ".");
+        return;
+      }
       if (wanted > row.available) {
         problems.push("Only " + row.available + " " + (row.unit || "unit") + " of " + row.name +
           " are on the Reception shelf; " + wanted + " requested.");
@@ -2290,7 +2296,7 @@
   function amenityIssueSummary(issues) {
     const rows = DATA.rows(issues);
     if (!rows.length) return "";
-    return rows.map((row) => (row.item_name || row.item_sku || "Item") + " \u00d7 " + row.quantity).join(", ");
+    return rows.map((row) => (row.item_name || row.item_sku || "Item") + " \u00d7 " + window.JONE.trimQuantityValue(row.quantity)).join(", ");
   }
 
   /**
@@ -2345,8 +2351,9 @@
         return null;
       }
       const assignments = (booking && booking.room_assignments) || [];
-      const roomNumber = opts.roomNumber ||
-        assignments.map((a) => a.room_number).filter(Boolean).join(", ");
+      const rooms = Array.from(new Set(assignments.map((a) => a.room_number).filter(Boolean)));
+      const canChooseRoom = !opts.roomNumber && rooms.length > 1;
+      const roomNumber = opts.roomNumber || (rooms.length===1 ? rooms[0] : "");
       const bookingId = booking && booking.id;
 
       return Promise.all([
@@ -2370,7 +2377,7 @@
              fixed, and offer the one screen that can fix it. */
           return window.JONE.ui.confirm({
             title: opts.title || "Record amenities given to the guest",
-            message: "Reception has no amenity stock to hand out yet, so nothing can be recorded. " +
+            message: "Reception has no eligible Main Store amenity stock to hand out yet. " +
               "The Store Keeper allocates soap, toothbrush, toothpaste and tissue to Reception on the " +
               "Amenities screen (Allocate tab)." + (already ? " Already recorded for this stay: " + already + "." : ""),
             confirmText: "Open Amenities",
@@ -2386,8 +2393,8 @@
           '<tr><td><strong>' + window.JONE.esc(row.name) + "</strong>" +
           (row.sku ? ' <span class="caption">' + window.JONE.esc(row.sku) + "</span>" : "") +
           '</td><td class="num">' + window.JONE.esc(String(row.available)) + " " + window.JONE.esc(row.unit) +
-          '</td><td style="width:9rem;"><input class="input" type="number" min="0" step="1" value="0" ' +
-          'inputmode="numeric" data-amenity-qty="' + row.item_id + '" aria-label="' +
+          '</td><td style="width:9rem;"><input class="input" type="number" min="0" step="' + (window.JONE.isWholeQuantityUnit(row.unit) ? '1' : '0.0001') + '" value="0" ' +
+          'data-amenity-qty="' + row.item_id + '" aria-label="' +
           window.JONE.esc("Quantity of " + row.name + " given") + '"></td></tr>'
         )).join("");
 
@@ -2395,7 +2402,8 @@
           title: opts.title || "Record amenities given to the guest",
           wide: true,
           submitText: "Record amenities",
-          fields: [{
+          fields: (canChooseRoom ? [{name:"room_number",label:"Physical room",type:"select",required:true,
+            options:[{value:"",label:"Choose the room receiving amenities"}].concat(rooms.map((room)=>({value:room,label:room})))}] : []).concat([{
             name: "amenities",
             type: "custom",
             render(mount) {
@@ -2403,10 +2411,10 @@
                 (already ? '<p class="caption" style="margin:0 0 .5rem;">Recorded earlier for this stay: ' +
                   window.JONE.esc(already) + "</p>" : "") +
                 '<div class="table-wrap"><table class="table"><thead><tr><th>Item</th>' +
-                '<th class="num">On the Reception shelf</th><th>Give now</th></tr></thead><tbody>' +
+                '<th class="num">Eligible from Main Store</th><th>Give now</th></tr></thead><tbody>' +
                 rowsHtml + "</tbody></table></div>" +
                 '<p class="hint" style="margin:.5rem 0 0;">Set how many of each item you handed to the guest. ' +
-                "Leave the rest at 0. Each item is recorded once per stay per day; the stock leaves Reception " +
+                "Leave the rest at 0. Each item is recorded once per room per day; the stock leaves Reception " +
                 "and the issuance is kept in the amenity history.</p>";
               mount.querySelectorAll("[data-amenity-qty]").forEach((input) => {
                 input.addEventListener("input", () => {
@@ -2423,8 +2431,9 @@
               if (!plan.lines.length) return "Choose at least one amenity to record, or close this window.";
               return null;
             },
-          }],
+          }]),
           onSubmit(values) {
+            const selectedRoom=values.room_number || roomNumber;
             const plan = amenityIssuePlan(catalogue, (values && values.amenities) || picks);
             if (!plan.lines.length || plan.problems.length) {
               throw new Error(plan.problems[0] || "Choose at least one amenity to record.");
@@ -2453,13 +2462,18 @@
               return window.API.post(AMENITY_ISSUE_PATH, {
                 guest_id: guestId,
                 booking_id: bookingId || null,
-                room_number: roomNumber || "",
+                room_number: selectedRoom,
                 item_id: line.item_id,
                 quantity: String(line.quantity),
                 notes: "Handed over at check-in",
-                idempotency_key: amenityIssueKey(lookup || bookingId, line.item_id, day),
+                idempotency_key: selectedRoom
+                  ? "checkin-room:" + (booking.booking_reference || lookup || bookingId) + ":" + selectedRoom + ":" + line.item_id + ":" + day
+                  : amenityIssueKey(lookup || bookingId, line.item_id, day),
               }).then((data) => {
-                if (data && data.created === false) existing += 1; else recorded += 1;
+                const issue = payload(data);
+                if (issue && issue.created === false) existing += 1;
+                else if (issue && issue.created === true) recorded += 1;
+                else failed.push(line.name + ": the server did not confirm the issuance.");
                 return run(index + 1);
               }).catch((err) => {
                 failed.push(line.name + ": " + ((err && err.message) || "failed"));

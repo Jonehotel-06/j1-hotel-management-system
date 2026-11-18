@@ -423,6 +423,9 @@ class ApprovalAndRejectionTests(ProcurementWorkflowBase):
 
 class CostAndUnitTests(ProcurementWorkflowBase):
     def test_the_total_is_the_sum_of_exact_line_products_rounded_half_up_once(self):
+        # Weigh the rice; this fixture no longer makes part of a counted bag.
+        self.rice.base_unit = "KG"
+        self.rice.save(update_fields=["base_unit"])
         data = self.create(lines=[
             {"item_id": self.rice.pk, "quantity_ordered": "0.3333", "unit_cost": "0.15"},   # 0.049995
             {"item_id": self.water.pk, "quantity_ordered": "1", "unit_cost": "0.01"},

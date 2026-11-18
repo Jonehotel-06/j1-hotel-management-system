@@ -29,11 +29,12 @@ from django.test import TestCase
 
 from apps.accounts.capabilities import ROLE_CAPABILITY_CODES, capability_codes_for_user
 from apps.accounts.models import Capability, RoleCapability, User
+from apps.bookings.services.booking_service import check_in_booking
 from apps.inventory.models import StockItem, StockLocation, StockMovement
 from apps.inventory.services.inventory_service import record_stock_movement
 from apps.core.utils import hotel_today
 from tests.base import BaseAPITestCase
-from tests.factories import make_booking, make_guest, make_room_type, make_staff
+from tests.factories import make_booking, make_guest, make_room, make_room_type, make_staff
 
 BASE = "/api/admin/service-requests"
 AMENITY_CODES = ("guest_amenity.allocate", "guest_amenity.issue", "breakfast.issue")
@@ -115,10 +116,11 @@ class AmenityStationAPITests(BaseAPITestCase):
         self.guest = make_guest("amenity-mt-guest@example.com")
         room_type = make_room_type("Amenity MT Suite", price="12000.00")
         self.booking = make_booking(
-            self.guest, room_type,
+            self.guest, room_type, rooms=[make_room(room_type, "101")],
             check_in=hotel_today(), check_out=hotel_today() + timedelta(days=2),
             total="24000.00",
         )
+        check_in_booking(self.booking, staff_user=self.receptionist)
 
     # ------------------------------ helpers --------------------------------
     def allocate(self, actor):

@@ -54,6 +54,7 @@ function context(extra) {
     window: { APP_CONFIG: { API_ENDPOINTS: {} } },
     JONE: {
       trimQuantityValue: (value) => String(Number(value)),
+      isWholeQuantityUnit: (unit) => ["PIECE", "BOTTLE"].includes(unit),
       formatMoney: (value) => "NGN " + value,
       formatQuantity: (value) => String(value),
       esc: (value) => String(value),
@@ -89,10 +90,12 @@ test("the original pieces-per-pack constraint rejected a whole pack size (the de
   assert.equal(satisfiesStep({ min: "0.01", step: "1" }, "24.01"), true);
 });
 
-test("the pieces-per-pack control now accepts every real pack size, hidden or shown", () => {
+test("the pack size control accepts whole and measured sizes at stock precision", () => {
   const ctx = load(context(), ["packSizeOf", "piecesPerPackField"]);
   const field = ctx.piecesPerPackField();
-  assert.equal(field.step, "any");
+  assert.equal(field.step, "0.0001");
+  assert.ok(satisfiesStep(field, "0.0001"));
+  assert.ok(!satisfiesStep(field, "0.00001"));
   for (const size of ["1", "6", "12", "24", "50", "144", "1000", "0.5", "12.5"]) {
     assert.ok(satisfiesStep(field, size), "pack size " + size + " must be valid");
   }
@@ -154,7 +157,7 @@ test("one idempotency key per dialog: a retry after a timeout replays the same k
     },
   };
   load(ctx, ["newOrder", "dialogHandle", "busyLabel", "confirmedOrder", "saveOrder", "explainOrderError",
-    "errorStrings", "lineErrorMessages", "linesToBaseUnits", "trimmed"], ["LINE_FIELD_LABELS"]);
+    "errorStrings", "lineErrorMessages", "linesToBaseUnits", "trimmed", "baseUnitOf", "toScaled", "recordedBaseQuantity"], ["LINE_FIELD_LABELS"]);
 
   const running = ctx.newOrder();
   const values = { supplier_id: 3, delivery_location_id: 4, lines: [{ item_id: 7, quantity_unit: "PIECE", quantity_ordered: "2", unit_cost: "65000" }] };
@@ -257,7 +260,7 @@ test("the order-total preview uses the server's exact Decimal arithmetic", () =>
 });
 
 test("lines resolve SKU and pack size from the records the picker displayed", () => {
-  const ctx = load(context(), ["linesToBaseUnits", "trimmed"]);
+  const ctx = load(context(), ["linesToBaseUnits", "trimmed", "baseUnitOf", "toScaled", "recordedBaseQuantity"]);
   const records = { 8: { id: 8, sku: "WATER", units_per_pack: "24.00" } };
   const converted = ctx.linesToBaseUnits([
     { item_id: 8, quantity_unit: "PACK", pieces_per_pack: "", quantity_ordered: "2", unit_cost: "2400" },

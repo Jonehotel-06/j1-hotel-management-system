@@ -3,6 +3,8 @@
 import secrets
 from datetime import date, datetime, time, timedelta
 
+from decimal import Decimal, InvalidOperation
+
 from django.utils import timezone
 
 
@@ -110,8 +112,17 @@ def staff_reference(user) -> str:
 
 def money(value) -> str:
     """Canonical API representation of a Decimal money amount."""
-    from decimal import Decimal
-
     if value is None:
         return None
     return f"{Decimal(value).quantize(Decimal('0.01'))}"
+
+
+def parse_whole_count(value, *, maximum=2147483647) -> int:
+    """Validate a new commercial line count without truncating fractions or booleans."""
+    try:
+        count = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("Enter a whole quantity.") from exc
+    if not count.is_finite() or count != count.to_integral_value() or not 1 <= count <= maximum:
+        raise ValueError(f"Enter a whole quantity between 1 and {maximum}.")
+    return int(count)

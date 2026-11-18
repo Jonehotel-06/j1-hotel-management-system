@@ -69,6 +69,11 @@ class StockUnit(TimeStampedModel):
 
 
 class StockLocation(TimeStampedModel):
+    class OperationalRole(models.TextChoices):
+        GENERAL = "GENERAL", "General store"
+        MAIN = "MAIN", "Main Store"
+        KITCHEN = "KITCHEN", "Kitchen Store"
+
     code = models.CharField(max_length=40, unique=True)
     name = models.CharField(max_length=120, unique=True)
     description = models.TextField(blank=True, default="")
@@ -77,6 +82,9 @@ class StockLocation(TimeStampedModel):
     #: remains a migration fallback for existing installations, but the UI and
     #: services use this persisted flag so a location is never hard-coded.
     is_reception = models.BooleanField(default=False, db_index=True)
+    # Blank preserves the exact-name/code compatibility for existing sites.
+    # Explicit GENERAL lets the hotel disambiguate a legacy name or code.
+    operational_role = models.CharField(max_length=10, choices=OperationalRole.choices, blank=True, default="", db_index=True)
 
     class Meta:
         ordering = ["name"]

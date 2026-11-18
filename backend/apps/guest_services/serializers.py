@@ -394,6 +394,23 @@ from .models import GuestAmenityIssue, BreakfastBenefitConfig, BreakfastIssuance
 
 
 class GuestAmenityIssueSerializer(serializers.ModelSerializer):
+    main_store_issuances = serializers.SerializerMethodField()
+    eligible_balance_before = serializers.SerializerMethodField()
+    eligible_balance_after = serializers.SerializerMethodField()
+
+    @staticmethod
+    def _evidence(obj):
+        return (obj.movement.metadata or {}) if obj.movement_id else {}
+
+    def get_main_store_issuances(self, obj):
+        return self._evidence(obj).get("main_store_issuances", [])
+
+    def get_eligible_balance_before(self, obj):
+        return self._evidence(obj).get("eligible_balance_before")
+
+    def get_eligible_balance_after(self, obj):
+        return self._evidence(obj).get("eligible_balance_after")
+
     guest_name = serializers.CharField(source="guest.full_name", read_only=True)
     guest_email = serializers.EmailField(source="guest.email", read_only=True, allow_null=True)
     item_sku = serializers.CharField(source="item.sku", read_only=True)
@@ -410,8 +427,8 @@ class GuestAmenityIssueSerializer(serializers.ModelSerializer):
             "id", "reference", "guest", "guest_name", "guest_email", "booking",
             "room_number", "receptionist", "receptionist_name", "item", "item_sku",
             "item_name", "base_unit", "quantity", "location", "location_code",
-            "departmental_balance_before", "departmental_balance_after",
-            "occurred_at", "notes", "movement", "created_at",
+            "departmental_balance_before", "departmental_balance_after", "eligible_balance_before", "eligible_balance_after",
+            "occurred_at", "notes", "movement", "created_at", "main_store_issuances",
         ]
         read_only_fields = fields
 
@@ -484,14 +501,18 @@ class BreakfastIssuanceSerializer(serializers.ModelSerializer):
     check_out = serializers.DateField(source="booking.check_out", read_only=True)
 
     def get_room_number(self, obj):
+        if obj.room_numbers:
+            return ", ".join(obj.room_numbers)
+        # Older records did not snapshot rooms; keep their legacy display.
         return ", ".join(a.room.room_number for a in obj.booking.room_assignments.all())
+
     issued_by_name = serializers.CharField(source="issued_by.full_name", read_only=True, allow_null=True)
 
     class Meta:
         model = BreakfastIssuance
         fields = [
             "id", "reference", "guest", "guest_name", "guest_email", "booking",
-            "booking_reference", "room_number", "check_in", "check_out", "service_date", "issued_by", "issued_by_name",
+            "booking_reference", "room_number", "room_numbers", "check_in", "check_out", "service_date", "issued_by", "issued_by_name",
             "eligible_guests", "items", "occurred_at", "notes", "created_at",
         ]
         read_only_fields = fields

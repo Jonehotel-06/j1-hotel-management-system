@@ -19,20 +19,26 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from decimal import Decimal, ROUND_HALF_UP
+from collections import defaultdict, deque
+from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.db.models import Q, prefetch_related_objects
 from django.utils import timezone
 
+from apps.accounts.capabilities import has_capability
 from apps.core.utils import hotel_today
 from apps.inventory.models import StockBalance, StockDepartment, StockItem, StockLocation, StockMovement
 from apps.inventory.services.inventory_service import (
-    canonical_unit, record_stock_movement, resolve_entered_quantity, scoped_key,
+    canonical_unit, is_whole_count_unit, record_stock_movement, resolve_entered_quantity, scoped_key,
     transfer_stock, unit_label,
 )
 
-from .models import BreakfastBenefitConfig, BreakfastIssuance, GuestAmenityIssue
+from apps.inventory.services.stock_routing import legacy_location_role, location_role
+
+from .models import BreakfastBenefitConfig, BreakfastIssuance, GuestAmenityIssue, MiniMartProduct
+from .services.breakfast_occupancy import breakfast_bookings, breakfast_room_numbers
 
 QTY = Decimal("0.0001")
 
@@ -45,16 +51,6 @@ def _reference(prefix):
     return f"{prefix}-{timezone.now():%Y%m%d}-{secrets.token_hex(6).upper()}"
 
 
-def _quantity(value, *, field="quantity", positive=False):
-    try:
-        amount = Decimal(str(value)).quantize(QTY, rounding=ROUND_HALF_UP)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"Enter a valid {field}.") from exc
-    if positive and amount <= Decimal("0.0000"):
-        raise ValueError(f"{field} must be greater than zero.")
-    return amount
-
-
 def reception_location():
     """The active configured Reception shelf, with a legacy-code fallback."""
     configured = StockLocation.objects.filter(is_reception=True, is_active=True).order_by("pk").first()
@@ -63,13 +59,98 @@ def reception_location():
     return StockLocation.objects.filter(code__iexact=RECEPTION_LOCATION_CODE, is_active=True).order_by("pk").first()
 
 
-def reception_amenity_stock(item, location=None):
-    """Current allocated balance of one item at a selected/configured shelf."""
-    location = location or reception_location()
-    if location is None:
-        return None, Decimal("0.0000")
-    balance = StockBalance.objects.filter(item=item, location=location).first()
-    return location, Decimal(balance.quantity_on_hand) if balance else Decimal("0.0000")
+def amenity_items_filter(prefix=""):
+    return Q(**{
+        f"{prefix}is_active": True,
+        f"{prefix}item_type": StockItem.ItemType.CONSUMABLE,
+        f"{prefix}minimart_product__isnull": True,
+    })
+
+
+def amenity_shelf(location=None):
+    target = reception_location()
+    if location is not None and (target is None or location.pk != target.pk):
+        raise ValueError({"location_id": "Guest amenities may only use the configured Reception shelf."})
+    return target
+
+
+AMENITY_TRANSFER_PREFIX = "transfer:reception-amenity-alloc:"
+
+
+def eligible_amenity_lots(location, item_ids, *, for_update=False):
+    """Reconcile eligible lots against every shelf depletion, in posting order.
+
+    StockBalance is still the sole stock projection. A matching transfer pair
+    and the old dedicated amenity source key are evidence of issuance; ordinary
+    transfers, opening stock, returns and adjustments never create eligibility.
+    Debits consume eligible stock first (conservative for a mixed legacy shelf).
+    There is no separate mutable ordered/issued balance that can drift.
+    """
+    if not item_ids:
+        return {}
+    movements = StockMovement.objects.filter(location_id=location.pk, item_id__in=item_ids).filter(
+        Q(quantity_delta__lt=0) | Q(type=StockMovement.Type.TRANSFER_IN, source_key__startswith=AMENITY_TRANSFER_PREFIX)
+    ).order_by("pk")
+    if for_update:
+        movements = movements.select_for_update()
+    movements = list(movements)
+    inbound = [m for m in movements if m.type == StockMovement.Type.TRANSFER_IN and m.source_key.endswith(":in")]
+    outbound = StockMovement.objects.filter(
+        source_key__in=[m.source_key.removesuffix(":in") + ":out" for m in inbound],
+        type=StockMovement.Type.TRANSFER_OUT,
+    )
+    if for_update:
+        # Current reads matter on MySQL: another transaction can have posted
+        # both legs while this transaction waited on the item lock.
+        outbound = outbound.select_for_update()
+    matched = list(outbound)
+    prefetch_related_objects(matched, "location", "actor")
+    by_key = {m.source_key: m for m in matched}
+    lots = defaultdict(deque)
+    for m in movements:
+        queue = lots[m.item_id]
+        if m.quantity_delta < 0:
+            remaining = -m.quantity_delta
+            while queue and remaining:
+                incoming, outgoing, available = queue[0]
+                used = min(remaining, available)
+                remaining -= used
+                if used == available:
+                    queue.popleft()
+                else:
+                    queue[0] = (incoming, outgoing, available - used)
+            continue
+        original = by_key.get(m.source_key.removesuffix(":in") + ":out")
+        if not (original and original.item_id == m.item_id and original.quantity_delta == -m.quantity_delta
+                and original.location_id != location.pk and original.actor_id == m.actor_id):
+            continue
+        role = (original.metadata or {}).get("amenity_source_role")
+        # Older dedicated allocations lack a store-role snapshot. A generic
+        # transfer or a custom store newly classified as MAIN is not evidence.
+        legacy_main = (not role and original.actor_id is not None and
+                       legacy_location_role(original.location) == StockLocation.OperationalRole.MAIN)
+        if role == StockLocation.OperationalRole.MAIN or legacy_main:
+            queue.append((m, original, m.quantity_delta))
+    return lots
+
+
+def amenity_lot_evidence(inbound, outbound, available):
+    meta = outbound.metadata or {}
+    return {
+        "issued_movement": outbound.reference, "received_movement": inbound.reference,
+        "source_store": meta.get("amenity_source_code") or outbound.location.code,
+        "source_store_name": meta.get("amenity_source_name") or outbound.location.name,
+        "issued_by": meta.get("amenity_issuer_name") or getattr(outbound.actor, "full_name", ""),
+        "issued_by_id": outbound.actor_id, "issued_at": outbound.occurred_at.isoformat(),
+        "allocated_quantity": str(inbound.quantity_delta), "remaining_quantity": str(available),
+    }
+
+
+def eligible_amenity_quantity(item, balance, lots):
+    available = max(Decimal("0"), min(balance, sum((lot[2] for lot in lots), Decimal("0"))))
+    # Existing partial counts remain on the ledger but cannot be handed out as
+    # a fraction of a physical unit. This is an issue limit, not a stock edit.
+    return Decimal(int(available)) if is_whole_count_unit(item.base_unit) else available
 
 
 @transaction.atomic
@@ -83,29 +164,28 @@ def allocate_reception_amenities(
     Reception location, so the quantity leaves the issuing store and becomes
     the Reception Department's own balance. Returns ``(outbound, inbound)``.
     """
-    from apps.inventory.services.inventory_service import resolve_entered_quantity
-
-    if from_location is None:
-        raise ValueError({"from_location_id": "Choose the store the amenities are issued from."})
-    target = to_location or reception_location()
+    if not has_capability(actor, "guest_amenity.allocate"):
+        from rest_framework.exceptions import PermissionDenied
+        raise PermissionDenied("Only authorized staff can allocate guest amenities from Main Store.")
+    target = amenity_shelf(to_location)
     if target is None:
-        raise ValueError({
-            "location_id": (
-                "Choose an active configured department store, or ask an administrator "
-                "to mark a stock location as the Reception store."
-            )
-        })
-    if not target.is_active:
-        raise ValueError({"location_id": "The selected department store is inactive. Choose an active location."})
-    if from_location.pk == target.pk:
-        raise ValueError({"from_location_id": "The Reception Department already holds this stock."})
-
-    base_quantity = _quantity(quantity, positive=True)
-    if unit and str(unit).strip():
-        base_quantity, _evidence = resolve_entered_quantity(
-            quantity, item=item, unit=unit, conversion_factor=conversion_factor,
-            allow_declared_pack_size=True,
-        )
+        raise ValueError({"location_id": "Ask an administrator to configure the Reception shelf."})
+    if from_location is None or from_location.pk == target.pk:
+        raise ValueError({"from_location_id": "Choose the Main Store as the source."})
+    item = StockItem.objects.select_for_update().get(pk=item.pk)
+    locked = {row.pk: row for row in StockLocation.objects.select_for_update()
+              .filter(pk__in=[from_location.pk, target.pk]).order_by("pk")}
+    from_location, target = locked[from_location.pk], locked[target.pk]
+    if not from_location.is_active or from_location.is_reception or location_role(from_location) != StockLocation.OperationalRole.MAIN:
+        raise ValueError({"from_location_id": "Guest amenity stock must be issued from an active Main Store."})
+    if not amenity_shelf(target) or not target.is_active:
+        raise ValueError({"location_id": "The configured Reception shelf changed; reload and retry."})
+    if not item.is_active or item.item_type != StockItem.ItemType.CONSUMABLE or MiniMartProduct.objects.filter(item=item).exists():
+        raise ValueError({"item_id": "Choose an active non-retail consumable approved for guest amenities."})
+    base_quantity, evidence = resolve_entered_quantity(
+        quantity, item=item, unit=unit or item.base_unit, conversion_factor=conversion_factor,
+        allow_declared_pack_size=True,
+    )
 
     raw_key = str(idempotency_key or "").strip()
     key = scoped_key(prefix="reception-amenity-alloc", scope=f"staff:{getattr(actor, 'pk', 'system')}", raw_key=raw_key)
@@ -114,6 +194,11 @@ def allocate_reception_amenities(
     return transfer_stock(
         item=item, from_location=from_location, to_location=target,
         quantity=base_quantity, actor=actor, transfer_key=key, notes=notes or "Amenity allocation to Reception",
+        department=StockDepartment.FRONT_DESK,
+        metadata={"amenity_source_role": StockLocation.OperationalRole.MAIN,
+                  "amenity_source_code": from_location.code, "amenity_source_name": from_location.name,
+                  "amenity_issuer_name": actor.full_name,
+                  "quantity_evidence": evidence},
     )
 
 
@@ -135,22 +220,19 @@ def issue_guest_amenity(
             if room_number and room_number not in rooms:
                 raise ValueError({"room_number": "Choose a room assigned to this booking."})
             room_number = room_number or (rooms[0] if len(rooms) == 1 else "")
-    location = location or reception_location()
+    if not has_capability(actor, "guest_amenity.issue"):
+        from rest_framework.exceptions import PermissionDenied
+        raise PermissionDenied("You are not authorized to issue guest amenities.")
+    location = amenity_shelf(location)
     if location is None:
-        raise ValueError({
-            "location_id": (
-                "Choose an active configured department store, or ask an administrator "
-                "to mark a stock location as the Reception store."
-            )
-        })
-    if not location.is_active:
-        raise ValueError({"location_id": "The selected department store is inactive. Choose an active location."})
-    amount = _quantity(quantity, positive=True)
+        raise ValueError({"location_id": "Ask an administrator to configure the Reception shelf."})
 
-    # Lock the item, location and balance before checking the available quantity.
+    # All stock writers serialize on this item/shelf before any movement.
     item = StockItem.objects.select_for_update().get(pk=item.pk)
     location = StockLocation.objects.select_for_update().get(pk=location.pk)
+    amenity_shelf(location)
     balance = StockBalance.objects.select_for_update().filter(item=item, location=location).first()
+    amount, _ = resolve_entered_quantity(quantity, item=item, unit=item.base_unit)
     raw_key = str(idempotency_key or "").strip()
     if raw_key:
         key = scoped_key(prefix="guest-amenity-issue", scope=f"guest:{guest.pk}:item:{item.pk}", raw_key=raw_key)
@@ -160,18 +242,46 @@ def issue_guest_amenity(
     existing = GuestAmenityIssue.objects.select_for_update().filter(source_key=key).first()
     if existing is not None:
         if (existing.quantity != amount or existing.booking_id != getattr(booking, "pk", None)
-                or existing.room_number != (room_number or "")):
+                or existing.room_number != (room_number or "") or existing.location_id != location.pk):
             raise ValueError({"idempotency_key": "This key already identifies a different amenity issuance."})
         return existing, False
 
-    before = Decimal(balance.quantity_on_hand) if balance else Decimal("0.0000")
-    if before < amount:
-        raise ValueError({
-            "quantity": (
-                f"Only {before.quantize(QTY)} {item.base_unit} of {item.sku} are allocated to the "
-                f"Reception Department; {amount.quantize(QTY)} requested. Ask the Store Keeper to allocate more."
-            )
-        })
+    # During rollout the old check-in modal's booking/day/item key may have
+    # already deducted stock. Respect single-room evidence and refuse to
+    # apportion a historical combined-room hand-over to individual rooms.
+    if booking and room_number and raw_key.startswith(f"checkin-room:{booking.booking_reference}:{room_number}:{item.pk}:"):
+        from datetime import date
+        day = raw_key.rsplit(":", 1)[-1]
+        try:
+            date.fromisoformat(day)
+        except ValueError as exc:
+            raise ValueError({"idempotency_key": "The check-in key requires a service date."}) from exc
+        legacy_keys = [scoped_key(prefix="guest-amenity-issue", scope=f"guest:{guest.pk}:item:{item.pk}",
+                       raw_key=f"checkin:{lookup}:{item.pk}:{day}") for lookup in (booking.booking_reference, booking.pk)]
+        legacy = GuestAmenityIssue.objects.select_for_update().filter(
+            source_key__in=legacy_keys, booking=booking, guest=guest, item=item,
+        ).first()
+        if legacy and (not legacy.room_number or room_number in legacy.room_number.split(", ")):
+            if legacy.room_number == room_number and legacy.quantity == amount:
+                return legacy, False
+            raise ValueError({"idempotency_key": f"Review the previous check-in issuance {legacy.reference} before recording another hand-over."})
+
+    if not item.is_active or item.item_type != StockItem.ItemType.CONSUMABLE or MiniMartProduct.objects.filter(item=item).exists():
+        raise ValueError({"item_id": "This item is not eligible for guest amenities."})
+    lots = eligible_amenity_lots(location, [item.pk], for_update=True).get(item.pk, ())
+    physical_before = balance.quantity_on_hand if balance else Decimal("0")
+    eligible_before = eligible_amenity_quantity(item, physical_before, lots)
+    if eligible_before < amount:
+        raise ValueError({"quantity": f"Only {eligible_before:f} {item.base_unit} of {item.sku} remain from Main Store amenity issuance."})
+
+    needed = amount
+    sources = []
+    for inbound, outbound, available in lots:
+        used = min(needed, available)
+        sources.append({**amenity_lot_evidence(inbound, outbound, available), "quantity": str(used)})
+        needed -= used
+        if not needed:
+            break
 
     movement, _created = record_stock_movement(
         item=item, location=location, movement_type=StockMovement.Type.ISSUE,
@@ -179,15 +289,14 @@ def issue_guest_amenity(
         source_reference=booking.booking_reference if booking else "",
         notes=notes or f"Guest amenity issued to {guest.full_name}",
         department=StockDepartment.FRONT_DESK, recipient=guest.full_name,
-        metadata={"guest_amenity_issue": True, "guest_id": guest.pk},
+        metadata={"guest_amenity_issue": True, "guest_id": guest.pk, "main_store_issuances": sources,
+                  "eligible_balance_before": str(eligible_before), "eligible_balance_after": str(eligible_before - amount)},
     )
-    balance.refresh_from_db()
-    after = Decimal(balance.quantity_on_hand)
 
     record = GuestAmenityIssue.objects.create(
         reference=_reference("AMY"), source_key=key, guest=guest, booking=booking,
         room_number=(room_number or "")[:40], receptionist=actor, item=item, quantity=amount,
-        location=location, departmental_balance_before=before, departmental_balance_after=after,
+        location=location, departmental_balance_before=physical_before, departmental_balance_after=physical_before - amount,
         occurred_at=timezone.now(), notes=(notes or "")[:500], movement=movement,
     )
     return record, True
@@ -204,53 +313,35 @@ def get_breakfast_config():
 
 
 def breakfast_eligibility(*, guest, booking, service_date):
-    """Whether a guest may receive breakfast on a service date, and why not.
-
-    The booking must be active for the whole day (check-in <= date <= check-out)
-    and not checked out, cancelled or expired. The number of eligible guests is
-    the booking's occupants (adults + children), not the number of rooms.
-    """
+    """One meal entitlement per booking guest/day, backed by actual occupancy."""
     config = get_breakfast_config()
     payload = {
-        "enabled": config.is_enabled,
-        "eligible": False,
-        "reason": "",
-        "eligible_guests": 0,
-        "check_in": None,
-        "check_out": None,
-        "status": None,
+        "enabled": config.is_enabled, "eligible": False, "reason": "", "eligible_guests": 0,
+        "check_in": booking.check_in if booking else None,
+        "check_out": booking.check_out if booking else None,
+        "status": booking.status if booking else None, "room_numbers": [],
     }
     if not config.is_enabled:
         payload["reason"] = "The complementary breakfast benefit is currently disabled."
-        return payload
-    if booking is None:
-        payload["reason"] = "No active booking is linked to this guest."
-        return payload
-    if guest is not None and booking.guest_id != guest.pk:
+    elif booking is None:
+        payload["reason"] = "No currently checked-in room is linked to this guest."
+    elif guest is not None and booking.guest_id != guest.pk:
         payload["reason"] = "That booking does not belong to this guest."
-        return payload
-    if booking.status in {"CHECKED_OUT", "CANCELLED", "EXPIRED", "NO_SHOW"}:
-        payload["reason"] = (
-            f"This booking is {booking.get_status_display().lower()}; breakfast benefits end at check-out."
-        )
-        payload["status"] = booking.status
-        return payload
-    if not (booking.check_in <= service_date <= booking.check_out):
-        payload["reason"] = (
-            f"Breakfast is only available between check-in ({booking.check_in}) and "
-            f"check-out ({booking.check_out})."
-        )
-        payload["check_in"] = booking.check_in
-        payload["check_out"] = booking.check_out
-        payload["status"] = booking.status
-        return payload
-    payload.update({
-        "eligible": True,
-        "eligible_guests": max(int(booking.adults or 0) + int(booking.children or 0), 1),
-        "check_in": booking.check_in,
-        "check_out": booking.check_out,
-        "status": booking.status,
-    })
+    elif service_date > hotel_today():
+        payload["reason"] = "Breakfast cannot be recorded for a future service date."
+    elif booking.check_out < hotel_today() or booking.status == booking.Status.CHECKED_OUT:
+        payload["reason"] = "Breakfast benefits end at check-out."
+    elif booking.check_in > hotel_today() and not booking.checked_in_at:
+        payload["reason"] = "Breakfast requires actual check-in, not a future reservation."
+    elif not breakfast_bookings(service_date).filter(pk=booking.pk).exists():
+        payload["reason"] = "Breakfast requires an active, physically assigned checked-in room."
+    else:
+        rooms = breakfast_room_numbers([booking.pk], service_date).get(booking.pk, [])
+        if not rooms:
+            payload["reason"] = "There is no active physical room for this booking."
+        else:
+            payload.update(eligible=True, room_numbers=rooms,
+                           eligible_guests=max(int(booking.adults or 0) + int(booking.children or 0), 1))
     return payload
 
 
@@ -265,13 +356,15 @@ def record_breakfast(*, guest, booking, service_date, items=None, actor=None, no
     the existing inventory ledger so the kitchen's on-hand balances remain
     truthful. Descriptive-only lines remain evidence and never touch stock.
     """
-    from apps.bookings.models import Guest
+    from apps.bookings.models import Booking, Guest
+    if not has_capability(actor, "breakfast.issue"):
+        from rest_framework.exceptions import PermissionDenied
+        raise PermissionDenied("You are not authorized to record breakfast.")
     Guest.objects.select_for_update().get(pk=guest.pk)
-    eligibility = breakfast_eligibility(guest=guest, booking=booking, service_date=service_date)
-    if not eligibility["eligible"]:
-        raise ValueError({"service_date": eligibility["reason"]})
+    if booking is not None:
+        booking = Booking.objects.select_for_update().get(pk=booking.pk)
     if booking is None or booking.guest_id != guest.pk:
-        raise ValueError({"booking_id": "That booking does not belong to this guest."})
+        raise ValueError({"booking_id": "Choose a current checked-in booking for this guest."})
 
     raw_key = str(idempotency_key or "").strip()
     if raw_key:
@@ -281,11 +374,17 @@ def record_breakfast(*, guest, booking, service_date, items=None, actor=None, no
 
     existing = BreakfastIssuance.objects.select_for_update().filter(source_key=key).first()
     if existing is not None:
+        if existing.booking_id != booking.pk or existing.service_date != service_date:
+            raise ValueError({"idempotency_key": "This key was already used for a different breakfast."})
         existing.stock_movement_count = StockMovement.objects.filter(
             source_reference=existing.reference,
             metadata__breakfast_issuance=True,
         ).count()
         return existing, False
+
+    eligibility = breakfast_eligibility(guest=guest, booking=booking, service_date=service_date)
+    if not eligibility["eligible"]:
+        raise ValueError({"service_date": eligibility["reason"]})
 
     if BreakfastIssuance.objects.filter(guest=guest, service_date=service_date).exists():
         raise ValueError({
@@ -318,9 +417,7 @@ def record_breakfast(*, guest, booking, service_date, items=None, actor=None, no
     if stock_lines:
         if not location_id:
             raise ValueError({"location_id": "Choose the store breakfast stock is issued from."})
-        location = StockLocation.objects.select_for_update().filter(
-            pk=location_id, is_active=True
-        ).first()
+        location = StockLocation.objects.filter(pk=location_id, is_active=True).first()
         if location is None:
             raise ValueError({"location_id": "Choose an active stock location for breakfast consumption."})
 
@@ -330,8 +427,11 @@ def record_breakfast(*, guest, booking, service_date, items=None, actor=None, no
     # no post-create SQL update can bypass the model's immutability guard.
     reference = _reference("BKF")
     movement_count = 0
+    stock_items = {item.pk: item for item in StockItem.objects.select_for_update().filter(
+        pk__in=[row["item_id"] for _, _, row in stock_lines], is_active=True,
+    ).order_by("pk")}
     for line_index, raw, row in stock_lines:
-        item = StockItem.objects.select_for_update().filter(pk=row["item_id"], is_active=True).first()
+        item = stock_items.get(row["item_id"])
         if item is None:
             raise ValueError({"items": f"Stock item {row['item_id']} is unknown or inactive."})
         selected_unit = str(raw.get("unit") or item.base_unit).strip()
@@ -386,7 +486,7 @@ def record_breakfast(*, guest, booking, service_date, items=None, actor=None, no
     record = BreakfastIssuance.objects.create(
         reference=reference, source_key=key, guest=guest, booking=booking,
         service_date=service_date, issued_by=actor, eligible_guests=eligibility["eligible_guests"],
-        items=normalized_items, occurred_at=timezone.now(), notes=(notes or "")[:500],
+        room_numbers=eligibility["room_numbers"], items=normalized_items, occurred_at=timezone.now(), notes=(notes or "")[:500],
     )
     record.stock_movement_count = movement_count
     return record, True

@@ -1,4 +1,7 @@
 """Capability-scoped staff and verified-email portal service-request APIs."""
+from datetime import date
+from decimal import Decimal
+
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from drf_spectacular.utils import extend_schema
@@ -29,6 +32,8 @@ def _active_department_location(location_id):
     """Resolve an explicit configured department shelf; None means the default."""
     if location_id in (None, ""):
         return None
+    if not str(location_id).isdigit():
+        raise ValidationError({"location_id": "Use a valid stock location id."})
     from apps.inventory.models import StockLocation
     location = StockLocation.objects.filter(pk=location_id, is_active=True).first()
     if location is None:
@@ -993,10 +998,11 @@ from .serializers import (  # noqa: E402
     ReceptionAmenityAllocationSerializer, BreakfastConfigSerializer,
     BreakfastIssuanceSerializer, BreakfastIssueSerializer,
 )
+from .services.breakfast_occupancy import breakfast_bookings  # noqa: E402
 from .services_amenities import (  # noqa: E402
     allocate_reception_amenities, issue_guest_amenity,
     record_breakfast, breakfast_eligibility, get_breakfast_config,
-    reception_amenity_stock,
+    amenity_items_filter, amenity_lot_evidence, amenity_shelf, eligible_amenity_lots, eligible_amenity_quantity,
 )
 
 
@@ -1031,7 +1037,7 @@ class ReceptionAmenityAllocationView(APIView):
                 idempotency_key=attrs.get("idempotency_key") or "",
             )
         except ValueError as exc:
-            raise ValidationError(exc)
+            raise ValidationError(exc.args[0]) from exc
 
         return success_response({
             "created": created,
@@ -1058,115 +1064,87 @@ class ReceptionAmenityStockView(APIView):
 
     def get(self, request):
         from apps.inventory.models import StockBalance
-        from .services_amenities import reception_location
-        location = _active_department_location(request.query_params.get("location_id")) or reception_location()
+        try:
+            location = amenity_shelf(_active_department_location(request.query_params.get("location_id")))
+        except ValueError as exc:
+            raise ValidationError(exc.args[0]) from exc
         if location is None:
             return success_response({"location": None, "balances": []})
-        balances = StockBalance.objects.filter(location=location).select_related("item")
+        balances = list(StockBalance.objects.select_related("item")
+                        .filter(amenity_items_filter("item__"), location=location, quantity_on_hand__gt=0)
+                        .order_by("item__name", "item_id"))
+        lots = eligible_amenity_lots(location, [b.item_id for b in balances])
+        rows = []
+        for b in balances:
+            available = eligible_amenity_quantity(b.item, b.quantity_on_hand, lots.get(b.item_id, ()))
+            if available > 0:
+                rows.append({"item_id": b.item_id, "sku": b.item.sku, "name": b.item.name,
+                             "base_unit": b.item.base_unit, "quantity": str(available.quantize(Decimal("0.0001"))),
+                             "is_active": b.item.is_active, "low_stock": available <= b.item.reorder_level,
+                             "reorder_level": str(b.item.reorder_level),
+                             "issued_from_main_store": True,
+                             "allocations": [amenity_lot_evidence(*lot) for lot in lots[b.item_id]]})
         return success_response({
             "location": {"id": location.pk, "code": location.code, "name": location.name, "is_reception": location.is_reception},
-            "balances": [
-                {"item_id": b.item_id, "sku": b.item.sku, "name": b.item.name,
-                 "base_unit": b.item.base_unit, "quantity": str(b.quantity_on_hand),
-                 "is_active": b.item.is_active, "low_stock": b.quantity_on_hand <= b.item.reorder_level,
-                 "reorder_level": str(b.item.reorder_level)}
-                for b in balances
-            ],
+            "balances": rows,
         })
 
 
 class ReceptionAmenitySourceStockView(APIView):
-    """Issuing-store stock, readable by the Store Keeper who allocates.
-
-    The Allocate form used to build its two pickers from
-    ``/api/admin/inventory/items/`` and ``/api/admin/inventory/locations/``,
-    which both require ``inventory.manage`` — the catalogue workspace
-    capability, not the allocation capability. That left a user who legitimately
-    holds ``guest_amenity.allocate`` with permanently empty, unsearchable
-    dropdowns. This endpoint answers exactly the question the Allocate form
-    asks: *which active, non-Reception stores currently hold which active items,
-    and how much* — read-only, capability-scoped, paginated and searchable in
-    the same envelope every other list endpoint uses.
-    """
+    """Only Main Store consumable balances available for a keeper to approve."""
 
     permission_classes = [HasCapability]
     required_capability = "guest_amenity.allocate"
 
     def get(self, request):
-        from apps.inventory.models import StockBalance, StockItem, StockLocation
-        from .services_amenities import reception_location
+        from apps.inventory.models import StockBalance, StockLocation
+        from apps.inventory.services.stock_routing import locations_with_role
 
-        target = reception_location()
-        search = (request.query_params.get("search") or "").strip()[:120]
-        location_id = (request.query_params.get("location_id") or "").strip()
-        item_id = (request.query_params.get("item_id") or "").strip()
-
-        locations = StockLocation.objects.filter(is_active=True)
-        if target is not None:
+        target = amenity_shelf()
+        params = request.query_params
+        search = (params.get("search") or "").strip()[:120]
+        locations = StockLocation.objects.filter(
+            locations_with_role(StockLocation.OperationalRole.MAIN), is_active=True, is_reception=False,
+        ).order_by("code")
+        if target:
             locations = locations.exclude(pk=target.pk)
-        # A configured Reception store must not be offered as the source: an
-        # allocation from Reception to Reception is not a transfer.
-        locations = locations.exclude(is_reception=True).order_by("code")
-        if search:
-            locations = locations.filter(Q(code__icontains=search) | Q(name__icontains=search))
-        locations = list(locations[:500])
-
-        items = StockItem.objects.filter(is_active=True).order_by("name")
-        if search:
-            items = items.filter(
-                Q(sku__icontains=search) | Q(name__icontains=search) | Q(category__icontains=search)
-            )
-        # Only items a store actually holds can be allocated: showing a zero
-        # balance here is what made the operator pick an item and then receive
-        # the ledger's shortage refusal.
-        held = StockBalance.objects.filter(
-            item__is_active=True,
-            quantity_on_hand__gt=0,
-            location__is_active=True,
-            location__is_reception=False,
-        )
-        if target is not None:
-            held = held.exclude(location_id=target.pk)
-        rows = held.select_related("item", "location")
-        if location_id.isdigit():
-            rows = rows.filter(location_id=int(location_id))
-        if item_id.isdigit():
-            rows = rows.filter(item_id=int(item_id))
+        rows = StockBalance.objects.filter(
+            amenity_items_filter("item__"), location__in=locations, quantity_on_hand__gt=0,
+        ).select_related("item", "location")
+        for key in ("location_id", "item_id"):
+            value = (params.get(key) or "").strip()
+            if value:
+                if not value.isdigit() or int(value) <= 0:
+                    raise ValidationError({key: "Use a positive stock id."})
+                rows = rows.filter(**{key: int(value)})
         if search:
             rows = rows.filter(
                 Q(item__sku__icontains=search) | Q(item__name__icontains=search)
                 | Q(item__category__icontains=search)
                 | Q(location__code__icontains=search) | Q(location__name__icontains=search)
             )
-        rows = rows.order_by("item__name", "location__code", "pk")
         try:
-            limit = min(max(int(request.query_params.get("limit") or 500), 1), 1000)
+            limit = min(max(int(params.get("limit") or 500), 1), 1000)
         except (TypeError, ValueError):
             limit = 500
-
+        stock = list(rows.order_by("item__name", "location__code", "pk")[:limit])
+        items = {row.item_id: row.item for row in stock}
         return success_response({
             "reception_location": (
                 {"id": target.pk, "code": target.code, "name": target.name} if target else None
             ),
-            "locations": [
-                {"id": loc.pk, "code": loc.code, "name": loc.name, "is_reception": loc.is_reception}
-                for loc in locations
-            ],
+            "locations": list(locations.values("id", "code", "name", "is_reception")),
             "items": [
-                {
-                    "id": item.pk, "sku": item.sku, "name": item.name,
-                    "category": item.category, "base_unit": item.base_unit,
-                }
-                for item in items[:limit]
+                {"id": item.pk, "sku": item.sku, "name": item.name,
+                 "category": item.category, "base_unit": item.base_unit}
+                for item in items.values()
             ],
             "stock": [
-                {
-                    "item_id": row.item_id, "sku": row.item.sku, "name": row.item.name,
-                    "category": row.item.category, "base_unit": row.item.base_unit,
-                    "location_id": row.location_id, "location_code": row.location.code,
-                    "location_name": row.location.name, "quantity": str(row.quantity_on_hand),
-                }
-                for row in rows[:limit]
+                {"item_id": row.item_id, "sku": row.item.sku, "name": row.item.name,
+                 "category": row.item.category, "base_unit": row.item.base_unit,
+                 "location_id": row.location_id, "location_code": row.location.code,
+                 "location_name": row.location.name, "quantity": str(row.quantity_on_hand)}
+                for row in stock
             ],
             "limit": limit,
         })
@@ -1209,7 +1187,7 @@ class GuestAmenityIssueView(APIView):
                 location=_active_department_location(attrs.get("location_id")),
             )
         except ValueError as exc:
-            raise ValidationError(exc)
+            raise ValidationError(exc.args[0]) from exc
 
         return success_response({
             "created": created,
@@ -1224,7 +1202,7 @@ class GuestAmenityIssueListView(APIView):
     required_capability = "guest_amenity.issue"
 
     def get(self, request):
-        qs = GuestAmenityIssue.objects.select_related("guest", "item", "location", "receptionist").all()
+        qs = GuestAmenityIssue.objects.select_related("guest", "item", "location", "receptionist", "movement").all()
         if guest_id := request.query_params.get("guest_id"):
             qs = qs.filter(guest_id=guest_id)
         if booking_id := request.query_params.get("booking_id"):
@@ -1293,18 +1271,13 @@ class BreakfastEligibilityView(APIView):
         from apps.bookings.models import Guest, Booking
         guest_id = request.query_params.get("guest_id")
         booking_id = request.query_params.get("booking_id")
-        from django.core.exceptions import ValidationError as DjangoValidationError
         try:
-            service_date = request.query_params.get("service_date")
-        except DjangoValidationError:
-            raise ValidationError({"service_date": "Invalid date."})
-        if not service_date:
-            raise ValidationError({"service_date": "Required."})
-        from datetime import date
-        try:
-            sd = date.fromisoformat(service_date)
-        except (TypeError, ValueError):
-            raise ValidationError({"service_date": "Use a valid YYYY-MM-DD date."})
+            sd = date.fromisoformat(request.query_params.get("service_date") or "")
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"service_date": "Use a valid YYYY-MM-DD date."}) from exc
+        for field, identifier in [("guest_id", guest_id), ("booking_id", booking_id)]:
+            if identifier and not identifier.isdigit():
+                raise ValidationError({field: "Use a positive numeric id."})
 
         guest = None
         booking = None
@@ -1323,10 +1296,7 @@ class BreakfastEligibilityView(APIView):
         if guest is None:
             raise ValidationError({"guest_id": "Provide a guest_id or booking_id."})
         if booking is None:
-            booking = (Booking.objects.filter(guest=guest, check_in__lte=sd, check_out__gte=sd)
-                       .exclude(status__in=["CHECKED_OUT", "CANCELLED", "EXPIRED", "NO_SHOW"])
-                       .order_by("-check_in", "pk").first()
-                       or Booking.objects.filter(guest=guest).order_by("-check_in").first())
+            booking = breakfast_bookings(sd).filter(guest=guest).order_by("-check_in", "pk").first()
 
         eligibility = breakfast_eligibility(guest=guest, booking=booking, service_date=sd)
         return success_response(eligibility)
@@ -1345,7 +1315,6 @@ class BreakfastIssueView(APIView):
         attrs = serializer.validated_data
 
         from apps.bookings.models import Guest, Booking
-        from datetime import date
         sd = attrs["service_date"]
         guest = None
         booking = None
@@ -1364,10 +1333,7 @@ class BreakfastIssueView(APIView):
         if guest is None:
             raise ValidationError({"guest_id": "Provide a guest_id or booking_id."})
         if booking is None:
-            booking = (Booking.objects.filter(guest=guest, check_in__lte=sd, check_out__gte=sd)
-                       .exclude(status__in=["CHECKED_OUT", "CANCELLED", "EXPIRED", "NO_SHOW"])
-                       .order_by("-check_in", "pk").first()
-                       or Booking.objects.filter(guest=guest).order_by("-check_in").first())
+            booking = breakfast_bookings(sd).filter(guest=guest).order_by("-check_in", "pk").first()
 
         try:
             record, created = record_breakfast(
@@ -1377,7 +1343,7 @@ class BreakfastIssueView(APIView):
                 location_id=attrs.get("location_id"),
             )
         except ValueError as exc:
-            raise ValidationError(exc)
+            raise ValidationError(exc.args[0]) from exc
 
         return success_response({
             "created": created,

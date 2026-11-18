@@ -101,9 +101,11 @@
 
 <section class="panel">
   <div class="filter-bar">
-    <div class="field"><label class="field-label" for="p-q">Search</label><input class="input" id="p-q" placeholder="Reference, booking, guest"></div>
-    <div class="field"><label class="field-label" for="p-method">Method</label><select class="select" id="p-method"><option value="">All</option><option value="PAYSTACK">Paystack</option><option value="CASH">Cash</option><option value="POS">POS</option><option value="BANK_TRANSFER">Bank transfer</option></select></div>
-    <div class="field"><label class="field-label" for="p-status">Status</label><select class="select" id="p-status"><option value="">All</option><option value="SUCCESS">Success</option><option value="PENDING">Pending</option><option value="FAILED">Failed</option><option value="PARTIALLY_REFUNDED">Partially refunded</option><option value="REFUNDED">Refunded</option></select></div>
+    <div class="field"><label class="field-label" for="p-q">Search</label><input class="input" id="p-q" placeholder="Reference, booking, room or guest"></div>
+    <div class="field"><label class="field-label" for="p-method">Method</label><select class="select" id="p-method"><option value="">All</option><option value="PAYSTACK">Paystack</option><option value="CASH">Cash</option><option value="POS">POS / card</option><option value="BANK_TRANSFER">Bank transfer</option><option value="OTHER">Other</option></select></div>
+    <div class="field"><label class="field-label" for="p-status">Status</label><select class="select" id="p-status"><option value="">All</option><option value="SUCCESS">Success</option><option value="PENDING">Pending</option><option value="FAILED">Failed</option><option value="PARTIALLY_REFUNDED">Partially refunded</option><option value="REFUNDED">Refunded</option><option value="PROCESSED">Refund processed</option><option value="REVERSED">Reversed</option></select></div>
+    <div class="field"><label class="field-label" for="p-from">From</label><input class="input" id="p-from" type="date"></div>
+    <div class="field"><label class="field-label" for="p-to">To</label><input class="input" id="p-to" type="date"></div>
     <div class="field"><button class="btn btn-sm" id="p-apply" type="button">Apply</button></div>
   </div>
 
@@ -126,15 +128,17 @@
     </div>
   </details>
   <div class="panel-body no-pad">
+    <p class="caption" style="margin:0.85rem 1rem 0;">Collections, processed refunds and reversals. Unpaid bills and non-cash credits do not count towards collections; current balances are shown in details where available.</p>
+    <p class="caption" style="margin:0.5rem 1rem 0.85rem;" data-pay-totals role="status" aria-live="polite"></p>
     <div class="table-wrap table-scroll-x" tabindex="0" role="region" aria-label="Payments table, scroll sideways to see every column"><table class="table table-payments">
-      <thead><tr><th>Payment ref</th><th>Booking</th><th class="hide-sm">Guest</th><th>Method</th><th class="hide-sm">Date</th><th>Amount</th><th>Status</th><th class="hide-sm">By</th><th><span class="sr-only">Actions</span></th></tr></thead>
+      <thead><tr><th>Payment ref</th><th>Source</th><th>Booking / service ref</th><th class="hide-sm">Guest</th><th>Room</th><th>Method</th><th>Date &amp; time</th><th>Money movement</th><th>Status</th><th class="hide-sm">By</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody data-tbody="payments"></tbody>
     </table></div>
     <div class="pagination" data-pay-pagination></div>
   </div>
 </section>
 <section class="panel" style="margin-top:1.25rem;">
-  <div class="panel-head"><h2>Refund lifecycle</h2><div class="panel-actions"><select class="select" id="r-status" style="min-width:170px;font-size:var(--fs-sm);padding:0.5em 0.8em;" aria-label="Refund status"><option value="">All refunds</option><option value="PENDING">Pending</option><option value="PROCESSING">Processing</option><option value="PROCESSED">Processed</option><option value="FAILED">Failed</option><option value="NEEDS_ATTENTION">Needs attention</option></select></div></div>
+  <div class="panel-head"><h2>Booking refund lifecycle</h2><div class="panel-actions"><select class="select" id="r-status" style="min-width:170px;font-size:var(--fs-sm);padding:0.5em 0.8em;" aria-label="Refund status"><option value="">All refunds</option><option value="PENDING">Pending</option><option value="PROCESSING">Processing</option><option value="PROCESSED">Processed</option><option value="FAILED">Failed</option><option value="NEEDS_ATTENTION">Needs attention</option></select></div></div>
   <div class="panel-body no-pad">
     <div class="table-wrap"><table class="table">
       <thead><tr><th>Refund</th><th>Booking</th><th>Payment ref</th><th>Amount</th><th>Status</th><th class="hide-sm">Submitted</th><th class="hide-sm">Paystack refund</th></tr></thead>
@@ -180,34 +184,30 @@
       (window.Auth.hasCapability("booking.read") || window.Auth.hasCapability("booking.manage")));
   }
 
-  /* Verified /api/admin/payments/ row:
-     { id, reference, booking_reference, guest_name, staff_email, provider,
-       amount, currency, status, channel, gateway_response, transaction_id,
-       paid_at, notes, created_at } — filters: status, provider, date_from,
-       date_to, paid_on, search. */
+  var totalsBox=document.querySelector("[data-pay-totals]");
+  function formatAmount(row, value){ return JONE.formatMoney(value,{currency:row.currency}); }
+  function methodLabel(method){
+    return {CARD:"Card / POS",POS:"POS terminal",BANK_TRANSFER:"Bank transfer",CASH:"Cash",PAYSTACK:"Paystack",OTHER:"Other"}[method] || method || "—";
+  }
   function render(list){
-    if(!list.length){ tbody.innerHTML='<tr><td colspan="9"><div class="empty-state"><span data-icon="creditCard"></span><h3>No payments found</h3><p>No payments match the current filters.</p></div></td></tr>'; JONE.icons.inject(tbody); return; }
+    if(!list.length){ DATA.empty(tbody,"creditCard","No payments found","No entries match the current filters.",11); return; }
     tbody.innerHTML=list.map(function(p){
-      var b=p.booking_reference;
-      /* The guest name column is hidden on phones, so the name is repeated
-         under the payment reference (.pay-mobile-guest, mobile-only) — a
-         payment row is meaningless without knowing WHO paid. */
-      var guest = p.guest_name || "";
+      var b=p.booking_reference, op=p.operation_reference, guest=p.guest_name || "", esc=JONE.esc;
+      var booking=(b && canOpenBookingReference()) ? '<a href="booking-details.html?ref='+encodeURIComponent(b)+'">'+esc(b)+'</a>' : esc(b || op || "—");
+      var by=p.staff_name || "—";
       return '<tr>' +
-        '<td class="cell-nowrap">' + JONE.esc(p.reference || "—") +
-          (guest ? '<span class="pay-mobile-guest hide-md">' + JONE.esc(guest) + '</span>' : '') +
-        '</td>' +
-        '<td class="cell-nowrap">' + (b ? (canOpenBookingReference() ? '<a href="booking-details.html?ref=' + encodeURIComponent(b) + '">' + JONE.esc(b) + '</a>' : JONE.esc(b)) : "—") + '</td>' +
-        '<td class="hide-sm">' + JONE.esc(guest || "—") + '</td>' +
-        '<td class="cell-nowrap">' + JONE.esc(String(p.provider || "—").toLowerCase().replace(/_/g, " ")) + '</td>' +
-        '<td class="hide-sm cell-nowrap">' + JONE.esc(p.paid_at ? JONE.formatDate(p.paid_at, "mid") : "—") + '</td>' +
-        '<td class="num cell-nowrap">' + JONE.esc(JONE.formatNaira(p.amount)) + '</td>' +
+        '<td class="cell-nowrap">' + esc(p.reference) + (guest ? '<span class="pay-mobile-guest hide-md">' + esc(guest) + '</span>' : '') + '</td>' +
+        '<td>' + esc(p.source) + '</td>' +
+        '<td class="cell-nowrap">'+booking+(b && op && op!==b?' <small class="caption">'+esc(op)+'</small>':'')+'</td>' +
+        '<td class="hide-sm">' + esc(guest || "—") + '</td>' +
+        '<td>' + esc((p.room_numbers||[]).join(", ") || "—") + '</td>' +
+        '<td class="cell-nowrap">' + esc(methodLabel(p.method)) + '</td>' +
+        '<td class="cell-nowrap">' + esc(JONE.formatDateTime(p.occurred_at)) + '</td>' +
+        '<td class="num cell-nowrap">' + esc(formatAmount(p,p.signed_amount)) +
+          '<small class="caption" style="display:block">'+esc(p.entry_type==="ATTEMPT"?"Not collected":p.entry_type==="REFUND"?"Refund paid":p.entry_type==="REVERSAL"?"Reversal":"Received")+'</small></td>' +
         '<td class="cell-nowrap">' + JONE.dashboard.statusPill(p.status) + '</td>' +
-        '<td class="hide-sm">' + JONE.esc(p.staff_email || "—") + '</td>' +
-        '<td class="cell-nowrap">' +
-          '<button class="btn btn-sm btn-outline" type="button" data-pay-view="' + JONE.esc(p.id) + '">' +
-            '<span data-icon="eye" data-size="13"></span> View</button>' +
-        '</td></tr>';
+        '<td class="hide-sm">' + esc(by) + '</td>' +
+        '<td><button class="btn btn-sm btn-outline" type="button" data-pay-view="'+esc(p.id)+'"><span data-icon="eye" data-size="13"></span> View</button></td></tr>';
     }).join("");
     JONE.icons.inject(tbody);
   }
@@ -215,43 +215,67 @@
   /* Server-side pagination: the page is the ONLY list state; filters are read
      from the inputs on every request, so paging preserves them and any filter
      change restarts at page 1. */
-  var state={ page:1 };
+  var state={ page:1, request:0 };
   var rowsById = {};
   var pager=document.querySelector("[data-pay-pagination]");
   function renderPager(meta){ JONE.dashboard.renderPagination(pager, meta, { onPage: load }); }
 
   function filters(){
-    var f={ page: state.page, page_size: JONE.dashboard.pageSize() };
+    var f={ view:"collections", page: state.page, page_size: JONE.dashboard.pageSize() };
     var q=document.getElementById("p-q"); if(q&&q.value.trim()) f.search=q.value.trim();
     var m=document.getElementById("p-method"); if(m&&m.value) f.provider=m.value;
     var s=document.getElementById("p-status"); if(s&&s.value) f.status=s.value;
+    var from=document.getElementById("p-from").value, to=document.getElementById("p-to").value;
+    if(from) f.date_from=from;
+    if(to) f.date_to=to;
     return f;
   }
 
   async function load(page){
     if(page!=null) state.page=Math.max(1,page);
-    DATA.loading(tbody);
+    var current=++state.request;
+    DATA.loading(tbody,11); renderPager(null); totalsBox.textContent="";
     try{
       var res=await window.API.list("payments",filters());
-      var norm=window.API.normalizeList(res.data,res.pagination);
-      var list=norm.items||((res.data&&res.data.results)||[]);
-      rowsById = {};
-      (list || []).forEach(function (row) { rowsById[String(row.id)] = row; });
-      render(list||[]);
-      renderPager(list.length?res.pagination:null);
-    }catch(err){ DATA.error(tbody,"Payments couldn't be loaded",(err&&err.message)||"Please try again in a moment.",9); }
+      if(current!==state.request) return;
+      var payload=res.data;
+      if(!payload || !Array.isArray(payload.results) || !Array.isArray(payload.totals)) throw new Error("The server did not return the collection feed. Confirm that the backend update is installed.");
+      rowsById={}; payload.results.forEach(function(row){rowsById[row.id]=row;});
+      render(payload.results); renderPager(res.pagination);
+      totalsBox.textContent=payload.totals.length ? payload.totals.map(function(t){
+        return t.currency+": received "+formatAmount(t,t.gross)+" · refunds "+formatAmount(t,t.refunds)+
+          " · reversals "+formatAmount(t,t.reversals)+" · net "+formatAmount(t,t.net);
+      }).join(" | ")+" (across the filtered results)" : "No money movements match the filters.";
+    }catch(err){ if(current===state.request) DATA.error(tbody,"Payments couldn't be loaded",(err&&err.message)||"Please try again in a moment.",11); }
   }
 
-  /* View opens the full payment record in the shared side panel. Everything
-     shown comes from the row the backend already returned plus a detail fetch
-     for anything the list omits — no card data is stored or displayed. */
-  tbody.addEventListener("click", async function (e) {
-    var btn = e.target.closest && e.target.closest("[data-pay-view]");
-    if (!btn) return;
-    var id = btn.getAttribute("data-pay-view");
-    var row = rowsById[String(id)] || null;
-    JONE.dashboard.paymentDetailPanel(id, row);
+  tbody.addEventListener("click", function(e){
+    var btn=e.target.closest && e.target.closest("[data-pay-view]");
+    var p=btn && rowsById[btn.getAttribute("data-pay-view")];
+    if(!p) return;
+    function field(label,value){ return '<div><dt>'+JONE.esc(label)+'</dt><dd>'+JONE.esc(value==null || value===""?"—":value)+'</dd></div>'; }
+    var details=field("Source",p.source)+field("Entry",p.entry_type)+field("Status",p.status)+
+      field("Guest",p.guest_name)+field("Physical room(s)",(p.room_numbers||[]).join(", "))+
+      (p.room_evidence?field("Room evidence",p.room_evidence):"")+
+      field("Method",methodLabel(p.method))+field("Channel",p.channel)+field("Staff",p.staff_name)+
+      field("Date & time",JONE.formatDateTime(p.occurred_at))+field("Booking / service ref",p.operation_reference)+
+      field("Money movement",formatAmount(p,p.signed_amount))+field("External ref",p.external_reference);
+    if(p.service_status) details+=field("Current service settlement",p.service_status.replaceAll("_"," "));
+    if(p.billed_amount!=null) details+=field("Service bill total",formatAmount(p,p.billed_amount));
+    if(p.outstanding_amount!=null) details+=field("Current service balance (not collected)",formatAmount(p,p.outstanding_amount));
+    if(p.booking_payment_status) details+=field("Current accommodation status",p.booking_payment_status.replaceAll("_"," "));
+    if(p.booking_billed_amount!=null) details+=field("Accommodation bill total",formatAmount(p,p.booking_billed_amount));
+    if(p.booking_outstanding_amount!=null) details+=field("Current accommodation balance (not collected)",formatAmount(p,p.booking_outstanding_amount));
+    if(p.original_reference) details+=field("Original reference",p.original_reference);
+    if(p.ledger_reference) details+=field("Ledger reference",p.ledger_reference);
+    (p.source_breakdown||[]).forEach(function(part){details+=field(part.source,formatAmount(p,part.amount));});
+    if((p.source_breakdown||[]).some(function(part){return part.source==="Guest Folio";})){
+      details+=field("Folio attribution","This collection was applied to the guest folio; the original record does not specify a split by charge.");
+    }
+    var panel=JONE.dashboard.panel.open(p.reference,'<dl class="profile-grid">'+details+'</dl>',p.payment_id?'<button type="button" class="btn btn-sm btn-outline" data-booking-payment-detail>Original payment details</button>':"");
+    if(p.payment_id) panel.querySelector("[data-booking-payment-detail]").addEventListener("click",function(){JONE.dashboard.paymentDetailPanel(p.payment_id,{reference:p.reference,booking_reference:p.booking_reference});});
   });
+
 
   var refundBody=document.querySelector("[data-tbody=refunds]");
   function renderRefunds(list){

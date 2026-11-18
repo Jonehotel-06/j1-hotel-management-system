@@ -22,6 +22,12 @@ class AdminPaymentListView(generics.ListAPIView):
     required_capability = "payment.read"
     serializer_class = PaymentSerializer
 
+    def list(self, request, *args, **kwargs):
+        if request.query_params.get("view") == "collections":
+            from .services.collection_feed import list_collections
+            return list_collections(self, request)
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
         qs = Payment.objects.select_related("booking", "booking__guest", "user").order_by("-created_at")
         params = self.request.query_params

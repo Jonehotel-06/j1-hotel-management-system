@@ -9,12 +9,13 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.test import TransactionTestCase, skipUnlessDBFeature
 from rest_framework.exceptions import ValidationError
 from apps.accounts.models import User
+from apps.bookings.services.booking_service import check_in_booking
 from apps.core.utils import hotel_today
 from apps.finance.models import CashMovement, FinancialTransaction
 from apps.finance.services.cash_session_service import open_cash_session
 from apps.guest_services.models import MiniMartProduct, MiniMartSale, MiniMartSaleLine, BreakfastIssuance
 from apps.guest_services.minimart_service import complete_sale
-from apps.guest_services.services_amenities import issue_guest_amenity, get_breakfast_config
+from apps.guest_services.services_amenities import allocate_reception_amenities, issue_guest_amenity, get_breakfast_config
 from apps.inventory.models import StockItem, StockLocation, StockBalance, StockMovement
 from apps.inventory.services.inventory_service import record_stock_movement
 from apps.pos.models import PosOrder, PosTender
@@ -240,11 +241,18 @@ class ReceptionRepairTests(RetailFixtures,BaseAPITestCase):
         self.assertEqual(self.balance(),5)
 
     def test_amenity_retry_when_shelf_empty_does_not_fail_or_deduct_twice(self):
-        args=dict(guest=self.guest,booking=self.booking,room_number='206',item=self.item,quantity=5,actor=self.staff,idempotency_key='last-stock')
+        keeper = make_staff("repair-amenity-keeper@example.test", User.Role.STOREKEEPER)
+        main = StockLocation.objects.create(code="MAIN", name="Main Store")
+        item = StockItem.objects.create(sku="REPAIR-AM-SOAP", name="Soap", base_unit="PC")
+        record_stock_movement(item=item, location=main, movement_type="OPENING", quantity_delta="5", source_key="repair-amenity-stock")
+        allocate_reception_amenities(item=item, quantity="5", from_location=main, actor=keeper)
+        args=dict(guest=self.guest,booking=self.booking,room_number='206',item=item,quantity=5,actor=self.staff,idempotency_key='last-stock')
         issue,created=issue_guest_amenity(**args);again,created=issue_guest_amenity(**args)
-        self.assertFalse(created);self.assertEqual(again.pk,issue.pk);self.assertEqual(self.balance(),0)
+        self.assertFalse(created);self.assertEqual(again.pk,issue.pk);self.assertEqual(StockBalance.objects.get(item=item, location=self.store).quantity_on_hand, 0)
+        self.assertEqual(self.balance(), 5, "Retail stock stays separate")
 
     def test_breakfast_uses_date_matching_booking_not_later_reservation(self):
+        check_in_booking(self.booking, staff_user=self.staff)
         make_booking(self.guest,self.rt)  # future booking must not hide the present stay
         cfg=get_breakfast_config();cfg.is_enabled=True;cfg.save()
         payload={'guest_id':self.guest.pk,'service_date':str(hotel_today()),'idempotency_key':'breakfast-test'}

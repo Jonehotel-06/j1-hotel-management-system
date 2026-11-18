@@ -33,7 +33,7 @@ urlpatterns = [
     path("issues/", views.StockIssueView.as_view(), name="issues"),
     # Independent Store Keeper issuance: no POS dish/menu item is selected.
     path("manual-stock-out/", views.StockIssuanceView.as_view(), name="manual-stock-out"),
-    path("kitchen-issues/", views.StockIssuanceView.as_view(), name="kitchen-issues"),
+    path("kitchen-issues/", views.StockIssuanceView.as_view(mode="KITCHEN_ISSUE"), name="kitchen-issues"),
     path(
         "manual-ingredient-issues/",
         views.ManualIngredientIssueListCreateView.as_view(), name="manual-ingredient-issues",

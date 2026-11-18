@@ -164,6 +164,19 @@ function toScaled(text,places){
   if(fraction.length>places)return null;
   return BigInt(match[1]+fraction+new Array(places-fraction.length+1).join("0"));
 }
+/* Convert to exact DECIMAL(14,4) base units without rounding a fractional
+   piece into a whole one. The server independently validates the base count. */
+function recordedBaseQuantity(typed,factor,unit){
+  var amount=toScaled(typed,4),size=toScaled(factor,4),scale=BigInt(10000);
+  if(amount===null||size===null||amount<=0n||size<=0n)throw new Error("Enter a positive quantity and pack size with at most four decimals.");
+  var product=amount*size;
+  if(product%scale!==0n)throw new Error("The conversion exceeds four decimals. Enter the exact stock-unit quantity.");
+  var value=product/scale;
+  if(value>99999999999999n)throw new Error("The stock quantity exceeds the supported limit.");
+  if(JONE.isWholeQuantityUnit(unit)&&value%scale!==0n)throw new Error("Enter a quantity that converts to a whole number of "+unit+".");
+  var digits=value.toString().padStart(5,"0");
+  return (digits.slice(0,-4)+"."+digits.slice(-4)).replace(/0+$/, "").replace(/\.$/, "");
+}
 function orderTotalText(apiLines){
   if(typeof BigInt!=="function")return null;
   var sum=BigInt(0);
@@ -192,7 +205,7 @@ function quantityUnitField(){
     name:"quantity_unit",label:"Quantity type",type:"select",required:true,defaultValue:"PIECE",
     options:function(record){
       var unit=baseUnitOf(record),per=Number((record&&record.units_per_pack)||0);
-      var options=[{value:"PIECE",label:"Pieces — counted in "+unit}];
+      var options=[{value:"PIECE",label:"Stock unit — "+unit}];
       if(per>0)options.push({value:"PACK",label:"Pack / bag — holds "+JONE.trimQuantityValue(String(per))+" "+unit});
       return options;
     }
@@ -205,7 +218,7 @@ function piecesPerPackField(){
        item's own whole pack size (24). The control is hidden while pieces are
        typed, so the browser could not show its message and "Create draft" /
        "Save changes" silently did nothing for any item with a pack size. */
-    name:"pieces_per_pack",label:"Pieces in one pack/bag",type:"number",min:"0.01",step:"any",
+    name:"pieces_per_pack",label:"Stock units in one pack/bag",type:"number",min:"0.0001",step:"0.0001",
     defaultValue:function(record){return packSizeOf(record)?JONE.trimQuantityValue(String(record.units_per_pack)):"";},
     when:function(record,values){return String(values.quantity_unit||"PIECE")!=="PIECE";},
     hint:function(record){return "How many "+baseUnitOf(record)+" pieces one whole pack/bag contains.";}
@@ -215,14 +228,12 @@ function poLineFields(){
   return [
     quantityUnitField(),
     piecesPerPackField(),
-    {name:"quantity_ordered",label:"Quantity",type:"number",min:"0.0001",step:"any",defaultValue:"1",required:true,
+    {name:"quantity_ordered",label:"Quantity",type:"number",min:"0.0001",step:"0.0001",defaultValue:"1",required:true,
+     configure:function(input,record,values){JONE.configureQuantityInput(input,String(values.quantity_unit||"PIECE")==="PIECE"&&JONE.isWholeQuantityUnit(baseUnitOf(record)));},
      hint:function(record,values){
-       var mode=String(values.quantity_unit||"PIECE");
-       var typed=Number(values.quantity_ordered||0);
-       if(mode==="PIECE")return "Records "+JONE.trimQuantityValue(String(typed))+" "+baseUnitOf(record)+" (pieces) on the order.";
-       var per=Number(values.pieces_per_pack||0);
-       if(!(per>0))return "Enter how many pieces are in one pack/bag.";
-       return "Records "+trimmed(typed*per,4)+" "+baseUnitOf(record)+" (pieces) on the order.";
+       var mode=String(values.quantity_unit||"PIECE"), unit=baseUnitOf(record);
+       try {return "Records "+recordedBaseQuantity(values.quantity_ordered,mode==="PIECE"?1:values.pieces_per_pack,unit)+" "+unit+" on the order.";}
+       catch(err){return err.message;}
      }},
     {name:"unit_cost",label:"Cost of ONE selected type (NGN)",type:"number",min:"0",step:"0.01",defaultValue:"0",required:true,
      hint:function(record,values){
@@ -262,7 +273,7 @@ function linesToBaseUnits(lines,records){
       pieces=typed*per;unitCost=cost/per;
     }
     if(!(pieces>0))throw new Error("Enter a quantity for "+(record.sku||"every line")+".");
-    return {item_id:Number(record.id!==undefined?record.id:line.item_id),quantity_ordered:trimmed(pieces,4),unit_cost:trimmed(unitCost,2),notes:""};
+    return {item_id:Number(record.id!==undefined?record.id:line.item_id),quantity_ordered:recordedBaseQuantity(line.quantity_ordered,mode==="PIECE"?1:(line.pieces_per_pack||record.units_per_pack),baseUnitOf(record)),unit_cost:trimmed(unitCost,2),notes:""};
   });
 }
 
@@ -543,7 +554,7 @@ function reorderUnitsPerPurchaseUnit(purchaseUnit,record){
 function reorderBaseQuantity(values,record){
   var quantity=Number((values||{}).reorder_quantity||0),per=reorderUnitsPerPurchaseUnit((values||{}).purchase_unit,record);
   if(!(quantity>0)||!(per>0))return null;
-  return trimmed(quantity*per,4);
+  try{return recordedBaseQuantity((values||{}).reorder_quantity,per,baseUnitOf(record));}catch(_){return null;}
 }
 /* Price per ONE base unit, from the price of the selected purchase unit. */
 function reorderBaseUnitCost(values,record){
@@ -670,7 +681,7 @@ async function reorderItem(itemId,fromLocationId){
           '<p class="caption">Standard cost '+JONE.esc(money(record.standard_cost||0))+' per '+JONE.esc(reorderUnitLabel(baseUnitOf(record)).toLowerCase())+' · '+JONE.esc(lastPurchase)+'</p>'+
           '<p class="caption">Already on order: '+JONE.esc(JONE.trimQuantityValue(String(context.open_purchase_order_quantity||0)))+' '+JONE.esc(reorderUnitLabel(baseUnitOf(record)).toLowerCase())+'</p></div>';
       },getValue:function(){return{};}},
-      {name:"reorder_quantity",label:"Reorder quantity",type:"number",min:"0.0001",step:"any",required:true,
+      {name:"reorder_quantity",label:"Reorder quantity",type:"number",min:"0.0001",step:"0.0001",required:true,
         help:"How many of the selected purchase unit to order; the server stores the exact base-unit quantity."},
       {name:"purchase_unit",label:"Purchase unit",type:"select",required:true,options:reorderPurchaseUnits(record)},
       {name:"unit_purchase_price",label:"Unit purchase price (NGN, per purchase unit)",type:"number",min:"0",step:"0.01",required:true,
@@ -680,6 +691,7 @@ async function reorderItem(itemId,fromLocationId){
         mount.appendChild(output);
         var inputs=function(){var out={};Array.prototype.forEach.call((form||mount).querySelectorAll("input,select"),function(control){if(control.name)out[control.name]=control.value;});return out;};
         var refresh=function(){var current=inputs(),line=reorderLinePayload(current,record);
+          JONE.configureQuantityInput(form && form.elements.reorder_quantity, current.purchase_unit!=="PACK" && JONE.isWholeQuantityUnit(baseUnitOf(record)));
           if(!line){output.textContent="Enter a quantity and a price to see the order total.";return;}
           var total=orderTotalText([line]);
           output.textContent="Order total as it will be recorded: "+money(total)+" ("+line.quantity_ordered+" "+reorderUnitLabel(baseUnitOf(record)).toLowerCase()+" at "+money(line.unit_cost)+" each).";
@@ -981,8 +993,8 @@ function receiptField(order){
           var remain=line.quantity_outstanding!=null?line.quantity_outstanding:line.quantity_ordered;
           return '<tr><td class="cell-clamp"><strong class="cell-sub">'+JONE.esc(line.item_sku)+'</strong><br><small class="caption">'+JONE.esc(line.item_name)+'</small></td>'+
             '<td class="num cell-nowrap">'+JONE.esc(qty(remain,line.base_unit))+'</td>'+
-            '<td><input class="input" type="number" min="0" step="any" value="0" data-proc-receipt-qty="'+JONE.esc(line.id)+'" data-proc-receipt-max="'+JONE.esc(remain)+'"></td>'+
-            '<td><select class="select" data-proc-receipt-mode="'+JONE.esc(line.id)+'"><option value="PIECE">Pieces ('+JONE.esc(line.base_unit)+')</option><option value="PACK">Pack</option><option value="BAG">Bag</option><option value="CRATE">Crate</option></select></td>'+
+            '<td><input class="input" type="number" min="0" step="'+(JONE.isWholeQuantityUnit(line.base_unit)?"1":"0.0001")+'" value="0" data-proc-receipt-qty="'+JONE.esc(line.id)+'" data-proc-receipt-max="'+JONE.esc(remain)+'"></td>'+
+            '<td><select class="select" data-proc-receipt-mode="'+JONE.esc(line.id)+'"><option value="PIECE">Stock unit ('+JONE.esc(line.base_unit)+')</option><option value="PACK">Pack</option><option value="BAG">Bag</option><option value="CRATE">Crate</option></select></td>'+
             '<td><input class="input" type="number" min="0" step="any" value="'+JONE.esc(JONE.trimQuantityValue(String(line.units_per_pack||"")))+'" data-proc-receipt-perpack="'+JONE.esc(line.id)+'" placeholder="e.g. 24"></td>'+
             '<td><input class="input" type="number" min="0" step="0.01" value="" data-proc-receipt-packprice="'+JONE.esc(line.id)+'" placeholder="Optional"></td>'+
             '<td><input class="input" type="number" min="0" step="0.01" value="'+JONE.esc(line.unit_cost)+'" data-proc-receipt-cost="'+JONE.esc(line.id)+'"></td>'+
@@ -995,11 +1007,10 @@ function receiptField(order){
         var mode=(wrap.querySelector('[data-proc-receipt-mode="'+id+'"]')||{}).value||"PIECE";
         var perPack=Number((wrap.querySelector('[data-proc-receipt-perpack="'+id+'"]')||{}).value||0);
         var line=(order.lines||[]).filter(function(row){return String(row.id)===String(id);})[0]||{};
-        var received=Number(input&&input.value||0);
-        var pieces=received;
-        if(mode!=="PIECE"&&perPack>0)pieces=received*perPack;
+        JONE.configureQuantityInput(input,mode==="PIECE"&&JONE.isWholeQuantityUnit(line.base_unit),true);
         var target=wrap.querySelector('[data-proc-receipt-preview="'+id+'"]');
-        if(target)target.textContent=JONE.trimQuantityValue(String(pieces))+" "+(line.base_unit||"PIECE");
+        try {if(target)target.textContent=(Number(input.value)>0?recordedBaseQuantity(input.value,mode==="PIECE"?1:perPack,line.base_unit):"0")+" "+(line.base_unit||"PIECE");}
+        catch(err){if(target)target.textContent=err.message;}
       }
       wrap.addEventListener("input",function(event){
         var id=event.target.getAttribute("data-proc-receipt-qty")||event.target.getAttribute("data-proc-receipt-perpack");
@@ -1019,12 +1030,12 @@ function receiptField(order){
           perPack=Number((document.querySelector('[data-proc-receipt-perpack="'+id+'"]')||{}).value||0),
           packPrice=Number((document.querySelector('[data-proc-receipt-packprice="'+id+'"]')||{}).value||0);
         if(qty>0){
-          var pieces=qty,unitCost=cost?Number(cost.value||0):0;
+          var line=(order.lines||[]).find(function(row){return Number(row.id)===id;})||{};
+          var pieces=recordedBaseQuantity(input.value,mode==="PIECE"?1:perPack,line.base_unit),unitCost=cost?Number(cost.value||0):0;
           if(mode!=="PIECE"&&perPack>0){
-            pieces=qty*perPack;
             if(!(unitCost>0)&&packPrice>0)unitCost=packPrice/perPack;
           }
-          lines.push({purchase_order_line_id:id,quantity_received:trimmed(pieces,4),unit_cost:trimmed(unitCost,2)});
+          lines.push({purchase_order_line_id:id,quantity_received:pieces,unit_cost:trimmed(unitCost,2)});
         }
       });
       return{lines:lines};
@@ -1041,7 +1052,9 @@ function receiptField(order){
           if(!(perPack>0))return "Enter how many pieces are in one "+(CONTAINER_UNITS[mode]||"pack")+" for each pack/bag line.";
           pieces=pieces*perPack;
         }
-        if(pieces>Number(input.getAttribute("data-proc-receipt-max")))return "A received quantity cannot exceed the outstanding amount.";
+        var line=(order.lines||[]).find(function(row){return String(row.id)===id;})||{};
+        try{pieces=recordedBaseQuantity(input.value,mode==="PIECE"?1:perPack,line.base_unit);}catch(err){return err.message;}
+        if(Number(pieces)>Number(input.getAttribute("data-proc-receipt-max")))return "A received quantity cannot exceed the outstanding amount.";
       }
       return"";
     }};

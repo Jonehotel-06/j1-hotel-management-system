@@ -668,18 +668,18 @@ class TransferIntegrityTests(InventoryManagementTestCase):
     def test_a_transfer_preserves_the_total_and_is_idempotent(self):
         self.stock_in(self.detergent, self.store, 20)
         (outbound, inbound), created = transfer_stock(
-            item=self.detergent, from_location=self.store, to_location=self.kitchen,
+            item=self.detergent, from_location=self.store, to_location=self.bar,
             quantity=Decimal("6.0000"), actor=self.clerk, transfer_key="itm-transfer-1",
         )
         self.assertTrue(created)
         self.assertEqual(self.balance(self.detergent, self.store), Decimal("14.0000"))
-        self.assertEqual(self.balance(self.detergent, self.kitchen), Decimal("6.0000"))
+        self.assertEqual(self.balance(self.detergent, self.bar), Decimal("6.0000"))
         self.assertEqual(self.total(self.detergent), Decimal("20.0000"))
         self.assertEqual(outbound.type, StockMovement.Type.TRANSFER_OUT)
         self.assertEqual(inbound.type, StockMovement.Type.TRANSFER_IN)
 
         (same_out, same_in), created_again = transfer_stock(
-            item=self.detergent, from_location=self.store, to_location=self.kitchen,
+            item=self.detergent, from_location=self.store, to_location=self.bar,
             quantity=Decimal("6.0000"), actor=self.clerk, transfer_key="itm-transfer-1",
         )
         self.assertFalse(created_again)
@@ -691,11 +691,11 @@ class TransferIntegrityTests(InventoryManagementTestCase):
         self.stock_in(self.detergent, self.store, 2)
         with self.assertRaises(ValidationError):
             transfer_stock(
-                item=self.detergent, from_location=self.store, to_location=self.kitchen,
+                item=self.detergent, from_location=self.store, to_location=self.bar,
                 quantity=Decimal("5.0000"), actor=self.clerk, transfer_key="itm-transfer-over",
             )
         self.assertEqual(self.balance(self.detergent, self.store), Decimal("2.0000"))
-        self.assertEqual(self.balance(self.detergent, self.kitchen), Decimal("0.0000"))
+        self.assertEqual(self.balance(self.detergent, self.bar), Decimal("0.0000"))
 
 
 class ValuationIntegrityTests(InventoryManagementTestCase):
@@ -718,10 +718,10 @@ class ValuationIntegrityTests(InventoryManagementTestCase):
 
         issue_stock(
             item=item, location=self.store, quantity=Decimal("5.0000"), actor=self.clerk,
-            source_key="itm-valu-issue", department="KITCHEN", recipient="Store keeper",
+            source_key="itm-valu-issue", department="RESTAURANT", recipient="Store keeper",
         )
         transfer_stock(
-            item=item, from_location=self.store, to_location=self.kitchen, quantity=Decimal("5.0000"),
+            item=item, from_location=self.store, to_location=self.bar, quantity=Decimal("5.0000"),
             actor=self.clerk, transfer_key="itm-valu-transfer",
         )
 
@@ -734,11 +734,11 @@ class ValuationIntegrityTests(InventoryManagementTestCase):
         # receipt basis at the destination, so the documented fallback (the
         # item's standard cost) applies there — nothing is averaged across
         # locations behind the operator's back.
-        kitchen_rows = product_profitability_projection(item_ids=[item.pk], location_id=self.kitchen.pk)
-        self.assertEqual(kitchen_rows[0]["current_stock"], Decimal("5.0000"))
-        self.assertEqual(kitchen_rows[0]["purchase_unit_cost"], Decimal("150.00"))
-        self.assertEqual(kitchen_rows[0]["cost_basis"], "STANDARD_COST")
-        self.assertEqual(kitchen_rows[0]["stock_value"], Decimal("750.00"))
+        bar_rows = product_profitability_projection(item_ids=[item.pk], location_id=self.bar.pk)
+        self.assertEqual(bar_rows[0]["current_stock"], Decimal("5.0000"))
+        self.assertEqual(bar_rows[0]["purchase_unit_cost"], Decimal("150.00"))
+        self.assertEqual(bar_rows[0]["cost_basis"], "STANDARD_COST")
+        self.assertEqual(bar_rows[0]["stock_value"], Decimal("750.00"))
 
     def test_a_direct_sale_configuration_prices_the_projection_per_base_unit(self):
         item = StockItem.objects.create(

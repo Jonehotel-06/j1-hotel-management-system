@@ -3,15 +3,27 @@
   "use strict";
   const S = window.ReceptionServices, API = window.API, UI = JONE.ui, esc = JONE.esc;
   function resetDate(form) { form.querySelector('[name=service_date]').value = JONE.hotelTodayISO(); }
+  const rosters = [];
+  function refreshRosters() { rosters.forEach(roster=>roster && roster.refresh()); }
   function init() {
-    S.tabs(name => { if (name === 'history') history(); if (name === 'config') config(); });
+    S.tabs(name => { if (name === 'history') history(); if (name === 'config') config(); if(name==='issue'||name==='eligibility')refreshRosters(); });
     ['[data-breakfast-issue-form]', '[data-breakfast-eligibility-form]'].forEach(selector => {
-      const form=document.querySelector(selector); resetDate(form); S.guests(form);
+      const form=document.querySelector(selector); resetDate(form);
+      const roster=S.guests(form,{scope:'breakfast'}); rosters.push(roster);
+      const date=form.elements.service_date;
+      date.max=JONE.hotelTodayISO(); date.addEventListener('change',()=>roster.refresh());
     });
     document.querySelector('[data-breakfast-issue-form]').addEventListener('submit', issue);
     document.querySelector('[data-breakfast-eligibility-form]').addEventListener('submit', eligibility);
     document.querySelector('[data-breakfast-config-form]').addEventListener('submit', saveConfig);
     document.querySelector('[data-breakfast-history-refresh]').addEventListener('click', history);
+    const refresh=()=>{ if(!document.hidden)refreshRosters(); };
+    window.addEventListener('focus',refresh);
+    document.addEventListener('visibilitychange',refresh);
+    document.querySelector('[data-breakfast-roster-refresh]').addEventListener('click',refresh);
+    let refreshTimer=window.setInterval(refresh,30000);
+    window.addEventListener('pagehide',()=>window.clearInterval(refreshTimer));
+    window.addEventListener('pageshow',event=>{if(event.persisted){refresh();refreshTimer=window.setInterval(refresh,30000);}});
     banner(); stockOptions();
   }
   function selection(form) {
@@ -29,9 +41,15 @@
         API.list('inventoryLocations',{active:'true',page_size:200}),
         API.list('inventoryUnits',{active:'true',page_size:200}),
       ]);
-      item.innerHTML='<option value="">No stock movement — entitlement record only</option>'+listRows(items).map(i=>'<option value="'+esc(i.id)+'">'+esc((i.sku||'')+' · '+(i.name||''))+'</option>').join('');
+      item.innerHTML='<option value="">No stock movement — entitlement record only</option>'+listRows(items).map(i=>'<option value="'+esc(i.id)+'" data-base-unit="'+esc(i.base_unit||'')+'">'+esc((i.sku||'')+' · '+(i.name||''))+'</option>').join('');
       loc.innerHTML='<option value="">Select a store</option>'+listRows(locations).map(l=>'<option value="'+esc(l.id)+'">'+esc((l.code||'')+' · '+(l.name||''))+'</option>').join('');
       unit.innerHTML='<option value="">Use the item\'s base unit</option>'+listRows(units).map(u=>'<option value="'+esc(u.code)+'">'+esc(u.label||u.code)+'</option>').join('');
+      const tune=()=>{
+        const base=item.selectedOptions[0]?.dataset.baseUnit || '';
+        const counted=!unit.value || unit.value.toUpperCase()===base.toUpperCase();
+        JONE.configureQuantityInput(document.querySelector('[name=stock_quantity]'),counted&&JONE.isWholeQuantityUnit(base));
+      };
+      item.addEventListener('change',tune); unit.addEventListener('change',tune);
     } catch(err) { /* optional stock evidence must never block entitlement recording */ }
   }
   function stockPayload(form,payload) {
@@ -47,22 +65,27 @@
   }
   async function banner() {
     const status=document.querySelector('[data-breakfast-config-status]');
-    try { const c=S.unwrap(await API.get(S.base+'breakfast/config/')); status.textContent=(c.is_enabled?'Enabled':'Disabled')+(c.service_start?' · '+c.service_start+' – '+c.service_end:''); }
+    try {
+      const c=S.unwrap(await API.get(S.base+'breakfast/config/'));
+      status.textContent=(c.is_enabled?'Enabled':'Disabled — breakfast cannot be recorded')+(c.service_start?' · '+c.service_start+' – '+c.service_end:'');
+      const submit=document.querySelector('[data-breakfast-issue-form] [type=submit]');
+      if(submit && c.is_enabled !== undefined) submit.disabled=!c.is_enabled;
+    }
     catch(e) { status.textContent=e.message || 'Unable to load breakfast configuration. Refresh to retry.'; }
   }
   async function issue(e) {
     e.preventDefault(); const form=e.target; let payload=selection(form); payload.notes=form.elements.notes.value;
     if (!payload.guest_id || !payload.booking_id) return UI.toast('Select a guest and their booking.','warning');
     payload=stockPayload(form,payload); if (!payload) return;
-    try { const data=await S.postOnce(form,S.base+'breakfast/issue/',payload); UI.toast(data.created?'Breakfast recorded'+(data.stock_movement_count?' with '+data.stock_movement_count+' stock movement(s)':'')+'.':'Already recorded for this service date.','success'); history(); }
-    catch(err) { UI.toast(err.message || 'Breakfast could not be recorded.','error'); }
+    try { const data=await S.postOnce(form,S.base+'breakfast/issue/',payload); UI.toast(data.created?'Breakfast recorded'+(data.stock_movement_count?' with '+data.stock_movement_count+' stock movement(s)':'')+'.':'Already recorded for this service date.','success'); history(); refreshRosters(); }
+    catch(err) { UI.toast(err.message || 'Breakfast could not be recorded.','error'); refreshRosters(); }
   }
   async function eligibility(e) {
     e.preventDefault(); const form=e.target, result=document.querySelector('[data-breakfast-eligibility-result]');
     result.innerHTML=S.loading();
     try {
       const d=S.unwrap(await API.get(S.base+'breakfast/eligibility/?'+new URLSearchParams(selection(form))));
-      result.innerHTML='<div class="alert" role="status"><strong>'+(d.eligible?'Eligible':'Not eligible')+'</strong> · '+esc(d.eligible?'Breakfast entitlement: '+d.eligible_guests+' guest(s), '+d.check_in+' to '+d.check_out:d.reason)+'</div>';
+      result.innerHTML='<div class="alert" role="status"><strong>'+(d.eligible?'Eligible':'Not eligible')+'</strong> · '+esc(d.eligible?'Breakfast entitlement: '+d.eligible_guests+' guest(s), room(s) '+(d.room_numbers||[]).join(', ')+', '+d.check_in+' to '+d.check_out:d.reason)+'</div>';
     } catch(err) { result.innerHTML=S.error(err); }
   }
   async function history() {

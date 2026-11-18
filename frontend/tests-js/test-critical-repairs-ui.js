@@ -111,10 +111,10 @@ test("amenities and breakfast use the configured department store and optional s
   const amenitiesHtml = html("amenities"), amenitiesJs = js("amenities");
   assert.match(amenitiesHtml, /data-amenity-shelf-select/);
   assert.match(amenitiesHtml, /data-amenity-department-location-select/);
-  assert.match(amenitiesJs, /loc\.is_reception/);
+  assert.match(amenitiesJs, /var configured = unwrap\(response\)\.location/);
   assert.match(amenitiesJs, /withLocation\("\/api\/admin\/service-requests\/reception\/amenities\/stock\/"\)/);
   assert.match(amenitiesJs, /payload\.location_id = parseInt\(locationId\)/);
-  assert.match(amenitiesJs, /Use configured Reception store/);
+  assert.match(amenitiesJs, /No Reception shelf configured/);
 
   const breakfastHtml = html("breakfast"), breakfastJs = js("breakfast");
   for (const marker of [

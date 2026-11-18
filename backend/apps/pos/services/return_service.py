@@ -51,7 +51,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.audit.services import log_action
-from apps.core.utils import hotel_today
+from apps.core.utils import hotel_today, parse_whole_count
 from apps.finance.models import CashMovement, CashSession, FinancialLine, FinancialTransaction, Folio, FolioPosting
 from apps.finance.services import accounting
 from apps.finance.services.approval_service import request_approval, requires_manager_approval
@@ -451,7 +451,7 @@ def _return_request_fingerprint(*, lines, reason, notes, refund_method,
     try:
         normalized = sorted(
             (int(row.get("order_line_id", row.get("line_id"))),
-             int(row.get("quantity_returned", row.get("quantity")))) for row in lines
+             parse_whole_count(row.get("quantity_returned", row.get("quantity")))) for row in lines
         )
     except (TypeError, ValueError, AttributeError) as exc:
         raise ValidationError({"lines": "Each return line needs integer identifiers and quantities."}) from exc
@@ -523,7 +523,7 @@ def record_unopened_return(
                     {"idempotency_key": "This key was already used for a different order's return."}
                 )
             try:
-                requested = sorted((int(row.get("order_line_id", row.get("line_id"))), int(row.get("quantity_returned", row.get("quantity")))) for row in lines)
+                requested = sorted((int(row.get("order_line_id", row.get("line_id"))), parse_whole_count(row.get("quantity_returned", row.get("quantity")))) for row in lines)
             except (TypeError, ValueError, AttributeError) as exc:
                 raise ValidationError({"lines": "Each return line needs integer identifiers and quantities."}) from exc
             recorded = sorted(existing.lines.values_list("order_line_id", "quantity_returned"))
@@ -543,7 +543,7 @@ def record_unopened_return(
     for raw in lines or ():
         try:
             order_line_id = int(raw.get("order_line_id") if "order_line_id" in raw else raw.get("line_id"))
-            quantity = int(raw.get("quantity_returned") if "quantity_returned" in raw else raw.get("quantity"))
+            quantity = parse_whole_count(raw.get("quantity_returned", raw.get("quantity")))
         except (TypeError, ValueError) as exc:
             raise ValidationError({"lines": "Each returned line needs an integer order_line_id and quantity."}) from exc
         if quantity <= 0:

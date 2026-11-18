@@ -13,6 +13,7 @@ from .models import (
     StockUnit, Supplier,
 )
 from .services.inventory_service import canonical_unit, is_container_unit, unit_label
+from .services.stock_routing import location_role, movement_workflow
 
 
 class EmptyAsNoneRelatedField(serializers.PrimaryKeyRelatedField):
@@ -52,15 +53,24 @@ class InventoryMenuItemDirectorySerializer(serializers.Serializer):
 
 
 class StockLocationSerializer(serializers.ModelSerializer):
+    effective_operational_role = serializers.SerializerMethodField()
+
+    def get_effective_operational_role(self, obj):
+        return location_role(obj)
+
     class Meta:
         model = StockLocation
-        fields = ["id", "code", "name", "description", "is_active", "is_reception", "created_at", "updated_at"]
+        fields = ["id", "code", "name", "description", "is_active", "is_reception", "operational_role",
+                  "effective_operational_role", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
 
     def validate(self, attrs):
         instance = self.instance
         active = attrs.get("is_active", getattr(instance, "is_active", True))
         reception = attrs.get("is_reception", getattr(instance, "is_reception", False))
+        role = attrs.get("operational_role", getattr(instance, "operational_role", ""))
+        if reception and role in (StockLocation.OperationalRole.MAIN, StockLocation.OperationalRole.KITCHEN):
+            raise serializers.ValidationError({"is_reception": "A Main or Kitchen store cannot also be the Reception shelf."})
         if reception and not active:
             raise serializers.ValidationError({"is_reception": "An inactive location cannot be the configured Reception store."})
         return attrs
@@ -417,6 +427,11 @@ class StockBalanceSerializer(serializers.ModelSerializer):
 
 
 class StockMovementSerializer(serializers.ModelSerializer):
+    workflow = serializers.SerializerMethodField()
+
+    def get_workflow(self, obj):
+        return movement_workflow(obj)
+
     item_sku = serializers.CharField(source="item.sku", read_only=True)
     item_name = serializers.CharField(source="item.name", read_only=True)
     item_type = serializers.CharField(source="item.item_type", read_only=True)
@@ -438,7 +453,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
             "type", "quantity_delta", "unit_cost", "currency", "occurred_at", "source_reference", "notes",
             "department", "department_label", "recipient", "actor_email", "metadata",
             "issue_method", "menu_item_name", "menu_item_sku", "preparation_batch_reference",
-            "batch_reference", "preparation_on",
+            "batch_reference", "preparation_on", "workflow",
         ]
         read_only_fields = fields
 
@@ -534,6 +549,12 @@ class StockIssuanceCreateSerializer(serializers.Serializer):
     remarks = serializers.CharField(required=False, allow_blank=True, max_length=500)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=128)
 
+    def to_internal_value(self, data):
+        unknown = set(data) - set(self.fields)
+        if unknown:
+            raise serializers.ValidationError({key: "This field is not accepted for stock issuance." for key in unknown})
+        return super().to_internal_value(data)
+
     def validate(self, attrs):
         if attrs.get("destination_location_id") == attrs.get("source_location_id"):
             raise serializers.ValidationError({"destination_location_id": "Choose a different receiving store, or leave it blank for consumption."})
@@ -569,7 +590,7 @@ class StockIssuanceReadSerializer(serializers.Serializer):
             "occurred_at": movement.occurred_at,
             "issued_by": getattr(getattr(movement.actor, "full_name", None), "strip", lambda: "")() or getattr(movement.actor, "email", ""),
             "type": movement.type,
-            "mode": meta.get("mode") or "MANUAL_STOCK_OUT",
+            "mode": movement_workflow(movement) or "MANUAL_STOCK_OUT",
         }
 
 

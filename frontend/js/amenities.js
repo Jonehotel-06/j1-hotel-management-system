@@ -58,20 +58,22 @@
           p.classList.toggle("hidden", p.getAttribute("data-panel") !== name);
         });
         if (name === "stock") loadStock();
+        if (name === "issue") loadIssueItemSelect();
+        if (name === "allocate") loadItemSelects();
         if (name === "history") loadHistory();
       });
     });
 
     // Load dropdowns
     var user = window.Auth && window.Auth.state && window.Auth.state.user;
-    var canAllocate = user && ["ADMIN", "GENERAL_MANAGER", "MANAGER", "STOREKEEPER"].indexOf(String(user.role).toUpperCase()) !== -1;
+    var canAllocate = window.Auth && window.Auth.state && window.Auth.state.capabilitiesLoaded ? window.Auth.hasCapability("guest_amenity.allocate") : user && ["ADMIN", "GENERAL_MANAGER", "MANAGER", "STOREKEEPER"].indexOf(String(user.role).toUpperCase()) !== -1;
     document.querySelector('[data-tab="allocate"]').hidden = !canAllocate;
     if (canAllocate) { loadItemSelects(); wireAllocateSearch(); }
     // Choosing the issuing store narrows the item list to what it holds.
     document.querySelectorAll("[data-amenity-location-select]").forEach(function (sel) {
       sel.addEventListener("change", function () { loadItemSelects((document.querySelector("[data-amenity-allocate-search]") || {}).value || ""); });
     });
-    var canIssue = !user || String(user.role).toUpperCase() !== "STOREKEEPER";
+    var canIssue = window.Auth && window.Auth.state && window.Auth.state.capabilitiesLoaded ? window.Auth.hasCapability("guest_amenity.issue") : !user || String(user.role).toUpperCase() !== "STOREKEEPER";
     if (canIssue) {
       ReceptionServices.guests(document.querySelector("[data-amenity-issue-form]"), {deepLink:true});
       loadIssueItemSelect();
@@ -119,11 +121,11 @@
 
     // Allocate form
     var allocForm = document.querySelector("[data-amenity-allocate-form]");
-    if (allocForm) allocForm.addEventListener("submit", onAllocate);
+    if (allocForm) { allocForm.addEventListener("submit", onAllocate); wireQuantity(allocForm); }
 
     // Issue form
     var issueForm = document.querySelector("[data-amenity-issue-form]");
-    if (issueForm) issueForm.addEventListener("submit", onIssue);
+    if (issueForm) { issueForm.addEventListener("submit", onIssue); wireQuantity(issueForm); }
 
     departmentSelects().forEach(function (sel) {
       sel.addEventListener("change", function () {
@@ -160,26 +162,10 @@
   function loadDepartmentLocationSelect() {
     var selects = departmentSelects();
     if (!selects.length || !API) return Promise.resolve();
-    /* Department shelves come from the amenity endpoint, not the catalogue
-       endpoint: the catalogue requires `inventory.manage`, which the front desk
-       does not hold, so this list used to stay empty for the receptionist even
-       though she may issue from the shelf. */
-    return sourceStock({}).then(function (data) {
-      var locs = ((data && data.locations) || []).concat(
-        data && data.reception_location ? [data.reception_location] : []
-      );
-      var configured = locs.filter(function (loc) { return loc.is_reception; })[0] ||
-        locs.filter(function (loc) { return String(loc.code || "").toUpperCase() === "RECEPTION"; })[0];
+    return API.get("/api/admin/service-requests/reception/amenities/stock/").then(function (response) {
+      var configured = unwrap(response).location;
       selects.forEach(function (sel) {
-        var keep = sel.value;
-        sel.innerHTML = '<option value="">Use configured Reception store</option>';
-        locs.forEach(function (loc) {
-          var opt = document.createElement("option");
-          opt.value = loc.id;
-          opt.textContent = loc.code + " — " + loc.name + (loc.is_reception ? " (configured)" : "");
-          sel.appendChild(opt);
-        });
-        sel.value = keep || (configured ? String(configured.id) : "");
+        sel.replaceChildren(new Option(configured ? configured.code + " — " + configured.name : "No Reception shelf configured", configured ? configured.id : ""));
       });
     });
   }
@@ -206,6 +192,16 @@
     return API.get(url).then(function (res) { return unwrap(res) || {}; });
   }
 
+  function wireQuantity(form) {
+    form.elements.item_id.addEventListener("change", function () { tuneQuantity(form); });
+  }
+  function tuneQuantity(form) {
+    if (!form) return;
+    var option=form.elements.item_id.selectedOptions[0];
+    JONE.configureQuantityInput(form.elements.quantity,option && JONE.isWholeQuantityUnit(option.dataset.unit));
+    form.elements.quantity.max=option && option.dataset.available || "";
+  }
+  var sourceRequest=0;
   function stockKey(itemId, locationId) { return String(itemId) + ":" + String(locationId); }
 
   /* Source store picker + item picker, driven by the live stock rows. A store
@@ -216,7 +212,9 @@
     var itemSelects = document.querySelectorAll("[data-amenity-item-select]");
     var locationSelects = document.querySelectorAll("[data-amenity-location-select]");
     if (!itemSelects.length && !locationSelects.length) return Promise.resolve();
+    var request=++sourceRequest;
     return sourceStock({ search: search || "", limit: 1000 }).then(function (data) {
+      if(request!==sourceRequest)return;
       sourceCache = data;
       var rows = (data && data.stock) || [];
       var locs = (data && data.locations) || [];
@@ -264,9 +262,11 @@
                 .reduce(function (sum, r) { return sum + Number(r.quantity || 0); }, 0);
           seen[row.item_id] = true;
           var opt = new Option(
-            row.sku + " — " + row.name + " (" + qty + " " + row.base_unit + " in stock)",
+            row.sku + " — " + row.name + " (" + JONE.trimQuantityValue(qty) + " " + row.base_unit + " in stock)",
             row.item_id
           );
+          opt.dataset.unit=row.base_unit;
+          if(chosenStore)opt.dataset.available=JONE.trimQuantityValue(row.quantity);
           if (Number(qty) <= 0) opt.disabled = true;
           sel.appendChild(opt);
         });
@@ -278,6 +278,7 @@
           });
         }
         if (keep && sel.querySelector('option[value="' + keep + '"]')) sel.value = keep;
+        tuneQuantity(sel.form);
       });
 
       // Quantity hint for the operator.
@@ -318,7 +319,8 @@
       available.forEach(function (row) {
         var opt = document.createElement("option");
         opt.value = row.item_id;
-        opt.textContent = row.name + " — " + row.quantity + " " + row.base_unit + " on the Reception shelf";
+        opt.textContent = row.name + " — " + JONE.trimQuantityValue(row.quantity) + " " + row.base_unit + " eligible";
+        opt.dataset.unit=row.base_unit; opt.dataset.available=JONE.trimQuantityValue(row.quantity);
         sel.appendChild(opt);
       });
       if (!available.length) {
@@ -328,7 +330,8 @@
         sel.disabled = false;
         if (keep) sel.value = keep;
       }
-    }).catch(function (err) { UI.toast(err.message || "Unable to load selection. Refresh to retry.", "error"); });
+      tuneQuantity(sel.form);
+    }).catch(function (err) { sel.disabled=true;sel.replaceChildren(new Option("Unable to load eligible stock","")); UI.toast(err.message || "Unable to load selection. Refresh to retry.", "error"); });
   }
 
   /* ------------------------------ Load data ------------------------------- */
@@ -369,9 +372,14 @@
       container.innerHTML = head + '<p class="text-muted" data-amenity-stock-empty>No stock items match “' + esc(term) + '”. <button type="button" class="btn btn-sm btn-outline" data-amenity-stock-clear>Clear search</button></p>';
       return;
     }
-    var html = head + '<table class="table"><thead><tr><th>SKU</th><th>Name</th><th>Base Unit</th><th>Quantity</th><th>Status</th></tr></thead><tbody>';
+    var html = head + '<table class="table"><thead><tr><th>SKU</th><th>Name</th><th>Base Unit</th><th>Eligible quantity</th><th>Main Store issue evidence</th><th>Status</th></tr></thead><tbody>';
     balances.forEach(function (b) {
-      html += "<tr><td><code>" + esc(b.sku) + "</code></td><td>" + esc(b.name) + "</td><td>" + esc(b.base_unit) + "</td><td><strong>" + esc(b.quantity) + "</strong></td><td>" + (b.is_active === false ? "Inactive" : Number(b.quantity) <= 0 ? "Unavailable" : b.low_stock ? "Low stock" : "Available") + "</td></tr>";
+      var allocations = (b.allocations || []).map(function (lot) {
+        return esc(lot.source_store + " · " + lot.issued_movement) + "<br>" +
+          esc((lot.issued_by || "Staff name unavailable") + " · " + JONE.formatDateTime(lot.issued_at)) + "<br>" +
+          esc(JONE.trimQuantityValue(lot.allocated_quantity) + " issued · " + JONE.trimQuantityValue(lot.remaining_quantity) + " remaining");
+      }).join("<hr>");
+      html += "<tr><td><code>" + esc(b.sku) + "</code></td><td>" + esc(b.name) + "</td><td>" + esc(b.base_unit) + "</td><td><strong>" + esc(JONE.trimQuantityValue(b.quantity)) + "</strong></td><td>" + (allocations || "—") + "</td><td>" + (b.is_active === false ? "Inactive" : Number(b.quantity) <= 0 ? "Unavailable" : b.low_stock ? "Low stock" : "Available") + "</td></tr>";
     });
     html += "</tbody></table>";
     if (term) {
@@ -405,15 +413,17 @@
         container.innerHTML = '<p class="text-muted">No amenity issuances recorded yet.</p>';
         return;
       }
-      var html = '<table class="table"><thead><tr><th>Reference</th><th>Guest</th><th>Room</th><th>Item</th><th>Qty</th><th>Balance After</th><th>Date</th></tr></thead><tbody>';
+      var html = '<table class="table"><thead><tr><th>Reference</th><th>Guest</th><th>Room</th><th>Item</th><th>Qty</th><th>Shelf / eligible after issue</th><th>Original store issue</th><th>Date</th></tr></thead><tbody>';
       issues.forEach(function (i) {
         html += "<tr><td><code>" + esc(i.reference) + "</code></td>";
         html += "<td>" + esc(i.guest_name || "Guest name unavailable") + "</td>";
         html += "<td>" + esc(i.room_number || "—") + "</td>";
         html += "<td><code>" + esc(i.item_name || i.item_sku || "—") + "</code></td>";
-        html += "<td>" + esc(i.quantity) + "</td>";
-        html += "<td>" + esc(i.departmental_balance_after) + "</td>";
-        html += "<td>" + esc(i.occurred_at || "") + "</td>";
+        html += "<td>" + esc(JONE.formatQuantity(i.quantity,{unit:i.base_unit})) + "</td>";
+        html += "<td>" + esc(JONE.trimQuantityValue(i.departmental_balance_after)) + " physical" +
+          (i.eligible_balance_after == null ? "" : " · " + esc(JONE.trimQuantityValue(i.eligible_balance_after)) + " eligible") + "</td>";
+        html += "<td>" + ((i.main_store_issuances||[]).map(function(lot){return esc(lot.source_store+" · "+lot.issued_movement+" · "+JONE.trimQuantityValue(lot.quantity)+" · "+(lot.issued_by||("staff #"+(lot.issued_by_id||"—")))+" · "+JONE.formatDateTime(lot.issued_at));}).join("<br>") || "Legacy record — no matched issue evidence") + "</td>";
+        html += "<td>" + esc(JONE.formatDateTime(i.occurred_at)) + "</td>";
         html += "</tr>";
       });
       html += "</tbody></table>";
@@ -440,13 +450,13 @@
       UI.toast("Please fill in all required fields.", "warning");
       return;
     }
-    UI.confirm({title:"Allocate stock", message:"Allocate this stock to the Reception Department?"}).then(function (ok) {
+    UI.confirm({title:"Allocate stock", message:"Issue this stock from Main Store for complimentary guest amenities?"}).then(function (ok) {
       if (!ok) return;
       ReceptionServices.postOnce(form, "/api/admin/service-requests/reception/amenities/allocate/", payload).then(function (res) {
         var data = unwrap(res);
         UI.toast(data.created ? "Stock allocated to Reception." : "Allocation already exists.", "success");
-        form.reset();
-        loadStock();
+        form.reset(); loadItemSelects();
+        loadStock(); loadIssueItemSelect();
       }).catch(function (err) {
         UI.toast("Allocation failed: " + (err.message || ""), "error");
       });

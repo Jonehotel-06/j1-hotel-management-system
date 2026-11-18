@@ -40,9 +40,10 @@ function sliceFunction(name) {
 }
 
 function loadConversions() {
-  const ctx = { Math, String, Number, Error };
+  const ctx = { Math, String, Number, Error, window: {}, document: {querySelectorAll: () => [], addEventListener: () => {}} };
   vm.createContext(ctx);
-  vm.runInContext(sliceFunction("trimmed"), ctx);
+  vm.runInContext(fs.readFileSync(path.join(FRONTEND, "js", "utils.js"), "utf8"), ctx);
+  for (const helper of ["trimmed", "toScaled", "baseUnitOf", "recordedBaseQuantity"]) vm.runInContext(sliceFunction(helper), ctx);
   vm.runInContext(sliceFunction("linesToBaseUnits"), ctx);
   return ctx;
 }
@@ -78,9 +79,9 @@ test("the edit dialog starts from the stored order instead of an empty form", ()
 
 test("each purchase-order line states the unit its quantity is typed in", () => {
   assert.match(PAGE, /name:"quantity_unit",label:"Quantity type",type:"select"/);
-  assert.match(PAGE, /label:"Pieces — counted in "\+unit/);
+  assert.match(PAGE, /label:"Stock unit — "\+unit/);
   assert.match(PAGE, /label:"Pack \/ bag — holds "/);
-  assert.match(PAGE, /name:"pieces_per_pack",label:"Pieces in one pack\/bag"/);
+  assert.match(PAGE, /name:"pieces_per_pack",label:"Stock units in one pack\/bag"/);
 });
 
 test("a pack quantity is converted to pieces exactly once", () => {
@@ -101,6 +102,14 @@ test("a pack line without its pack size is refused instead of guessed", () => {
     () => ctx.linesToBaseUnits([{ record: { id: 9, sku: "OIL" }, quantity_unit: "PACK", quantity_ordered: "1", unit_cost: "100" }]),
     /how many pieces are in one pack\/bag/,
   );
+});
+
+test("quantity conversion rejects fractional base counts but keeps measured units and exact packs", () => {
+  const ctx = loadConversions();
+  assert.equal(ctx.recordedBaseQuantity("0.5", "24", "PIECE"), "12");
+  assert.throws(() => ctx.recordedBaseQuantity("0.5", "3", "PIECE"), /whole number/);
+  assert.throws(() => ctx.recordedBaseQuantity("0.0001", "0.0001", "KG"), /exceeds four decimals/);
+  assert.equal(ctx.recordedBaseQuantity("1.125", "2", "KG"), "2.25");
 });
 
 /* --------------------------- Approval evidence ---------------------------- */
@@ -130,8 +139,8 @@ test("the detail view links the stored invoice and shows the payment reference",
 
 test("the receipt grid posts pieces, never pack counts", () => {
   const receipt = sliceFunction("receiptField");
-  assert.match(receipt, /pieces=qty\*perPack/);
-  assert.match(receipt, /<option value="PIECE">Pieces \(/);
+  assert.match(receipt, /pieces=recordedBaseQuantity\(input\.value,mode==="PIECE"\?1:perPack,line\.base_unit\)/);
+  assert.match(receipt, /<option value="PIECE">Stock unit \(/);
   // The dialog previews what will actually be posted to the ledger.
   assert.match(receipt, /data-proc-receipt-preview/);
   assert.match(receipt, /Posts to stock/);

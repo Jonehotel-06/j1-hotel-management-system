@@ -120,11 +120,12 @@ test("stock at hand can be searched without reloading the page", () => {
 /* ------------------------------- Task 5 ---------------------------------- */
 function reorderSandbox() {
   return sandbox(
-    ["trimmed", "toScaled", "orderTotalText", "reorderUnitsPerPurchaseUnit", "reorderBaseQuantity",
+    ["trimmed", "toScaled", "recordedBaseQuantity", "orderTotalText", "reorderUnitsPerPurchaseUnit", "reorderBaseQuantity",
      "reorderBaseUnitCost", "reorderLinePayload", "reorderTotalText", "reorderReviewText",
      "reorderQuotedTotalText", "reorderPurchaseUnits",
      "baseUnitOf", "packSizeOf", "reorderUnitLabel"],
-    PROCUREMENT
+    PROCUREMENT,
+    { JONE: { trimQuantityValue: (value) => String(value), isWholeQuantityUnit: (unit) => unit === "PIECE" } }
   );
 }
 

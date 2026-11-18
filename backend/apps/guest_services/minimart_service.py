@@ -20,7 +20,7 @@ from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from apps.accounts.capabilities import has_capability
 from apps.accounts.models import User
-from apps.core.utils import hotel_today
+from apps.core.utils import hotel_today, parse_whole_count
 from apps.finance.models import CashSession, FinancialTransaction, FinancialLine
 from apps.finance.services import accounting
 from apps.finance.services.ledger_service import create_posted_transaction
@@ -115,7 +115,10 @@ def complete_sale(*, actor, data):
     # Same item -> location -> balance lock order as the authoritative ledger.
     items = {i.pk: i for i in StockItem.objects.select_for_update().filter(pk__in=[p.item_id for p in products]).order_by("pk")}
     locations = {l.pk: l for l in StockLocation.objects.select_for_update().filter(pk__in=[p.location_id for p in products]).order_by("pk")}
-    quantities = {line["product_id"]: line["quantity"] for line in data["lines"]}
+    try:
+        quantities = {line["product_id"]: parse_whole_count(line["quantity"], maximum=999) for line in data["lines"]}
+    except (TypeError, ValueError, KeyError) as exc:
+        raise ValidationError({"lines": "Mini Mart quantities must be whole numbers between 1 and 999."}) from exc
     for p in products:
         item, loc = items[p.item_id], locations[p.location_id]
         if not (p.is_active and item.is_active and loc.is_active and item.item_type == "SELLABLE_PRODUCT" and item.currency.upper() == "NGN"):

@@ -219,6 +219,7 @@ class ManualStockOutTests(BaseAPITestCase):
         self.auth(self.storekeeper)
         self.store = StockLocation.objects.create(code="DRY", name="Dry Store")
         self.kitchen = StockLocation.objects.create(code="KIT", name="Kitchen")
+        self.destination = StockLocation.objects.create(code="BAR", name="Bar Store")
         self.rice = StockItem.objects.create(
             sku="RICE-50", name="Rice 50kg bag", category="Food",
             item_type="RECIPE_INGREDIENT", base_unit="KG", standard_cost="900",
@@ -231,7 +232,7 @@ class ManualStockOutTests(BaseAPITestCase):
     def test_valid_stock_out_in_the_base_unit(self):
         response = self.client.post(self.endpoint, {
             "item_id": self.rice.pk, "source_location_id": self.store.pk, "quantity": "25",
-            "reason": "KITCHEN", "department": "KITCHEN", "remarks": "Lunch service",
+            "reason": "GENERAL", "remarks": "Housekeeping service",
             "idempotency_key": "mso-ok-1",
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
@@ -247,7 +248,7 @@ class ManualStockOutTests(BaseAPITestCase):
         response = self.client.post(self.endpoint, {
             "item_id": self.rice.pk, "source_location_id": self.store.pk, "quantity": "1",
             "unit": "BAG", "conversion_factor": "50",
-            "reason": "KITCHEN", "department": "KITCHEN", "idempotency_key": "mso-bag-1",
+            "reason": "GENERAL", "idempotency_key": "mso-bag-1",
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(
@@ -259,7 +260,7 @@ class ManualStockOutTests(BaseAPITestCase):
         before = StockBalance.objects.get(item=self.rice, location=self.store).quantity_on_hand
         response = self.client.post(self.endpoint, {
             "item_id": self.rice.pk, "source_location_id": self.store.pk, "quantity": "150",
-            "reason": "KITCHEN", "department": "KITCHEN", "idempotency_key": "mso-short-1",
+            "reason": "GENERAL", "idempotency_key": "mso-short-1",
         }, format="json")
         self.assertEqual(response.status_code, 400)
         message = str(response.data)
@@ -275,7 +276,7 @@ class ManualStockOutTests(BaseAPITestCase):
     def test_the_selected_store_must_hold_the_stock(self):
         response = self.client.post(self.endpoint, {
             "item_id": self.rice.pk, "source_location_id": self.kitchen.pk, "quantity": "5",
-            "reason": "KITCHEN", "department": "KITCHEN", "idempotency_key": "mso-wrong-store",
+            "reason": "GENERAL", "idempotency_key": "mso-wrong-store",
         }, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertIn("KIT", str(response.data))
@@ -283,12 +284,12 @@ class ManualStockOutTests(BaseAPITestCase):
     def test_store_to_store_transfer_uses_the_same_guarded_path(self):
         response = self.client.post(self.endpoint, {
             "item_id": self.rice.pk, "source_location_id": self.store.pk,
-            "destination_location_id": self.kitchen.pk, "quantity": "20",
-            "reason": "GENERAL", "recipient": "Chef Musa", "idempotency_key": "mso-transfer-1",
+            "destination_location_id": self.destination.pk, "quantity": "20",
+            "reason": "GENERAL", "recipient": "Staff Musa", "idempotency_key": "mso-transfer-1",
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(
-            StockBalance.objects.get(item=self.rice, location=self.kitchen).quantity_on_hand,
+            StockBalance.objects.get(item=self.rice, location=self.destination).quantity_on_hand,
             Decimal("20"),
         )
         self.assertEqual(

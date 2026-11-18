@@ -49,7 +49,7 @@ test("Procurement separates payment, receipt and Accounting handover states", ()
 });
 
 test("Inventory exposes the manual dish-ingredient issue workflow", () => {
-  assert.match(inventory, /data-inv-tab="food-issues">Food issues/);
+  assert.doesNotMatch(inventory, /data-inv-tab="(?:food-issues|consumption|recipes)"/);
   assert.match(inventory, /data-inv-food-issue-rows/);
   assert.match(inventory, /data-inv-new-food-issue/);
   assert.match(inventory, /consumptionModeOptions/);

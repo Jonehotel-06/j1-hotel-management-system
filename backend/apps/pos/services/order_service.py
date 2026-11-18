@@ -9,7 +9,7 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
-from apps.core.utils import hotel_today
+from apps.core.utils import hotel_today, parse_whole_count
 from apps.finance.models import CashMovement, CashSession, FinancialLine, FinancialTransaction, Folio, FolioPosting
 from apps.guest_services.models import ServiceRequest, ServiceRequestEvent
 from apps.guest_services.services.request_service import service_request_queryset_for_staff
@@ -75,7 +75,7 @@ def _new_reference(prefix, model, *, field="reference") -> str:
 def _snapshot_line(*, raw_line: Mapping, currency: str, service_areas=None) -> dict:
     try:
         menu_item_id = int(raw_line.get("menu_item_id"))
-        quantity = int(raw_line.get("quantity"))
+        quantity = parse_whole_count(raw_line.get("quantity"), maximum=MAX_LINE_QUANTITY)
     except (TypeError, ValueError) as exc:
         raise ValidationError({"lines": "Each line needs an integer menu_item_id and quantity."}) from exc
     if not 1 <= quantity <= MAX_LINE_QUANTITY:
@@ -259,9 +259,7 @@ def _validate_order_lines_stock(lines, *, exclude_order=None, require_configurat
                 raise PosStockConflictError("An ordered item is no longer available. Please contact the hotel.")
             continue  # legacy free-text line: never resolvable to stock, never blocked here
         try:
-            quantity = int(line.get("quantity"))
-            if quantity <= 0:
-                raise ValueError("non-positive quantity")
+            quantity = parse_whole_count(line.get("quantity"), maximum=MAX_LINE_QUANTITY)
         except (TypeError, ValueError):
             if require_configuration:
                 raise PosStockConflictError("An order quantity is invalid. Please contact the hotel.")

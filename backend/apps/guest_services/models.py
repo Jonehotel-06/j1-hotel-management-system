@@ -500,6 +500,8 @@ class BreakfastIssuance(TimeStampedModel):
     )
     #: Number of guests the booking entitles to breakfast.
     eligible_guests = models.PositiveIntegerField(default=1)
+    #: Physical rooms at issuance, not the booking’s later assignments.
+    room_numbers = models.JSONField(default=list, blank=True)
     #: What was served, as evidence: [{item_id, item_sku, item_name, quantity, unit}].
     items = models.JSONField(default=list, blank=True)
     occurred_at = models.DateTimeField(default=timezone.now, db_index=True)

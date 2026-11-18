@@ -149,8 +149,8 @@
   async function loadAmenityMarks(){
     amenityCounts={};
     try{
-      var data=await window.API.get("/api/admin/service-requests/reception/amenities/issues/?page_size=100");
-      ((data&&data.results)||[]).forEach(function(row){
+      var res=await window.API.get("/api/admin/service-requests/reception/amenities/issues/?page_size=100");
+      DATA.rows(window.API.unwrap(res)).forEach(function(row){
         if(row.booking) amenityCounts[String(row.booking)]=(amenityCounts[String(row.booking)]||0)+1;
       });
     }catch(err){ amenityCounts={}; }   /* no permission / nothing recorded: no marks, no error */

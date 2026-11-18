@@ -16,6 +16,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from apps.accounts.models import User
+from apps.bookings.services.booking_service import check_in_booking
 from apps.inventory.models import StockBalance, StockItem, StockLocation, StockMovement
 from apps.inventory.services.inventory_service import record_stock_movement
 from apps.guest_services.models import GuestAmenityIssue, BreakfastBenefitConfig, BreakfastIssuance
@@ -26,7 +27,7 @@ from apps.guest_services.services_amenities import (
 )
 
 from .base import BaseAPITestCase
-from .factories import make_booking, make_guest, make_room_type, make_staff
+from .factories import make_booking, make_guest, make_room, make_room_type, make_staff
 
 
 class AmenityAllocationTests(BaseAPITestCase):
@@ -136,16 +137,15 @@ class AmenityIssuanceTests(BaseAPITestCase):
             item=self.toothbrush, location=self.main_store, movement_type=StockMovement.Type.OPENING,
             quantity_delta="100", source_key="amy-issue-opening-tb", actor=self.keeper,
         )
-        from apps.inventory.services.inventory_service import transfer_stock
-        transfer_stock(
+        allocate_reception_amenities(
             item=self.soap, from_location=self.main_store, to_location=self.reception_loc,
             quantity=Decimal("30"), actor=self.keeper,
-            transfer_key="amy-issue-transfer-soap", notes="Amenity allocation",
+            idempotency_key="amy-issue-transfer-soap", notes="Amenity allocation",
         )
-        transfer_stock(
+        allocate_reception_amenities(
             item=self.toothbrush, from_location=self.main_store, to_location=self.reception_loc,
             quantity=Decimal("30"), actor=self.keeper,
-            transfer_key="amy-issue-transfer-tb", notes="Amenity allocation",
+            idempotency_key="amy-issue-transfer-tb", notes="Amenity allocation",
         )
 
         # Create a guest with a booking
@@ -262,17 +262,16 @@ class CheckInAmenityKitTests(BaseAPITestCase):
             "tissue": StockItem.objects.create(
                 sku="AMY-TISSUE", name="Guest tissue", base_unit="PACK", standard_cost=Decimal("80.00")),
         }
-        from apps.inventory.services.inventory_service import transfer_stock
         for i, (key, item) in enumerate(sorted(self.items.items())):
             record_stock_movement(
                 item=item, location=self.main_store, movement_type=StockMovement.Type.OPENING,
                 quantity_delta="50", source_key=f"kit-opening-{key}", actor=self.keeper,
             )
             # Toothpaste is deliberately short: two tubes on the shelf.
-            transfer_stock(
+            allocate_reception_amenities(
                 item=item, from_location=self.main_store, to_location=self.reception_loc,
                 quantity=Decimal("2") if key == "toothpaste" else Decimal("20"),
-                actor=self.keeper, transfer_key=f"kit-transfer-{key}", notes="Amenity allocation",
+                actor=self.keeper, idempotency_key=f"kit-transfer-{key}", notes="Amenity allocation",
             )
 
         self.guest = make_guest("checkin-kit@example.com")
@@ -411,10 +410,11 @@ class BreakfastEligibilityTests(BaseAPITestCase):
         guest = make_guest("bkf-eligible@example.com")
         room_type = make_room_type("Breakfast Suite", price="15000.00")
         booking = make_booking(
-            guest, room_type,
+            guest, room_type, rooms=[make_room(room_type, "711")],
             check_in=date.today(), check_out=date.today() + timedelta(days=2),
             total="30000.00",
         )
+        check_in_booking(booking, staff_user=self.receptionist)
         eligibility = breakfast_eligibility(
             guest=guest, booking=booking, service_date=date.today(),
         )
@@ -480,10 +480,11 @@ class BreakfastIssuanceTests(BaseAPITestCase):
         self.guest = make_guest("bkf-issue@example.com")
         room_type = make_room_type("Breakfast Suite", price="15000.00")
         self.booking = make_booking(
-            self.guest, room_type,
+            self.guest, room_type, rooms=[make_room(room_type, "712")],
             check_in=date.today(), check_out=date.today() + timedelta(days=2),
             total="30000.00",
         )
+        check_in_booking(self.booking, staff_user=self.receptionist)
 
     def test_issuance_creates_record(self):
         """Recording a breakfast creates an immutable issuance record."""

@@ -47,7 +47,7 @@ test("goods receipts can be recorded as pieces, pack, or bag with pack and piece
   assert.match(PROCUREMENT, /data-proc-receipt-mode=/);
   assert.match(PROCUREMENT, /data-proc-receipt-perpack=/);
   assert.match(PROCUREMENT, /data-proc-receipt-packprice=/);
-  assert.match(PROCUREMENT, /pieces=qty\*perPack/);
+  assert.match(PROCUREMENT, /pieces=recordedBaseQuantity\(input\.value,mode==="PIECE"\?1:perPack,line\.base_unit\)/);
 });
 
 test("quantities in counts and recipes render trimmed (20, not 20.0000)", () => {

@@ -147,7 +147,12 @@ class CriticalRepairsRuntimeTests(APITestCase):
 
         today = hotel_today()
         guest = make_guest("critical-breakfast@guest.dev")
-        booking = make_booking(guest, make_room_type(name="Critical Suite"), check_in=today - timedelta(days=1), check_out=today + timedelta(days=1), status="CHECKED_IN")
+        from apps.bookings.services.booking_service import check_in_booking
+        from tests.factories import make_room
+
+        room_type = make_room_type(name="Critical Suite")
+        booking = make_booking(guest, room_type, rooms=[make_room(room_type, "811")], check_in=today, check_out=today + timedelta(days=1))
+        check_in_booking(booking, staff_user=self.receptionist)
         record, created = record_breakfast(
             guest=guest, booking=booking, service_date=today,
             items=[{"item_id": self.item.pk, "quantity": "2", "unit": "BOTTLE"}],

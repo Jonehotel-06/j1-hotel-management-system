@@ -144,8 +144,21 @@ const JONE = (() => {
     if (value === null || value === undefined || value === "") return "";
     const raw = String(value).trim();
     if (!/^-?\d+(\.\d+)?$/.test(raw)) return raw;
-    const trimmed = raw.replace(/\.?0+$/, "");
+    const trimmed = raw.includes(".") ? raw.replace(/0+$/, "").replace(/\.$/, "") : raw;
     return trimmed === "-0" ? "0" : trimmed;
+  }
+
+  function isWholeQuantityUnit(unit) {
+    const key = unitKey(unit);
+    if (/^(?:CUPS?|SHOTS?|TABLESPOONS?|TEASPOONS?)$/.test(key)) return false;
+    return WHOLE_COUNT_UNITS.has(key) || /^(?:PCE|DZ|SACHET\(S\)|PAIRS?|TOWELS?|SHEETS?|CASES?|SACKS?|BUNDLES?|LOAF|LOAVES)$/.test(key);
+  }
+
+  function configureQuantityInput(input, whole, allowZero) {
+    if (!input) return;
+    input.step = whole ? "1" : "0.0001";
+    input.min = allowZero ? "0" : whole ? "1" : "0.0001";
+    input.inputMode = whole ? "numeric" : "decimal";
   }
 
   /* Convenience wrapper for a stock API row ({ quantity_on_hand, base_unit }). */
@@ -473,7 +486,7 @@ const JONE = (() => {
 
   return {
     formatNaira, formatMoney, CURRENCY_SYMBOLS,
-    formatQuantity, formatStockQuantity, trimQuantityValue, quantityPrecisionFor, WHOLE_COUNT_UNITS,
+    formatQuantity, formatStockQuantity, trimQuantityValue, quantityPrecisionFor, WHOLE_COUNT_UNITS, isWholeQuantityUnit, configureQuantityInput,
     formatDate, formatDateTime, offerPeriod, offerStatusNote,
     offerCriteria, offerDiscountLabel, parseISO, hotelTodayISO, todayISO, nightsBetween, setupDateConstraints,
     $, $$, el, esc, debounce, throttle, storage, bindData, paginate, initials,

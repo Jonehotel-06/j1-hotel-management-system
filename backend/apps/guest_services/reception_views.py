@@ -1,19 +1,23 @@
 """Scoped reception data and retail APIs; no administrative stock serializers."""
 from collections import Counter
 from decimal import Decimal
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from rest_framework import serializers
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from apps.accounts.capabilities import has_capability
 from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
 from apps.inventory.models import StockBalance
 from apps.finance.models import CashSession
 from .models import MiniMartCategory, MiniMartProduct, MiniMartSale
 from .minimart_service import assert_seller, complete_sale
+from .services.breakfast_occupancy import (
+    breakfast_bookings, breakfast_occupant_context, breakfast_room_numbers, eligible_occupants,
+)
 
 
 class ReceptionGuestView(APIView):
@@ -33,6 +37,14 @@ class ReceptionGuestView(APIView):
         # Case-insensitive, whitespace-tolerant term (``"  J1-2026…  "`` works).
         term = " ".join(str(request.query_params.get("search", "") or "").split())[:120]
         today = hotel_today()
+        if request.query_params.get("scope") == "breakfast":
+            if not has_capability(request.user, "breakfast.issue"):
+                raise PermissionDenied("Breakfast permission is required for this roster.")
+            try:
+                service_date = date.fromisoformat(request.query_params.get("service_date") or today.isoformat())
+            except ValueError as exc:
+                raise ValidationError({"service_date": "Use a valid YYYY-MM-DD date."}) from exc
+            return self.breakfast_guests(term, service_date)
 
         qs = Guest.objects.all()
         if term:
@@ -93,6 +105,46 @@ class ReceptionGuestView(APIView):
                 ],
             })
         return success_response({"results": rows, "limit": 50, "search": term})
+
+
+    def breakfast_guests(self, term, service_date):
+        from apps.bookings.models import Guest
+        from .models import BreakfastIssuance
+
+        active = breakfast_bookings(service_date)
+        guest_stays = active.filter(guest_id=OuterRef("pk"))
+        qs = Guest.objects.filter(Exists(guest_stays))
+        occupants = eligible_occupants(service_date).filter(booking_room__booking__guest_id=OuterRef("pk")) if term else None
+        for part in term.split():
+            qs = qs.filter(
+                Q(first_name__icontains=part) | Q(last_name__icontains=part)
+                | Q(email__icontains=part) | Q(phone__icontains=part)
+                | Q(Exists(occupants.filter(Q(full_name__icontains=part) | Q(email__icontains=part))))
+                | Q(Exists(guest_stays.filter(booking_reference__icontains=part)))
+                | Q(Exists(breakfast_bookings(service_date, match=part).filter(guest_id=OuterRef("pk"))))
+            )
+        guests = list(qs.order_by("first_name", "last_name", "pk")[:50])
+        guest_ids = [guest.pk for guest in guests]
+        bookings = list(active.filter(guest_id__in=guest_ids).order_by("-check_in", "pk"))
+        booking_ids = [b.pk for b in bookings]
+        rooms = breakfast_room_numbers(booking_ids, service_date)
+        context = breakfast_occupant_context(booking_ids, service_date)
+        served = set(BreakfastIssuance.objects.filter(guest_id__in=guest_ids, service_date=service_date)
+                     .values_list("guest_id", flat=True))
+        by_guest = {}
+        for booking in bookings:
+            if numbers := rooms.get(booking.pk):
+                by_guest.setdefault(booking.guest_id, []).append({
+                    "id": booking.pk, "reference": booking.booking_reference, "status": booking.status,
+                    "check_in": booking.check_in, "check_out": booking.check_out, "rooms": numbers,
+                    "occupants": context.get(booking.pk, []),
+                    "eligible_guests": max(booking.adults + booking.children, 1),
+                })
+        return success_response({"results": [
+            {"id": guest.pk, "full_name": guest.full_name, "bookings": by_guest[guest.pk],
+             "breakfast_served": guest.pk in served}
+            for guest in guests if guest.pk in by_guest
+        ], "limit": 50, "search": term})
 
 
 class CartLineSerializer(serializers.Serializer):

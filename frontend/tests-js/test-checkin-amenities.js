@@ -151,7 +151,7 @@ test("already-recorded amenities are summarised for the desk", () => {
         { item_name: "Tissue Roll", quantity: "2.0000" },
       ],
     }),
-    "Soap \u00d7 1.0000, Tissue Roll \u00d7 2.0000"
+    "Soap \u00d7 1, Tissue Roll \u00d7 2"
   );
 });
 

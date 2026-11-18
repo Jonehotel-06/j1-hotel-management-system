@@ -116,7 +116,7 @@ function boot(opts = {}) {
       else if (url.indexOf("amenities/source-stock/") !== -1) data = opts.source || SOURCE;
       else if (url.indexOf("amenities/stock/") !== -1) data = opts.stock || STOCK;
       else if (url.indexOf("amenities/issues/") !== -1) data = { results: [] };
-      else if (url.indexOf("reception/guests/") !== -1) data = { results: [] };
+      else if (url.indexOf("reception/guests/") !== -1) data = { results: [{ id: 7, guest_id: 7, full_name: "Ada Obi", bookings: [{ id: 33, room_numbers: ["204"] }] }] };
       return { status: 200, ok: true, data };
     },
     post: async (url, body) => {
@@ -124,10 +124,8 @@ function boot(opts = {}) {
       return { status: 200, ok: true, data: { created: true } };
     },
   };
-  window.JONE = {
-    ui: { toast: () => {}, confirm: () => Promise.resolve(true) },
-    esc: (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])),
-  };
+  window.eval(fs.readFileSync(path.join(FRONTEND, "js/utils.js"), "utf8"));
+  window.JONE.ui = { toast: () => {}, confirm: () => Promise.resolve(true) };
   window.Auth = { state: { user: { role: "ADMIN" } } };
   window.eval(fs.readFileSync(path.join(FRONTEND, "js/reception-services.js"), "utf8"));
   window.eval(fs.readFileSync(path.join(FRONTEND, "js/amenities.js"), "utf8"));
@@ -169,9 +167,9 @@ test("the store-location dropdowns list real issuing stores and exclude the Rece
   assert.equal(from.children.length, 2, "placeholder + MAIN only");
   assert.equal(from.children[1].value, "1");
   assert.ok(from.children[1].textContent.indexOf("MAIN") !== -1);
-  assert.equal(shelf.children.length, 3, "placeholder + both locations");
+  assert.equal(shelf.children.length, 1, "only the configured Reception shelf");
   const shelfLabels = Array.from(shelf.children).map((o) => o.textContent).join(" | ");
-  assert.ok(shelfLabels.indexOf("(configured)") !== -1, "configured Reception store flagged");
+  assert.match(shelfLabels, /RECEPTION/i);
 });
 
 test("only items with stock on the shelf are issuable", { skip: SKIP }, async () => {
@@ -252,6 +250,7 @@ test("issuing an amenity posts the selected item, quantity and shelf", { skip: S
   itemSelect.value = "10";
   form.elements.quantity.value = "2";
   form.elements.notes.value = "";
+  form.elements.room_number.innerHTML = '<option value="204">204</option>';
   form.elements.room_number.value = "204";
   const shelf = doc.querySelector("[data-amenity-department-location-select]");
   if (shelf) shelf.value = "2";
