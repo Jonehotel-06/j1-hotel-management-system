@@ -22,9 +22,17 @@ libjpeg's DCT scaling (``Image.draft``) so memory stays proportional to the
 guard is kept, pinned to the configured pixel ceiling.
 """
 from io import BytesIO
+import threading
 import warnings
 
 from PIL import Image, ImageOps, UnidentifiedImageError
+
+# Image.MAX_IMAGE_PIXELS is process-global Pillow state. Two gallery uploads
+# processed by two gunicorn threads at once could reset each other's ceiling
+# mid-decode (one legitimate photo refused as a "bomb", or a crafted header
+# slipping a lowered guard). Serialise gallery decoding instead; uploads are
+# staff actions, not a hot path.
+_DECODE_LOCK = threading.Lock()
 
 #: Containers that decode to a first frame we can re-encode. MPO is a JPEG
 #: carrying several pictures (Android/Phone "ultra HDR" + stereo shots).
@@ -37,6 +45,13 @@ class ThumbnailError(ValueError):
 
 def make_thumbnail(data, *, max_bytes=16 * 1024 * 1024, max_pixels=200_000_000,
                    size=(640, 400), quality=80):
+    with _DECODE_LOCK:
+        return _make_thumbnail(data, max_bytes=max_bytes, max_pixels=max_pixels,
+                               size=size, quality=quality)
+
+
+def _make_thumbnail(data, *, max_bytes=16 * 1024 * 1024, max_pixels=200_000_000,
+                    size=(640, 400), quality=80):
     """Return JPEG bytes for a bounded JPEG/MPO, PNG, WebP or GIF image.
 
     Animated files use their first frame. Metadata is not copied to the output.
@@ -87,11 +102,26 @@ def make_thumbnail(data, *, max_bytes=16 * 1024 * 1024, max_pixels=200_000_000,
                     pass
                 source.load()
                 oriented = ImageOps.exif_transpose(source)
-                # Composite transparency onto a neutral light background.
+                # Downscale BEFORE compositing. The previous order converted
+                # the full-resolution frame to RGBA and pasted it onto a
+                # second full-resolution RGB frame first: a single 48 MP
+                # phone photo peaked near 800 MB RSS in this process, and
+                # when the container was OOM-killed the browser saw the
+                # connection reset mid-upload ("Network connection
+                # interrupted") even though the file itself was fine.
+                factor = max(1, min(oriented.width // max(1, size[0]),
+                                    oriented.height // max(1, size[1])))
+                if factor > 1:
+                    try:
+                        oriented = oriented.reduce(factor)
+                    except (AttributeError, OSError, ValueError):
+                        pass
+                oriented.thumbnail(size, Image.Resampling.LANCZOS)
+                # Composite transparency onto a neutral light background —
+                # now at thumbnail size, so the copies are tiny.
                 rgba = oriented.convert("RGBA")
                 background = Image.new("RGB", rgba.size, "white")
                 background.paste(rgba, mask=rgba.getchannel("A"))
-                background.thumbnail(size, Image.Resampling.LANCZOS)
                 result = BytesIO()
                 background.save(result, format="JPEG", quality=quality, optimize=True)
                 return result.getvalue()

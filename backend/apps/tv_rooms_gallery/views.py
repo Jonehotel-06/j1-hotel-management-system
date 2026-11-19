@@ -217,7 +217,9 @@ class AdminMedia(AdminView):
         # Retry safety: the same bytes for the same room is the same gallery
         # item. A lost response (or a double click on Retry) must never create a
         # second row or a second stored file.
-        if room is not None and fingerprint:
+        if fingerprint:
+            # room=None is the background-music collection; a retried audio
+            # upload deserves the same duplicate protection as a room file.
             existing = GalleryMedia.objects.filter(
                 room=room, upload_fingerprint=fingerprint, active=True
             ).order_by('id').first()
@@ -227,7 +229,8 @@ class AdminMedia(AdminView):
                         storage.remove(key)
                     except OSError:
                         pass
-                logger.info('Duplicate gallery upload ignored (media %s, room %s)', existing.pk, room.pk)
+                logger.info('Duplicate gallery upload ignored (media %s, room %s)',
+                            existing.pk, room.pk if room is not None else 'background-music')
                 payload = admin_media(existing)
                 payload['notice'] = 'This file is already in this room\'s gallery; it was not uploaded twice.'
                 payload['duplicate'] = True

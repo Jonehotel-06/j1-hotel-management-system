@@ -181,7 +181,16 @@
       if(blocked){text.textContent=' Failed: '+blocked;retry.hidden=true;running=false;return;}
       text.textContent=' Uploading…';
       var result;
-      try{result=await upload(file,roomId,row);}catch(e){text.textContent=' Failed: '+e.message;retry.hidden=!!e.uncertain;running=false;return;}
+      try{result=await upload(file,roomId,row);}catch(e){
+        text.textContent=' Failed: '+e.message;retry.hidden=!!e.uncertain;running=false;
+        /* Uncertain = the server may already hold this file. Refresh the
+           media list so the operator can SEE whether it landed before
+           deciding anything — and the Retry button stays hidden until
+           they have had that chance, so a blind re-upload cannot create
+           a duplicate (the server also dedupes identical bytes). */
+        if(e.uncertain){try{await load();text.textContent+=' The media list was refreshed — check whether this file is already listed.';}catch(_){}}
+        return;
+      }
       completed=true;running=false;progress.value=100;text.textContent=' Uploaded'+(result.notice?' — '+result.notice:'');
       try{await load();}catch(e){text.textContent+='; list refresh failed. Use Refresh processing status: '+e.message;}
     }

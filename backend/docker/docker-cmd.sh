@@ -70,9 +70,14 @@ case "${ROLE}" in
     worker)
         CONCURRENCY="${CELERY_CONCURRENCY:-2}"
         LOG_LEVEL="${CELERY_LOG_LEVEL:-info}"
+        # Consume the TV gallery queue as well as the default queue: gallery
+        # video tasks are published to "tv_gallery" (apps/tv_rooms_gallery/
+        # tasks.py) and a worker started without -Q only ever consumed
+        # "celery", so uploaded videos stayed "queued" forever.
         exec celery -A config worker \
             --loglevel="${LOG_LEVEL}" \
             --concurrency="${CONCURRENCY}" \
+            --queues celery,tv_gallery \
             --without-gossip \
             --without-mingle
         ;;

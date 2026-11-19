@@ -152,6 +152,13 @@ def _candidate_dll_dirs() -> List[Path]:
             Path(base) / "HID Global" / "DigitalPersona" / "U.are.U SDK" / "Windows" / "Lib" / "x64",
             Path(base) / "Crossmatch" / "U.are.U SDK" / "Windows" / "Lib" / "x64",
             Path(base) / "DigitalPersona" / "U.are.U 4500 Fingerprint Reader",
+            # The runtime (RTE) installer — the package the setup guide tells
+            # the operator to verify with Test-Path — drops both DLLs in Bin.
+            # The first revision never looked there, so a workstation that
+            # passed the guide's own check still reported driver_missing.
+            Path(base) / "DigitalPersona" / "Bin",
+            Path(base) / "HID Global" / "DigitalPersona" / "Bin",
+            Path(base) / "DigitalPersona" / "U.are.U SDK" / "Bin",
         ])
     system_root = (os.environ.get("SystemRoot") or r"C:\Windows")
     dirs.append(Path(system_root) / "System32")
@@ -216,7 +223,11 @@ class DigitalPersonaReader:
     """
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        # RLock, not Lock: capture() holds the lock while _capture_raw() may
+        # call initialize() (which re-enters it) when the device was never
+        # opened. With a plain Lock that first capture deadlocked forever
+        # and every capture ended as a frontend BRIDGE_TIMEOUT.
+        self._lock = threading.RLock()
         self._dd = None            # dpfpdd.dll handle
         self._fj = None            # dpfj.dll handle
         self._device = ctypes.c_void_p(0)
@@ -572,8 +583,7 @@ class DigitalPersonaReader:
             raise ReaderError("CAPTURE_FAILED", "The fingerprint capture failed unexpectedly (%s)." % exc) from exc
         finally:
             self._capturing = False
-            if self._lock.locked():
-                self._lock.release()
+            self._lock.release()
 
     def diagnose(self) -> Dict[str, Any]:
         """Print-ready report used by ``--diagnose`` and the setup guide."""
@@ -678,6 +688,13 @@ def make_handler(reader: Any, allowed_origins: Iterable[str]) -> type:
             self.send_response(204)
             for key, value in self._cors_headers().items():
                 self.send_header(key, value)
+            # Chrome/Edge Private Network Access: a public page (the hosted
+            # desk) calling loopback sends a preflight carrying
+            # Access-Control-Request-Private-Network, and the grant below is
+            # what lets that preflight succeed. Loopback-only, and only ever
+            # sent in answer to that exact request header.
+            if (self.headers.get("Access-Control-Request-Private-Network") or "").strip().lower() == "true":
+                self.send_header("Access-Control-Allow-Private-Network", "true")
             self.send_header("Content-Length", "0")
             self.end_headers()
 
@@ -738,10 +755,10 @@ def make_handler(reader: Any, allowed_origins: Iterable[str]) -> type:
                             "message": "The fingerprint bridge hit an internal error (%s)." % exc}, 500)
 
         def _read_json_safe(self) -> Dict[str, Any]:
-            try:
-                return self._read_json()
-            except ValueError:
-                return {}
+            # Malformed JSON is a client error (HTTP 400 via _route), not an
+            # empty body: silently treating it as {} made a broken caller
+            # indistinguishable from a valid capture with default options.
+            return self._read_json()
 
     return BridgeHandler
 
@@ -779,7 +796,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         logger.warning("Binding the fingerprint bridge to %s exposes the reader to the network. "
                        "Use loopback unless you understand the risk.", args.host)
 
-    server = serve(reader, host=args.host, port=args.port, allowed_origins=origins)
+    try:
+        server = serve(reader, host=args.host, port=args.port, allowed_origins=origins)
+    except OSError as exc:
+        # Almost always "port already in use": a second copy of the bridge,
+        # or the previous one never stopped. Name it instead of dumping a
+        # traceback the reception operator cannot act on.
+        logger.error(
+            "The fingerprint bridge cannot listen on http://%s:%d (%s). "
+            "If the bridge is already running, use that copy; otherwise stop "
+            "the process holding the port or start with --port and set the "
+            "same port in the desk page configuration.",
+            args.host, args.port, exc,
+        )
+        reader.shutdown()
+        return 2
     logger.info("%s %s listening on http://%s:%d (origins: %s)",
                 SERVICE_NAME, SERVICE_VERSION, args.host, args.port, ", ".join(origins))
     state = reader.status()

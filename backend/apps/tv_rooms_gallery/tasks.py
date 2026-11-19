@@ -29,7 +29,13 @@ def queue_video(item):
     return item.processing_token
 
 
-@shared_task(name='apps.tv_rooms_gallery.tasks.process_video', ignore_result=True)
+# Per-task limits, deliberately NOT the global CELERY_TASK_TIME_LIMIT (90 s
+# soft / 120 s hard in config/settings/base.py): video_processing.make_video
+# legitimately allows ffmpeg up to 360 s plus poster/probe time, so the
+# global limit killed every longer transcode mid-flight and left videos
+# stuck at "processing". Only this task's limits change.
+@shared_task(name='apps.tv_rooms_gallery.tasks.process_video', ignore_result=True,
+             soft_time_limit=540, time_limit=600)
 def process_video(media_id, token):
     claimed = GalleryMedia.objects.filter(pk=media_id, kind='video', processing_token=token, processing_status='queued').update(
         processing_status='processing', processing_updated_at=timezone.now())

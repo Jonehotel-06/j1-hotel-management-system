@@ -166,7 +166,10 @@ services:
       PORT: "8000"
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
       GUNICORN_THREADS: ${GUNICORN_THREADS:-2}
-      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-60}
+      # Must cover the gallery admin's 300 s upload timeout (frontend
+      # rooms-gallery/admin.js): at 60 s gunicorn killed large uploads
+      # mid-request and the browser reported a network interruption.
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-300}
       HEALTHCHECK_PATH: /api/health/ready/
     ports:
       - "${API_BIND_IP:-127.0.0.1}:${API_PORT:-8000}:8000"
@@ -191,7 +194,7 @@ services:
     image: jone-hotel-backend:local
     pull_policy: never
     restart: unless-stopped
-    command: ["celery", "-A", "config", "worker", "-l", "info", "--concurrency", "2"]
+    command: ["celery", "-A", "config", "worker", "-l", "info", "--concurrency", "2", "-Q", "celery,tv_gallery"]
     depends_on:
       api:
         condition: service_healthy

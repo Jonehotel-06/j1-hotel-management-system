@@ -106,6 +106,25 @@
   var STATUS_TIMEOUT_MS = 6000;
   var CAPTURE_GRACE_MS = 8000;
 
+  /* The reader is USB hardware on ONE Windows workstation, and 127.0.0.1
+     always means "the device running this browser". On a phone or tablet
+     the loopback request goes to the phone itself, so the honest answer is
+     not "start the bridge" (there is nowhere to start it) but "open this
+     page on the reception PC the reader is plugged into". Detected from
+     the user agent only — a desktop browser without a bridge still gets
+     the normal BRIDGE_UNREACHABLE guidance. */
+  function isMobileBrowserContext() {
+    var ua = (window.navigator && window.navigator.userAgent) || "";
+    return /Android|webOS|iPhone|iPad|iPod|Mobile/i.test(ua);
+  }
+
+  var WRONG_WORKSTATION_MESSAGE =
+    "Fingerprint capture is only possible on the reception Windows workstation " +
+    "the DigitalPersona 4500 reader is plugged into. This page is open on a " +
+    "mobile device, where 127.0.0.1 is the device itself — no reader can be " +
+    "reached from here. Open this page on the reception PC instead; a manager " +
+    "or administrator can authorise a supervised fallback meanwhile.";
+
   function bridgeBase() {
     var configured = window.APP_CONFIG && window.APP_CONFIG.FINGERPRINT_BRIDGE_URL;
     var base = typeof configured === "string" && configured.trim() ? configured.trim() : DEFAULT_BRIDGE_URL;
@@ -382,6 +401,9 @@
      the reader and retrying exactly once recovers those cases without hiding a
      genuine "no finger on the sensor" problem or inventing a template. */
   async function captureFromHttpBridge(options) {
+    if (isMobileBrowserContext()) {
+      throw bridgeError(WRONG_WORKSTATION_MESSAGE, "WRONG_WORKSTATION", { reachable: false });
+    }
     try {
       return await captureOnceFromBridge(options);
     } catch (err) {
@@ -403,6 +425,20 @@
      back-off (0.4s, 0.8s, 1.6s …) is used, never an unbounded poll loop. */
   async function getReaderStatus(options) {
     options = options || {};
+    if (isMobileBrowserContext()) {
+      return {
+        status: STATUS_NOT_CONNECTED,
+        detail: WRONG_WORKSTATION_MESSAGE,
+        connected: false,
+        device_serial: "",
+        capture_in_progress: false,
+        driver_installed: null,
+        sdk_loaded: null,
+        bridge_url: bridgeBase(),
+        bridge_reachable: false,
+        bridge_error_code: "WRONG_WORKSTATION"
+      };
+    }
     var retries = options.retries === undefined ? 1 : Math.max(0, Math.min(5, options.retries));
     var lastError = null;
     for (var attempt = 0; attempt <= retries; attempt++) {
@@ -578,6 +614,7 @@
     STATUS_COMMUNICATION_FAILURE: STATUS_COMMUNICATION_FAILURE,
     STATUS_DESCRIPTIONS: STATUS_DESCRIPTIONS,
     captureMinutiaeProbe: captureMinutiaeProbe,
+    isMobileBrowserContext: isMobileBrowserContext,
     getReaderStatus: getReaderStatus,
     initializeReader: initializeReader,
     getBridgeUrl: bridgeBase,

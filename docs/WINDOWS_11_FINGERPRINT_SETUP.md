@@ -90,12 +90,15 @@ unknown device, the vendor driver is missing (§3).
 
 1. Copy the `workstation_bridge` folder (from `J1_FINGERPRINT_BRIDGE_AND_MEDIA_REPAIR_OUTPUT/updated_files/workstation_bridge/`)
    to `C:\JONE\workstation_bridge`.
-2. Install the Python dependency set (the bridge uses the standard library plus
-   `cryptography` for the `ctypes` marshalling helpers):
-
-   ```powershell
-   py -3 -m pip install --upgrade cryptography
-   ```
+2. No Python packages need installing: the bridge (including the
+   ISO/IEC 19794-2 template parser, `iso19794_2.py`) uses only the Python
+   standard library. Keep the complete `workstation_bridge` folder together
+   — an earlier copy that was missing `iso19794_2.py` crashed on startup,
+   which is exactly what "the fingerprint bridge is not reachable" meant.
+   The bridge finds `dpfpdd.dll` / `dpfj.dll` in the SDK `Lib\x64` folders,
+   in `C:\Program Files\DigitalPersona\Bin` (the runtime installer layout
+   checked in §3), in `System32`, or in a folder named by the
+   `JONE_DPFP_DLL_DIR` environment variable.
 
 3. Test it in the foreground first:
 
