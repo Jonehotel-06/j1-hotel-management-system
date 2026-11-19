@@ -4,12 +4,47 @@
   var ownKey='jone.tv.admin.token', token='', rooms=[], media=[], settings={}, currentCatalog=null;
   function message(text){$('message').textContent=text;}
   function getToken(){try{var own=sessionStorage.getItem(ownKey);if(own)return own;var existing=JSON.parse(sessionStorage.getItem('jone.session')||'null');return existing&&existing.access||'';}catch(_){return '';}}
+  /* Read the API's own explanation out of an error response.
+
+     The backend envelope for a rejected request is
+         { success:false, code:'VALIDATION_ERROR', message:'Validation failed.',
+           errors:{ file:['Image could not be decoded safely.'] } }
+     and the page previously looked only at `data.file`, which never exists, so
+     every rejection — including "storage unavailable" and "image too large" —
+     was displayed as the uninformative "Failed: Validation failed.".
+     `errors` is authoritative; `data` is still read as a fallback so a cached
+     older build of this page keeps working. */
+  function firstMessage(node){
+    if(node===undefined||node===null)return '';
+    if(typeof node==='string')return node.trim();
+    if(typeof node==='number'||typeof node==='boolean')return String(node);
+    if(Array.isArray(node)){for(var i=0;i<node.length;i++){var m=firstMessage(node[i]);if(m)return m;}return '';}
+    if(typeof node==='object'){for(var k in node){if(!Object.prototype.hasOwnProperty.call(node,k))continue;var v=firstMessage(node[k]);if(v)return v;}}
+    return '';
+  }
+  function errorDetail(obj){
+    if(!obj||typeof obj!=='object')return {message:'',field:'',code:''};
+    var buckets=[obj.errors, obj.data];
+    for(var i=0;i<buckets.length;i++){
+      var bucket=buckets[i];
+      if(!bucket||typeof bucket!=='object')continue;
+      var keys=Object.keys(bucket);
+      for(var j=0;j<keys.length;j++){
+        var text=firstMessage(bucket[keys[j]]);
+        if(text)return {message:text,field:keys[j],code:obj.code||''};
+      }
+    }
+    return {message:typeof obj.message==='string'?obj.message:'',field:'',code:obj.code||''};
+  }
   async function api(path,options){
     options=options||{};options.headers=Object.assign({},options.headers||{},token?{'Authorization':'Bearer '+token}:{});
     var res=await fetch(JoneOffline.apiBase()+'/api/rooms-gallery/'+path,options);
     if(res.status===204)return null;
     var data;try{data=await res.json();}catch(_){throw new Error('Unexpected server response ('+res.status+').');}
-    if(!res.ok||data.success===false)throw new Error(data.message||('Request failed ('+res.status+').'));
+    if(!res.ok||data.success===false){
+      var detail=errorDetail(data);
+      throw new Error(detail.message||data.message||('Request failed ('+res.status+').'));
+    }
     return data.data;
   }
   function json(method,data){return {method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)};}
@@ -68,7 +103,9 @@
     });
   }
   function renderSettings(){
-    $('upload-limit').textContent='Maximum file size: '+settings.max_upload_mb+' MB. Images have an additional 16 MB processing limit.';
+    var mb=maxUploadMb();
+    $('upload-limit').textContent='Maximum file size: '+mb+' MB (JPG, PNG, WebP, GIF images; MP4, MOV, WebM videos; MP3, WAV audio).'
+      +(settings.storage_ready===false?' Warning: gallery storage on the server is not configured — uploads will fail until an administrator fixes it ('+(settings.storage_detail||'')+').':'');
     $('interval').value=settings.slideshow_seconds;$('max-upload').value=settings.max_upload_mb;$('volume').value=settings.music_volume;
     $('music-enabled').checked=settings.music_enabled;$('music-auto').checked=settings.music_autoplay;
     $('music-list').replaceChildren(makeOption('','None'));media.filter(function(m){return m.kind==='audio'&&m.room_id===null;}).forEach(function(m){$('music-list').appendChild(makeOption(String(m.id),m.name));});
@@ -78,8 +115,31 @@
     var data=await Promise.all([api('manage/rooms/'),api('manage/media/'),api('manage/settings/')]);rooms=data[0];media=data[1];settings=data[2];
     $('login-panel').hidden=true;$('admin').hidden=false;fillRooms();renderSettings();
   }
+  /* Formats the API accepts (server-side validation is authoritative; this is
+     only so the page can refuse an obviously-wrong file BEFORE spending minutes
+     uploading it — the two layers must not disagree). */
+  var IMAGE_EXTENSIONS=['jpg','jpeg','png','webp','gif'];
+  var VIDEO_EXTENSIONS=['mp4','m4v','mov','webm'];
+  var AUDIO_EXTENSIONS=['mp3','wav','ogg'];
+  function extensionOf(name){var parts=String(name||'').toLowerCase().split('.');return parts.length>1?parts.pop():'';}
+  function maxUploadMb(){
+    var value=Number(settings.effective_max_upload_mb||settings.max_upload_mb);
+    return isFinite(value)&&value>0?value:128;
+  }
+  /* Pre-flight: an empty file, an obviously unsupported extension or a file over
+     the limit is reported immediately with the real reason. */
+  function preflight(file){
+    if(!file||!file.size)return 'The selected file is empty (0 bytes).';
+    var ext=extensionOf(file.name),known=IMAGE_EXTENSIONS.indexOf(ext)>=0||VIDEO_EXTENSIONS.indexOf(ext)>=0||AUDIO_EXTENSIONS.indexOf(ext)>=0;
+    if(!known)return 'Unsupported file format ("'+(ext?'.'+ext:'no extension')+'"). Use JPG, PNG, WebP or GIF images, MP4/MOV/WebM videos, or MP3/WAV audio.';
+    var limit=maxUploadMb()*1024*1024;
+    if(file.size>limit)return 'This file is '+Math.round(file.size/1048576)+' MB; the maximum allowed size is '+maxUploadMb()+' MB.';
+    return '';
+  }
   function upload(file,roomId,row){
     return new Promise(function(resolve,reject){
+      var blocked=preflight(file);
+      if(blocked){reject(new Error(blocked));return;}
       var xhr=new XMLHttpRequest(),form=new FormData();form.append('file',file);if(roomId)form.append('room_id',roomId);
       xhr.open('POST',JoneOffline.apiBase()+'/api/rooms-gallery/manage/media/');xhr.setRequestHeader('Authorization','Bearer '+token);
       xhr.upload.onprogress=function(e){if(e.lengthComputable)row.querySelector('progress').value=Math.round(e.loaded/e.total*100);};
@@ -91,11 +151,20 @@
       xhr.onload=function(){
         var obj;try{obj=JSON.parse(xhr.responseText);}catch(_){uncertain('Unexpected server response ('+xhr.status+').');return;}
         if(xhr.status<200||xhr.status>=300||obj.success===false){
-          var detail=obj.data&&obj.data.file;
-          var reason=detail?(Array.isArray(detail)?detail.join(' '):String(detail)):(obj.message||'Upload failed');
+          var detail=errorDetail(obj);
+          var reason=detail.message||obj.message||('Upload failed ('+xhr.status+').');
+          /* Storage/configuration faults are the SERVER's problem and nothing was
+             stored, so the same file can safely be retried once an administrator
+             fixes it — this must not read as "your file is invalid". */
+          if(obj.code==='GALLERY_STORAGE_UNAVAILABLE'){
+            var storageError=new Error(reason);
+            storageError.retryable=true;
+            reject(storageError);return;
+          }
+          if(xhr.status===413){reject(new Error('The server refused the upload as too large (HTTP 413). The maximum configured size is '+maxUploadMb()+' MB; if the file is smaller, the hosting proxy has a lower limit — ask an administrator.'));return;}
           if(xhr.status>=500){uncertain(reason);return;}
-          if(xhr.status===413||/exceeds|maximum|limit|size/i.test(reason)){reject(new Error('File exceeds the maximum allowed size ('+settings.max_upload_mb+' MB).'));return;}
-          if(/unsupported|format|type/i.test(reason)){reject(new Error('Unsupported file format. Please use JPG, PNG, WebP images or MP4/WebM videos.'));return;}
+          if(/exceeds|maximum|limit|size/i.test(reason)){reject(new Error(reason));return;}
+          if(/unsupported|format|type/i.test(reason)){reject(new Error(reason));return;}
           reject(new Error(reason));return;
         }
         if(!obj.data||!obj.data.id){uncertain('The server returned an incomplete upload response.');return;}
@@ -107,7 +176,10 @@
     var row=document.createElement('div');row.className='upload-row';var label=document.createElement('span');label.textContent=file.name+' ';var progress=document.createElement('progress');progress.max=100;progress.value=0;var text=document.createElement('span');row.append(label,progress,text);$('uploads').appendChild(row);
     var running=false, completed=false;
     async function run(){
-      if(running||completed)return;running=true;progress.value=0;text.textContent=' Uploading…';retry.hidden=true;
+      if(running||completed)return;running=true;progress.value=0;retry.hidden=true;
+      var blocked=preflight(file);
+      if(blocked){text.textContent=' Failed: '+blocked;retry.hidden=true;running=false;return;}
+      text.textContent=' Uploading…';
       var result;
       try{result=await upload(file,roomId,row);}catch(e){text.textContent=' Failed: '+e.message;retry.hidden=!!e.uncertain;running=false;return;}
       completed=true;running=false;progress.value=100;text.textContent=' Uploaded'+(result.notice?' — '+result.notice:'');

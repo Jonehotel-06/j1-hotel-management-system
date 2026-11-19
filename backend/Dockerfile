@@ -63,10 +63,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 #   - libmariadb3: shared C client library linked by mysqlclient
 #   - ca-certificates: TLS root bundle for HTTPS APIs (Paystack, Brevo, B2/S3)
 #   - tzdata: IANA timezone database required for Africa/Lagos business rules
+#   - ffmpeg: provides BOTH ffprobe (content verification of uploaded videos) and
+#     ffmpeg (the H.264 transcode the TV gallery publishes). Without these two
+#     binaries every gallery video was either downgraded to a private "other"
+#     attachment or stuck in "processing failed" — the upload looked accepted and
+#     then never played on the TV. apps/tv_rooms_gallery/media.py (verify_av) and
+#     video_processing.py (make_video) both re-check for them at runtime and fail
+#     closed with an explicit message if a stripped image removes them.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libmariadb3 \
         ca-certificates \
         tzdata \
+        ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 appgroup \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin appuser
@@ -82,10 +90,21 @@ COPY docker/container-healthcheck.py /usr/local/bin/container-healthcheck.py
 # Application code owned cleanly; runtime directories belong to non-root user.
 COPY --chown=appuser:appgroup . /app
 
+# /var/lib/jone-gallery is the PRIVATE TV gallery store (originals + renditions).
+# It is deliberately outside /app/media (which is public) and must be backed by
+# a persistent volume; mount one at this path in the deployment. The path is
+# exported below so a fresh container never starts without it configured — that
+# missing configuration is what made every gallery upload fail with HTTP 400.
 RUN chmod 0755 /usr/local/bin/docker-cmd.sh /usr/local/bin/container-healthcheck.py /app/build.sh \
-    && mkdir -p /app/staticfiles /app/media /var/tmp/jone \
+    && mkdir -p /app/staticfiles /app/media /var/tmp/jone /var/lib/jone-gallery \
     && chown appuser:appgroup /app \
-    && chown -R appuser:appgroup /app/staticfiles /app/media /var/tmp/jone
+    && chown -R appuser:appgroup /app/staticfiles /app/media /var/tmp/jone \
+    && chown -R appuser:appgroup /var/lib/jone-gallery \
+    && chmod 0700 /var/lib/jone-gallery
+
+ENV TV_GALLERY_STORAGE_ROOT=/var/lib/jone-gallery \
+    TV_GALLERY_MAX_UPLOAD_MB=128 \
+    GUNICORN_TIMEOUT=120
 
 USER appuser
 

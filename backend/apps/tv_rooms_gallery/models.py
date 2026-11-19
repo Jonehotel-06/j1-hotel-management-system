@@ -25,6 +25,10 @@ class GalleryMedia(models.Model):
     kind = models.CharField(max_length=10, choices=Kind.choices)
     original_name = models.CharField(max_length=200)
     storage_key = models.CharField(max_length=32, unique=True)
+    # SHA-256 of the uploaded bytes, computed while the file is written. Used to
+    # recognise a RETRY of the same file (same room + same bytes) and answer with
+    # the existing record instead of storing a duplicate gallery entry.
+    upload_fingerprint = models.CharField(max_length=64, blank=True, default="", db_index=True)
     thumbnail_key = models.CharField(max_length=32, blank=True)
     display_key = models.CharField(max_length=32, blank=True)
     content_type = models.CharField(max_length=100, default="application/octet-stream")

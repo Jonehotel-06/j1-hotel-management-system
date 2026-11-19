@@ -1,10 +1,36 @@
 """
-J-ONE Fingerprint Reader Bridge Service (local workstation component).
+J-ONE Fingerprint Reader Bridge — SERVER-HOSTED adapter (not the workstation bridge).
 
-This module implements the local-side bridge that runs on the Windows 11
-workstation where the DigitalPersona U.are.U 4500 fingerprint reader is
-physically connected. It exposes a WebSocket API that the browser-based
-J-ONE frontend connects to, translating between:
+Architecture (repaired 2026-11-19)
+==================================
+The DigitalPersona U.are.U 4500 is a USB device attached to ONE Windows 11
+workstation. The supported capture path is the standalone bridge that runs on
+that workstation:
+
+    workstation_bridge/fingerprint_bridge_service.py   (loopback HTTP, port 8787)
+    frontend/js/biometrics.js                          (calls it directly)
+
+What this module implements is a *server-hosted* adapter: it can only see a
+reader when the Django API itself runs on the machine the reader is plugged
+into. That is true for a single-PC "all-in-one" deployment and never for the
+hosted API (Northflank/Cloudflare), which has no USB reader.
+
+Consequently:
+  * ``apps/staff_operations/views_bridge.py`` refuses to use it unless
+    ``FINGERPRINT_BRIDGE_COLOCATED=1`` is configured, and says so explicitly
+    instead of reporting a missing reader;
+  * the desk pages no longer call those server endpoints at all.
+
+Hardware assumptions corrected here
+-----------------------------------
+  * The U.are.U 4500 USB identifiers are vendor 0x05BA (DigitalPersona / HID
+    Global), product 0x000A — not 0x007B/0x0119.
+  * The device is a vendor-specific biometric USB device, NOT a USB-HID class
+    device: ``hid.enumerate`` cannot discover it and a raw HID handle cannot
+    capture from it. Enumeration and capture go through the DigitalPersona SDK
+    (``dpfpdd.dll`` / ``dpfj.dll``).
+
+Translating between:
 
   Physical USB reader (DigitalPersona 4500) <-> Windows SDK/Service <-> this bridge <-> WebSocket <-> browser
 
@@ -68,10 +94,13 @@ READER_STATUS_DESCRIPTIONS = {
     READER_STATUS_COMMUNICATION_FAILURE: "Communication with the fingerprint reader failed. Disconnect and reconnect the reader, then retry.",
 }
 
-# DigitalPersona U.are.U 4500 USB vendor/product IDs.
-# These are the standard HID Global / DigitalPersona identifiers.
-DP_VENDOR_ID = 0x007B          # HID Global / DigitalPersona
-DP_PRODUCT_ID_4500 = 0x0119    # DigitalPersona U.are.U 4500
+# DigitalPersona U.are.U 4500 USB identifiers.
+#   0x05BA = DigitalPersona / HID Global (USB vendor id of the U.are.U family,
+#            which includes the 4500 module 0x000A).
+# Recorded for diagnostics only: the device is vendor-specific USB hardware and
+# is opened through the DigitalPersona SDK, never through libusb/HID.
+DP_VENDOR_ID = 0x05BA          # DigitalPersona / HID Global
+DP_PRODUCT_ID_4500 = 0x000A    # DigitalPersona U.are.U 4500
 
 # Bridge WebSocket port (localhost only).
 BRIDGE_PORT = int(os.environ.get("JONE_FINGERPRINT_BRIDGE_PORT", "8765"))
@@ -135,7 +164,20 @@ class FingerprintReaderBridge:
     # ------------------------------------------------------------------
 
     def _discover_hid_devices(self) -> list[Dict[str, Any]]:
-        """Scan USB HID for DigitalPersona 4500 readers using hidapi."""
+        """HID discovery is not a supported path for this reader — record why.
+
+        The U.are.U 4500 is a vendor-specific biometric USB device, not a
+        USB-HID class device, so ``hid.enumerate`` finds nothing and a raw HID
+        handle cannot capture a fingerprint. An empty list with no explanation
+        is what previously produced misleading "no reader" reports, so the
+        reason is logged and carried in the reader status detail.
+        """
+        self._last_discovery_error = (
+            "The DigitalPersona U.are.U 4500 is enumerated through the "
+            "DigitalPersona SDK (dpfpdd.dll/dpfj.dll), not USB-HID. Use the "
+            "workstation bridge: workstation_bridge/fingerprint_bridge_service.py"
+        )
+        logger.info(self._last_discovery_error)
         devices = []
         try:
             import hid  # type: ignore
@@ -163,36 +205,25 @@ class FingerprintReaderBridge:
 
     def _try_load_dpa_sdk(self) -> bool:
         """
-        Attempt to load the DigitalPersona DPA SDK.
+        Attempt to load the DigitalPersona SDK.
 
-        On Windows, the SDK is typically available as a COM/.NET component
-        or a native DLL. This method tries several common entry points:
+        Only *documented* entry points are tried. The previous implementation
+        also attempted a COM ProgID ("DPFPcomCtl.GReader") that does not exist
+        in any DigitalPersona SDK release; an invented ProgID cannot make a
+        reader work, it only hides which library is genuinely missing.
 
-        1. DPfpComLib (COM automation) via comtypes/pywin32
-        2. dpfpdd.dll / dpfpj.dll via ctypes
-        3. The `dpfp` Python package if installed
+        1. dpfpdd.dll (device layer, required to talk to the reader)
+        2. dpfj.dll (feature extraction, required to obtain minutiae)
+        3. The `dpfp` Python package, if an operator installed one
 
-        Returns True if the SDK could be loaded and initialised.
+        Returns True only when the device layer actually loaded.
         """
-        # Try comtypes for COM-based SDK access
-        try:
-            import comtypes  # type: ignore
-            from comtypes.client import CreateObject  # type: ignore
-            # DigitalPersona COM ProgId (example — actual value depends on SDK version)
-            try:
-                sdk = CreateObject("DPFPcomCtl.GReader")
-                self._sdk_available = True
-                logger.info("DigitalPersona SDK loaded via COM (DPFPcomCtl.GReader).")
-                return True
-            except Exception:
-                pass
-        except ImportError:
-            pass
-
-        # Try ctypes for native DLL access
+        # Native DLLs from the U.are.U SDK (the documented interface)
         try:
             import ctypes
-            for dll_name in ["dpfpdd.dll", "dpfpj.dll"]:
+            # dpfpdd.dll = device layer; dpfj.dll = feature extraction. The
+            # earlier spelling "dpfpj.dll" does not exist in the SDK.
+            for dll_name in ["dpfpdd.dll", "dpfj.dll"]:
                 try:
                     ctypes.WinDLL(dll_name)
                     self._sdk_available = True

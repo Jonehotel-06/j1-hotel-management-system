@@ -122,8 +122,12 @@ test("no shipped frontend file hardcodes a deployment API host for the payment f
   //    fallback; a public host resolves to same-origin instead.
   const executableHosts = (config.match(/["']https?:\/\/[^"']+["']/g) || [])
     .map((h) => h.replace(/["']/g, ""));
-  assert.deepEqual(executableHosts, ["http://127.0.0.1:8000"],
-    "config.js may only name the local dev API");
+  /* Two loopback origins are legitimate: the local dev API and the local
+     fingerprint bridge (a workstation service, added 2026-11-19 because the
+     reader is USB-attached to the desk PC and cannot be reached through the
+     hosted API). Neither is a remote host. */
+  assert.deepEqual(executableHosts, ["http://127.0.0.1:8000", "http://127.0.0.1:8787"],
+    "config.js may only name loopback defaults (dev API + fingerprint bridge)");
 
   // 3. The authoritative runtime config resolves public origins directly to
   //    https://api.jonehotels.com over HTTPS and never to a PaaS preview host.

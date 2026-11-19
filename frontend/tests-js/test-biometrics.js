@@ -53,12 +53,17 @@ test("identifierPayload buckets email, numeric staff id and employee code", () =
 });
 
 test("with no reader and no simulation opt-in the client refuses to fabricate a fingerprint", async () => {
+  /* Repaired 2026-11-19: with no in-page SDK the client now asks the WORKSTATION
+     bridge (http://127.0.0.1:8787) instead of a hosted API route. When that
+     bridge is not running the error must name the bridge and still point at the
+     supervised fallback — and must never return synthetic minutiae. */
   const ctx = makeBio();
   await assert.rejects(
     () => ctx.window.JONE.biometrics.captureMinutiaeProbe({ seed: "worker@jonehotel.com" }),
     (err) => err.name === "FingerprintReaderError"
-      && /No fingerprint reader is available/.test(err.message)
-      && /supervised fallback/.test(err.message),
+      && /fingerprint bridge is not reachable at http:\/\/127\.0\.0\.1:8787/.test(err.message)
+      && /supervised fallback/.test(err.message)
+      && err.code === "BRIDGE_UNREACHABLE",
     "a missing reader must be reported, not papered over with synthetic minutiae"
   );
   disposeAll();

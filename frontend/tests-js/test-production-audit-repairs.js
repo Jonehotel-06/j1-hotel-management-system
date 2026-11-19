@@ -84,7 +84,12 @@ test("Failure B: dashboard.js formModal maps nested guest.* errors to guest_* in
 test("Failure C: CSP permits https://api.jonehotels.com and https: images in _headers and vercel.json", () => {
   const cfHeaders = fs.readFileSync(path.join(FRONTEND, "_headers"), "utf8");
   assert.match(cfHeaders, /img-src\s+'self'\s+https:\/\/api\.jonehotels\.com\s+https:\s+data:\s+blob:;/);
-  assert.match(cfHeaders, /connect-src\s+'self'\s+https:\/\/api\.jonehotels\.com;/);
+  /* connect-src additionally allowlists the LOOPBACK fingerprint bridge
+     (http://127.0.0.1:* and http://localhost:*). It is a local workstation
+     service, cannot be reached over the network, and is the only way a browser
+     can talk to a USB reader attached to the desk PC. No remote origin and no
+     wildcard is permitted — see test-deploy-config.js for the full policy. */
+  assert.match(cfHeaders, /connect-src\s+'self'\s+https:\/\/api\.jonehotels\.com\s+http:\/\/127\.0\.0\.1:\*\s+http:\/\/localhost:\*;/);
 
   const cspHeader = (VERCEL.headers || [])
     .flatMap((h) => h.headers || [])

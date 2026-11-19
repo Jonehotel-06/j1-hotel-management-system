@@ -615,6 +615,54 @@ MAX_UPLOAD_MB = config("MAX_UPLOAD_MB", default=5, cast=int)
 # than gallery images (the server still validates the real content).
 MAX_DOCUMENT_UPLOAD_MB = config("MAX_DOCUMENT_UPLOAD_MB", default=10, cast=int)
 
+# --- TV rooms gallery private storage ---------------------------------------
+# The TV gallery keeps originals OUT of the public media root (MEDIA_ROOT is
+# served at /media/ and through the B2/CDN domain, and an uploaded video must
+# not be world-readable until it has been transcoded and verified). That means
+# it needs its own directory, and — critically — that directory must exist.
+#
+# This setting is why gallery uploads used to fail with HTTP 400
+# "Validation failed.": ``apps/tv_rooms_gallery/storage.py`` demanded an
+# absolute ``TV_GALLERY_STORAGE_ROOT`` that was NEVER set by the Dockerfile,
+# docker-cmd.sh, compose.yaml or these settings, so every upload raised
+# ``ImproperlyConfigured`` before the file was written. The value is now
+# resolved (and created) here, from the environment when provided.
+def _default_tv_gallery_root(media_root: Path) -> Path:
+    """Private gallery directory used when TV_GALLERY_STORAGE_ROOT is not set.
+
+    Preference order:
+      1. a private sibling of MEDIA_ROOT, when media lives on its own volume
+         (a host-mounted /data/media gives /data/gallery-private), or
+      2. ``<project>/private/tv-gallery`` — outside MEDIA_ROOT and STATIC_ROOT,
+         which is what matters: nothing in that tree is served publicly.
+    The directory is created on demand by apps/tv_rooms_gallery/storage.py.
+    """
+    media = Path(media_root)
+    try:
+        media.resolve().relative_to(BASE_DIR.resolve())
+    except ValueError:
+        return media.parent / "gallery-private"
+    return Path(BASE_DIR) / "private" / "tv-gallery"
+
+
+TV_GALLERY_STORAGE_ROOT = config(
+    "TV_GALLERY_STORAGE_ROOT",
+    default=str(_default_tv_gallery_root(config("MEDIA_ROOT", default=str(BASE_DIR / "media")))),
+)
+# Hard ceiling for one gallery upload, independent of the per-gallery setting in
+# the database (GallerySettings.max_upload_mb). 128 MB is the configured
+# business limit; the clamp below only stops an administrator from accidentally
+# raising it beyond what the platform accepts.
+TV_GALLERY_MAX_UPLOAD_MB = config("TV_GALLERY_MAX_UPLOAD_MB", default=128, cast=int)
+# Largest image (pixels) accepted for thumbnail/display generation. Modern phone
+# cameras legitimately produce 48 MP / 64 MP / 108 MP stills; the previous
+# 32 MP ceiling rejected them as "unsupported".
+TV_GALLERY_MAX_IMAGE_PIXELS = config("TV_GALLERY_MAX_IMAGE_PIXELS", default=200_000_000, cast=int)
+# Largest image file accepted for re-encoding. Bounded by the upload ceiling.
+TV_GALLERY_MAX_IMAGE_BYTES = config(
+    "TV_GALLERY_MAX_IMAGE_BYTES", default=TV_GALLERY_MAX_UPLOAD_MB * 1024 * 1024, cast=int
+)
+
 # --- Email -----------------------------------------------------------------
 EMAIL_HOST = config("EMAIL_HOST", default="")
 EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)

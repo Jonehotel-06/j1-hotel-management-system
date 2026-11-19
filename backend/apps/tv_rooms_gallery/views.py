@@ -3,6 +3,7 @@ import os
 import re
 import logging
 
+from django.conf import settings
 from django.http import FileResponse, Http404, HttpResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.db import transaction, DatabaseError
@@ -182,23 +183,56 @@ class AdminMedia(AdminView):
         upload = request.FILES.get('file')
         if upload is None:
             raise ValidationError({'file': 'Select a file.'})
+        if not upload.size:
+            raise ValidationError({'file': 'The selected file is empty (0 bytes).'})
         room_id = request.data.get('room_id')
         if room_id and (not str(room_id).isdigit() or int(room_id) < 1):
             raise ValidationError({'room_id': 'Provide a valid room ID.'})
         room = get_object_or_404(Room, pk=room_id) if room_id else None
         config = GallerySettings.load()
-        # Hard upper bound independent of any setting or client declaration.
-        limit = min(config.max_upload_mb, 512) * 1024 * 1024
+        # Hard upper bound independent of any setting or client declaration, and
+        # never above the deployment ceiling (TV_GALLERY_MAX_UPLOAD_MB, 128 MB).
+        deployment_ceiling = int(getattr(settings, 'TV_GALLERY_MAX_UPLOAD_MB', 128) or 128)
+        effective_mb = min(int(config.max_upload_mb or deployment_ceiling), deployment_ceiling, 512)
+        limit = effective_mb * 1024 * 1024
         if upload.size > limit:
-            raise ValidationError({'file': 'File exceeds the maximum allowed size of %d MB.' % config.max_upload_mb})
+            raise ValidationError({'file': 'File exceeds the maximum allowed size of %d MB.' % effective_mb})
         try:
             values = media.prepare(upload, limit)
+        except storage.GalleryStorageUnavailable as exc:
+            # A deployment/configuration problem is NOT the staff member's file
+            # being invalid. Before this repair it was converted into HTTP 400
+            # "Validation failed." for every upload, which is exactly the
+            # message the team reported for both the JPG and the MP4.
+            logger.error('Gallery storage is unavailable during upload: %s', exc)
+            return self._storage_unavailable(exc)
         except ValueError as exc:
             raise ValidationError({'file': str(exc)}) from exc
         except (OSError, ImproperlyConfigured) as exc:
             logger.exception('Gallery storage error during upload')
-            raise ValidationError({'file': 'Storage service unavailable. Please try again later.'}) from exc
+            return self._storage_unavailable(exc)
         notice = values.pop('_notice', '')
+        fingerprint = values.get('upload_fingerprint', '')
+
+        # Retry safety: the same bytes for the same room is the same gallery
+        # item. A lost response (or a double click on Retry) must never create a
+        # second row or a second stored file.
+        if room is not None and fingerprint:
+            existing = GalleryMedia.objects.filter(
+                room=room, upload_fingerprint=fingerprint, active=True
+            ).order_by('id').first()
+            if existing is not None:
+                for key in (values.get('storage_key'), values.get('thumbnail_key'), values.get('display_key')):
+                    try:
+                        storage.remove(key)
+                    except OSError:
+                        pass
+                logger.info('Duplicate gallery upload ignored (media %s, room %s)', existing.pk, room.pk)
+                payload = admin_media(existing)
+                payload['notice'] = 'This file is already in this room\'s gallery; it was not uploaded twice.'
+                payload['duplicate'] = True
+                return Response(payload, status=status.HTTP_200_OK)
+
         if values['kind'] == 'video':
             values.update(processing_status='queued', processing_token=uuid4().hex, processing_updated_at=timezone.now())
         try:
@@ -227,6 +261,25 @@ class AdminMedia(AdminView):
         payload = admin_media(item)
         if notice: payload['notice'] = notice
         return Response(payload, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _storage_unavailable(exc):
+        """HTTP 503 with a configuration code — never a fake validation error."""
+        from rest_framework.response import Response
+        message = getattr(exc, 'message', '') or (
+            'TV gallery storage is unavailable. An administrator must configure '
+            'TV_GALLERY_STORAGE_ROOT and restart the API.'
+        )
+        return Response(
+            {
+                'success': False,
+                'code': 'GALLERY_STORAGE_UNAVAILABLE',
+                'message': message,
+                'errors': {'storage': [message]},
+                'data': {'retryable': True},
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
 
 class MediaChange(serializers.Serializer):
@@ -317,7 +370,13 @@ class AdminSettings(AdminView):
 
     @staticmethod
     def serialize(config):
-        return {key: getattr(config, key) for key in ('slideshow_seconds', 'music_id', 'music_enabled', 'music_autoplay', 'music_volume', 'max_upload_mb')}
+        payload = {key: getattr(config, key) for key in ('slideshow_seconds', 'music_id', 'music_enabled', 'music_autoplay', 'music_volume', 'max_upload_mb')}
+        # The API enforces the smaller of the stored setting and the deployment
+        # ceiling; the dashboard shows this value so the two cannot disagree.
+        ceiling = int(getattr(settings, 'TV_GALLERY_MAX_UPLOAD_MB', 128) or 128)
+        payload['effective_max_upload_mb'] = min(int(config.max_upload_mb or ceiling), ceiling)
+        payload['storage_ready'], payload['storage_detail'] = storage.is_configured()
+        return payload
 
 
 class AdminFile(AdminView):

@@ -6,12 +6,14 @@
    the browser NEVER invents a fingerprint. A probe comes from one of three
    places only:
 
-     1. the department fingerprint reader bridge, exposed by the workstation as
-        `window.JoneFingerprintReader.capture({fingerPosition, timeout})`
-        (USB/HID/WebUSB reader SDK, installed by the deployment); or
-     2. the local HTTP bridge API (Windows workstation bridge service at
-        /api/admin/staff-operations/biometrics/bridge/*), which delegates to
-        the local WebSocket bridge running on the workstation; or
+     1. the workstation fingerprint bridge service (the supported path on
+        Windows 11), reached DIRECTLY at its loopback origin — default
+        http://127.0.0.1:8787 — as `GET /status`, `POST /initialize` and
+        `POST /capture`. The bridge, not the hosted API, owns the USB reader.
+        See workstation_bridge/fingerprint_bridge_service.py and
+        docs/WINDOWS_11_FINGERPRINT_SETUP.md; or
+     2. a reader SDK installed directly in the desk page, exposed as
+        `window.JoneFingerprintReader.capture({fingerPosition, timeout})`; or
      3. an explicitly configured lab/demo simulation
         (`__APP_CONFIG__.BIOMETRIC_READER_MODE = "simulated"`), which is
         announced on the console and must never be enabled in production.
@@ -80,10 +82,162 @@
     return bridge && typeof bridge.capture === "function" ? bridge : null;
   }
 
-  // Resolve the bridge API base URL from the same origin as the API.
-  function bridgeApiBase() {
-    var base = window.APP_CONFIG && window.APP_CONFIG.API_BASE_URL ? window.APP_CONFIG.API_BASE_URL : "";
-    return base.replace(/\/$/, "") + "/api/admin/staff-operations/biometrics/bridge";
+  /* ------------------------- Local bridge transport -------------------------
+     The fingerprint reader is a USB device attached to ONE Windows
+     workstation, so the capture request must be answered by the bridge
+     service running on that workstation (loopback), not by the hosted API.
+
+     The previous implementation built an ABSOLUTE backend URL here and handed
+     it to window.API.post(), which prefixes the API origin again. The browser
+     received
+
+       https://api.jonehotels.comhttps://api.jonehotels.com/api/.../capture/
+
+     and refused it (malformed URL + CSP), surfacing as
+     "Bridge communication error: We couldn't reach our servers…". The hosted
+     API could never answer that call usefully anyway: it runs in a data centre
+     with no USB reader attached.
+
+     Everything below therefore talks to the workstation bridge directly over
+     its own origin, with the same request/response contract and no secrets in
+     the page (the bridge holds no credential; authorisation stays with the
+     API's JWT, which is sent only to the API). */
+  var DEFAULT_BRIDGE_URL = "http://127.0.0.1:8787";
+  var STATUS_TIMEOUT_MS = 6000;
+  var CAPTURE_GRACE_MS = 8000;
+
+  function bridgeBase() {
+    var configured = window.APP_CONFIG && window.APP_CONFIG.FINGERPRINT_BRIDGE_URL;
+    var base = typeof configured === "string" && configured.trim() ? configured.trim() : DEFAULT_BRIDGE_URL;
+    return base.replace(/\/+$/, "");
+  }
+
+  function bridgeUrl(path) {
+    var base = bridgeBase();
+    var suffix = String(path || "");
+    if (suffix && suffix.charAt(0) !== "/") suffix = "/" + suffix;
+    return base + suffix;
+  }
+
+  function bridgeError(message, code, extra) {
+    var error = FingerprintReaderError(message, code);
+    if (extra) {
+      error.bridgeStatus = extra.status || "";
+      error.bridgeDetail = extra.detail || "";
+      error.bridgeUrl = bridgeBase();
+      error.bridgeReachable = !!extra.reachable;
+      error.httpStatus = extra.httpStatus || 0;
+    }
+    return error;
+  }
+
+  /* One bridge request: JSON in, JSON out, hard timeout, no credentials.
+
+     Returns the parsed body. Throws a FingerprintReaderError whose `code`
+     distinguishes the three genuinely different failures an operator must act
+     on differently:
+
+       BRIDGE_UNREACHABLE — nothing is listening on the bridge origin (service
+                            not started, wrong port, or the request was blocked
+                            by policy). Says so instead of blaming the network
+                            or the hotel server.
+       BRIDGE_TIMEOUT     — the bridge accepted the request but did not answer.
+       BRIDGE_HTTP_<n>    — the bridge answered with an error status.
+       BRIDGE_BAD_RESPONSE— the bridge answered with something unreadable. */
+  async function bridgeRequest(path, options) {
+    options = options || {};
+    var url = bridgeUrl(path);
+    var timeout = options.timeout || STATUS_TIMEOUT_MS;
+    var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, timeout);
+    var response;
+    try {
+      response = await fetch(url, {
+        method: options.method || "GET",
+        headers: Object.assign({ "Accept": "application/json" }, options.body ? { "Content-Type": "application/json" } : {}),
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        mode: "cors",
+        credentials: "omit",
+        cache: "no-store",
+        redirect: "error",
+        referrerPolicy: "no-referrer",
+        signal: controller ? controller.signal : undefined
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      var aborted = err && (err.name === "AbortError" || err.name === "TimeoutError");
+      if (aborted) {
+        throw bridgeError(
+          "The fingerprint bridge at " + bridgeBase() + " did not answer within " +
+          Math.round(timeout / 1000) + " seconds. Check that the J-ONE Fingerprint Bridge is running and that the reader is connected.",
+          "BRIDGE_TIMEOUT",
+          { reachable: true }
+        );
+      }
+      throw bridgeError(
+        "The fingerprint bridge is not reachable at " + bridgeBase() + ". " +
+        "Start the J-ONE Fingerprint Bridge on this workstation (Start → J-ONE Fingerprint Bridge), " +
+        "then press Retry. If it is already running, confirm the bridge port and that the browser is " +
+        "allowed to reach 127.0.0.1. Until it is running no fingerprint can be read here — a manager or " +
+        "administrator can authorise a supervised fallback instead.",
+        "BRIDGE_UNREACHABLE",
+        { reachable: false }
+      );
+    }
+    clearTimeout(timer);
+    var text = "";
+    try { text = await response.text(); } catch (_) { text = ""; }
+    var payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = null; } }
+    if (!response.ok) {
+      var detail = (payload && (payload.detail || payload.message)) || ("HTTP " + response.status);
+      throw bridgeError(
+        "The fingerprint bridge answered with an error (" + response.status + "): " + detail,
+        "BRIDGE_HTTP_" + response.status,
+        { reachable: true, status: (payload && payload.status) || "", detail: detail, httpStatus: response.status }
+      );
+    }
+    if (!payload || typeof payload !== "object") {
+      throw bridgeError(
+        "The fingerprint bridge returned a response this page cannot read. Restart the bridge, and report it if it continues.",
+        "BRIDGE_BAD_RESPONSE",
+        { reachable: true }
+      );
+    }
+    return payload;
+  }
+
+  function normalizeBridgeStatus(payload) {
+    var d = (payload && (payload.data && typeof payload.data === "object" ? payload.data : payload)) || {};
+    var status = String(d.status || "").toLowerCase();
+    if (!STATUS_DESCRIPTIONS[status]) status = STATUS_NOT_CONNECTED;
+    return {
+      status: status,
+      detail: d.detail || STATUS_DESCRIPTIONS[status],
+      connected: status === STATUS_CONNECTED || status === STATUS_BUSY ? true : !!d.connected,
+      device_serial: d.device_serial || "",
+      capture_in_progress: !!d.capture_in_progress,
+      driver_installed: d.driver_installed === undefined ? null : !!d.driver_installed,
+      sdk_loaded: d.sdk_loaded === undefined ? null : !!d.sdk_loaded,
+      bridge_url: bridgeBase(),
+      bridge_reachable: true
+    };
+  }
+
+  function unreachableStatus(err) {
+    var code = (err && err.code) || "BRIDGE_UNREACHABLE";
+    return {
+      status: code === "BRIDGE_TIMEOUT" ? STATUS_COMMUNICATION_FAILURE : STATUS_NOT_CONNECTED,
+      detail: (err && err.message) || "The fingerprint bridge is not reachable on this workstation.",
+      connected: false,
+      device_serial: "",
+      capture_in_progress: false,
+      driver_installed: null,
+      sdk_loaded: null,
+      bridge_url: bridgeBase(),
+      bridge_reachable: false,
+      bridge_error_code: code
+    };
   }
 
   // Normalise whatever the reader SDK returns into the ISO/IEC 19794-2 point
@@ -173,87 +327,135 @@
     return points;
   }
 
-  // Capture via the HTTP bridge API (delegates to the local WebSocket bridge).
-  async function captureFromHttpBridge(options) {
-    var base = bridgeApiBase();
-    var body = {
-      timeout_ms: options.timeout || DEFAULT_TIMEOUT_MS,
-      finger_position: options.fingerPosition || "RIGHT_INDEX"
-    };
-    var res = await window.API.post(base + "/capture/", body, { auth: false });
-    if (!res || !res.success) {
-      var msg = (res && res.data && res.data.message) || "Bridge capture failed.";
-      var code = (res && res.data && res.data.error) || "BRIDGE_CAPTURE_ERROR";
-      throw FingerprintReaderError(msg, code);
+  /* One capture attempt against the workstation bridge.
+
+     The bridge answers
+       { success: true,  minutiae: [{x, y, angle, type, quality}, …], … }
+       { success: false, error: "READER_NOT_CONNECTED", message: "…" }
+     and only a successful capture with enough minutiae leaves this function —
+     a failure is always reported, never converted into a template. */
+  async function captureOnceFromBridge(options) {
+    var timeout = options.timeout || DEFAULT_TIMEOUT_MS;
+    var payload = await bridgeRequest("/capture", {
+      method: "POST",
+      body: {
+        timeout_ms: timeout,
+        finger_position: options.fingerPosition || "RIGHT_INDEX"
+      },
+      timeout: timeout + CAPTURE_GRACE_MS
+    });
+    var data = (payload && payload.data && typeof payload.data === "object") ? payload.data : payload;
+    if (!data || data.success === false) {
+      var code = (data && (data.error || data.code)) || "BRIDGE_CAPTURE_ERROR";
+      var message = (data && data.message) || "The fingerprint reader did not complete the capture.";
+      throw bridgeError(message, code, { reachable: true, status: (data && data.status) || "", detail: message });
     }
-    var data = res.data;
-    if (!data.success) {
-      throw FingerprintReaderError(data.message || "Capture failed.", data.error || "BRIDGE_CAPTURE_ERROR");
-    }
-    var points = normalizePoints(data.minutiae || []);
+    var points = normalizePoints((data && data.minutiae) || []);
     if (!points) {
-      throw FingerprintReaderError(
-        "The bridge returned an incomplete fingerprint capture.",
-        "BRIDGE_INCOMPLETE_CAPTURE"
+      throw bridgeError(
+        "The fingerprint reader returned an incomplete capture (" +
+        (Array.isArray(data && data.minutiae) ? (data.minutiae.length + " minutiae points") : "no template") +
+        "). Clean the sensor, place the finger flat and try again, or use the supervised fallback.",
+        "BRIDGE_INCOMPLETE_CAPTURE",
+        { reachable: true, status: STATUS_COMMUNICATION_FAILURE }
       );
     }
     return points;
   }
 
-  // Query the reader status from the HTTP bridge API.
-  async function getReaderStatus() {
-    var base = bridgeApiBase();
-    var res = await window.API.get(base + "/status/", { auth: false });
-    if (!res || !res.data) {
-      return { status: STATUS_COMMUNICATION_FAILURE, detail: "Could not reach the fingerprint reader bridge." };
+  function isRecoverableBridgeFailure(err) {
+    var code = String((err && err.code) || "");
+    return code === "READER_NOT_CONNECTED" ||
+      code === "READER_COMMUNICATION_FAILURE" ||
+      code === "COMMUNICATION_FAILURE" ||
+      code === "READER_BUSY" ||
+      code === "BUSY" ||
+      code === "BRIDGE_TIMEOUT" ||
+      code === "READER_INIT_FAILED";
+  }
+
+  /* Capture via the workstation bridge, with ONE bounded recovery attempt.
+
+     A reader that was unplugged and plugged back in, a bridge that was
+     restarted after the page was already open, or a device left busy by a
+     previous attempt all present as a normal capture failure. Re-initialising
+     the reader and retrying exactly once recovers those cases without hiding a
+     genuine "no finger on the sensor" problem or inventing a template. */
+  async function captureFromHttpBridge(options) {
+    try {
+      return await captureOnceFromBridge(options);
+    } catch (err) {
+      if (!isRecoverableBridgeFailure(err)) throw err;
+      var recovered = false;
+      try {
+        var status = normalizeBridgeStatus(await bridgeRequest("/initialize", { method: "POST", body: {}, timeout: 20000 }));
+        recovered = !!status.connected;
+      } catch (initErr) {
+        throw err;
+      }
+      if (!recovered) throw err;
+      return await captureOnceFromBridge(options);
     }
-    var d = res.data;
-    return {
-      status: d.status || STATUS_NOT_CONNECTED,
-      detail: d.detail || STATUS_DESCRIPTIONS[d.status || STATUS_NOT_CONNECTED] || "",
-      connected: !!d.connected,
-      device_serial: d.device_serial || "",
-      capture_in_progress: !!d.capture_in_progress,
-    };
+  }
+
+  /* Query reader status. `retries` allows the page to distinguish "the bridge
+     is still starting" from "the bridge is not installed": a short bounded
+     back-off (0.4s, 0.8s, 1.6s …) is used, never an unbounded poll loop. */
+  async function getReaderStatus(options) {
+    options = options || {};
+    var retries = options.retries === undefined ? 1 : Math.max(0, Math.min(5, options.retries));
+    var lastError = null;
+    for (var attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return normalizeBridgeStatus(await bridgeRequest("/status", { timeout: STATUS_TIMEOUT_MS }));
+      } catch (err) {
+        lastError = err;
+        if (err && err.code === "BRIDGE_UNREACHABLE" && attempt < retries) {
+          await new Promise(function (resolve) { setTimeout(resolve, 400 * Math.pow(2, attempt)); });
+          continue;
+        }
+        break;
+      }
+    }
+    return unreachableStatus(lastError);
   }
 
   // Initialize (or re-initialize) the fingerprint reader via the bridge.
-  async function initializeReader() {
-    var base = bridgeApiBase();
-    var res = await window.API.post(base + "/initialize/", {}, { auth: false });
-    if (!res || !res.data) {
-      return { status: STATUS_COMMUNICATION_FAILURE, detail: "Could not reach the fingerprint reader bridge." };
+  async function initializeReader(options) {
+    options = options || {};
+    try {
+      return normalizeBridgeStatus(await bridgeRequest("/initialize", {
+        method: "POST",
+        body: { reopen: options.reopen !== false },
+        timeout: 25000
+      }));
+    } catch (err) {
+      return unreachableStatus(err);
     }
-    var d = res.data;
-    return {
-      status: d.status || STATUS_NOT_CONNECTED,
-      detail: d.detail || STATUS_DESCRIPTIONS[d.status || STATUS_NOT_CONNECTED] || "",
-      connected: !!d.connected,
-      device_serial: d.device_serial || "",
-      capture_in_progress: !!d.capture_in_progress,
-    };
   }
 
-  // Capture a minutiae probe. Tries the legacy bridge, then the HTTP bridge,
-  // then the lab simulation (when explicitly configured), or throws.
+  // Capture a minutiae probe. Tries the workstation bridge, then the lab
+  // simulation (when explicitly configured), or throws an actionable error.
   async function captureMinutiaeProbe(options) {
     options = options || {};
 
-    // 1. Try the legacy in-browser bridge (window.JoneFingerprintReader).
+    // 1. A vendor SDK installed directly in the page (highest precedence: it
+    //    is already talking to the attached device).
     var points = await captureFromLegacyBridge(options);
     if (points) return points;
 
-    // 2. Try the HTTP bridge API (local workstation bridge service).
+    // 2. The workstation bridge service (the supported path on Windows 11).
+    var lastFailure = null;
     try {
       points = await captureFromHttpBridge(options);
       if (points) return points;
     } catch (err) {
-      // Fall through — the error will be re-thrown if no other source works.
-      if (!(err instanceof FingerprintReaderError)) {
-        err = FingerprintReaderError("Bridge communication error: " + (err && err.message ? err.message : err), "BRIDGE_UNREACHABLE");
-      }
-      // Remember the bridge error to surface it if nothing else works.
-      var bridgeError = err;
+      /* FingerprintReaderError is a factory (it returns an Error with a name),
+         so `instanceof` is always false — check the name it stamps instead, or
+         a precise bridge error would be re-wrapped as a vague one. */
+      lastFailure = (err && err.name === "FingerprintReaderError")
+        ? err
+        : bridgeError("Fingerprint capture failed: " + ((err && err.message) || String(err)), "CAPTURE_ERROR");
     }
 
     // 3. Lab/demo simulation (explicitly configured only).
@@ -267,12 +469,13 @@
       return simulateMinutiae(options.seed);
     }
 
-    // No capture source available. Surface the most specific error we have.
-    if (bridgeError) throw bridgeError;
+    // No capture source produced a template. The reader error is the honest
+    // answer; it names the bridge origin and what the operator must do.
+    if (lastFailure) throw lastFailure;
 
     throw FingerprintReaderError(
-      "No fingerprint reader is available to this browser: the fingerprint capture bridge is not loaded. " +
-      "A connected USB device alone is not enough; contact an administrator to install and verify the reader integration, " +
+      "No fingerprint reader is available to this browser. Start the J-ONE Fingerprint Bridge on this " +
+      "workstation (" + bridgeBase() + "), confirm the DigitalPersona 4500 is connected, and try again — " +
       "or ask a manager or administrator to authorise a supervised fallback.",
       "READER_NOT_AVAILABLE"
     );
@@ -377,6 +580,8 @@
     captureMinutiaeProbe: captureMinutiaeProbe,
     getReaderStatus: getReaderStatus,
     initializeReader: initializeReader,
+    getBridgeUrl: bridgeBase,
+    bridgeCapturedThrough: "workstation-bridge",
     requestEnrollment: requestEnrollment,
     issueTemporaryWorkstationToken: issueTemporaryWorkstationToken,
     getReceptionTerminalStatus: getReceptionTerminalStatus,

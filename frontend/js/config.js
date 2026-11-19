@@ -56,6 +56,51 @@
 
   var API_BASE_URL = resolveApiBase(runtimeConfig.API_BASE_URL);
 
+  /* Default loopback origin of the J-ONE fingerprint bridge service
+     (workstation_bridge/fingerprint_bridge_service.py). */
+  var DEFAULT_FINGERPRINT_BRIDGE_URL = "http://127.0.0.1:8787";
+  var LOOPBACK_HOSTS = ["127.0.0.1", "localhost", "[::1]"];
+
+  function bridgeHostIsLoopback(host) {
+    return LOOPBACK_HOSTS.indexOf(String(host || "").toLowerCase()) !== -1;
+  }
+
+  /* Validate the configured bridge origin.
+
+     On an HTTPS page (production: https://jonehotels.com) a browser only
+     allows plain-HTTP requests to a *potentially trustworthy* loopback origin,
+     so http://127.0.0.1 / http://localhost is the supported shape. Anything
+     else is rejected here — with one console line naming the real problem —
+     instead of producing a CSP/mixed-content failure at capture time. */
+  function resolveFingerprintBridgeUrl(value) {
+    if (value === undefined || value === null || value === "") return DEFAULT_FINGERPRINT_BRIDGE_URL;
+    if (typeof value !== "string") {
+      if (typeof console !== "undefined" && console.error) {
+        console.error("[J-ONE CONFIG] Invalid FINGERPRINT_BRIDGE_URL type; expected an origin string.");
+      }
+      return DEFAULT_FINGERPRINT_BRIDGE_URL;
+    }
+    var candidate = value.trim().replace(/\/+$/, "");
+    if (!candidate) return DEFAULT_FINGERPRINT_BRIDGE_URL;
+    if (!/^https?:\/\/[a-z0-9.\-:[\]]+$/i.test(candidate)) {
+      if (typeof console !== "undefined" && console.error) {
+        console.error("[J-ONE CONFIG] Invalid FINGERPRINT_BRIDGE_URL (" + candidate +
+          "): expected scheme + host[:port] with no path.");
+      }
+      return DEFAULT_FINGERPRINT_BRIDGE_URL;
+    }
+    var host = candidate.replace(/^https?:\/\//i, "").split(":")[0];
+    var httpsPage = window.location && window.location.protocol === "https:";
+    if (httpsPage && /^http:\/\//i.test(candidate) && !bridgeHostIsLoopback(host)) {
+      if (typeof console !== "undefined" && console.error) {
+        console.error("[J-ONE CONFIG] FINGERPRINT_BRIDGE_URL (" + candidate +
+          ") would be blocked as mixed content on this HTTPS page; using " + DEFAULT_FINGERPRINT_BRIDGE_URL + ".");
+      }
+      return DEFAULT_FINGERPRINT_BRIDGE_URL;
+    }
+    return candidate;
+  }
+
   window.APP_CONFIG = {
     API_BASE_URL: API_BASE_URL,
     CONFIG_ERROR: CONFIG_ERROR,
@@ -81,9 +126,12 @@
   /* Fingerprint capture source for this deployment.
 
      "hardware" (default, required in production): probes come only from the
-     department reader bridge exposed as window.JoneFingerprintReader.capture().
-     Without a reader the biometric pages refuse and point the operator at the
-     supervised fallback — the browser never invents a fingerprint.
+     DigitalPersona reader attached to THIS workstation, reached through the
+     local fingerprint bridge (see FINGERPRINT_BRIDGE_URL below) or through
+     window.JoneFingerprintReader.capture() when the vendor SDK is exposed
+     directly by the workstation. Without a working reader the biometric pages
+     refuse and point the operator at the supervised fallback — the browser
+     never invents a fingerprint.
 
      "simulated": lab/demo only. A deployment sets it through the
      deployment-owned runtime config (window.__APP_CONFIG__.BIOMETRIC_READER_MODE)
@@ -94,6 +142,21 @@
     && runtimeConfig.BIOMETRIC_READER_MODE.trim())
     ? runtimeConfig.BIOMETRIC_READER_MODE.trim().toLowerCase()
     : "hardware",
+
+  /* Local fingerprint bridge origin (the Windows workstation service).
+
+     The USB reader is physically attached to the RECEPTION/attendance PC, so
+     the capture request must be answered by a service running on that PC —
+     never by the hosted API, which cannot see a USB device in the hotel.
+     Default: http://127.0.0.1:8787 (the bridge's default loopback port).
+
+     A deployment may override it through the deployment-owned runtime config
+     (window.__APP_CONFIG__.FINGERPRINT_BRIDGE_URL) when the bridge listens on
+     another loopback port or another local address. Only an http(s) origin is
+     accepted — a path would be discarded — and on an HTTPS page the browser
+     only permits a loopback origin (127.0.0.1 / localhost / [::1]), which is
+     why any other value is ignored here rather than silently failing later. */
+  FINGERPRINT_BRIDGE_URL: resolveFingerprintBridgeUrl(runtimeConfig.FINGERPRINT_BRIDGE_URL),
 
   /* Department subdomain routing map (Approved 11 Departments & 11 Roles) */
   DEPARTMENT_SUBDOMAINS: {
@@ -439,6 +502,12 @@
   // Re-resolve after the override merge so an empty API_BASE_URL in
   // runtime-config.js can't wipe out the localhost dev fallback.
   window.APP_CONFIG.API_BASE_URL = resolveApiBase(window.APP_CONFIG.API_BASE_URL);
+
+  // The override merge above copies runtime keys verbatim, so the bridge origin
+  // is validated one final time: an origin that the browser would block on this
+  // HTTPS page is replaced with the loopback default instead of failing later
+  // with an opaque CSP/mixed-content error during capture.
+  window.APP_CONFIG.FINGERPRINT_BRIDGE_URL = resolveFingerprintBridgeUrl(window.APP_CONFIG.FINGERPRINT_BRIDGE_URL);
 
   if (runtimeConfig.API_ENDPOINTS && typeof runtimeConfig.API_ENDPOINTS === "object") {
     Object.assign(window.APP_CONFIG.API_ENDPOINTS, runtimeConfig.API_ENDPOINTS);

@@ -64,6 +64,12 @@ x-backend-env: &backend-common-env
   MEDIA_CUSTOM_DOMAIN: ${MEDIA_CUSTOM_DOMAIN:-}
   MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-http://127.0.0.1:8000}
   MEDIA_ROOT: ${MEDIA_ROOT:-/app/media}
+  # Private TV gallery store: outside MEDIA_ROOT (which is public) and mounted
+  # from the `gallery_data` volume below so uploads survive `compose down`.
+  TV_GALLERY_STORAGE_ROOT: ${TV_GALLERY_STORAGE_ROOT:-/var/lib/jone-gallery}
+  TV_GALLERY_MAX_UPLOAD_MB: ${TV_GALLERY_MAX_UPLOAD_MB:-128}
+  # Large gallery uploads need more than gunicorn's 60s default on a hotel link.
+  GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-120}
   # Email defaults to console locally so zero real emails leave the machine
   EMAIL_PROVIDER: ${EMAIL_PROVIDER:-console}
   EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
@@ -166,6 +172,7 @@ services:
       - "${API_BIND_IP:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
       - media_data:/app/media
+      - gallery_data:/var/lib/jone-gallery
     networks:
       - backend_internal
     stop_grace_period: 35s
@@ -197,6 +204,7 @@ services:
       SERVICE_ROLE: worker
     volumes:
       - media_data:/app/media
+      - gallery_data:/var/lib/jone-gallery
     networks:
       - backend_internal
     stop_grace_period: 35s
@@ -257,3 +265,6 @@ volumes:
   mysql_data:
   redis_data:
   media_data:
+  # Private TV gallery store. Persistent on purpose: transcoded renditions and
+  # originals must survive a redeploy, and this path is never served publicly.
+  gallery_data:

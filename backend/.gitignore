@@ -28,6 +28,9 @@ media/
 staticfiles/
 logs/
 *.log
+# Private TV rooms-gallery store (settings default <project>/private/tv-gallery).
+# Hotel photographs and video must never be committed.
+private/
 
 # --- Build / misc ----------------------------------------------------------
 build/

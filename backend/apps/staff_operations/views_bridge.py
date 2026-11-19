@@ -1,24 +1,42 @@
 """
-API endpoints for fingerprint reader bridge integration.
+Server-side fingerprint-bridge endpoints (co-located deployments only).
 
-These views let the browser-based frontend query the local fingerprint reader
-bridge running on the Windows 11 workstation, and submit captures through it.
+Architecture (repaired 2026-11-19)
+==================================
+The DigitalPersona U.are.U 4500 is plugged into the Windows 11 workstation, so
+the capture must be answered by a service running on THAT machine. The desk
+pages therefore call the workstation bridge directly
+(``workstation_bridge/fingerprint_bridge_service.py`` on
+``http://127.0.0.1:8787``) — see ``frontend/js/biometrics.js``.
+
+The endpoints in this module live in the Django API process. They can only see
+a reader when the API runs on the same machine as the reader (a single-PC
+deployment), which is never true for the hosted API. The previous revision made
+the browser call these endpoints anyway, which is why the desk page reported
+"We couldn't reach our servers" for a local USB problem, and why a cloud
+container answered "no reader" no matter what was plugged into the reception PC.
+
+They are kept (no public path is renamed or removed) but are now explicitly
+gated on co-location:
+
+    FINGERPRINT_BRIDGE_COLOCATED=1
+
+When it is not set, every endpoint answers HTTP 409 ``BRIDGE_NOT_COLOCATED``
+with the workstation instructions instead of a misleading reader status. All
+existing authentication, capability and audit controls are unchanged.
 
 Endpoints:
   GET    /api/admin/staff-operations/biometrics/bridge/status/     — reader status
   POST   /api/admin/staff-operations/biometrics/bridge/initialize/ — (re)initialize reader
   POST   /api/admin/staff-operations/biometrics/bridge/capture/    — capture fingerprint probe
   POST   /api/admin/staff-operations/biometrics/bridge/submit/     — submit capture to attendance backend
-
-The bridge itself runs as a local WebSocket server on the workstation
-(see services/fingerprint_bridge.py). These HTTP views are a convenience
-layer that delegates to the singleton bridge instance when the browser
-cannot open a WebSocket directly (e.g. same-origin restrictions).
+  GET    /api/admin/staff-operations/biometrics/bridge/devices/    — registered readers
 """
 
 from __future__ import annotations
 
 import logging
+import os
 
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
@@ -46,6 +64,41 @@ from .services.fingerprint_bridge import (
 )
 
 logger = logging.getLogger(__name__)
+
+BRIDGE_NOT_COLOCATED_MESSAGE = (
+    "This API server does not have the fingerprint reader attached. The reader "
+    "is a USB device on the reception workstation, so capture must be performed "
+    "by the J-ONE Fingerprint Bridge running on that workstation "
+    "(http://127.0.0.1:8787) and the desk page calls it directly. Open the "
+    "attendance terminal on the workstation itself. Server-side bridge use "
+    "requires FINGERPRINT_BRIDGE_COLOCATED=1 on an API that runs on the same "
+    "machine as the reader."
+)
+
+
+def bridge_colocated() -> bool:
+    """True only when this API process really is on the reader's machine.
+
+    Defaulting to False is deliberate: on the hosted API a server-side bridge
+    can never reach a USB reader, and pretending otherwise is what produced the
+    "no fingerprint reader is available on this workstation" report for a reader
+    that was plugged in and working.
+    """
+    return str(os.environ.get("FINGERPRINT_BRIDGE_COLOCATED", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _not_colocated_response():
+    from rest_framework.response import Response
+    return Response(
+        {
+            "success": False,
+            "code": "BRIDGE_NOT_COLOCATED",
+            "message": BRIDGE_NOT_COLOCATED_MESSAGE,
+            "errors": {"bridge": [BRIDGE_NOT_COLOCATED_MESSAGE]},
+            "data": {"bridge_colocated": False},
+        },
+        status=status.HTTP_409_CONFLICT,
+    )
 
 
 def _bridge_status_to_device_status(bridge_status: str) -> str:
@@ -81,6 +134,8 @@ class BridgeReaderStatusView(APIView):
     def get(self, request):
         if not has_capability(request.user, "attendance.clock") and not has_capability(request.user, "attendance.manage"):
             raise DjangoPermissionDenied("This user cannot view fingerprint reader status.")
+        if not bridge_colocated():
+            return _not_colocated_response()
 
         bridge = get_bridge()
         resp = bridge._status_response()
@@ -100,6 +155,8 @@ class BridgeReaderInitializeView(APIView):
     def post(self, request):
         if not has_capability(request.user, "attendance.manage"):
             raise DjangoPermissionDenied("This user cannot initialize fingerprint devices.")
+        if not bridge_colocated():
+            return _not_colocated_response()
 
         bridge = get_bridge()
         resp = bridge.initialize()
@@ -141,6 +198,8 @@ class BridgeReaderCaptureView(APIView):
     def post(self, request):
         if not has_capability(request.user, "attendance.clock") and not has_capability(request.user, "attendance.manage"):
             raise DjangoPermissionDenied("This user cannot perform fingerprint capture.")
+        if not bridge_colocated():
+            return _not_colocated_response()
 
         bridge = get_bridge()
         resp = bridge.capture(
@@ -178,6 +237,8 @@ class BridgeReaderSubmitCaptureView(APIView):
 
         if not has_capability(request.user, "attendance.clock") and not has_capability(request.user, "attendance.manage"):
             raise DjangoPermissionDenied("This user cannot submit fingerprint captures.")
+        if not bridge_colocated():
+            return _not_colocated_response()
 
         serial = str(request.data.get("serial_number", "")).strip()
         nonce = str(request.data.get("event_nonce", "")).strip()
@@ -234,6 +295,8 @@ class BridgeReaderDevicesView(APIView):
     def get(self, request):
         if not has_capability(request.user, "attendance.clock") and not has_capability(request.user, "attendance.manage"):
             raise DjangoPermissionDenied("This user cannot view fingerprint devices.")
+        if not bridge_colocated():
+            return _not_colocated_response()
 
         bridge = get_bridge()
         bridge_status = bridge._status_response()

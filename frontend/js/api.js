@@ -247,6 +247,33 @@ const API = (() => {
     return trimmed;
   }
 
+  /* --------------------------- URL construction ----------------------------
+     A request path is normally a backend ROUTE ("/api/rooms/"), and the API
+     origin (BASE) is prepended to it once. Passing a URL that ALREADY carries
+     its own scheme therefore used to produce a nonsense URL by concatenation,
+     e.g. the fingerprint bridge call in js/biometrics.js handed a fully
+     qualified "https://api.jonehotels.com/api/.../bridge/capture/" to
+     API.post(), which produced
+
+         https://api.jonehotels.comhttps://api.jonehotels.com/api/.../capture/
+
+     The browser refused it (malformed URL + CSP) and the caller reported it as
+     "We couldn't reach our servers", hiding a plain string-building bug.
+
+     Absolute and protocol-relative URLs are now returned untouched so that a
+     caller which must address a DIFFERENT origin (the workstation bridge on
+     http://127.0.0.1, a CDN, …) can pass a full URL safely, while every
+     existing relative route keeps resolving against BASE exactly as before.
+     A path that already starts with BASE is not prefixed twice either. */
+  const ABSOLUTE_URL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+  function resolveUrl(path) {
+    const raw = String(path == null ? "" : path).trim();
+    if (ABSOLUTE_URL_RE.test(raw) || raw.startsWith("//")) return raw;
+    if (BASE && raw.startsWith(BASE + "/")) return raw;
+    return BASE + raw;
+  }
+
   /* ----------------------------- Core request (single pass) ---------------- */
   async function requestOnce(path, opts = {}) {
     const traceRequestId = newRequestId();
@@ -265,7 +292,7 @@ const API = (() => {
       signal
     } = opts;
 
-    let url = BASE + path;
+    let url = resolveUrl(path);
     if (params) {
       const qs = new URLSearchParams();
       for (const [k, v] of Object.entries(params)) {
@@ -1309,7 +1336,7 @@ const API = (() => {
       const token = tokenProvider();
       const xhr = new XMLHttpRequest();
       const uploadTraceId = newRequestId();
-      xhr.open(method, BASE + safePath, true);
+      xhr.open(method, resolveUrl(safePath), true);
       xhr.setRequestHeader("Accept", "application/json");
       xhr.setRequestHeader("X-Request-ID", uploadTraceId);
       if (auth && token) {
@@ -1416,6 +1443,7 @@ const API = (() => {
     getStaffProfile, sendReceipt, getEmailLog, listEmailLogs, getRoomTypeRooms,
     // Helpers
     setTokenProvider, setRefreshProvider, setWorkstationReference, getWorkstationReference, APIError, BASE,
+    resolveUrl,
     normalizeList, unwrap, safe
   };
 })();
