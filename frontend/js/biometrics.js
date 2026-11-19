@@ -148,7 +148,8 @@
     }
 
     throw FingerprintReaderError(
-      "No fingerprint reader is available on this workstation. Connect the department reader, " +
+      "No fingerprint reader is available to this browser: the fingerprint capture bridge is not loaded. " +
+      "A connected USB device alone is not enough; contact an administrator to install and verify the reader integration, " +
       "or ask a manager or administrator to authorise a supervised fallback."
     );
   }

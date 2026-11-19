@@ -39,6 +39,7 @@
     var target=$('media-list');target.replaceChildren();
     media.filter(function(m){return selectedRoom()?String(m.room_id)===selectedRoom():m.room_id===null;}).forEach(function(item){
       var row=document.createElement('tr'),name=document.createElement('td'),kind=document.createElement('td'),order=document.createElement('td'),actions=document.createElement('td');
+      name.setAttribute('data-label','File');kind.setAttribute('data-label','Type');order.setAttribute('data-label','Order');actions.setAttribute('data-label','Actions');
       name.textContent=item.name;kind.textContent=item.kind+(item.kind==='video'?' · '+item.processing_status+(item.processing_error?' — '+item.processing_error:''):'')+(item.is_cover?' · cover':'')+(item.active?'':' · inactive');
       var input=document.createElement('input');input.type='number';input.min='0';input.max='1000000';input.value=item.order;input.style.width='85px';order.appendChild(input);
       actions.appendChild(button('Save order',async function(){try{await api('manage/media/'+item.id+'/',json('PATCH',{order:Number(input.value)}));await load();message('Order saved.');}catch(e){message(e.message);}}));
@@ -67,6 +68,7 @@
     });
   }
   function renderSettings(){
+    $('upload-limit').textContent='Maximum file size: '+settings.max_upload_mb+' MB. Images have an additional 16 MB processing limit.';
     $('interval').value=settings.slideshow_seconds;$('max-upload').value=settings.max_upload_mb;$('volume').value=settings.music_volume;
     $('music-enabled').checked=settings.music_enabled;$('music-auto').checked=settings.music_autoplay;
     $('music-list').replaceChildren(makeOption('','None'));media.filter(function(m){return m.kind==='audio'&&m.room_id===null;}).forEach(function(m){$('music-list').appendChild(makeOption(String(m.id),m.name));});
@@ -81,15 +83,34 @@
       var xhr=new XMLHttpRequest(),form=new FormData();form.append('file',file);if(roomId)form.append('room_id',roomId);
       xhr.open('POST',JoneOffline.apiBase()+'/api/rooms-gallery/manage/media/');xhr.setRequestHeader('Authorization','Bearer '+token);
       xhr.upload.onprogress=function(e){if(e.lengthComputable)row.querySelector('progress').value=Math.round(e.loaded/e.total*100);};
-      xhr.onerror=function(){reject(new Error('Network error'));};xhr.onload=function(){try{var obj=JSON.parse(xhr.responseText);if(xhr.status<200||xhr.status>=300||obj.success===false)throw new Error(obj.message||'Upload failed');resolve(obj.data);}catch(e){reject(e);}};xhr.send(form);
+      function uncertain(message){var error=new Error(message+' The server may have saved this file. Refresh the media list and check before uploading again.');error.uncertain=true;reject(error);}
+      xhr.onerror=function(){uncertain('Network error.');};xhr.onabort=function(){uncertain('Upload interrupted.');};
+      xhr.onload=function(){
+        var obj;try{obj=JSON.parse(xhr.responseText);}catch(_){uncertain('Unexpected server response ('+xhr.status+').');return;}
+        if(xhr.status<200||xhr.status>=300||obj.success===false){
+          var detail=obj.data&&obj.data.file;
+          var reason=detail?(Array.isArray(detail)?detail.join(' '):String(detail)):(obj.message||'Upload failed');
+          if(xhr.status>=500){uncertain(reason);return;}
+          reject(new Error(reason));return;
+        }
+        if(!obj.data||!obj.data.id){uncertain('The server returned an incomplete upload response.');return;}
+        resolve(obj.data);
+      };xhr.send(form);
     });
   }
   function uploadRow(file,roomId){
     var row=document.createElement('div');row.className='upload-row';var label=document.createElement('span');label.textContent=file.name+' ';var progress=document.createElement('progress');progress.max=100;progress.value=0;var text=document.createElement('span');row.append(label,progress,text);$('uploads').appendChild(row);
-    async function run(){text.textContent=' Uploading…';retry.hidden=true;try{var result=await upload(file,roomId,row);text.textContent=' Uploaded'+(result.notice?' — '+result.notice:'');progress.value=100;await load();}catch(e){text.textContent=' Failed: '+e.message;retry.hidden=false;}}
+    var running=false, completed=false;
+    async function run(){
+      if(running||completed)return;running=true;progress.value=0;text.textContent=' Uploading…';retry.hidden=true;
+      var result;
+      try{result=await upload(file,roomId,row);}catch(e){text.textContent=' Failed: '+e.message;retry.hidden=!!e.uncertain;running=false;return;}
+      completed=true;running=false;progress.value=100;text.textContent=' Uploaded'+(result.notice?' — '+result.notice:'');
+      try{await load();}catch(e){text.textContent+='; list refresh failed. Use Refresh processing status: '+e.message;}
+    }
     var retry=button('Retry',run);retry.hidden=true;row.appendChild(retry);return run;
   }
-  $('upload').onclick=async function(){var files=Array.from($('files').files),roomId=selectedRoom();if(!files.length){message('Select files first.');return;}for(var f of files)await uploadRow(f,roomId)();$('files').value='';};
+  $('upload').onclick=async function(){var files=Array.from($('files').files),roomId=selectedRoom();if(!files.length){message('Select files first.');return;}this.disabled=true;try{for(var f of files)await uploadRow(f,roomId)();$('files').value='';}finally{this.disabled=false;}};
   $('save-room').onclick=async function(){try{await api('manage/rooms/',json('PATCH',{room_id:Number(selectedRoom()),active:$('room-active').checked}));await load();message('Room presentation state saved.');}catch(e){message(e.message);}};
   $('save-settings').onclick=async function(){try{await api('manage/settings/',json('PATCH',{slideshow_seconds:Number($('interval').value),max_upload_mb:Number($('max-upload').value),music_volume:Number($('volume').value),music_id:$('music-list').value?Number($('music-list').value):null,music_enabled:$('music-enabled').checked,music_autoplay:$('music-auto').checked}));await load();message('Settings saved.');}catch(e){message(e.message);}};
   $('room').onchange=selectRoom;
