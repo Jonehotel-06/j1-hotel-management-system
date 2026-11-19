@@ -84,13 +84,18 @@
       xhr.open('POST',JoneOffline.apiBase()+'/api/rooms-gallery/manage/media/');xhr.setRequestHeader('Authorization','Bearer '+token);
       xhr.upload.onprogress=function(e){if(e.lengthComputable)row.querySelector('progress').value=Math.round(e.loaded/e.total*100);};
       function uncertain(message){var error=new Error(message+' The server may have saved this file. Refresh the media list and check before uploading again.');error.uncertain=true;reject(error);}
-      xhr.onerror=function(){uncertain('Network error.');};xhr.onabort=function(){uncertain('Upload interrupted.');};
+      xhr.onerror=function(){uncertain('Network connection interrupted. Please check your connection and retry.');};
+      xhr.onabort=function(){uncertain('Upload interrupted. The upload was cancelled before completion.');};
+      xhr.ontimeout=function(){uncertain('Upload timed out. The file may be too large or the connection is slow. Try a smaller file or retry.');};
+      xhr.timeout=300000;
       xhr.onload=function(){
         var obj;try{obj=JSON.parse(xhr.responseText);}catch(_){uncertain('Unexpected server response ('+xhr.status+').');return;}
         if(xhr.status<200||xhr.status>=300||obj.success===false){
           var detail=obj.data&&obj.data.file;
           var reason=detail?(Array.isArray(detail)?detail.join(' '):String(detail)):(obj.message||'Upload failed');
           if(xhr.status>=500){uncertain(reason);return;}
+          if(xhr.status===413||/exceeds|maximum|limit|size/i.test(reason)){reject(new Error('File exceeds the maximum allowed size ('+settings.max_upload_mb+' MB).'));return;}
+          if(/unsupported|format|type/i.test(reason)){reject(new Error('Unsupported file format. Please use JPG, PNG, WebP images or MP4/WebM videos.'));return;}
           reject(new Error(reason));return;
         }
         if(!obj.data||!obj.data.id){uncertain('The server returned an incomplete upload response.');return;}

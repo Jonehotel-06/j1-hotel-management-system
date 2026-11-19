@@ -19,10 +19,14 @@ def safe_name(value):
 
 
 def identify(header):
-    if header.startswith((b'\xff\xd8\xff', b'\x89PNG\r\n\x1a\n', b'GIF87a', b'GIF89a')):
+    if header.startswith(b'\xff\xd8\xff'):
         return 'image', 'image/jpeg'
+    if header.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image', 'image/png'
+    if header.startswith(b'GIF87a') or header.startswith(b'GIF89a'):
+        return 'image', 'image/gif'
     if len(header) >= 12 and header[:4] == b'RIFF' and header[8:12] == b'WEBP':
-        return 'image', 'image/jpeg'
+        return 'image', 'image/webp'
     if len(header) >= 12 and header[4:8] == b'ftyp':
         return 'video', 'video/mp4'
     if header.startswith(b'\x1a\x45\xdf\xa3'):

@@ -1,11 +1,12 @@
 """Independent TV gallery API. Public content is explicitly opted in."""
 import os
 import re
+import logging
 
 from django.http import FileResponse, Http404, HttpResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
-from django.db import transaction
-from django.core.exceptions import ImproperlyConfigured
+from django.db import transaction, DatabaseError
+from django.core.exceptions import ImproperlyConfigured, ValidationError as DjangoValidationError
 from datetime import timedelta
 from uuid import uuid4
 from django.utils import timezone
@@ -23,6 +24,8 @@ from apps.rooms.models import Room
 from . import media, storage
 from .models import GalleryMedia, GalleryRoom, GallerySettings
 from .tasks import queue_video, dispatch_video
+
+logger = logging.getLogger(__name__)
 
 
 class PublicView(APIView):
@@ -187,20 +190,35 @@ class AdminMedia(AdminView):
         # Hard upper bound independent of any setting or client declaration.
         limit = min(config.max_upload_mb, 512) * 1024 * 1024
         if upload.size > limit:
-            raise ValidationError({'file': 'File exceeds the configured upload size limit.'})
+            raise ValidationError({'file': 'File exceeds the maximum allowed size of %d MB.' % config.max_upload_mb})
         try:
             values = media.prepare(upload, limit)
         except ValueError as exc:
             raise ValidationError({'file': str(exc)}) from exc
+        except (OSError, ImproperlyConfigured) as exc:
+            logger.exception('Gallery storage error during upload')
+            raise ValidationError({'file': 'Storage service unavailable. Please try again later.'}) from exc
         notice = values.pop('_notice', '')
         if values['kind'] == 'video':
             values.update(processing_status='queued', processing_token=uuid4().hex, processing_updated_at=timezone.now())
         try:
             item = GalleryMedia.objects.create(room=room, original_name=media.safe_name(upload.name),
                                                uploaded_by=request.user, **values)
-        except Exception:
-            for key in (values['storage_key'], values['thumbnail_key'], values['display_key']):
-                storage.remove(key)
+        except DatabaseError as exc:
+            logger.exception('Gallery database error during upload')
+            for key in (values.get('storage_key'), values.get('thumbnail_key'), values.get('display_key')):
+                try:
+                    storage.remove(key)
+                except OSError:
+                    pass
+            raise ValidationError({'file': 'Upload succeeded but media record could not be saved. Please try again.'}) from exc
+        except Exception as exc:
+            logger.exception('Gallery unexpected error during upload')
+            for key in (values.get('storage_key'), values.get('thumbnail_key'), values.get('display_key')):
+                try:
+                    storage.remove(key)
+                except OSError:
+                    pass
             raise
         if item.kind == 'video':
             transaction.on_commit(lambda: dispatch_video(item))

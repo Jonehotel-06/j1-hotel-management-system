@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import payroll_views, views, views_face, views_biometrics, views_self_profile
+from . import payroll_views, views, views_biometrics, views_bridge, views_face, views_self_profile
 
 app_name = "staff_operations"
 
@@ -37,6 +37,11 @@ urlpatterns = [
     path("biometrics/temporary-credential/", views_biometrics.TemporaryWorkstationCredentialIssueView.as_view(), name="biometrics-temporary-credential"),
     path("biometrics/reception-terminal/", views_biometrics.ReceptionAttendanceTerminalView.as_view(), name="biometrics-reception-terminal"),
     path("biometrics/devices/", views_biometrics.FingerprintDeviceListCreateView.as_view(), name="biometrics-devices"),
+    path("biometrics/bridge/status/", views_bridge.BridgeReaderStatusView.as_view(), name="biometrics-bridge-status"),
+    path("biometrics/bridge/initialize/", views_bridge.BridgeReaderInitializeView.as_view(), name="biometrics-bridge-initialize"),
+    path("biometrics/bridge/capture/", views_bridge.BridgeReaderCaptureView.as_view(), name="biometrics-bridge-capture"),
+    path("biometrics/bridge/submit/", views_bridge.BridgeReaderSubmitCaptureView.as_view(), name="biometrics-bridge-submit"),
+    path("biometrics/bridge/devices/", views_bridge.BridgeReaderDevicesView.as_view(), name="biometrics-bridge-devices"),
     path("attendance/<str:reference>/", views.AttendanceRecordDetailView.as_view(), name="attendance-detail"),
     path("leave-requests/", views.LeaveRequestListCreateView.as_view(), name="leave-requests"),
     path("leave-requests/<str:reference>/", views.LeaveRequestDetailView.as_view(), name="leave-detail"),
