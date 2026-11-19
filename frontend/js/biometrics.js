@@ -24,6 +24,34 @@
    to the server. MANUAL_FALLBACK never captures at all: it exists because no
    capture was possible, and the server records it as an audited override.
 
+   Browser Local Network Access (repaired 2026-11-20)
+   ==================================================
+   Chromium 138+ enforces Local Network Access: a PUBLIC page
+   (https://jonehotels.com) that calls a LOOPBACK address
+   (http://127.0.0.1:8787) is refused with
+
+     Access to fetch ... blocked by CORS policy: Permission was denied for
+     this request to access the `loopback` address space.
+
+   A browser `fetch()` failure is an opaque TypeError with no status and no
+   reason, so "no bridge", "firewall blocked", "Chrome blocked loopback" and
+   "the operator denied the prompt" all looked identical and were reported as
+   BRIDGE_UNREACHABLE "start the bridge". The mitigation, verified in Chromium:
+
+     * the desk pages are served with
+         Permissions-Policy: local-network-access=(self)
+       (frontend/_headers + frontend/vercel.json + the checkout-owned
+       configuration/frontend copies);
+     * before the first bridge call the page asks for the `local-network-access`
+       permission, still under a real user gesture (the button the operator
+       pressed), so the browser shows its normal prompt;
+     * the transport remembers that the operator DENIED it, and reports
+       BRIDGE_PERMISSION_BLOCKED with instructions instead of "start the
+       bridge" — which can never fix a permission denial.
+
+   The file:// (offline kit) path and any browser without the permission
+   descriptor behave exactly as before.
+
    Reader status model (returned by getReaderStatus / initializeReader):
      connected             — reader connected and ready
      initializing          — reader is initializing
@@ -50,6 +78,10 @@
   var STATUS_PERMISSION_DENIED = "permission_denied";
   var STATUS_BUSY = "busy";
   var STATUS_COMMUNICATION_FAILURE = "communication_failure";
+  // Not a reader state: the BROWSER refused the page access to the loopback
+  // bridge. Kept distinct so the operator is never told to "start the bridge"
+  // when the bridge may well be running.
+  var STATUS_PERMISSION_BLOCKED = "permission_blocked";
 
   var STATUS_DESCRIPTIONS = {};
   STATUS_DESCRIPTIONS[STATUS_CONNECTED] = "Fingerprint reader connected and ready.";
@@ -60,6 +92,7 @@
   STATUS_DESCRIPTIONS[STATUS_PERMISSION_DENIED] = "Permission denied to access the fingerprint reader. Run the bridge as administrator.";
   STATUS_DESCRIPTIONS[STATUS_BUSY] = "The fingerprint reader is busy. Please wait and try again.";
   STATUS_DESCRIPTIONS[STATUS_COMMUNICATION_FAILURE] = "Communication with the fingerprint reader failed. Disconnect and reconnect the reader, then retry.";
+  STATUS_DESCRIPTIONS[STATUS_PERMISSION_BLOCKED] = "This browser blocked the page from contacting the fingerprint bridge on this computer. Allow local network access (the lock icon in the address bar), then press Allow / Retry. The bridge itself may already be running.";
 
   function FingerprintReaderError(message, code) {
     var error = new Error(message);
@@ -110,20 +143,59 @@
      always means "the device running this browser". On a phone or tablet
      the loopback request goes to the phone itself, so the honest answer is
      not "start the bridge" (there is nowhere to start it) but "open this
-     page on the reception PC the reader is plugged into". Detected from
-     the user agent only — a desktop browser without a bridge still gets
-     the normal BRIDGE_UNREACHABLE guidance. */
+     page on the reception PC the reader is plugged into".
+
+     Detection is POSITIVE evidence only — a match on a mobile/tablet platform
+     token. The previous test also matched the bare word "Mobile", which
+     appears in the compatibility string of some Windows browsers; a reception
+     PC misdetected as "mobile" would never attempt a capture at all. Always
+     return to the user agent guess (with retries) before changing this: a
+     false positive disables fingerprint attendance, which is far worse than a
+     false negative (a false negative only produces the ordinary
+     BRIDGE_UNREACHABLE guidance).
+
+     Everything else — including a Windows PC where the bridge is not running,
+     the reader is unplugged, the driver is missing or the browser blocked
+     loopback — is classified from real evidence in async describeReader(). */
   function isMobileBrowserContext() {
     var ua = (window.navigator && window.navigator.userAgent) || "";
-    return /Android|webOS|iPhone|iPad|iPod|Mobile/i.test(ua);
+    return /Android|webOS|iPhone|iPad|iPod|Windows Phone|BlackBerry|Opera Mini|IEMobile/i.test(ua) ||
+      /Mobile\s*Safari/i.test(ua);
+  }
+
+  /* Session-scoped operator choice for the workstation mode (see
+     workstationMode()): "desktop" shows the reader controls on a device that
+     positively identified itself as not-a-desktop (a Windows tablet in
+     desktop mode, for example). sessionStorage only — a choice made at the desk
+     must not follow the account to another device. */
+  var WORKSTATION_OVERRIDE_KEY = "jone.fingerprint.workstation";
+
+  function readOverride() {
+    try {
+      var raw = window.sessionStorage && window.sessionStorage.getItem(WORKSTATION_OVERRIDE_KEY);
+      return raw === "desktop" || raw === "mobile" ? raw : "";
+    } catch (_) { return ""; }
+  }
+
+  function setWorkstationOverride(value) {
+    try {
+      if (!window.sessionStorage) return;
+      if (value === "desktop" || value === "mobile") {
+        window.sessionStorage.setItem(WORKSTATION_OVERRIDE_KEY, value);
+      } else {
+        window.sessionStorage.removeItem(WORKSTATION_OVERRIDE_KEY);
+      }
+    } catch (_) { /* private mode / disabled storage: detection still works */ }
   }
 
   var WRONG_WORKSTATION_MESSAGE =
-    "Fingerprint capture is only possible on the reception Windows workstation " +
-    "the DigitalPersona 4500 reader is plugged into. This page is open on a " +
-    "mobile device, where 127.0.0.1 is the device itself — no reader can be " +
-    "reached from here. Open this page on the reception PC instead; a manager " +
-    "or administrator can authorise a supervised fallback meanwhile.";
+    "Fingerprint attendance is available only on the designated Windows reception " +
+    "workstation connected to the DigitalPersona fingerprint reader. Open this page " +
+    "on that reception Windows workstation to scan fingerprints. This page is open on a mobile " +
+    "device, where 127.0.0.1 is the device itself, so no reader can be reached from " +
+    "here; open this page on the reception PC the reader is plugged into. A manager " +
+    "or administrator can authorise a supervised fallback " +
+    "meanwhile if the attendance policy permits it.";
 
   function bridgeBase() {
     var configured = window.APP_CONFIG && window.APP_CONFIG.FINGERPRINT_BRIDGE_URL;
@@ -136,6 +208,83 @@
     var suffix = String(path || "");
     if (suffix && suffix.charAt(0) !== "/") suffix = "/" + suffix;
     return base + suffix;
+  }
+
+  /* ------------------------ Local Network Access ---------------------------
+     Chromium 138+ refuses a public page's fetch() to a loopback address until
+     the `local-network-access` permission is granted (the shipping behaviour:
+     "Permission was denied for this request to access the `loopback` address
+     space."). The permission prompt is only offered from a user gesture, so
+     the capture click asks for it synchronously before the first capture.
+
+     Nothing here is required on browsers without the descriptor (Firefox,
+     Safari, older Chrome, the file:// offline kit): requestLocalNetworkAccess()
+     then resolves to "unsupported"/"unknown" and the transport behaves
+     exactly as it always did. */
+  var LNA_STATE = { permission: "unknown", checked: false };
+
+  function lnaSupported() {
+    try {
+      var permissions = window.navigator && window.navigator.permissions;
+      return !!(permissions && typeof permissions.query === "function" &&
+        window.isSecureContext !== false);
+    } catch (_) { return false; }
+  }
+
+  async function localNetworkPermissionState() {
+    if (!lnaSupported()) return "unsupported";
+    try {
+      var status = await window.navigator.permissions.query({ name: "local-network-access" });
+      return (status && status.state) || "unknown";
+    } catch (_) {
+      // Not a Chromium build with LNA: the descriptor is rejected.
+      return "unsupported";
+    }
+  }
+
+  function localNetworkPermissionBlocked() {
+    return LNA_STATE.checked && LNA_STATE.permission === "denied";
+  }
+
+  /* Ask once, under the caller's click. Returns the observed state:
+       granted | prompt | denied | unsupported | unknown
+     A denial is remembered for the page's lifetime so Retry cannot loop the
+     operator back into the same silent failure. */
+  async function requestLocalNetworkAccess() {
+    if (!lnaSupported()) {
+      LNA_STATE = { permission: "unsupported", checked: true };
+      return "unsupported";
+    }
+    var state = await localNetworkPermissionState();
+    if (state === "prompt") {
+      try {
+        var permissions = window.navigator.permissions;
+        if (typeof permissions.request === "function") {
+          var granted = await permissions.request({ name: "local-network-access" });
+          state = (granted && granted.state) || "prompt";
+        }
+      } catch (_) {
+        // No programmatic request (the browser only prompts on the fetch);
+        // keep "prompt" and let the transport attempt the call.
+        state = "prompt";
+      }
+    }
+    LNA_STATE = { permission: state, checked: true };
+    return state;
+  }
+
+  function permissionBlockedError() {
+    return bridgeError(
+      "This browser blocked the page from contacting the fingerprint bridge at " + bridgeBase() + ". " +
+      "The bridge itself may already be running — the block is the browser's Local Network Access " +
+      "protection. Open the site information (lock icon) in the address bar, allow local network " +
+      "access for " + ((window.location && window.location.hostname) || "this site") + ", " +
+      "then press Retry. If no prompt appears, ask an administrator to confirm the site's " +
+      "Permissions-Policy allows local-network-access, or allow the origin in chrome://settings " +
+      "→ Privacy and security → Local network access.",
+      "BRIDGE_PERMISSION_BLOCKED",
+      { reachable: false, status: STATUS_PERMISSION_BLOCKED }
+    );
   }
 
   function bridgeError(message, code, extra) {
@@ -193,12 +342,23 @@
           { reachable: true }
         );
       }
+      /* A refused fetch is opaque: no status, no reason. Classify from what
+         IS observable — a remembered Local Network Access denial, or the
+         permission state the browser reports — and only fall back to the
+         "start the bridge" guidance when the browser never had to ask. */
+      if (localNetworkPermissionBlocked()) throw permissionBlockedError();
+      var permission = await localNetworkPermissionState();
+      if (permission === "denied") {
+        LNA_STATE = { permission: "denied", checked: true };
+        throw permissionBlockedError();
+      }
       throw bridgeError(
         "The fingerprint bridge is not reachable at " + bridgeBase() + ". " +
         "Start the J-ONE Fingerprint Bridge on this workstation (Start → J-ONE Fingerprint Bridge), " +
-        "then press Retry. If it is already running, confirm the bridge port and that the browser is " +
-        "allowed to reach 127.0.0.1. Until it is running no fingerprint can be read here — a manager or " +
-        "administrator can authorise a supervised fallback instead.",
+        "then press Retry. If it is already running, confirm it is bound to 127.0.0.1 on that port, that " +
+        "the Windows firewall is not blocking it, and that this browser allows local network access. " +
+        "Until it is running no fingerprint can be read here — a manager or administrator can " +
+        "authorise a supervised fallback instead.",
         "BRIDGE_UNREACHABLE",
         { reachable: false }
       );
@@ -245,8 +405,12 @@
 
   function unreachableStatus(err) {
     var code = (err && err.code) || "BRIDGE_UNREACHABLE";
+    var status = STATUS_NOT_CONNECTED;
+    if (code === "BRIDGE_TIMEOUT") status = STATUS_COMMUNICATION_FAILURE;
+    else if (code === "BRIDGE_PERMISSION_BLOCKED") status = STATUS_PERMISSION_BLOCKED;
+    else if (code === "WRONG_WORKSTATION") status = "wrong_workstation";
     return {
-      status: code === "BRIDGE_TIMEOUT" ? STATUS_COMMUNICATION_FAILURE : STATUS_NOT_CONNECTED,
+      status: status,
       detail: (err && err.message) || "The fingerprint bridge is not reachable on this workstation.",
       connected: false,
       device_serial: "",
@@ -255,7 +419,8 @@
       sdk_loaded: null,
       bridge_url: bridgeBase(),
       bridge_reachable: false,
-      bridge_error_code: code
+      bridge_error_code: code,
+      local_network_permission: LNA_STATE.permission
     };
   }
 
@@ -401,8 +566,11 @@
      the reader and retrying exactly once recovers those cases without hiding a
      genuine "no finger on the sensor" problem or inventing a template. */
   async function captureFromHttpBridge(options) {
-    if (isMobileBrowserContext()) {
+    if (workstationMode() === "mobile") {
       throw bridgeError(WRONG_WORKSTATION_MESSAGE, "WRONG_WORKSTATION", { reachable: false });
+    }
+    if (options.requestPermission !== false) {
+      await requestLocalNetworkAccess();
     }
     try {
       return await captureOnceFromBridge(options);
@@ -425,9 +593,9 @@
      back-off (0.4s, 0.8s, 1.6s …) is used, never an unbounded poll loop. */
   async function getReaderStatus(options) {
     options = options || {};
-    if (isMobileBrowserContext()) {
+    if (workstationMode() === "mobile") {
       return {
-        status: STATUS_NOT_CONNECTED,
+        status: "wrong_workstation",
         detail: WRONG_WORKSTATION_MESSAGE,
         connected: false,
         device_serial: "",
@@ -436,17 +604,20 @@
         sdk_loaded: null,
         bridge_url: bridgeBase(),
         bridge_reachable: false,
-        bridge_error_code: "WRONG_WORKSTATION"
+        bridge_error_code: "WRONG_WORKSTATION",
+        local_network_permission: LNA_STATE.permission
       };
     }
     var retries = options.retries === undefined ? 1 : Math.max(0, Math.min(5, options.retries));
     var lastError = null;
     for (var attempt = 0; attempt <= retries; attempt++) {
       try {
-        return normalizeBridgeStatus(await bridgeRequest("/status", { timeout: STATUS_TIMEOUT_MS }));
+        var status = normalizeBridgeStatus(await bridgeRequest("/status", { timeout: STATUS_TIMEOUT_MS }));
+        LNA_STATE = { permission: "granted", checked: true };
+        return status;
       } catch (err) {
         lastError = err;
-        if (err && err.code === "BRIDGE_UNREACHABLE" && attempt < retries) {
+        if ((err && (err.code === "BRIDGE_UNREACHABLE" || err.code === "BRIDGE_TIMEOUT")) && attempt < retries) {
           await new Promise(function (resolve) { setTimeout(resolve, 400 * Math.pow(2, attempt)); });
           continue;
         }
@@ -456,9 +627,19 @@
     return unreachableStatus(lastError);
   }
 
+  /* "mobile" | "desktop" — decided from positive evidence only. */
+  function workstationMode() {
+    var override = readOverride();
+    if (override) return override;
+    if (typeof window === "object" && window.__JONE_FORCE_WORKSTATION__ === "desktop") return "desktop";
+    return isMobileBrowserContext() ? "mobile" : "desktop";
+  }
+
   // Initialize (or re-initialize) the fingerprint reader via the bridge.
   async function initializeReader(options) {
     options = options || {};
+    if (workstationMode() === "mobile") return unreachableStatus(bridgeError(WRONG_WORKSTATION_MESSAGE, "WRONG_WORKSTATION"));
+    if (options.requestPermission !== false) await requestLocalNetworkAccess();
     try {
       return normalizeBridgeStatus(await bridgeRequest("/initialize", {
         method: "POST",
@@ -468,6 +649,100 @@
     } catch (err) {
       return unreachableStatus(err);
     }
+  }
+
+  /* ---- One honest picture of why a capture can or cannot happen --------
+
+     Every desk page must tell SIX genuinely different situations apart, and
+     the previous single "bridge not reachable" message merged all of them:
+
+       mobile                  the page is on a phone/tablet — 127.0.0.1 is
+                               that device, so no instruction about a Windows
+                               bridge can ever be acted on (WRONG_WORKSTATION)
+       permission_blocked      the BROWSER refused the page loopback access
+                               (Local Network Access); the bridge may be fine
+       bridge_unreachable      nothing answered on the bridge origin
+       bridge_timeout          the bridge accepted the request but did not reply
+       reader_not_ready        the bridge answered: reader/driver/SDK missing,
+                               or a capture already running
+       ready                   the reader is connected and a capture can start
+
+   ``source`` says WHERE the answer came from (bridge / browser / policy), so a
+   support call can tell a USB fault from a policy fault without guessing.
+   Optional ``initialize: true`` re-opens the reader once when the bridge says
+   it is not ready — that is what recovers a reader that was unplugged and
+   plugged back in while the page was open. Nothing is cached: every call asks
+   the workstation again. */
+  async function describeReader(options) {
+    options = options || {};
+    var mode = workstationMode();
+    var result = {
+      mode: mode,
+      ready: false,
+      status: STATUS_NOT_CONNECTED,
+      detail: "",
+      code: "",
+      source: "policy",
+      bridge_reachable: false,
+      reader_connected: false,
+      device_serial: "",
+      driver_installed: null,
+      sdk_loaded: null,
+      local_network_permission: LNA_STATE.permission,
+      permission_prompt_available: lnaSupported(),
+      bridge_url: bridgeBase(),
+      retryable: true
+    };
+    if (mode === "mobile") {
+      result.status = "wrong_workstation";
+      result.code = "WRONG_WORKSTATION";
+      result.detail = WRONG_WORKSTATION_MESSAGE;
+      result.retryable = false;
+      return result;
+    }
+    if (options.requestPermission) await requestLocalNetworkAccess();
+    var status = await getReaderStatus({ retries: options.retries === undefined ? 1 : options.retries });
+    result.status = status.status;
+    result.detail = status.detail;
+    result.code = status.bridge_error_code || "";
+    result.bridge_reachable = !!status.bridge_reachable;
+    result.reader_connected = !!status.connected;
+    result.device_serial = status.device_serial || "";
+    result.driver_installed = status.driver_installed;
+    result.sdk_loaded = status.sdk_loaded;
+    result.local_network_permission = LNA_STATE.permission;
+    result.source = status.bridge_reachable ? "bridge" : "browser";
+
+    if (!status.bridge_reachable) {
+      if (result.code === "BRIDGE_PERMISSION_BLOCKED") {
+        result.status = STATUS_PERMISSION_BLOCKED;
+        // The grant happens on the next real capture attempt (user gesture);
+        // there is nothing to retry automatically from here.
+        result.retryable = true;
+      } else if (result.code === "BRIDGE_TIMEOUT") {
+        result.status = STATUS_COMMUNICATION_FAILURE;
+      }
+      return result;
+    }
+
+    if (!status.connected && options.initialize) {
+      var reinitialized = await initializeReader({ reopen: true, requestPermission: false });
+      if (reinitialized.bridge_reachable) {
+        result.status = reinitialized.status;
+        result.detail = reinitialized.detail;
+        result.reader_connected = !!reinitialized.connected;
+        result.device_serial = reinitialized.device_serial || result.device_serial;
+        result.driver_installed = reinitialized.driver_installed;
+        result.sdk_loaded = reinitialized.sdk_loaded;
+        result.source = "bridge";
+      }
+    }
+    result.ready = result.status === STATUS_CONNECTED;
+    if (!result.ready) {
+      result.code = result.code || ("READER_" + String(result.status).toUpperCase());
+      result.retryable = result.status !== STATUS_PERMISSION_DENIED;
+    }
+    return result;
   }
 
   // Capture a minutiae probe. Tries the workstation bridge, then the lab
@@ -612,9 +887,15 @@
     STATUS_PERMISSION_DENIED: STATUS_PERMISSION_DENIED,
     STATUS_BUSY: STATUS_BUSY,
     STATUS_COMMUNICATION_FAILURE: STATUS_COMMUNICATION_FAILURE,
+    STATUS_PERMISSION_BLOCKED: STATUS_PERMISSION_BLOCKED,
     STATUS_DESCRIPTIONS: STATUS_DESCRIPTIONS,
     captureMinutiaeProbe: captureMinutiaeProbe,
     isMobileBrowserContext: isMobileBrowserContext,
+    workstationMode: workstationMode,
+    setWorkstationMode: setWorkstationOverride,
+    describeReader: describeReader,
+    requestLocalNetworkAccess: requestLocalNetworkAccess,
+    localNetworkPermissionState: localNetworkPermissionState,
     getReaderStatus: getReaderStatus,
     initializeReader: initializeReader,
     getBridgeUrl: bridgeBase,

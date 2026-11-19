@@ -1,10 +1,29 @@
-"""Independent TV gallery API. Public content is explicitly opted in."""
+"""Independent TV gallery API. Public content is explicitly opted in.
+
+Repair note (2026-11-20) — why every rendition answered 404 in production
+=========================================================================
+``_serve()`` used a single ``except (ValueError, OSError): raise Http404``
+around key resolution + stat + open. That is four different faults collapsed
+into "this page does not exist":
+
+  * the storage root is misconfigured / the volume is not mounted  (503)
+  * the media row points at a file that is not there  (a deployment fault)
+  * the file is there but unreadable by the API process  (a permissions fault)
+  * the requested rendition does not apply to this media type  (404, correct)
+
+Production returned 404 for media ids 1–9 — every image the catalog still
+lists — so the desk could not tell "the gallery is empty" from "the gallery
+files are unreachable", and no repair could be targeted. ``storage.resolve()``
+now reports which of the four it is and each answers accordingly. The catalog
+also marks a room's media as ``available: false`` when its files cannot be
+resolved, so the TV screen rotates only over media that can actually play.
+"""
 import os
 import re
 import logging
 
 from django.conf import settings
-from django.http import FileResponse, Http404, HttpResponse, StreamingHttpResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.db import transaction, DatabaseError
 from django.core.exceptions import ImproperlyConfigured, ValidationError as DjangoValidationError
@@ -46,8 +65,17 @@ class Catalog(PublicView):
         grouped = {entry.room_id: [] for entry in rooms}
         for item in GalleryMedia.objects.filter(room_id__in=grouped, active=True, processing_status='ready', kind__in=['image', 'video']).order_by('-is_cover', 'display_order', 'id'):
             rendition = 'display' if item.kind == 'image' else 'file'
-            grouped[item.room_id].append({'id': item.pk, 'kind': item.kind, 'url': public_url(request, item, rendition),
-                                          'thumbnail': public_url(request, item, 'thumb') if item.thumbnail_key else None})
+            available = _rendition_present(item, rendition)
+            grouped[item.room_id].append({
+                'id': item.pk, 'kind': item.kind,
+                'url': public_url(request, item, rendition),
+                'thumbnail': public_url(request, item, 'thumb') if item.thumbnail_key else None,
+                # ``available`` is advisory for the TV client (it skips media it
+                # cannot fetch instead of showing a black frame). The URL stays
+                # in the payload so a repaired deployment needs no client
+                # change to start serving it again.
+                'available': available,
+            })
         payload = [{'id': entry.room_id, 'number': entry.room.room_number,
                     'type': entry.room.room_type.name, 'media': grouped[entry.room_id]} for entry in rooms]
         music = None
@@ -68,25 +96,85 @@ def _visible(item):
                                        room__room_type__is_active=True).exists())
 
 
-def _serve(request, item, rendition, private=False):
+def _rendition_key(item, rendition, private=False):
+    """Map a rendition name to (key, content-type), or (None, None).
+
+    ``None`` means "this rendition does not apply to this media type" (404 is
+    the right answer); an empty key for an applicable rendition means the
+    rendition was never produced — a different fault, reported as such.
+    """
     if rendition == 'thumb' and item.kind in ('image', 'video'):
-        key, mime = item.thumbnail_key, 'image/jpeg'
-    elif rendition == 'display' and item.kind == 'image':
-        key, mime = item.display_key, 'image/jpeg'
-    elif rendition == 'file' and item.kind == 'video':
-        key, mime = item.display_key, 'video/mp4'
-    elif rendition == 'file' and (private or item.kind == 'audio'):
-        key, mime = item.storage_key, item.content_type
-        if item.kind in ('other', 'image'):
-            mime = 'application/octet-stream'
-    else:
+        return item.thumbnail_key, 'image/jpeg'
+    if rendition == 'display' and item.kind == 'image':
+        return item.display_key, 'image/jpeg'
+    if rendition == 'file' and item.kind == 'video':
+        return item.display_key, 'video/mp4'
+    if rendition == 'file' and (private or item.kind == 'audio'):
+        mime = 'application/octet-stream' if item.kind in ('other', 'image') else item.content_type
+        return item.storage_key, mime
+    return None, None
+
+
+def _rendition_present(item, rendition):
+    """True when ``rendition`` resolves to a readable file for this item."""
+    key, _ = _rendition_key(item, rendition)
+    if not key:
+        return False
+    path, outcome = storage.resolve(key)
+    return outcome == storage.FILE_OK and path is not None
+
+
+def _storage_fault_response(request, item, rendition, outcome):
+    """Answer a genuine storage fault honestly instead of a bare 404.
+
+    The response body names the media id, rendition, storage key and outcome so
+    an operator can act on it without database access, but never leaks the
+    filesystem path (served to anonymous visitors).
+    """
+    logger.error(
+        'TV gallery media %s rendition=%s kind=%s key=%r could not be served: %s',
+        item.pk, rendition, item.kind, _rendition_key(item, rendition)[0], outcome,
+    )
+    if outcome == storage.FILE_STORAGE_UNAVAILABLE:
+        available, detail = storage.is_configured()
+        return JsonResponse({
+            'success': False,
+            'code': 'GALLERY_STORAGE_UNAVAILABLE',
+            'message': ('Gallery storage is unavailable on the API server, so stored media '
+                        'cannot be read. An administrator must restore the media volume '
+                        '(TV_GALLERY_STORAGE_ROOT) and retry.'),
+            'data': {'retryable': True, 'media_id': item.pk, 'rendition': rendition,
+                     'storage_configured': available, 'storage_detail': detail},
+        }, status=503)
+    key = _rendition_key(item, rendition)[0] or ''
+    return JsonResponse({
+        'success': False,
+        'code': 'GALLERY_MEDIA_FILE_MISSING' if outcome == storage.FILE_MISSING else 'GALLERY_MEDIA_FILE_UNREADABLE',
+        'message': ('The media record exists but its stored file could not be read. '
+                    'This is a deployment/storage fault, not a deleted gallery item: '
+                    'run `python manage.py check_gallery_storage` and restore the gallery '
+                    'volume from backup if the file is gone.'),
+        'data': {'media_id': item.pk, 'rendition': rendition, 'kind': item.kind,
+                 'storage_key': key, 'outcome': outcome, 'retryable': False},
+    }, status=500)
+
+
+def _serve(request, item, rendition, private=False):
+    key, mime = _rendition_key(item, rendition, private=private)
+    if key is None:
+        # The rendition does not apply to this media type: a genuine 404.
         raise Http404
+    path, outcome = storage.resolve(key) if key else (None, storage.FILE_MISSING)
+    if outcome != storage.FILE_OK or path is None:
+        # A rendition that was never produced (empty key) or whose file has
+        # gone is a processing/storage fault on an existing record, and the
+        # operator needs to be told which — see the module docstring.
+        return _storage_fault_response(request, item, rendition, outcome)
+    size = path.stat().st_size
     try:
-        path = storage.path_for(key)
-        size = path.stat().st_size
         source = path.open('rb')
-    except (ValueError, OSError):
-        raise Http404
+    except OSError:
+        return _storage_fault_response(request, item, rendition, storage.FILE_UNREADABLE)
     # Single byte range support for normal HTML video/audio seeking. Invalid and
     # unsatisfiable ranges receive 416; never cache partial responses as full files.
     header = request.headers.get('Range', '')

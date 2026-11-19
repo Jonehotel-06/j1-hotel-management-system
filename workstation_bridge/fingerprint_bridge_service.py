@@ -101,6 +101,10 @@ STATUS_DETAILS = {
 # value is reported verbatim (hex) rather than being mapped to a guessed name,
 # because the vendor's code list differs between SDK releases.
 DPFPDD_OK = 0
+# DPFPDD_E_DEVICE_FAILURE / DEVICE_MISSING / DEVICE_BUSY are the vendor's
+# "device went away" family. They are grouped only to decide ONE thing: whether
+# the handle must be re-opened before the next read (see _capture_raw).
+DPFPDD_DEVICE_GONE = (0x05BA0001, 0x05BA0002, 0x05BA0003, 0x05BA0004)
 DPFPDD_IMG_FMT_PIXEL_BUFFER = 1
 DPFPDD_IMG_PROC_DEFAULT = 0
 DPFPDD_IMG_RES_500 = 1
@@ -122,13 +126,20 @@ logger = logging.getLogger(SERVICE_NAME)
 
 
 class ReaderError(Exception):
-    """A reader operation failed. Carries a machine code and a user message."""
+    """A reader operation failed. Carries a machine code and a user message.
 
-    def __init__(self, code: str, message: str, status: str = STATUS_COMMUNICATION_FAILURE, **extra: Any):
+    ``retry`` marks a transient device fault (the USB handle went stale after a
+    replug or a driver restart). Only those may re-open the reader and capture
+    again — a genuine "no finger on the sensor" timeout is reported as-is.
+    """
+
+    def __init__(self, code: str, message: str, status: str = STATUS_COMMUNICATION_FAILURE,
+                 retry: bool = False, **extra: Any):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status = status
+        self.retry = retry
         self.extra = extra
 
 
@@ -356,8 +367,17 @@ class DigitalPersonaReader:
         self._serial = ""
         self._product = ""
 
+    def is_capturing(self) -> bool:
+        """True while a capture holds the reader (used by /status)."""
+        return bool(self._capturing)
+
     def status(self) -> Dict[str, Any]:
-        """Report device state without capturing. Cheap enough to poll."""
+        """Report device state without capturing. Cheap enough to poll.
+
+        Never blocks on a capture: while a capture is in flight the busy flag
+        is what the desk needs, and waiting for the sensor would make the page
+        look frozen for the whole capture timeout.
+        """
         base = {
             "status": STATUS_NOT_CONNECTED,
             "connected": False,
@@ -395,11 +415,33 @@ class DigitalPersonaReader:
             base.update(status=STATUS_SDK_UNAVAILABLE, detail=STATUS_DETAILS[STATUS_SDK_UNAVAILABLE])
             return base
         base.update(status=STATUS_CONNECTED, connected=True, detail=STATUS_DETAILS[STATUS_CONNECTED])
+        if self._capturing:
+            # A second capture attempt would be refused; say so now instead of
+            # letting the page start (and time out) on a reader that is busy.
+            base.update(status=STATUS_BUSY, captured_state=STATUS_CONNECTED,
+                        detail=STATUS_DETAILS[STATUS_BUSY], capture_in_progress=True)
         return base
 
     def initialize(self) -> Dict[str, Any]:
-        """(Re)open the reader — used after a replug or a bridge restart."""
-        with self._lock:
+        """(Re)open the reader — used after a replug or a bridge restart.
+
+        Called from an HTTP thread while a capture may be running on another.
+        A blocking acquire here made /initialize hang for the whole capture
+        timeout (and the desk page treat the bridge as dead); instead it answers
+        \"busy\" immediately and the caller retries after the capture.
+        """
+        if not self._lock.acquire(blocking=False):
+            state = self.status()
+            state.update(status=STATUS_BUSY, detail=STATUS_DETAILS[STATUS_BUSY],
+                         busy=True, initialized=False)
+            return state
+        try:
+            return self._initialize_locked()
+        finally:
+            self._lock.release()
+
+    def _initialize_locked(self) -> Dict[str, Any]:
+        if True:  # structure preserved: the body below runs under self._lock
             self._close_device()
             self._last_error = ""
             state = self.status()
@@ -446,6 +488,22 @@ class DigitalPersonaReader:
             rc = self._dd.dpfpdd_capture(self._device, ctypes.byref(param), ctypes.byref(size),
                                          buffer, ctypes.byref(result))
             last_rc = rc
+            if rc in DPFPDD_DEVICE_GONE:
+                # The USB handle is stale (reader replugged, driver restarted or
+                # the device was reset). The handle must be closed and re-opened
+                # or every later read fails the same way — which is exactly how
+                # a replugged reader stayed "broken" until the bridge restarted.
+                try:
+                    self._close_device()
+                except Exception:  # pragma: no cover - closing a dead handle
+                    self._device_open = False
+                raise ReaderError(
+                    "READER_RECONNECT_NEEDED",
+                    "The fingerprint reader was disconnected or re-plugged. Re-open the reader and try again.",
+                    status=STATUS_COMMUNICATION_FAILURE,
+                    retry=True,
+                    reader_status=rc,
+                )
             if rc == DPFPDD_OK and result.success:
                 width, height = self._frame_dimensions(size.value)
                 if width and height and size.value == width * height:
@@ -562,7 +620,26 @@ class DigitalPersonaReader:
                 raise ReaderError("DRIVER_MISSING", STATUS_DETAILS[STATUS_DRIVER_MISSING], status=STATUS_DRIVER_MISSING)
             if not self._load_fj():
                 raise ReaderError("SDK_UNAVAILABLE", STATUS_DETAILS[STATUS_SDK_UNAVAILABLE], status=STATUS_SDK_UNAVAILABLE)
-            pixels, width, height = self._capture_raw(timeout_ms)
+            try:
+                pixels, width, height = self._capture_raw(timeout_ms)
+            except ReaderError as first:
+                # ONLY a stale device handle is retried automatically, and only
+                # once. The lock is already held here, so a second device open
+                # cannot race another capture. A no-finger timeout is NOT
+                # retried: it would double the caller's own timeout and tell
+                # the operator nothing new.
+                if not getattr(first, "retry", False):
+                    raise
+                logger.info("Re-opening the fingerprint reader after %s", first.code)
+                state = self.initialize()
+                if not state.get("connected"):
+                    raise ReaderError(
+                        "READER_RECONNECT_FAILED",
+                        "The fingerprint reader was re-plugged but could not be re-opened: %s"
+                        % (state.get("detail") or STATUS_DETAILS[STATUS_NOT_CONNECTED]),
+                        status=state.get("status") or STATUS_COMMUNICATION_FAILURE,
+                    ) from first
+                pixels, width, height = self._capture_raw(timeout_ms)
             points = self._extract_minutiae(pixels, width, height)
             # The raw frame never leaves this function and is never written to
             # disk: only the minutiae below are returned.

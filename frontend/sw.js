@@ -64,6 +64,16 @@ const PRECACHE_URLS = [
   "/js/hotel-data.js",
   "/js/navigation.js",
   "/js/pwa.js",
+  /* biometrics.js is loaded by every desk page that can clock a staff member
+     in. It was missing from this list, so the shell could keep serving an
+     older cached copy from the stale-while-revalidate branch even after a
+     release fixed it — "we changed the file but production still runs the old
+     one" is exactly this. Precached here, it is refreshed on every install
+     alongside the rest of the bootstrap. */
+  "/js/biometrics.js",
+  "/js/operations.js",
+  "/js/table-fit.js",
+  "/js/runtime-config.js",
   "/js/version.js",
   "/js/update-checker.js",
   "/favicon/favicon-32.png",

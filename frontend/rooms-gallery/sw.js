@@ -1,6 +1,13 @@
 /* Dedicated Rooms Gallery worker: never cache authenticated/admin requests. */
 'use strict';
 importScripts('/rooms-gallery/sync-db.js');
+/* Repair 2026-11-20: a media request that the server refuses is no longer
+   answered from a previously cached copy, and an HTTP 404/410 for ONLINE
+   media marks the downloaded generation outdated instead of being kept as
+   if it were good content. A 404 cached before the backend was repaired
+   therefore cannot survive here. The cache names are unchanged on purpose:
+   the shell is refreshed in place by `addAll` on install (which overwrites
+   each path), and renaming would discard a valid offline download. */
 const SHELL='jone-tv-shell-v2', PREFIX='jone-tv-download-v2-', TAG='jone-tv-download-v2';
 const PATHS=['/rooms-gallery/','/rooms-gallery/gallery.css','/rooms-gallery/gallery.js','/rooms-gallery/offline.js','/rooms-gallery/sync-db.js','/rooms-gallery/grid.js','/rooms-gallery/brand.png','/rooms-gallery/icon-192.png','/rooms-gallery/icon-512.png','/rooms-gallery/icon.svg','/rooms-gallery/manifest.webmanifest'];
 const running=new Map();
@@ -87,11 +94,37 @@ self.addEventListener('sync',event=>{
   if(event.tag!==TAG)return;
   event.waitUntil((async()=>{const state=await JoneSyncDB.read();if(state&&state.phase==='pending'){try{await startJob(state.job,null);}catch(e){if(e.retryable)throw e;}}})());
 });
+async function markOutdated(reason){
+  // The server answered for a downloaded file that the gallery no longer
+  // serves: the download generation is stale. Flag it so the admin page asks
+  // for a re-synchronise, and keep the existing files (they may still be the
+  // only offline copies) until a new generation replaces them.
+  try{
+    const state=await JoneSyncDB.read();
+    if(state&&state.phase==='ready'&&!state.outdated){
+      await JoneSyncDB.compare(state.job,s=>Object.assign({},s,{outdated:true,error:String(reason||'The gallery changed; synchronize again.')}));
+      await announce();
+    }
+  }catch(_){}
+}
 async function cachedMedia(request){
   const state=await JoneSyncDB.read().catch(()=>null);
   const cache=state&&state.activeCache?await caches.open(state.activeCache):null;
   const found=cache?await cache.match(request.url):null;
   if(!found)return fetch(request);
+  if(navigator.onLine){
+    /* Online: the server decides. A refused (non-OK) answer is reported to the
+       page AND flags the downloaded generation as outdated; the cached bytes
+       are NOT used to paper over it. A network error falls through to the
+       cached copy so a flaky link still plays the downloaded gallery. */
+    const response=await fetch(request).catch(()=>null);
+    if(response){
+      if(!response.ok&&(response.status===404||response.status===410)){
+        await markOutdated('Media '+request.url+' is no longer served (HTTP '+response.status+'); synchronize again.');
+      }
+      return response;
+    }
+  }
   const range=request.headers.get('Range');if(!range)return found;
   const match=/^bytes=(\d*)-(\d*)$/.exec(range);if(!match||(!match[1]&&!match[2]))return fetch(request);
   const blob=await found.blob();let start,end;

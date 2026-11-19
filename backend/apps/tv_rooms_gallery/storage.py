@@ -28,6 +28,29 @@ on every upload — which ``views.AdminMedia.post`` converted into HTTP 400
 member, for every file, while the message blamed the file. The configuration is
 now resolved, created when missing, and reported as its own failure class
 (HTTP 503 with a configuration code) instead of a validation error.
+
+Repair note (2026-11-20) — RESOLUTION, not relocation
+=====================================================
+A storage key is a filename inside whatever directory
+``TV_GALLERY_STORAGE_ROOT`` resolves to *in the process that wrote the file*.
+Database rows store only the key, never the directory. Production evidence
+(2026-11-20): the public catalog still lists media 1–9 for active rooms, while
+``/api/rooms-gallery/media/<id>/<rendition>/`` answers 404 for every one of
+them. The records are visible and marked ready, so the failure is between the
+row and the bytes: the same key does not resolve to a readable file in the
+process that is serving requests (a storage root that changed between releases,
+a volume that is no longer mounted, or files that never reached the volume that
+outlived the deploy).
+
+Nothing here re-interprets an existing key — that would orphan every file the
+gallery already holds. Instead :func:`resolve` reports *why* a key cannot be
+read (``missing`` / ``unreadable`` / ``storage_unavailable``) so the API can
+answer 404 only for a record that genuinely is not there, 503 when the storage
+configuration itself is broken, and 500 with an actionable diagnosis for a row
+whose files are gone. ``manage.py check_gallery_storage`` then names the files
+each record needs, so the volume can be restored or re-uploaded deliberately.
+The 2026-11-20 404s were indistinguishable from a deleted page, which is why
+several repairs never found them.
 """
 from __future__ import annotations
 
@@ -43,6 +66,10 @@ from django.core.exceptions import ImproperlyConfigured
 logger = logging.getLogger(__name__)
 
 _KEY = re.compile(r"^[0-9a-f]{32}$")
+
+#: Written by ``manage.py check_gallery_storage --write-marker``; its presence is
+#: the only proof that this exact directory survives a deploy.
+VOLUME_MARKER = ".jone-gallery-volume"
 
 
 class GalleryStorageUnavailable(ImproperlyConfigured):
@@ -147,10 +174,77 @@ def is_configured() -> tuple[bool, str]:
         return False, str(exc)
 
 
+def is_valid_key(key: str) -> bool:
+    return bool(_KEY.fullmatch(key or ""))
+
+
 def path_for(key: str) -> Path:
-    if not _KEY.fullmatch(key or ""):
+    """Filesystem path for a stored key.
+
+    Keys are opaque 32-hex names generated server-side and stored flat in the
+    gallery root. The shape is validated before any join, so a key can never
+    traverse — and, equally important, an existing key keeps resolving to the
+    same file forever (see the repair note above).
+    """
+    if not _KEY.fullmatch(str(key or "")):
         raise ValueError("Invalid gallery storage key")
-    return root() / key
+    return root() / str(key)
+
+
+#: Outcomes of :func:`resolve`.
+FILE_OK = "ok"
+FILE_MISSING = "missing"
+FILE_UNREADABLE = "unreadable"
+FILE_STORAGE_UNAVAILABLE = "storage_unavailable"
+
+
+def resolve(key: str):
+    """Locate a stored key and say honestly whether it can be served.
+
+    Returns ``(path_or_None, outcome)``. ``outcome`` is one of ``ok`` /
+    ``missing`` / ``unreadable`` / ``storage_unavailable`` so the API can answer
+    404, 500-with-a-reason or 503 instead of collapsing all three into 404.
+    """
+    try:
+        path = path_for(key)
+    except ValueError:
+        return None, FILE_MISSING
+    except GalleryStorageUnavailable:
+        return None, FILE_STORAGE_UNAVAILABLE
+    try:
+        if not path.is_file():
+            return None, FILE_MISSING
+        size = path.stat().st_size
+    except GalleryStorageUnavailable:
+        return None, FILE_STORAGE_UNAVAILABLE
+    except OSError:
+        return None, FILE_UNREADABLE
+    if size <= 0:
+        return None, FILE_UNREADABLE
+    try:
+        with path.open("rb") as handle:
+            handle.read(1)
+    except GalleryStorageUnavailable:
+        return None, FILE_STORAGE_UNAVAILABLE
+    except OSError:
+        return None, FILE_UNREADABLE
+    return path, FILE_OK
+
+
+def describe_root() -> dict:
+    """Diagnostics for ``manage.py check_gallery_storage``; never raises."""
+    try:
+        directory = root()
+    except GalleryStorageUnavailable as exc:
+        return {"configured": False, "error": exc.message}
+    marker = directory / VOLUME_MARKER
+    return {
+        "configured": True,
+        "path": str(directory),
+        "usable": os.access(directory, os.W_OK | os.X_OK),
+        "volume_marker": marker.is_file(),
+        "files": len([p for p in directory.rglob('*') if p.is_file()]),
+    }
 
 
 def save_chunks(chunks, max_size):
@@ -181,4 +275,8 @@ def save_chunks(chunks, max_size):
 
 def remove(key):
     if key:
-        path_for(key).unlink(missing_ok=True)
+        try:
+            path_for(key).unlink(missing_ok=True)
+        except ValueError:
+            # A malformed key names no file; removal is a no-op, never a path.
+            return

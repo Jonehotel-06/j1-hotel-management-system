@@ -151,6 +151,23 @@ unknown device, the vendor driver is missing (§3).
      impossible path. It must not appear at all; if it does, the deployed
      `js/biometrics.js` is stale (hard-refresh with Ctrl+F5, and confirm the
      static-host cache was purged).
+   * `Permission was denied for this request to access the `loopback` address
+     space` (Chromium 138+, **Local Network Access**). The bridge can be
+     running perfectly and the request still never leaves the browser. This is
+     NOT "the bridge is not running". Check, in this order:
+       - the site's response headers contain
+         `Permissions-Policy: … local-network-access=(self)`
+         (`curl -sI https://jonehotels.com/ | grep -i permissions-policy`);
+       - the page shows a "Blocked by this browser" reader badge with an
+         **Allow local network access** button — press it and accept the
+         browser prompt;
+       - if you previously dismissed the prompt, re-allow it from the lock
+         icon → *Local network access* → *Allow*, then reload.
+     Ten minutes on a fresh profile normally settles this; the same block
+     happens on every site, so a new bridge or a new PC changes nothing.
+   * `status` says `busy` — a capture is already in flight (another tab, or a
+     finger resting on the sensor). Wait for it to finish; the reader answers
+     one capture at a time by design.
    * `net::ERR_CONNECTION_REFUSED` on `127.0.0.1:8787` — the bridge is not
      running (§4.3) or listens on another port.
    * A CSP violation mentioning `connect-src` — the deployed `_headers` /
@@ -201,10 +218,59 @@ unknown device, the vendor driver is missing (§3).
 | HTTP 409 `BRIDGE_NOT_COLOCATED` from `api.jonehotels.com` | The hosted API was asked to capture — the reader is not there | Client must call `127.0.0.1:8787`; purge the stale frontend bundle |
 | `net::ERR_CONNECTION_REFUSED` | Bridge not running | Start it (§4.3) |
 | CSP `connect-src` violation | Hosting headers do not allowlist loopback | Deploy the repaired `_headers` / `vercel.json` |
+| CORS error: *Permission was denied … `loopback` address space* | The BROWSER blocked Local Network Access. The bridge is not at fault. | Allow local network access for the site (see 5.4); confirm `Permissions-Policy: … local-network-access=(self)` is deployed. Do **not** reinstall the driver. |
+| The bridge answers `/status` with `busy` | A capture already holds the reader | Wait for the current capture; the second attempt is refused, not queued |
+| Reader replugged and `communication_failure` persists | Stale USB handle | Press **Re-initialise reader** (or restart the bridge). The bridge now re-opens the handle itself after `DPFPDD_DEVICE_*`; if the message still appears, run `--diagnose` |
 
 ---
 
-## 8. What was changed in this repair (for the record)
+## 8. What was changed in the 2026-11-20 repair (for the record)
+
+* `frontend/js/biometrics.js`
+  * **Local Network Access.** Chromium 138+ refuses a public page's `fetch()` to
+    loopback until `local-network-access` is granted. The transport now asks for
+    that permission under the operator's click (`requestLocalNetworkAccess()`),
+    remembers a denial for the page's lifetime, and reports
+    `BRIDGE_PERMISSION_BLOCKED` / `STATUS_PERMISSION_BLOCKED` with instructions
+    instead of "start the bridge" — which cannot fix a permission denial.
+  * **Device detection.** `isMobileBrowserContext()` now matches positive
+    mobile/tablet platform tokens only (`Mobile` alone no longer appears in the
+    test, because some Windows browsers carry it in their compatibility string,
+    and a false positive disables capture on the reception PC). An operator
+    override (`setWorkstationMode('desktop'|'mobile')`, shown as *Use reader on
+    this device* / *This is a phone or tablet*) covers Windows tablets.
+  * **`describeReader()`** returns one honest picture — `mobile`,
+    `permission_blocked`, `bridge_unreachable`, `bridge_timeout`,
+    `reader_not_ready`, `ready` — with `source` (`browser` / `bridge` /
+    `policy`). The Workforce and Terminals pages render it as a reader badge,
+    the detail, and the one action that can help.
+* `frontend/dashboard/workforce.html`, `frontend/dashboard/terminals.html` —
+  the reader panel and its controls (Check reader / Allow local network access /
+  Re-initialise reader / workstation-mode override). Nothing about attendance
+  authorisation changed: the server still enforces the desk key, registered
+  address and supervised-fallback rules, and the fallback card still works from
+  a phone or tablet when policy allows it.
+* `frontend/_headers`, `frontend/vercel.json` and the `configuration/frontend/`
+  copies — `Permissions-Policy` gains `local-network-access=(self)`. Without it
+  the browser cannot grant the page loopback access at all.
+* `frontend/sw.js` — `biometrics.js`, `operations.js`, `table-fit.js` and
+  `runtime-config.js` are precached, so the staff shell cannot keep serving an
+  older cached biometric module after a release.
+* `backend/apps/staff_operations/services/fingerprint_bridge.py` — the
+  server-side adapter's default port was 8765 while the workstation bridge (the
+  only component that can own the USB reader) listens on 8787; corrected to
+  8787 so the two agree. This adapter still requires
+  `FINGERPRINT_BRIDGE_COLOCATED=1` and is not used by the desk pages.
+* `workstation_bridge/fingerprint_bridge_service.py`
+  * a stale USB handle (reader replugged / driver restarted) is now closed and
+    re-opened once, inside the capture lock, instead of failing every later
+    read until the bridge is restarted;
+  * `/status` reports `busy` while a capture is in flight and never blocks
+    behind it;
+  * `/initialize` answers `busy` immediately instead of hanging for the whole
+    capture timeout.
+
+## 9. What was changed in the earlier 2026-11-19 repair (for the record)
 
 * `frontend/js/api.js` — `resolveUrl()` normalises instead of concatenating: a
   URL that already carries a scheme (or already starts with the API base) passes

@@ -102,8 +102,13 @@ READER_STATUS_DESCRIPTIONS = {
 DP_VENDOR_ID = 0x05BA          # DigitalPersona / HID Global
 DP_PRODUCT_ID_4500 = 0x000A    # DigitalPersona U.are.U 4500
 
-# Bridge WebSocket port (localhost only).
-BRIDGE_PORT = int(os.environ.get("JONE_FINGERPRINT_BRIDGE_PORT", "8765"))
+# Bridge port (loopback only). MUST match workstation_bridge/
+# fingerprint_bridge_service.py (DEFAULT_PORT 8787), frontend/js/config.js
+# (FALLBACK bridge URL http://127.0.0.1:8787) and the docs. It previously said
+# 8765 here while the workstation bridge — the ONLY component that can own the
+# USB reader — listened on 8787, so this server-side adapter could never reach
+# a bridge the operator had actually started.
+BRIDGE_PORT = int(os.environ.get("JONE_FINGERPRINT_BRIDGE_PORT", "8787"))
 
 
 class FingerprintBridgeError(Exception):

@@ -69,6 +69,30 @@
         <div class="card card-pad"><div class="caption muted">On Break / Clocked Out Today</div><div id="rt-kpi-break-out" style="font-size:1.4rem;font-weight:700;">0 / 0</div></div>
         <div class="card card-pad"><div class="caption muted">Active 6-Digit Access Codes</div><div id="rt-kpi-codes" style="font-size:1.4rem;font-weight:700;">0</div></div>
       </div>
+      <!-- Reader state for THIS browser (mirrors the Workforce page panel).
+           Six different situations — phone/tablet, browser loopback block,
+           bridge not running, bridge not answering, reader/driver missing,
+           reader ready — each get their own sentence and control instead of
+           one "bridge not reachable" for all of them. -->
+      <div class="card card-pad" data-tm-reader style="margin-bottom:1.25rem;" aria-live="polite">
+        <div class="row" style="display:flex;gap:0.75rem;align-items:flex-start;flex-wrap:wrap;">
+          <div style="flex:1 1 320px;">
+            <div style="display:flex;align-items:center;gap:0.5rem;">
+              <span class="badge" data-tm-reader-badge>Checking reader…</span>
+              <strong data-tm-reader-title>Fingerprint reader</strong>
+            </div>
+            <p class="caption muted" data-tm-reader-detail role="status" aria-live="polite" style="margin-top:0.35rem;">Checking this computer and the J-ONE Fingerprint Bridge…</p>
+            <p class="caption" data-tm-reader-meta style="margin-top:0.25rem;opacity:0.75;"></p>
+          </div>
+          <div class="row-actions" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-outline" type="button" data-tm-reader-action="check">Check reader</button>
+            <button class="btn btn-sm btn-outline" type="button" data-tm-reader-action="allow" hidden>Allow local network access</button>
+            <button class="btn btn-sm btn-outline" type="button" data-tm-reader-action="initialize" hidden>Re-initialise reader</button>
+            <button class="btn btn-sm btn-outline" type="button" data-tm-reader-action="desktop" hidden>Use reader on this device</button>
+            <button class="btn btn-sm btn-outline" type="button" data-tm-reader-action="mobile" hidden>This is a phone or tablet</button>
+          </div>
+        </div>
+      </div>
 
       <div class="grid grid-2" style="gap:1.25rem;align-items:start;">
         <div class="card card-pad">
@@ -194,6 +218,54 @@
   </section>
 </main></div></div>
 <script src="../js/runtime-config.js?v=1.1.29"></script><script src="../js/config.js?v=1.1.29"></script><script src="../js/utils.js?v=1.1.29"></script><script src="../js/icons.js?v=1.1.29"></script><script src="../js/api.js?v=1.1.29"></script><script src="../js/theme.js?v=1.1.29"></script><script src="../js/ui.js?v=1.1.29"></script><script src="../js/auth.js?v=1.1.29"></script><script src="../js/navigation.js?v=1.1.29"></script><script src="../js/dashboard.js?v=1.1.29"></script><script src="../js/table-fit.js?v=1.1.29"></script><script src="../js/operations.js?v=1.1.29"></script><script src="../js/biometrics.js?v=1.1.29"></script>
+<script>
+/* Reader state panel — same contract as the Workforce page
+   (JONE.biometrics.describeReader). This is the console staff actually open at
+   the front desk, so it carries the same honest status. */
+(function(){
+  var badge=document.querySelector("[data-tm-reader-badge]");
+  var title=document.querySelector("[data-tm-reader-title]");
+  var detail=document.querySelector("[data-tm-reader-detail]");
+  var meta=document.querySelector("[data-tm-reader-meta]");
+  var actions=document.querySelectorAll("[data-tm-reader-action]");
+  var busy=false;
+  function say(b,t,d,m){if(badge)badge.textContent=b;if(title)title.textContent=t;if(detail)detail.textContent=d;if(meta)meta.textContent=m||"";}
+  function show(action,visible){actions.forEach(function(x){if(x.getAttribute("data-tm-reader-action")===action)x.hidden=!visible;});}
+  function render(r){
+    if(!r){say("Unknown","Fingerprint reader","Reader state could not be read.","");return;}
+    var m=[];if(r.bridge_url)m.push("Bridge: "+r.bridge_url);if(r.device_serial)m.push("Serial: "+r.device_serial);
+    if(r.local_network_permission&&r.local_network_permission!=="unsupported")m.push("Browser local network access: "+r.local_network_permission);
+    var metaText=m.join(" · "),code=String(r.code||"");
+    if(r.mode==="mobile"){
+      say("Not available on this device","Fingerprint capture needs the reception workstation",r.detail,
+        "Supervised fallback and every other permitted action on this page still work from here. "+metaText);
+      show("check",true);show("allow",false);show("initialize",false);show("desktop",true);show("mobile",false);return;
+    }
+    show("mobile",true);show("desktop",false);
+    if(r.ready){say("Ready","Fingerprint reader connected",r.detail||"Place a finger on the reader when you start an action.",metaText);show("check",true);show("allow",false);show("initialize",true);return;}
+    if(code==="BRIDGE_PERMISSION_BLOCKED"){say("Blocked by this browser","Browser blocked local network access",r.detail,"Allow local network access for this site, then press Check reader. The bridge does not need restarting. "+metaText);show("check",true);show("allow",true);show("initialize",false);return;}
+    if(!r.bridge_reachable){say(code==="BRIDGE_TIMEOUT"?"Bridge did not answer":"Bridge not running",code==="BRIDGE_TIMEOUT"?"The fingerprint bridge accepted the request but did not reply":"Fingerprint bridge is not running on this computer",r.detail,metaText);show("check",true);show("allow",false);show("initialize",false);return;}
+    say("Reader not ready","The bridge is running but cannot read a finger",r.detail,metaText);show("check",true);show("allow",false);show("initialize",true);
+  }
+  async function refresh(options){
+    options=options||{};if(busy)return null;
+    var bio=window.JONE&&window.JONE.biometrics;
+    if(!bio){say("Unavailable","Fingerprint reader","The biometrics module did not load on this page.","");return null;}
+    busy=true;
+    try{var r=await bio.describeReader({initialize:options.initialize!==false,requestPermission:!!options.requestPermission});render(r);return r;}
+    catch(err){say("Unknown","Fingerprint reader",(err&&err.message)||"Reader state could not be read.","");return null;}
+    finally{busy=false;}
+  }
+  actions.forEach(function(btn){btn.addEventListener("click",async function(){
+    var action=btn.getAttribute("data-tm-reader-action"),bio=window.JONE&&window.JONE.biometrics;if(!bio)return;
+    if(action==="allow"){var s=await bio.requestLocalNetworkAccess();JONE.ui.toast(s==="granted"?"Local network access allowed.":"The browser reports local network access as "+s+".",s==="granted"?"success":"warning");await refresh({});return;}
+    if(action==="desktop"){bio.setWorkstationMode("desktop");JONE.ui.toast("Reader controls enabled for this device for this session.","info");await refresh({});return;}
+    if(action==="mobile"){bio.setWorkstationMode("mobile");JONE.ui.toast("This device is treated as a phone or tablet for this session.","info");await refresh({});return;}
+    await refresh({initialize:action!=="check"});
+  });});
+  if(document.querySelector("[data-tm-reader]"))refresh({});
+})();
+</script>
 <script>
 JONE.ui.initChrome();var __terminalAllowed=JONE.dashboard.boot(["admin","general_manager"]);document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
 (function(){"use strict";if(!__terminalAllowed)return;var OPS=JONE.operations,rows=document.querySelector("[data-terminal-rows]"),pager=document.querySelector("[data-terminal-pagination]"),current=document.querySelector("[data-terminal-current]"),state={page:1,cache:{}};
