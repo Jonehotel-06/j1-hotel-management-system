@@ -32,7 +32,7 @@
 
 "use strict";
 
-const CACHE_VERSION = "jone-v1.1.29";
+const CACHE_VERSION = "jone-v1.1.30";
 const PRECACHE = `${CACHE_VERSION}-precache`;
 const PAGES_CACHE = `${CACHE_VERSION}-pages`;
 const IMAGES_CACHE = `${CACHE_VERSION}-images`;
@@ -189,6 +189,29 @@ async function assetSWR(request, cacheName) {
   return cached || (await network) || Response.error();
 }
 
+/* Code must never be "stale while revalidating". `assetSWR` below returns the
+   cached copy BEFORE asking the network, which means the first load after a
+   deploy still executes the PREVIOUS release — and if a release shipped without
+   a new ?v= stamp (production 2026-11-20 did exactly that), the stamp matches
+   the cached entry and there is nothing to tell them apart. Scripts and styles
+   are small, so while online they are fetched first and fall back to the cache
+   only when the network is genuinely unavailable. Offline behaviour is
+   unchanged: a cached copy is still served. */
+async function assetFreshOnline(request, cacheName) {
+  if (navigator.onLine === false) return assetSWR(request, cacheName);
+  try {
+    const response = await fetch(request, { cache: "no-cache" });
+    if (response && response.ok && response.type === "basic") {
+      const cache = await caches.open(cacheName);
+      cache.put(request, response.clone()).catch(() => {});
+    }
+    return response;
+  } catch (_) {
+    const cached = await caches.match(request, { ignoreVary: true });
+    return cached || Response.error();
+  }
+}
+
 /* Stale-while-revalidate for local public images (hero/gallery art). */
 async function staleWhileRevalidate(request, cacheName, limit) {
   const cache = await caches.open(cacheName);
@@ -308,9 +331,9 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (dest === "style" || dest === "script" || dest === "font" || dest === "manifest") {
-    // Stale-while-revalidate: instant from cache, but always refreshed in the
-    // background so a new deploy is picked up on the next load automatically.
-    event.respondWith(assetSWR(request, PRECACHE));
+    // Network-first while online so a deploy takes effect on the NEXT load,
+    // not the one after it; cached copies still serve the offline case.
+    event.respondWith(assetFreshOnline(request, PRECACHE));
     return;
   }
 

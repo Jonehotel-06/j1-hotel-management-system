@@ -151,7 +151,33 @@ def main():
                 print("FAIL: initial synchronisation did not become ready:", result)
                 ok = False
 
-            # 2. The backend now refuses the media (the production 404 shape).
+            # 2. A SERVER-SIDE READ FAULT (production 2026-11-20: HTTP 500
+            #    GALLERY_MEDIA_FILE_MISSING for every media because the gallery
+            #    volume was not mounted) must NOT blank a TV that still holds a
+            #    complete download. The record is valid; only the server's copy
+            #    is unreadable, so the downloaded bytes are the only working copy
+            #    left and are served, with the fault flagged and the generation
+            #    NOT marked outdated.
+            STATE["media_status"] = 500
+            fault = page.evaluate("""async () => {
+                const res = await fetch('http://127.0.0.1:%d/api/rooms-gallery/media/7/display/', {cache: 'no-store'});
+                const state = await JoneSyncDB.read();
+                return {status: res.status, bytes: (res.ok ? (await res.blob()).size : 0),
+                        serverFault: !!(state && state.serverFault), outdated: !!(state && state.outdated)};
+            }""" % port)
+            if fault["status"] != 200 or fault["bytes"] <= 0:
+                print("FAIL: a server 500 was passed to the screen instead of the downloaded copy "
+                      "(status %s, %s bytes) — this is the blank-TV regression"
+                      % (fault["status"], fault["bytes"]))
+                ok = False
+            if not fault["serverFault"]:
+                print("FAIL: the server-side read fault was not flagged for the admin page")
+                ok = False
+            if fault["outdated"]:
+                print("FAIL: a 500 wrongly marked the download outdated (it is not the download's fault)")
+                ok = False
+
+            # 3. The backend now refuses the media (the production 404 shape).
             STATE["media_status"] = 404
             page.reload(wait_until="load")
             page.evaluate("() => navigator.serviceWorker.ready.then(() => true)")
@@ -169,7 +195,7 @@ def main():
                 print("FAIL: the download generation was not flagged outdated after a 404")
                 ok = False
 
-            # 3. The offline copy is NOT destroyed by that flag.
+            # 4. The offline copy is NOT destroyed by that flag.
             page.evaluate("() => navigator.serviceWorker.ready.then(() => true)")
             still_cached = page.evaluate("""async () => {
                 const state = await JoneSyncDB.read();
@@ -181,7 +207,7 @@ def main():
                 print("FAIL: the downloaded media was discarded instead of being flagged")
                 ok = False
 
-            # 4. Once the backend serves it again, the network answer wins again.
+            # 5. Once the backend serves it again, the network answer wins again.
             STATE["media_status"] = 200
             recovered = page.evaluate("""async () => {
                 const res = await fetch('http://127.0.0.1:%d/api/rooms-gallery/media/7/display/', {cache: 'no-store'});
@@ -191,7 +217,7 @@ def main():
                 print("FAIL: media did not recover once the server served it again (got %s)" % recovered)
                 ok = False
 
-            # 5. Offline playback still works from the download.
+            # 6. Offline playback still works from the download.
             context.set_offline(True)
             offline = page.evaluate("""async () => {
                 const res = await fetch('http://127.0.0.1:%d/api/rooms-gallery/media/7/display/');

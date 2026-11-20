@@ -94,6 +94,18 @@ self.addEventListener('sync',event=>{
   if(event.tag!==TAG)return;
   event.waitUntil((async()=>{const state=await JoneSyncDB.read();if(state&&state.phase==='pending'){try{await startJob(state.job,null);}catch(e){if(e.retryable)throw e;}}})());
 });
+async function markServerFault(reason){
+  /* A server-side read fault says nothing about the downloaded file, so the
+     download is kept and NOT marked outdated; the page is told so a manager
+     can see why the TV is running on cached bytes. */
+  try{
+    const state=await JoneSyncDB.read();
+    if(state&&state.phase==='ready'&&!state.serverFault){
+      await JoneSyncDB.compare(state.job,s=>Object.assign({},s,{serverFault:true,serverFaultReason:String(reason||'')}));
+      await announce();
+    }
+  }catch(_){}
+}
 async function markOutdated(reason){
   // The server answered for a downloaded file that the gallery no longer
   // serves: the download generation is stale. Flag it so the admin page asks
@@ -113,14 +125,25 @@ async function cachedMedia(request){
   const found=cache?await cache.match(request.url):null;
   if(!found)return fetch(request);
   if(navigator.onLine){
-    /* Online: the server decides. A refused (non-OK) answer is reported to the
-       page AND flags the downloaded generation as outdated; the cached bytes
-       are NOT used to paper over it. A network error falls through to the
-       cached copy so a flaky link still plays the downloaded gallery. */
+    /* Online: the server decides WHICH record exists, but not whether this
+       device may still play the file it downloaded. The two failure kinds are
+       NOT the same thing and must not be collapsed again (2026-11-20):
+         404 / 410  the record is gone -> the download is stale, say so, and
+                    let the server's answer stand; never replay dead bytes.
+         5xx        the server cannot READ its own copy (e.g. the media volume
+                    is not mounted after a redeploy). The record is valid and
+                    the downloaded bytes are the only working copy left on this
+                    device, so throwing them away turns a working TV into a
+                    blank one. Serve the downloaded copy and flag the fault. */
     const response=await fetch(request).catch(()=>null);
     if(response){
-      if(!response.ok&&(response.status===404||response.status===410)){
+      if(response.status===404||response.status===410){
         await markOutdated('Media '+request.url+' is no longer served (HTTP '+response.status+'); synchronize again.');
+        return response;
+      }
+      if(response.status>=500){
+        await markServerFault('The server cannot read this media (HTTP '+response.status+'); playing the downloaded copy.');
+        return found;
       }
       return response;
     }

@@ -38,7 +38,17 @@
   }
   async function api(path,options){
     options=options||{};options.headers=Object.assign({},options.headers||{},token?{'Authorization':'Bearer '+token}:{});
-    var res=await fetch(JoneOffline.apiBase()+'/api/rooms-gallery/'+path,options);
+    /* A mobile connection can stall a request indefinitely; without a cap the
+       caller waits forever and the page looks frozen. 30 s is far beyond any
+       healthy response and short enough to tell the manager something broke. */
+    var controller=typeof AbortController==='function'?new AbortController():null;
+    var timer=controller?setTimeout(function(){controller.abort();},30000):null;
+    var res;
+    try{
+      res=await fetch(JoneOffline.apiBase()+'/api/rooms-gallery/'+path,controller?Object.assign({},options,{signal:controller.signal}):options);
+    }catch(err){
+      throw new Error(err&&err.name==='AbortError'?'The server did not answer within 30 seconds. Check the connection and try again.':(err&&err.message)||'Network error.');
+    }finally{if(timer)clearTimeout(timer);}
     if(res.status===204)return null;
     var data;try{data=await res.json();}catch(_){throw new Error('Unexpected server response ('+res.status+').');}
     if(!res.ok||data.success===false){
@@ -112,9 +122,25 @@
     $('music-list').value=settings.music_id?String(settings.music_id):'';
   }
   async function load(){
-    var data=await Promise.all([api('manage/rooms/'),api('manage/media/'),api('manage/settings/')]);rooms=data[0];media=data[1];settings=data[2];
-    $('login-panel').hidden=true;$('admin').hidden=false;fillRooms();renderSettings();
+    /* The three collections are independent, so they are loaded independently.
+       Promise.all() made the whole page hostage to its slowest member: on a
+       mobile connection one dropped request left the manager staring at the
+       sign-in form with no panel, no spinner and no reason, which reads as a
+       frozen page. The panel is now opened as soon as the session is accepted,
+       whatever the outcome, and every failure is named in the status line. */
+    $('login-panel').hidden=true;$('admin').hidden=false;
+    var results=await Promise.allSettled([api('manage/rooms/'),api('manage/media/'),api('manage/settings/')]);
+    var failures=[];
+    if(results[0].status==='fulfilled')rooms=results[0].value;else failures.push('rooms: '+reason(results[0]));
+    if(results[1].status==='fulfilled')media=results[1].value;else failures.push('media: '+reason(results[1]));
+    if(results[2].status==='fulfilled')settings=results[2].value;else failures.push('settings: '+reason(results[2]));
+    /* Report BEFORE rendering: a missing collection can make a renderer throw,
+       and an exception here must not swallow the explanation of why. */
+    if(failures.length)message('Some sections did not load — '+failures.join('; ')+'. Tap "Refresh processing status" to retry.');
+    try{fillRooms();}catch(err){message('Rooms could not be shown: '+((err&&err.message)||err)+'.');}
+    try{renderSettings();}catch(err){message('Settings could not be shown: '+((err&&err.message)||err)+'.');}
   }
+  function reason(result){var e=result&&result.reason;return (e&&e.message)||'failed';}
   /* Formats the API accepts (server-side validation is authoritative; this is
      only so the page can refuse an obviously-wrong file BEFORE spending minutes
      uploading it — the two layers must not disagree). */
@@ -201,7 +227,12 @@
   $('save-settings').onclick=async function(){try{await api('manage/settings/',json('PATCH',{slideshow_seconds:Number($('interval').value),max_upload_mb:Number($('max-upload').value),music_volume:Number($('volume').value),music_id:$('music-list').value?Number($('music-list').value):null,music_enabled:$('music-enabled').checked,music_autoplay:$('music-auto').checked}));await load();message('Settings saved.');}catch(e){message(e.message);}};
   $('room').onchange=selectRoom;
   $('refresh-media').onclick=function(){load().then(function(){message('Status refreshed.');}).catch(function(e){message(e.message);});};
-  $('login').onsubmit=async function(e){e.preventDefault();$('login-message').textContent='Signing in…';try{var res=await fetch(JoneOffline.apiBase()+'/api/auth/login/',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:$('email').value,password:$('password').value})});var obj=await res.json();if(!res.ok||!obj.data||!obj.data.tokens)throw new Error(obj.message||'Sign-in failed.');token=obj.data.tokens.access;sessionStorage.setItem(ownKey,token);$('password').value='';await load();$('login-message').textContent='';}catch(err){token='';sessionStorage.removeItem(ownKey);$('login-message').textContent=err.message;}};
+  $('login').onsubmit=async function(e){e.preventDefault();$('login-message').textContent='Signing in…';try{
+      var lc=typeof AbortController==='function'?new AbortController():null,lt=lc?setTimeout(function(){lc.abort();},30000):null,lres;
+      try{lres=await fetch(JoneOffline.apiBase()+'/api/auth/login/',lc?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:$('email').value,password:$('password').value}),signal:lc.signal}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:$('email').value,password:$('password').value})});}
+      catch(le){throw new Error(le&&le.name==='AbortError'?'Sign-in timed out after 30 seconds. Check the connection and try again.':'Could not reach the server. Check the connection and try again.');}
+      finally{if(lt)clearTimeout(lt);}
+      var res=lres;var obj=await res.json();if(!res.ok||!obj.data||!obj.data.tokens)throw new Error(obj.message||'Sign-in failed.');token=obj.data.tokens.access;sessionStorage.setItem(ownKey,token);$('password').value='';await load();$('login-message').textContent='';}catch(err){token='';sessionStorage.removeItem(ownKey);$('login-message').textContent=err.message;}};
   $('signout').onclick=function(){sessionStorage.removeItem(ownKey);token='';$('admin').hidden=true;$('login-panel').hidden=false;$('login-message').textContent='Gallery session closed. Other hotel sessions are unchanged.';};
   async function offlineStatus(){var status=await JoneOffline.status();$('offline-status').textContent=status.ready?'Ready for offline: '+status.count+' selected files saved on this device.':status.reason;if(navigator.storage&&navigator.storage.estimate){var q=await navigator.storage.estimate();$('quota').textContent='Storage used: '+Math.round((q.usage||0)/1048576)+' MB; estimated quota: '+Math.round((q.quota||0)/1048576)+' MB.';}}
   $('refresh-offline').onclick=async function(){try{currentCatalog=await JoneOffline.freshCatalog();var box=$('offline-choices');box.replaceChildren();currentCatalog.data.rooms.forEach(function(room){var group=document.createElement('fieldset'),legend=document.createElement('legend');legend.textContent='ROOM '+room.number;group.appendChild(legend);var label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.className='offline-room';check.value=room.id;check.checked=true;label.append(check,document.createTextNode(' Room images'));group.appendChild(label);room.media.filter(function(m){return m.kind==='video';}).forEach(function(m,i){var l=document.createElement('label'),v=document.createElement('input');v.type='checkbox';v.className='offline-video';v.value=m.id;l.append(v,document.createTextNode(' Video '+(i+1)));group.appendChild(l);});box.appendChild(group);});await offlineStatus();}catch(e){$('offline-status').textContent=e.message;}};

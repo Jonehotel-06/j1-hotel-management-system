@@ -92,7 +92,7 @@
   STATUS_DESCRIPTIONS[STATUS_PERMISSION_DENIED] = "Permission denied to access the fingerprint reader. Run the bridge as administrator.";
   STATUS_DESCRIPTIONS[STATUS_BUSY] = "The fingerprint reader is busy. Please wait and try again.";
   STATUS_DESCRIPTIONS[STATUS_COMMUNICATION_FAILURE] = "Communication with the fingerprint reader failed. Disconnect and reconnect the reader, then retry.";
-  STATUS_DESCRIPTIONS[STATUS_PERMISSION_BLOCKED] = "This browser blocked the page from contacting the fingerprint bridge on this computer. Allow local network access (the lock icon in the address bar), then press Allow / Retry. The bridge itself may already be running.";
+  STATUS_DESCRIPTIONS[STATUS_PERMISSION_BLOCKED] = "This browser has not granted the page permission to reach the fingerprint bridge on this computer, so the request never left the browser. Press Allow reader access (the lock icon → Local network access also works), then press Retry. The bridge itself may already be running.";
 
   function FingerprintReaderError(message, code) {
     var error = new Error(message);
@@ -273,6 +273,25 @@
     return state;
   }
 
+  /* The browser reports the Local Network Access state as "prompt": it has NOT
+     refused, it simply has not asked the operator yet, and a fetch with no user
+     gesture is silently refused. That refusal is byte-identical to a stopped
+     bridge, so reporting "start the bridge" here sends the operator to fix the
+     one thing that is provably fine. Both causes are named, in likelihood
+     order, with the single action that resolves the common one. */
+  function permissionNotGrantedError() {
+    var host = (window.location && window.location.hostname) || "this site";
+    return bridgeError(
+      "This browser has not yet been given permission to reach the fingerprint bridge at " +
+      bridgeBase() + ". Press Allow reader access (or Retry) — the request only succeeds from a " +
+      "button press, because " + host + " must be granted local network access first. " +
+      "If allowing it does not clear this message, then start the J-ONE Fingerprint Bridge on this " +
+      "workstation (Start → J-ONE Fingerprint Bridge) and check the reader is plugged in.",
+      "BRIDGE_PERMISSION_PROMPT",
+      { reachable: false, status: STATUS_PERMISSION_BLOCKED }
+    );
+  }
+
   function permissionBlockedError() {
     return bridgeError(
       "This browser blocked the page from contacting the fingerprint bridge at " + bridgeBase() + ". " +
@@ -352,6 +371,13 @@
         LNA_STATE = { permission: "denied", checked: true };
         throw permissionBlockedError();
       }
+      /* "prompt" (and an unreadable state) means the browser never granted
+         access, so it refused the request before it ever reached the port.
+         Calling that a stopped bridge is a false diagnosis. */
+      if (permission === "prompt" || permission === "unknown") {
+        LNA_STATE = { permission: permission, checked: true };
+        throw permissionNotGrantedError();
+      }
       throw bridgeError(
         "The fingerprint bridge is not reachable at " + bridgeBase() + ". " +
         "Start the J-ONE Fingerprint Bridge on this workstation (Start → J-ONE Fingerprint Bridge), " +
@@ -408,6 +434,7 @@
     var status = STATUS_NOT_CONNECTED;
     if (code === "BRIDGE_TIMEOUT") status = STATUS_COMMUNICATION_FAILURE;
     else if (code === "BRIDGE_PERMISSION_BLOCKED") status = STATUS_PERMISSION_BLOCKED;
+    else if (code === "BRIDGE_PERMISSION_PROMPT") status = STATUS_PERMISSION_BLOCKED;
     else if (code === "WRONG_WORKSTATION") status = "wrong_workstation";
     return {
       status: status,
@@ -714,7 +741,7 @@
     result.source = status.bridge_reachable ? "bridge" : "browser";
 
     if (!status.bridge_reachable) {
-      if (result.code === "BRIDGE_PERMISSION_BLOCKED") {
+      if (result.code === "BRIDGE_PERMISSION_BLOCKED" || result.code === "BRIDGE_PERMISSION_PROMPT") {
         result.status = STATUS_PERMISSION_BLOCKED;
         // The grant happens on the next real capture attempt (user gesture);
         // there is nothing to retry automatically from here.
@@ -893,6 +920,7 @@
     isMobileBrowserContext: isMobileBrowserContext,
     workstationMode: workstationMode,
     setWorkstationMode: setWorkstationOverride,
+    permissionNotGrantedError: permissionNotGrantedError,
     describeReader: describeReader,
     requestLocalNetworkAccess: requestLocalNetworkAccess,
     localNetworkPermissionState: localNetworkPermissionState,

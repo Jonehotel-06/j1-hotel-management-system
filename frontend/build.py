@@ -197,6 +197,79 @@ def write_version(version):
         SW_FILE.write_text(sw, encoding="utf-8")
 
 
+# ---------------------------------------------------------------------------#
+# Release guard — an asset change may never ship under an unchanged version.
+# ---------------------------------------------------------------------------#
+# 2026-11-20, production: js/biometrics.js was replaced and deployed while
+# version.json stayed at 1.1.29. Every page kept requesting
+# `biometrics.js?v=1.1.29`, so Cloudflare, the browser cache and the staff
+# service worker were all entitled to hand back the previous file, and the
+# operator correctly reported "the fix did not work" while the server was
+# already serving the new bytes. Nothing in the build noticed, because a plain
+# build happily re-stamps the OLD version onto CHANGED assets.
+#
+# The build now remembers the digest of every shipped asset. If the assets
+# change while the version does not, the build STOPS and names the command that
+# fixes it. Pass --allow-unstamped to override deliberately (e.g. a hotfix that
+# is certain no client cached the previous file).
+ASSET_STATE_FILE = ROOT / ".build-assets.json"
+_ASSET_STATE_PATHS = ("js", "css", "rooms-gallery")
+
+
+def _asset_digest():
+    """Digest of every file a browser may cache, keyed by relative path."""
+    import hashlib
+
+    digest = {}
+    for folder in _ASSET_STATE_PATHS:
+        base = ROOT / folder
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if not path.is_file() or path.suffix not in {".js", ".css", ".html", ".webmanifest"}:
+                continue
+            rel = path.relative_to(ROOT).as_posix()
+            digest[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return digest
+
+
+def check_release_guard(version, changed_by_release):
+    """Refuse to build changed assets under an unchanged version."""
+    if changed_by_release:
+        return {}
+    try:
+        state = json.loads(ASSET_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return _asset_digest()  # first guarded build: record the baseline
+    previous = state.get("assets") or {}
+    if not previous or state.get("version") != version:
+        return _asset_digest()
+    changed = sorted(name for name, sha in _asset_digest().items()
+                     if previous.get(name) not in (None, sha))
+    if changed:
+        shown = "\n  ".join(changed[:12])
+        more = "" if len(changed) <= 12 else f"\n  ... and {len(changed) - 12} more"
+        raise SystemExit(
+            f"BUILD STOPPED: {len(changed)} front-end asset(s) changed but version.json is "
+            f"still {version}.\n  {shown}{more}\n\n"
+            "Browsers, Cloudflare and the service worker key their caches on the ?v= stamp, "
+            "which comes from version.json, so shipping this as-is would keep serving the "
+            "PREVIOUS files.\n\n    python3 build.py --bump patch\n\n"
+            "(or --version X.Y.Z). Re-run with --allow-unstamped only if you know no client "
+            "has cached the previous file."
+        )
+    return _asset_digest()
+
+
+def write_asset_state(version, assets):
+    if not assets:
+        return
+    ASSET_STATE_FILE.write_text(
+        json.dumps({"version": version, "assets": assets}, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def bump_version(current, mode):
     major, minor, patch = (int(x) for x in current.split("."))
     if mode == "major":
@@ -447,6 +520,9 @@ def main():
                         help="Release a new version before building.")
     parser.add_argument("--version", metavar="X.Y.Z",
                         help="Set an explicit version before building.")
+    parser.add_argument("--allow-unstamped", action="store_true",
+                        help="Build changed assets without bumping the version (skips the "
+                             "release guard; changes will NOT be picked up by cached clients).")
     parser.add_argument("--api-base-url", metavar="HTTPS_ORIGIN",
                         default=os.environ.get("JONE_API_BASE_URL", DEFAULT_PRODUCTION_API_ORIGIN),
                         help="Authoritative HTTPS API origin for runtime-config.js.")
@@ -462,6 +538,9 @@ def main():
         version = args.version
     elif args.bump:
         version = bump_version(version, args.bump)
+
+    assets_before = {} if args.allow_unstamped else check_release_guard(
+        version, bool(args.bump or args.version))
 
     # Always (re)sync the generated artifacts with the released version so a
     # drifted js/version.js or service-worker CACHE_VERSION can never survive
@@ -501,6 +580,15 @@ def main():
     if problems:
         raise SystemExit(f"SEO validation failed with {len(problems)} problem(s); not releasing.")
     print("SEO: validation passed")
+
+    # Record what this release shipped, so the NEXT build can tell a real asset
+    # change from a no-op rebuild (see check_release_guard).
+    write_asset_state(version, _asset_digest())
+    if assets_before and assets_before != _asset_digest() and not (args.bump or args.version):
+        print("WARNING: assets changed during this build under the same version; "
+              "clients holding the previous copy will keep it. Release with --bump patch.",
+              file=sys.stderr)
+    print(f"Release guard: recorded {len(_asset_digest())} asset digests for {version}")
 
 
 if __name__ == "__main__":
