@@ -38,6 +38,13 @@
   }
   async function api(path,options){
     options=options||{};options.headers=Object.assign({},options.headers||{},token?{'Authorization':'Bearer '+token}:{});
+    /* Offline administration: never pretend a mutating request reached the
+       server while the device has no connection. This is shown immediately
+       instead of after a 30 s timeout, nothing the operator selected is
+       discarded, and the same button works once the connection returns. */
+    if(options.method&&options.method!=='GET'&&!navigator.onLine){
+      throw new Error('You are offline. This change cannot be sent to the server yet; your selection is preserved. Reconnect and try again.');
+    }
     /* A mobile connection can stall a request indefinitely; without a cap the
        caller waits forever and the page looks frozen. 30 s is far beyond any
        healthy response and short enough to tell the manager something broke. */
@@ -203,6 +210,7 @@
     var running=false, completed=false;
     async function run(){
       if(running||completed)return;running=true;progress.value=0;retry.hidden=true;
+      if(!navigator.onLine){text.textContent=' Cannot upload — this device is offline. Reconnect, then press Retry.';retry.hidden=false;running=false;return;}
       var blocked=preflight(file);
       if(blocked){text.textContent=' Failed: '+blocked;retry.hidden=true;running=false;return;}
       text.textContent=' Uploading…';
