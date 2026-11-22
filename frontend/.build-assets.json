@@ -21,7 +21,7 @@
   "js/auth.js": "044a54bd02c16cde18e3c3c41a8e56b533711110cfd592f38dfd7d00ae07979a",
   "js/barcode-labels.js": "d0001cd03ed88e046b6da271a88074139d364a1843442b12060895c1a9f0075b",
   "js/barcode-scanner.js": "720a9784adb1148a19ec5653256bfb1663f1dd1f89e086bd681ce9e2edb83c82",
-  "js/biometrics.js": "a75d698568c17cdb209d10d2cc8e8f1fd50ecb8569c30031adc84e773df163e8",
+  "js/biometrics.js": "37bc48f4d9b6ad2c08db656890a58242d665fc553ddf0a2ec9721cdf7181a977",
   "js/booking-calendar.js": "46724204c48a14cc5343cf7de1d4dd7aa402e0f8ec95cfea3cd137146b0bf5ef",
   "js/booking-stepper.js": "7e5b2e57faabefc1f4d43e5c60382f98da0edf0344d6b0f7316f13ee67ba4950",
   "js/breakfast.js": "7be30b89207bee664471b7bd63fed32505c4457ad9c672a905536c991a9a4806",
@@ -35,7 +35,7 @@
   "js/kitchen-food.js": "3367262052c9b2019f0c809fb9ab95858a2377cc383c1aafdf34052ae6056649",
   "js/menu-print.js": "b90f3547dce2b677a266d93d32d271cc5bf35b1b2a0dc37d872d08f75e991933",
   "js/minimart-admin.js": "bb82f3db6d0756d7505b91744468433959b9c4c2fbbda370aad26bbbec693b6d",
-  "js/minimart.js": "bc7bfe9fa4610184bceeaf80a910f633f554f887ce4e310877702be178d69358",
+  "js/minimart.js": "5e407a237215ff9b999290743911b4d6fa618fe51e98d580df31579d3b0b88de",
   "js/navigation.js": "ce4165570ded0f7676aba16b97e7ca284a277681ab50a5bf6d8d627b63a25807",
   "js/operations.js": "c82109b800eb9031c848f90a737bbe49bc81107d2bb61bc5070167d6240fafca",
   "js/portal-catalog.js": "9b4872730c0de72e64a34c8dc61ddd1a54e10d59fd6e368a7aadc134bcb4d5f1",
@@ -43,6 +43,7 @@
   "js/portal.js": "422360f795d78e71775ec79e70b967073d4a823b156434d3d1b29b8239248e1b",
   "js/pos-drafts.js": "807f2c907cc0f0df1dbcd0c38103afec78609ed4943453b42fcc2843915335a2",
   "js/pwa.js": "73ae65fb50b90c347c741a2b93c88e223a4283819e488d2fa80577a0f22c75e7",
+  "js/reader-check.js": "513b9e1596e43a830c9b0399574ce2c3cdc9f77d9de038753b8fba74dd523e8c",
   "js/receipt-email-modal.js": "6bcab749219a59ae6cec3d03a24b0cfa9bd2929f6e87b079773662a411f54e1a",
   "js/receipt.js": "60e0220fd60ea55e211e3e86f0437584ab892836be69cef88da68b3278c962e8",
   "js/reception-services.js": "bea6da82ba250de1212cf9ac73af3ddb44045642322b4b89cb42171c75e9274f",
@@ -57,10 +58,10 @@
   "js/ui.js": "511bf18df17beacae3e030e77463b4ec4a9079eaeba03f808e63409b84657dc0",
   "js/update-checker.js": "a5ed2272d077fe7860c3555011d8e8318896eae7fd475ac7b3a811ff3e635475",
   "js/utils.js": "c1dd4acf03f86253f3fe0a6f1865d3139c0fd6a6620a8467379b39f6c7a592d6",
-  "js/version.js": "f2715009d7e657343665e80669fd187042fc6f2e26f9a27b00ac5eb90613c515",
-  "rooms-gallery/admin.html": "6a5bc6339e62feded272dff8c4d4d8ce5bf8ea836f5890af0de8ab84edfa0a0d",
-  "rooms-gallery/admin.js": "9092dc649553531cdf7e67881a5e936b70706ec236b3c5b10915a3e0eec2e1ac",
-  "rooms-gallery/gallery.css": "506eb62e6a6365f01fa87a212d6dd315a39c3e2077b9b83d61df126da3e1ba8d",
+  "js/version.js": "ac83bf380d42c10de7a30ee759db2c81d2805b535908ee643c14d3dadf3df415",
+  "rooms-gallery/admin.html": "8d1518d3fc570fe6dbe598d9b900027998106598c0a722ba951a436ce9f07998",
+  "rooms-gallery/admin.js": "0c1af291d3cfeead6b34436e7f17acda4f693ace3ee1c876d78b2d4730e896b1",
+  "rooms-gallery/gallery.css": "bc552dd7a39e2307f14640858c440a75770a30d27369850097309968baa9ff88",
   "rooms-gallery/gallery.js": "0c99f367376563c5bd605f3f2714a3724e4ed8fb77d81ec12ce111d7894fc107",
   "rooms-gallery/grid.js": "a5137a1ff241162f1e2ea9d47415999c8259034bbdc4533c4754d67cccfa05e2",
   "rooms-gallery/index.html": "94f2e30b2ee99bf913568ed3fe414355997dcb45cbe93198dcadd6d1ccf320c1",
@@ -69,5 +70,5 @@
   "rooms-gallery/sw.js": "bb5f13413969d5c20422c9e7745e745d20e951ee8ad6c3a2fa5fe79d0c50c08d",
   "rooms-gallery/sync-db.js": "9f3fb2fe017f74ee7718915a26343c1d86ab058f97dc6bb9152b7208cecdd462"
  },
- "version": "1.1.30"
+ "version": "1.1.35"
 }

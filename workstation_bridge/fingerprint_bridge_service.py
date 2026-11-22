@@ -85,6 +85,11 @@ STATUS_SDK_UNAVAILABLE = "sdk_unavailable"
 STATUS_PERMISSION_DENIED = "permission_denied"
 STATUS_BUSY = "busy"
 STATUS_COMMUNICATION_FAILURE = "communication_failure"
+# The vendor DLLs are present (the driver IS installed) but dpfpdd_init() did
+# not succeed — in practice the DigitalPersona runtime service is stopped or
+# still starting. Distinct from driver_missing because the repair is different:
+# start a service, not reinstall a driver.
+STATUS_SERVICE_UNAVAILABLE = "service_unavailable"
 
 STATUS_DETAILS = {
     STATUS_CONNECTED: "Fingerprint reader connected and ready.",
@@ -95,6 +100,11 @@ STATUS_DETAILS = {
     STATUS_PERMISSION_DENIED: "Windows denied access to the fingerprint reader. Close other fingerprint software or run the bridge as an administrator.",
     STATUS_BUSY: "The fingerprint reader is busy with another capture.",
     STATUS_COMMUNICATION_FAILURE: "Communication with the fingerprint reader failed. Unplug and reconnect the reader, then press Retry.",
+    STATUS_SERVICE_UNAVAILABLE: (
+        "The DigitalPersona driver is installed but its Windows service is not running or did not "
+        "answer, so the reader cannot be opened. Start the \"DigitalPersona\" service (services.msc) "
+        "and replug the reader, then press Retry."
+    ),
 }
 
 # dpfpdd.dll status codes. Only 0 (success) is treated as success; every other
@@ -249,6 +259,11 @@ class DigitalPersonaReader:
         self._fmd_format: Optional[Tuple[str, int]] = None
         self._fid_format: Optional[Tuple[str, int]] = None
         self._capturing = False
+        # dpfpdd_init() outcome, kept apart from "the DLL is missing" — see
+        # _load_dd(). Both are reported honestly by status().
+        self._init_failed = False
+        self._init_rc = 0
+        self._dd_path: Optional[Path] = None
 
     # -- introspection -----------------------------------------------------
     def _load_dd(self) -> bool:
@@ -285,10 +300,32 @@ class DigitalPersonaReader:
             ctypes.POINTER(_DPFPDD_CAPTURE_RESULT),
         ]
         try:
-            dd.dpfpdd_init()
+            init_rc = dd.dpfpdd_init()
         except OSError as exc:  # pragma: no cover - vendor DLL init failure
             self._last_error = "dpfpdd_init failed (%s)." % exc
             return False
+        # dpfpdd_init() returning an error is NOT the same fault as a missing
+        # DLL, and the two need completely different repairs on the workstation.
+        # This code is the one recorded when the DigitalPersona runtime service
+        # is installed but not running/answered:
+        #
+        #   dpfpdd_init() -> DPFPDD_E_DEVICE_FAILURE (0x05BA0005)
+        #
+        # The DLL loaded, so the driver IS installed; nothing can enumerate the
+        # reader until the vendor service is running. Reporting that as
+        # "driver_missing" sent technicians to reinstall a driver that was
+        # already present, so it gets its own status and its own sentence.
+        if init_rc != DPFPDD_OK:
+            self._last_error = "dpfpdd_init returned 0x%04X." % init_rc
+            self._init_failed = True
+            self._init_rc = init_rc
+            # Keep the handle: dpfj (template extraction) is still usable and
+            # /diagnose must be able to report the exact code.
+            self._dd = dd
+            self._dd_path = path
+            return False
+        self._init_failed = False
+        self._init_rc = 0
         self._dd = dd
         self._dd_path = path
         return True
@@ -397,6 +434,15 @@ class DigitalPersonaReader:
                         detail="This bridge must run on the Windows workstation that has the reader attached.")
             return base
         if not self._load_dd():
+            if self._init_failed:
+                # DLLs found and loaded; dpfpdd_init() itself failed.
+                base.update(status=STATUS_SERVICE_UNAVAILABLE,
+                            detail=STATUS_DETAILS[STATUS_SERVICE_UNAVAILABLE],
+                            driver_installed=True,
+                            driver_dll=str(self._dd_path or ""),
+                            init_status="0x%04X" % self._init_rc)
+                base["last_error"] = self._last_error
+                return base
             base.update(status=STATUS_DRIVER_MISSING, detail=STATUS_DETAILS[STATUS_DRIVER_MISSING])
             base["last_error"] = self._last_error
             return base
@@ -617,6 +663,13 @@ class DigitalPersonaReader:
         started = time.monotonic()
         try:
             if not self._load_dd():
+                if self._init_failed:
+                    raise ReaderError(
+                        "DRIVER_SERVICE_UNAVAILABLE",
+                        STATUS_DETAILS[STATUS_SERVICE_UNAVAILABLE] + " (%s)" % self._last_error,
+                        status=STATUS_SERVICE_UNAVAILABLE,
+                        retry=True,
+                    )
                 raise ReaderError("DRIVER_MISSING", STATUS_DETAILS[STATUS_DRIVER_MISSING], status=STATUS_DRIVER_MISSING)
             if not self._load_fj():
                 raise ReaderError("SDK_UNAVAILABLE", STATUS_DETAILS[STATUS_SDK_UNAVAILABLE], status=STATUS_SDK_UNAVAILABLE)

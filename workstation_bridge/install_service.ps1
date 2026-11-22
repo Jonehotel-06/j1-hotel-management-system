@@ -35,6 +35,12 @@
 .PARAMETER Force
     Overwrites an existing task of the same name without prompting.
 
+.PARAMETER StartNow
+    Starts the bridge immediately after registering the task, instead of waiting
+    for the next logon. The task is idempotent (MultipleInstances=IgnoreNew, and
+    the bridge itself refuses a second copy on the same port), so this never
+    leaves two bridges running.
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File install_service.ps1
     Installs the task for C:\JONE\workstation_bridge.
@@ -53,7 +59,8 @@ param(
     [string]$BridgeDir = '',
     [string]$TaskName = 'J-ONE Fingerprint Bridge',
     [switch]$Uninstall,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$StartNow
 )
 
 $ErrorActionPreference = 'Stop'
@@ -174,6 +181,43 @@ try {
     exit 1
 }
 
+# ---- Start Menu shortcut ---------------------------------------------------
+# The desk page tells the operator "Start -> J-ONE Fingerprint Bridge". Before
+# this, no program with that name existed anywhere on the workstation: the only
+# entry point was a .bat file inside the bridge folder, so the one instruction
+# the page gave could not be followed. The shortcut is a link to the same
+# foreground launcher the Scheduled Task runs.
+try {
+    $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+    if (Test-Path $startMenu) {
+        $linkPath = Join-Path $startMenu 'J-ONE Fingerprint Bridge.lnk'
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($linkPath)
+        $shortcut.TargetPath = $Bat
+        $shortcut.WorkingDirectory = $BridgeDir
+        $shortcut.WindowStyle = 7
+        $shortcut.Description = 'Starts the J-ONE fingerprint bridge for the DigitalPersona 4500 reader on this workstation.'
+        $shortcut.Save()
+        Write-Ok "Start Menu shortcut created: $linkPath"
+    } else {
+        Write-Warn "The Start Menu folder was not found; no shortcut was created. Start the bridge with $Bat instead."
+    }
+} catch {
+    Write-Warn "The Start Menu shortcut could not be created ($($_.Exception.Message)). Start the bridge with $Bat instead."
+}
+
+if ($StartNow) {
+    try {
+        Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+        Start-Sleep -Seconds 3
+        $probe = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8787/health' -TimeoutSec 5
+        if ($probe.StatusCode -eq 200) { Write-Ok 'The bridge answered /health after starting.' }
+        else { Write-Warn "The bridge started but /health answered HTTP $($probe.StatusCode)." }
+    } catch {
+        Write-Warn "The task was registered but the bridge did not answer /health: $($_.Exception.Message). Start it once by hand with $Bat to see the reason."
+    }
+}
+
 Write-Status ''
 Write-Status "Next steps:"
 Write-Status "  1. Confirm the bridge works in the foreground:"
@@ -183,4 +227,5 @@ Write-Status "  2. In another window:  curl.exe http://127.0.0.1:8787/health"
 Write-Status "  3. Log off and log back on — the task starts the bridge automatically."
 Write-Status "  4. To stop the bridge: Task Manager -> 'J-ONE Fingerprint Bridge' -> End task."
 Write-Status "  5. To remove the task: powershell -ExecutionPolicy Bypass -File install_service.ps1 -Uninstall"
+Write-Status "  6. Or press the Windows key and type 'J-ONE Fingerprint Bridge' to start it by hand."
 exit 0

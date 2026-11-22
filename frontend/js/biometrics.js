@@ -78,6 +78,10 @@
   var STATUS_PERMISSION_DENIED = "permission_denied";
   var STATUS_BUSY = "busy";
   var STATUS_COMMUNICATION_FAILURE = "communication_failure";
+  // Driver DLLs present and loaded, but the vendor service did not answer
+  // dpfpdd_init(). The repair is to start the DigitalPersona service, NOT to
+  // reinstall the driver, so it must never be reported as driver_missing.
+  var STATUS_SERVICE_UNAVAILABLE = "service_unavailable";
   // Not a reader state: the BROWSER refused the page access to the loopback
   // bridge. Kept distinct so the operator is never told to "start the bridge"
   // when the bridge may well be running.
@@ -92,6 +96,7 @@
   STATUS_DESCRIPTIONS[STATUS_PERMISSION_DENIED] = "Permission denied to access the fingerprint reader. Run the bridge as administrator.";
   STATUS_DESCRIPTIONS[STATUS_BUSY] = "The fingerprint reader is busy. Please wait and try again.";
   STATUS_DESCRIPTIONS[STATUS_COMMUNICATION_FAILURE] = "Communication with the fingerprint reader failed. Disconnect and reconnect the reader, then retry.";
+  STATUS_DESCRIPTIONS[STATUS_SERVICE_UNAVAILABLE] = "The DigitalPersona driver is installed but its Windows service is not running or did not answer, so the reader cannot be opened. Start the DigitalPersona service on this workstation and replug the reader, then retry.";
   STATUS_DESCRIPTIONS[STATUS_PERMISSION_BLOCKED] = "This browser has not granted the page permission to reach the fingerprint bridge on this computer, so the request never left the browser. Press Allow reader access (the lock icon → Local network access also works), then press Retry. The bridge itself may already be running.";
 
   function FingerprintReaderError(message, code) {
@@ -221,7 +226,7 @@
      Safari, older Chrome, the file:// offline kit): requestLocalNetworkAccess()
      then resolves to "unsupported"/"unknown" and the transport behaves
      exactly as it always did. */
-  var LNA_STATE = { permission: "unknown", checked: false };
+  var LNA_STATE = { permission: "unknown", checked: false, read_error: false };
 
   function lnaSupported() {
     try {
@@ -231,13 +236,33 @@
     } catch (_) { return false; }
   }
 
+  /* Read the browser's Local Network Access state.
+
+     Three genuinely different answers hide behind one rejected promise, and
+     conflating them is what made the desk page tell an operator to "start the
+     bridge" when nothing was wrong with the bridge:
+
+       * the browser has no such permission           -> "unsupported"
+       * the DESK PAGE'S OWN Permissions-Policy forbids reading it outside a
+         user gesture (Chromium: SecurityError, "cannot be read from a document
+         with a permissions policy that disallows it") -> "prompt": the operator
+         has not been asked yet, and the next button press is what asks
+       * anything else                                 -> "unknown"
+
+     Only "denied" means the operator refused. "prompt" must never be rendered
+     as a refusal and must never be rendered as "the bridge is not running". */
   async function localNetworkPermissionState() {
     if (!lnaSupported()) return "unsupported";
     try {
       var status = await window.navigator.permissions.query({ name: "local-network-access" });
       return (status && status.state) || "unknown";
-    } catch (_) {
-      // Not a Chromium build with LNA: the descriptor is rejected.
+    } catch (err) {
+      if (err && String(err.name) === "SecurityError") {
+        LNA_STATE.read_error = true;
+        return "prompt";
+      }
+      // Not a browser with LNA (older Chrome/Firefox/Safari, or the file://
+      // offline kit): the descriptor itself is rejected.
       return "unsupported";
     }
   }
@@ -252,7 +277,7 @@
      operator back into the same silent failure. */
   async function requestLocalNetworkAccess() {
     if (!lnaSupported()) {
-      LNA_STATE = { permission: "unsupported", checked: true };
+      LNA_STATE = { permission: "unsupported", checked: true, read_error: false };
       return "unsupported";
     }
     var state = await localNetworkPermissionState();
@@ -269,7 +294,7 @@
         state = "prompt";
       }
     }
-    LNA_STATE = { permission: state, checked: true };
+    LNA_STATE = { permission: state, checked: true, read_error: LNA_STATE.read_error };
     return state;
   }
 
@@ -368,14 +393,14 @@
       if (localNetworkPermissionBlocked()) throw permissionBlockedError();
       var permission = await localNetworkPermissionState();
       if (permission === "denied") {
-        LNA_STATE = { permission: "denied", checked: true };
+        LNA_STATE = { permission: "denied", checked: true, read_error: false };
         throw permissionBlockedError();
       }
       /* "prompt" (and an unreadable state) means the browser never granted
          access, so it refused the request before it ever reached the port.
          Calling that a stopped bridge is a false diagnosis. */
       if (permission === "prompt" || permission === "unknown") {
-        LNA_STATE = { permission: permission, checked: true };
+        LNA_STATE = { permission: permission, checked: true, read_error: LNA_STATE.read_error };
         throw permissionNotGrantedError();
       }
       throw bridgeError(
@@ -615,6 +640,45 @@
     }
   }
 
+  /* Probe the bridge with a POST, used only when a plain GET could not tell
+     "bridge missing" from "browser refused the request".
+
+     The capture endpoint is the ONLY bridge route the operator's browser has
+     always been able to reach: Chromium answers the POST preflight itself when
+     the page's Permissions-Policy allows local-network-access, so a preflight
+     that comes back with `Access-Control-Allow-Origin` proves the bridge is
+     running and the browser allowed the call — with no capture performed and
+     nothing sent to the API. An intentionally invalid body (timeout_ms far
+     below the bridge's minimum) makes the bridge answer 400 BAD_REQUEST, which
+     this function maps to "reachable". A network-level failure is still a
+     network-level failure: nothing is ever inferred from it. */
+  async function probeBridgeViaPreflight() {
+    var controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, STATUS_TIMEOUT_MS);
+    try {
+      var response = await fetch(bridgeUrl("/capture"), {
+        method: "POST",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        // timeout_ms is clamped to >= 5000 by the bridge, so this body is
+        // rejected with 400 before any device access happens.
+        body: JSON.stringify({ probe: true, timeout_ms: 1 }),
+        mode: "cors",
+        credentials: "omit",
+        cache: "no-store",
+        redirect: "error",
+        referrerPolicy: "no-referrer",
+        signal: controller ? controller.signal : undefined
+      });
+      var payload = null;
+      try { payload = await response.json(); } catch (_) { payload = null; }
+      return { reachable: true, http_status: response.status, payload: payload };
+    } catch (_) {
+      return { reachable: false, http_status: 0, payload: null };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   /* Query reader status. `retries` allows the page to distinguish "the bridge
      is still starting" from "the bridge is not installed": a short bounded
      back-off (0.4s, 0.8s, 1.6s …) is used, never an unbounded poll loop. */
@@ -640,7 +704,7 @@
     for (var attempt = 0; attempt <= retries; attempt++) {
       try {
         var status = normalizeBridgeStatus(await bridgeRequest("/status", { timeout: STATUS_TIMEOUT_MS }));
-        LNA_STATE = { permission: "granted", checked: true };
+        LNA_STATE = { permission: "granted", checked: true, read_error: false };
         return status;
       } catch (err) {
         lastError = err;
@@ -649,6 +713,38 @@
           continue;
         }
         break;
+      }
+    }
+    /* A refused GET is ambiguous: "nothing is listening" and "the browser
+       refused this request before it left the page" are byte-identical to
+       fetch(). Before telling the operator the bridge is not running, ask the
+       one bridge route the browser has always permitted (see
+       probeBridgeViaPreflight). Only a genuinely reachable bridge can change
+       the answer — a failed probe is reported exactly as before. */
+    if (lastError && (lastError.code === "BRIDGE_UNREACHABLE" || lastError.code === "BRIDGE_TIMEOUT")) {
+      var probe = await probeBridgeViaPreflight();
+      if (probe.reachable) {
+        var message = (LNA_STATE.permission === "denied")
+          ? "The fingerprint bridge at " + bridgeBase() + " is running — the browser answered its " +
+            "request — but this page has not been granted local network access, so the reader " +
+            "status could not be read. Open the site information (lock icon), allow local network " +
+            "access for this site, then press Check fingerprint station again."
+          : "The fingerprint bridge at " + bridgeBase() + " is running (it answered a bridge " +
+            "request), but this page could not read the reader status. Press Check fingerprint " +
+            "station again; if it repeats, restart the J-ONE Fingerprint Bridge on this workstation.";
+        return {
+          status: STATUS_COMMUNICATION_FAILURE,
+          detail: message,
+          connected: false,
+          device_serial: "",
+          capture_in_progress: false,
+          driver_installed: null,
+          sdk_loaded: null,
+          bridge_url: bridgeBase(),
+          bridge_reachable: true,
+          bridge_error_code: "BRIDGE_REACHABLE_STATUS_UNREADABLE",
+          local_network_permission: LNA_STATE.permission
+        };
       }
     }
     return unreachableStatus(lastError);
@@ -914,6 +1010,7 @@
     STATUS_PERMISSION_DENIED: STATUS_PERMISSION_DENIED,
     STATUS_BUSY: STATUS_BUSY,
     STATUS_COMMUNICATION_FAILURE: STATUS_COMMUNICATION_FAILURE,
+    STATUS_SERVICE_UNAVAILABLE: STATUS_SERVICE_UNAVAILABLE,
     STATUS_PERMISSION_BLOCKED: STATUS_PERMISSION_BLOCKED,
     STATUS_DESCRIPTIONS: STATUS_DESCRIPTIONS,
     captureMinutiaeProbe: captureMinutiaeProbe,
@@ -927,6 +1024,7 @@
     getReaderStatus: getReaderStatus,
     initializeReader: initializeReader,
     getBridgeUrl: bridgeBase,
+    probeBridgeViaPreflight: probeBridgeViaPreflight,
     bridgeCapturedThrough: "workstation-bridge",
     requestEnrollment: requestEnrollment,
     issueTemporaryWorkstationToken: issueTemporaryWorkstationToken,

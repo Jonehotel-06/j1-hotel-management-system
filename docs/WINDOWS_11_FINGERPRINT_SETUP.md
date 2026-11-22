@@ -130,6 +130,17 @@ unknown device, the vendor driver is missing (§3).
    the interactive session of the account the reader is attached to — do not try
    to run it as a Windows service under `SYSTEM`, the device is per-session.
 
+   It also creates a Start Menu shortcut with the same name, because the desk
+   page tells the operator to start **J-ONE Fingerprint Bridge** from the Start
+   menu. Add `-StartNow` to start it immediately instead of at the next logon:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File install_service.ps1 -StartNow
+   ```
+
+   `run_fingerprint_bridge.bat` now checks Python, an already-running bridge and
+   the vendor DLLs *before* it starts, and names whichever one is missing.
+
 ---
 
 ## 5. Verify from the browser (this is the part that proves the repair)
@@ -215,6 +226,8 @@ unknown device, the vendor driver is missing (§3).
 | `permission_denied` | Windows denied access to the device | Run the bridge as the signed-in user (Scheduled Task), not as `SYSTEM`; check biometric policy in `gpedit.msc` |
 | `busy` | Another process/tab holds the reader | Close other capture windows; restart the bridge |
 | `communication_failure` | Device dropped mid-capture | Replug; if it repeats, replace the cable/reader itself |
+| `service_unavailable` | The DLLs **are** installed (`driver_installed: true`) but `dpfpdd_init()` did not answer — in practice the DigitalPersona runtime service is stopped, still starting, or another program owns the reader | Start the *DigitalPersona* service (`services.msc`), replug the reader, press **Retry**. Do **not** reinstall the driver: the driver is already there. `/status` shows the raw `init_status` code |
+| Reader panel says *"This browser has not been allowed to reach the reader yet"* | Nobody has granted the site local network access yet. This is not a bridge fault | Press **Check fingerprint station** (Workforce / Terminals / Staff Profile). The browser can only ask for the grant inside a click, which is why the panel cannot report the reader before the first press |
 | HTTP 409 `BRIDGE_NOT_COLOCATED` from `api.jonehotels.com` | The hosted API was asked to capture — the reader is not there | Client must call `127.0.0.1:8787`; purge the stale frontend bundle |
 | `net::ERR_CONNECTION_REFUSED` | Bridge not running | Start it (§4.3) |
 | CSP `connect-src` violation | Hosting headers do not allowlist loopback | Deploy the repaired `_headers` / `vercel.json` |
@@ -295,3 +308,49 @@ unknown device, the vendor driver is missing (§3).
   as before.
 * `workstation_bridge/` — the bridge service itself, ISO 19794-2 encoding,
   `run_fingerprint_bridge.bat`, `install_service.ps1`, tests.
+
+---
+
+## 10. What was changed in the 2026-11-22 repair (for the record)
+
+The client's error was the *unreachable* sentence, reported from a **mobile
+browser** while the reader was on a Windows 11 workstation. Three separate
+defects produced exactly that one sentence, so the investigation had to remove
+all three before the message could be trusted:
+
+1. **Nothing the page told the operator to do could be done.**
+   * The message said *Start → J-ONE Fingerprint Bridge*. No program with that
+     name existed: the installer registered a Scheduled Task and nothing else.
+     `install_service.ps1` now also creates a **Start Menu shortcut** with that
+     exact name, and accepts `-StartNow`.
+   * `run_fingerprint_bridge.bat` now refuses to start silently: it names a
+     missing Python, an already-running bridge (and opens `/status`), or the
+     missing `dpfpdd.dll` / `dpfj.dll` before the window can just close.
+
+2. **"Not allowed yet" and "not running" printed the same sentence.** A page
+   that has not been granted Local Network Access cannot read the permission
+   state at all (Chromium throws `SecurityError`), and `js/biometrics.js`
+   treated that as `unsupported` → "start the bridge". It now reports
+   `prompt` ("not asked yet") separately, and when a status read is refused it
+   probes `/capture` with a deliberately invalid body — a POST preflight is the
+   one request the browser has always allowed — so a running bridge is never
+   reported as missing. No capture happens and nothing is sent to the API.
+
+3. **The reader panel could not be used before a biometric action.**
+   Workforce / Terminals / Staff Profile only asked for the grant on a capture
+   click, so the panel that exists to report the reader could report nothing.
+   Each page now has a **Check fingerprint station** control that runs the whole
+   detection sequence (permission → `/health` → `/status` → `/initialize` only
+   if needed) inside that click (`frontend/js/reader-check.js`).
+
+4. **The driver/service distinction was missing.** `dpfpdd_init()` failing was
+   reported as `driver_missing`, sending technicians to reinstall a driver that
+   was already present. It is now `service_unavailable`, with its own sentence
+   and its raw `init_status` code.
+
+5. **On a phone the page now says so first.** The mobile check
+   (`workstationMode()` / `WRONG_WORKSTATION_MESSAGE`) already existed and is
+   unchanged: `127.0.0.1` on a phone is the phone. Fingerprint capture is only
+   supported on the reception Windows workstation; every other permitted
+   attendance action (including the supervised fallback, when policy allows it)
+   still works from a phone, and the page says exactly that.

@@ -8,7 +8,7 @@
 </script><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow"><title>Workforce | J-ONE Staff</title><meta name="theme-color" content="#373435">
   <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
-  <link rel="stylesheet" href="../css/main.css?v=1.1.29">
+  <link rel="stylesheet" href="../css/main.css?v=1.1.35">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -178,7 +178,8 @@
     <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Operational staff profiles"><table class="table"><thead><tr><th>Staff</th><th>Employee code</th><th>Department</th><th>Title</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-wf-profile-rows></tbody></table></div><div class="pagination" data-wf-profile-pagination></div></div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.29"></script><script src="../js/config.js?v=1.1.29"></script><script src="../js/utils.js?v=1.1.29"></script><script src="../js/icons.js?v=1.1.29"></script><script src="../js/api.js?v=1.1.29"></script><script src="../js/theme.js?v=1.1.29"></script><script src="../js/ui.js?v=1.1.29"></script><script src="../js/auth.js?v=1.1.29"></script><script src="../js/navigation.js?v=1.1.29"></script><script src="../js/dashboard.js?v=1.1.29"></script><script src="../js/table-fit.js?v=1.1.29"></script><script src="../js/operations.js?v=1.1.29"></script><script src="../js/biometrics.js?v=1.1.29"></script>
+<script src="../js/runtime-config.js?v=1.1.35"></script><script src="../js/config.js?v=1.1.35"></script><script src="../js/utils.js?v=1.1.35"></script><script src="../js/icons.js?v=1.1.35"></script><script src="../js/api.js?v=1.1.35"></script><script src="../js/theme.js?v=1.1.35"></script><script src="../js/ui.js?v=1.1.35"></script><script src="../js/auth.js?v=1.1.35"></script><script src="../js/navigation.js?v=1.1.35"></script><script src="../js/dashboard.js?v=1.1.35"></script><script src="../js/table-fit.js?v=1.1.35"></script><script src="../js/operations.js?v=1.1.35"></script><script src="../js/biometrics.js?v=1.1.35"></script>
+<script src="../js/reader-check.js?v=1.1.35"></script>
 <script>
 JONE.ui.initChrome();
 var __workforceAllowed=JONE.dashboard.boot(["admin","general_manager","accountant","procurement_officer","chef","kitchen_assistant","waiter","porter","receptionist","housekeeping","storekeeper","security"]);
@@ -274,6 +275,10 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
   var readerMeta=document.querySelector("[data-wf-rt-reader-meta]");
   var readerActions=document.querySelectorAll("[data-wf-rt-reader-action]");
   var readerBusy=false;
+  /* Published so js/reader-check.js can refuse to start a second detection
+     sequence while a capture is running on this reader (a capture holds the
+     device; a status poll on top of it is what made the panel flicker). */
+  window.__JONE_READER_BUSY__=function(){return readerBusy;};
   function readerSay(badge,title,detail,meta){
     if(readerBadge)readerBadge.textContent=badge;
     if(readerTitle)readerTitle.textContent=title;
@@ -316,10 +321,17 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
       return;
     }
     if(!report.bridge_reachable){
-      readerSay(code==="BRIDGE_TIMEOUT"?"Bridge did not answer":"Bridge not running",
-        code==="BRIDGE_TIMEOUT"?"The fingerprint bridge accepted the request but did not reply":"Fingerprint bridge is not running on this computer",
+      /* "Not allowed yet" is not "not running". Until this site has been granted
+         local network access — a grant the browser only offers inside a click —
+         the bridge's refusal and its absence look identical, so both causes are
+         named here and "Check reader"/"Allow local network access" (both real
+         clicks) are the actions that settle it. */
+      var permissionPending=report.local_network_permission==="prompt"||report.local_network_permission==="unknown";
+      readerSay(code==="BRIDGE_TIMEOUT"?"Bridge did not answer":(permissionPending?"Not checked yet":"Bridge not running"),
+        code==="BRIDGE_TIMEOUT"?"The fingerprint bridge accepted the request but did not reply":
+          (permissionPending?"This browser has not been allowed to reach the reader yet":"Fingerprint bridge is not running on this computer"),
         report.detail,metaText);
-      readerShow("check",true);readerShow("allow",false);readerShow("initialize",false);
+      readerShow("check",true);readerShow("allow",permissionPending);readerShow("initialize",false);
       return;
     }
     readerSay("Reader not ready","The bridge is running but cannot read a finger",report.detail,metaText);
@@ -345,10 +357,16 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
       var action=btn.getAttribute("data-wf-rt-reader-action");
       var bio=window.JONE&&window.JONE.biometrics;
       if(!bio)return;
-      if(action==="allow"){
+      if(action==="allow"||action==="check"){
+        /* Both actions are user gestures, which is the ONLY moment the browser
+           offers its local network access prompt. Running the request here —
+           instead of only on a capture click — is what makes the reader panel
+           able to report the real state before any biometric action starts. */
         var state=await bio.requestLocalNetworkAccess();
-        JONE.ui.toast(state==="granted"?"Local network access allowed. Checking the reader again…":"The browser still reports local network access as "+state+". Allow it for this site, then press Check reader.",state==="granted"?"success":"warning");
-        await readerRefresh({});
+        if(action==="allow"){
+          JONE.ui.toast(state==="granted"?"Local network access allowed. Checking the reader again…":"The browser still reports local network access as "+state+". Allow it for this site, then press Check reader.",state==="granted"?"success":"warning");
+        }
+        await readerRefresh({initialize:false,requestPermission:false});
         return;
       }
       if(action==="desktop"){bio.setWorkstationMode("desktop");JONE.ui.toast("Reader controls enabled for this device for this session.","info");await readerRefresh({});return;}
@@ -467,5 +485,5 @@ document.querySelectorAll("button[data-wf-rt-action]").forEach(function(btn){
   });
 });
 })();
-</script><script src="../js/pwa.js?v=1.1.29"></script><script src="../js/version.js?v=1.1.29"></script><script src="../js/update-checker.js?v=1.1.29"></script>
+</script><script src="../js/pwa.js?v=1.1.35"></script><script src="../js/version.js?v=1.1.35"></script><script src="../js/update-checker.js?v=1.1.35"></script>
 </body></html>
