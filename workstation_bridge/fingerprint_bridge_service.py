@@ -61,7 +61,7 @@ except ImportError:  # pragma: no cover - direct script execution
     import iso19794_2  # type: ignore
 
 SERVICE_NAME = "jone-fingerprint-bridge"
-SERVICE_VERSION = "2.0.0"
+SERVICE_VERSION = "2.1.0"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = int(os.environ.get("JONE_FINGERPRINT_BRIDGE_PORT", "8787"))
 
@@ -862,7 +862,31 @@ def make_handler(reader: Any, allowed_origins: Iterable[str]) -> type:
                                     "message": "Use POST for /capture."}, 405)
                         return
                     body = self._read_json_safe()
-                    timeout_ms = int(body.get("timeout_ms") or 30000)
+                    # Repair 2026-11-22: an EXPLICIT timeout below the 5 s floor
+                    # used to be clamped up and turned into a REAL five-second
+                    # capture. The desk page's preflight probe (see
+                    # frontend/js/biometrics.js probeBridgeViaPreflight) sends
+                    # exactly such a deliberately-invalid body to test whether
+                    # this bridge is reachable without touching the device, so
+                    # the old behaviour (a) held the reader busy for five
+                    # seconds and flashed its LED during what must be a
+                    # side-effect-free reachability check, and (b) made the
+                    # documented "the bridge answers 400 before any device
+                    # access" contract false. Reject the request instead. A
+                    # MISSING timeout keeps the documented 30 s default, and a
+                    # non-numeric value still falls through to the ValueError
+                    # handler (400 BAD_REQUEST) below.
+                    raw_timeout = body.get("timeout_ms")
+                    timeout_ms = int(raw_timeout) if raw_timeout is not None else 30000
+                    if timeout_ms < 5000:
+                        self._send({
+                            "success": False,
+                            "error": "INVALID_CAPTURE_TIMEOUT",
+                            "message": "timeout_ms must be at least 5000 (probe rejected before any device access).",
+                            "min_timeout_ms": 5000,
+                            "max_timeout_ms": 60000,
+                        }, 400)
+                        return
                     timeout_ms = max(5000, min(timeout_ms, 60000))
                     finger = str(body.get("finger_position") or "RIGHT_INDEX")
                     try:

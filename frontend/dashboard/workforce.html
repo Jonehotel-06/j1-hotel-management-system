@@ -411,7 +411,36 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
     ?"This browser carries a Receptionist Desktop key, so attendance recorded here is recorded at the desk."
     :management
       ?"No desktop key in this browser. As a management account you may still record attendance from here: each use is audited with your account, the workstation and the reason, and a fallback still needs its recorded failure (administrators excepted)."
-      :"This browser is not an enrolled Receptionist Desktop, so the server will refuse to record attendance here. Ask an administrator to enrol this desk.");
+      :"Checking with the server whether this workstation is enrolled\u2026");
+  /* Repair 2026-11-22: the desk can be enrolled THREE ways server-side — an
+     installed desktop key, an approved device token, or the workstation's
+     REGISTERED ADDRESS (plus the Settings-page network binding). Only the first
+     two live in this browser's storage, so the old localStorage-only check told
+     a desk enrolled by its registered address "the server will refuse to record
+     attendance here" — which was false: the server authorised every action at
+     that desk. The page now asks the server (the same call every terminal
+     action is judged by) and shows its verdict, so the message always matches
+     what the backend will actually do. The server still re-checks every
+     action; nothing here grants anything. */
+  if(!enrol&&!management){
+    if(JONE.biometrics&&JONE.biometrics.getReceptionTerminalStatus){
+      JONE.biometrics.getReceptionTerminalStatus().then(function(data){
+        say("The server recognises this workstation as an enrolled Receptionist Desktop"
+          +(data&&data.workstation_reference?" ("+data.workstation_reference+")":"")
+          +", so attendance recorded here is recorded at the desk.");
+      }).catch(function(err){
+        var status=(err&&err.status)||0;
+        if(status===401||status===403){
+          say((err&&err.message?err.message+" ":"")
+            +"Ask an administrator to enrol this desk (install its desktop key, approve this browser as a front desk device, or register this workstation's address).");
+        }else{
+          say("The server could not be reached to confirm workstation enrolment"
+            +((err&&err.message)?(" ("+err.message+")"):"")
+            +". Every attendance action is still verified by the server when it is attempted.");
+        }
+      });
+    }
+  }
   var fallback=document.querySelector("[data-wf-rt-fallback]");
   if(fallback)fallback.hidden=!management;
   var fallbackState=document.querySelector("[data-wf-rt-fallback-state]");

@@ -69,6 +69,30 @@ user) and `compose.yaml` mounts the named volume `gallery_data` there on **both*
 `api` and `worker`, so a container rebuild or a second API replica keeps the
 photos. The volume is private to the containers; no host path is published.
 
+**Where the bytes DURABLY live — `TV_GALLERY_STORAGE_BACKEND` (2026-11-22 repair).**
+A healthy directory is still not enough when it sits on the container's own
+ephemeral filesystem: every deploy replaces the container and takes the bytes
+with it while the database rows survive (the 404-after-deploy failure). The
+backend selector picks the durable home:
+
+- `fs` — the directory, exactly as above (use on compose volumes / host volumes);
+- `object` — a **dedicated PRIVATE** S3-compatible bucket: `TV_GALLERY_BUCKET_NAME`
+  with `TV_GALLERY_BUCKET_KEY_ID` / `TV_GALLERY_BUCKET_APPLICATION_KEY`
+  (each falls back to `BACKBLAZE_KEY_ID` / `BACKBLAZE_APPLICATION_KEY`),
+  `TV_GALLERY_BUCKET_ENDPOINT` (falls back to `BACKBLAZE_ENDPOINT`) and
+  `TV_GALLERY_BUCKET_REGION`. Keys, DB rows and API responses are identical in
+  both modes — switching needs no migration or re-upload. The local directory
+  remains the private staging/cache layer (`TV_GALLERY_OBJECT_CACHE_MB`, default
+  1024); the bucket must stay private, serving remains through the authenticated
+  API;
+- `auto` (default) — `fs` when the directory is on a real mounted volume,
+  otherwise `object` when the bucket is fully configured, otherwise `fs` with
+  the honest errors below.
+
+`manage.py check_gallery_storage` reports the active backend, where bytes
+durably live and the write/read round-trip, and exits non-zero when the store
+is unusable — run it as a deployment gate.
+
 ---
 
 ## 3. Limits (all settings, all reported to the UI)

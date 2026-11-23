@@ -256,7 +256,9 @@ def _resolve_reception_terminal(request):
     """
     from apps.accounts.desktop_policy import (
         DESKTOP_BY_DEVICE,
+        DESKTOP_BY_KEY,
         attendance_off_desk_authority,
+        desktop_key_override_for_unusable_ip_pin,
         device_credential_overrides_unusable_ip_pin,
         front_desk_device_for_token,
         may_record_attendance_off_desk,
@@ -269,6 +271,11 @@ def _resolve_reception_terminal(request):
     from apps.audit.services import log_action
 
     desk, method = resolve_receptionist_desktop(request)
+    # A device token names the desk only when it resolves to an active device
+    # bound to the signed-in account; the flag below scopes the device
+    # pin-override to a device that actually proved itself, so a copied token
+    # can never ride past the pin on an override it did not earn.
+    device_is_the_desk = False
     if desk is not None and method == DESKTOP_BY_DEVICE:
         # The device is the desk. It must be issued to the signed-in account, so
         # one approved browser cannot clock the whole hotel in, and it is still
@@ -276,12 +283,27 @@ def _resolve_reception_terminal(request):
         user = getattr(request, "user", None)
         device = front_desk_device_for_token(presented_device_token(request), staff=user)
         if device is not None:
+            device_is_the_desk = True
             record_device_seen(device, request_client_ip(request))
-            if front_desk_desktop_ip_allowed(request) or device_credential_overrides_unusable_ip_pin(
-                request, method
-            ):
-                return desk.reference, desk
-    if desk is not None and front_desk_desktop_ip_allowed(request):
+    # Repair 2026-11-22: the pin-override parity. Sign-in
+    # (apps/accounts/views.py) and token refresh (apps/staff_operations/views.py)
+    # already let a presented desktop key past a saved HotelSettings pin that no
+    # browser can ever match (the hosting proxy address an administrator once
+    # saved, e.g. a Railway 100.64.0.0/10 peer) via
+    # ``desktop_key_override_for_unusable_ip_pin``. This module enforced the SAME
+    # pin WITHOUT that override, so staff could sign in at the desk and were
+    # refused at the attendance terminal with DETAIL_DESK_HOST_MISMATCH — a
+    # policy contradiction the desk could not resolve. The terminal now applies
+    # the identical rule: the desktop-key override (and the device override,
+    # scoped to a device that actually resolved) exempt the desk only when the
+    # request arrived from a public address and every saved binding is
+    # private/shared/loopback infrastructure. A hotel LAN whose desk really is
+    # on 192.168.x is unchanged, and IP-proven routes gain nothing.
+    if desk is not None and (
+        front_desk_desktop_ip_allowed(request)
+        or (method == DESKTOP_BY_KEY and desktop_key_override_for_unusable_ip_pin(request, method))
+        or (device_is_the_desk and device_credential_overrides_unusable_ip_pin(request, method))
+    ):
         return desk.reference, desk
 
     user = getattr(request, "user", None)

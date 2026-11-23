@@ -649,6 +649,15 @@ TV_GALLERY_STORAGE_ROOT = config(
     "TV_GALLERY_STORAGE_ROOT",
     default=str(_default_tv_gallery_root(config("MEDIA_ROOT", default=str(BASE_DIR / "media")))),
 )
+# Where TV gallery bytes DURABLY live (2026-11-22 Rooms Gallery persistence
+# repair). The directory above is the private staging/cache/scratch layer;
+# "auto" keeps it as the durable home when it sits on a mounted, persistent
+# volume (compose volumes, host volumes) and otherwise uses the configured
+# private object store (TV_GALLERY_BUCKET_NAME, falling back to the BACKBLAZE_*
+# credentials) so uploads survive deploys on container hosts without a volume.
+# "fs" and "object" force one backend explicitly. See
+# apps/tv_rooms_gallery/storage.py and backend/docs/TV_GALLERY_STORAGE.md.
+TV_GALLERY_STORAGE_BACKEND = config("TV_GALLERY_STORAGE_BACKEND", default="auto").strip().lower()
 # Hard ceiling for one gallery upload, independent of the per-gallery setting in
 # the database (GallerySettings.max_upload_mb). 128 MB is the configured
 # business limit; the clamp below only stops an administrator from accidentally

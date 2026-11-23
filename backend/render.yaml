@@ -70,6 +70,24 @@ envVarGroups:
         sync: false          # optional; parsed from the endpoint when omitted
       - key: MEDIA_CUSTOM_DOMAIN
         sync: false          # optional B2 friendly-URL / CDN host
+      # --- Rooms Gallery media persistence (2026-11-22 repair) --------------
+      # A native-runtime web service has NO persistent disk, so the private TV
+      # gallery store (and, unless BACKBLAZE_* is configured above, every other
+      # upload) is wiped by each deploy. Configure the BACKBLAZE_* credentials
+      # above for public media, and set a dedicated PRIVATE bucket for the
+      # gallery so TV images/videos survive deploys without a mounted volume:
+      - key: TV_GALLERY_STORAGE_BACKEND
+        value: object
+      - key: TV_GALLERY_BUCKET_NAME
+        sync: false          # dedicated PRIVATE gallery bucket (never serve it publicly)
+      - key: TV_GALLERY_BUCKET_KEY_ID
+        sync: false          # defaults to BACKBLAZE_KEY_ID when omitted
+      - key: TV_GALLERY_BUCKET_APPLICATION_KEY
+        sync: false          # defaults to BACKBLAZE_APPLICATION_KEY when omitted
+      - key: TV_GALLERY_BUCKET_ENDPOINT
+        sync: false          # defaults to BACKBLAZE_ENDPOINT when omitted
+      - key: TV_GALLERY_BUCKET_REGION
+        sync: false          # optional; parsed from the endpoint when omitted
       # --- Email (HTTPS API provider — synchronous, no worker involved) ----
       # EMAIL_PROVIDER: brevo | sendgrid | mailgun | postmark | resend.
       # EMAIL_API_KEY: created in that vendor's dashboard.

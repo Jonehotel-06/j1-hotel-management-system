@@ -67,6 +67,18 @@ x-backend-env: &backend-common-env
   # Private TV gallery store: outside MEDIA_ROOT (which is public) and mounted
   # from the `gallery_data` volume below so uploads survive `compose down`.
   TV_GALLERY_STORAGE_ROOT: ${TV_GALLERY_STORAGE_ROOT:-/var/lib/jone-gallery}
+  # Where gallery bytes DURABLY live (2026-11-22 persistence repair): "auto"
+  # (default) keeps the mounted gallery_data volume as the durable home and
+  # would only switch to the private object store if this directory were NOT on
+  # a real volume; "object" forces the private bucket (dedicated
+  # TV_GALLERY_BUCKET_* vars, falling back to the BACKBLAZE_* credentials);
+  # "fs" forces the directory. See backend/docs/TV_GALLERY_STORAGE.md §2.
+  TV_GALLERY_STORAGE_BACKEND: ${TV_GALLERY_STORAGE_BACKEND:-auto}
+  TV_GALLERY_BUCKET_NAME: ${TV_GALLERY_BUCKET_NAME:-}
+  TV_GALLERY_BUCKET_KEY_ID: ${TV_GALLERY_BUCKET_KEY_ID:-}
+  TV_GALLERY_BUCKET_APPLICATION_KEY: ${TV_GALLERY_BUCKET_APPLICATION_KEY:-}
+  TV_GALLERY_BUCKET_ENDPOINT: ${TV_GALLERY_BUCKET_ENDPOINT:-}
+  TV_GALLERY_BUCKET_REGION: ${TV_GALLERY_BUCKET_REGION:-}
   TV_GALLERY_MAX_UPLOAD_MB: ${TV_GALLERY_MAX_UPLOAD_MB:-128}
   # Large gallery uploads need more than gunicorn's 60s default on a hotel link.
   GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-120}

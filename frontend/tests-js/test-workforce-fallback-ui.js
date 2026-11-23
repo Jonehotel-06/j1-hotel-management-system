@@ -53,7 +53,16 @@ test("the issued code is described as reusable until clock-out, never single-use
 test("the console states whether this browser is an enrolled Receptionist Desktop", () => {
   assert.match(WORKFORCE, /data-wf-rt-desktop-state/);
   assert.match(WORKFORCE, /carries a Receptionist Desktop key/);
-  assert.match(WORKFORCE, /the server will refuse to record attendance here/);
+  /* 2026-11-22 repair: the desk can be enrolled server-side by its REGISTERED
+     ADDRESS as well as by a key or device token stored in this browser, so the
+     old localStorage-only message ("the server will refuse to record attendance
+     here") was FALSE for a desk enrolled by address. The console now asks the
+     server and reports its verdict; the false claim must never come back. */
+  assert.match(WORKFORCE, /getReceptionTerminalStatus/, "the console asks the server instead of assuming from localStorage");
+  assert.match(WORKFORCE, /The server recognises this workstation as an enrolled Receptionist Desktop/);
+  assert.match(WORKFORCE, /workstation_reference/, "the server-named workstation is shown");
+  assert.match(WORKFORCE, /status===401\|\|status===403/, "a server refusal is reported with the server's own reason");
+  assert.doesNotMatch(WORKFORCE, /will refuse to record attendance here/, "the false claim is gone");
 });
 
 test("the console tells management they may record off-desk, and shows the address to register", () => {

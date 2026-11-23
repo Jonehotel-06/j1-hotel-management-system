@@ -149,37 +149,42 @@ def prepare(upload, max_bytes):
         digest = hashlib.sha256()
         original, size = storage.save_chunks(_hashing_chunks(upload.chunks(), digest), max_bytes)
         keys.append(original)
-        with storage.path_for(original).open('rb') as f:
-            header = f.read(64)
-        kind, mime = identify(header)
-        notice = ''
-        if kind in ('video', 'audio'):
-            verified, notice = verify_av(storage.path_for(original), kind, mime)
-            if not verified:
-                kind, mime = 'other', 'application/octet-stream'
-        thumb = display = ''
-        if kind == 'image':
-            # Limits come from settings and default to the gallery ceiling, so a
-            # 50 MP / 12 MB phone photo is processed instead of being rejected.
-            max_image_bytes = int(getattr(settings, 'TV_GALLERY_MAX_IMAGE_BYTES', max_bytes) or max_bytes)
-            max_image_pixels = int(getattr(settings, 'TV_GALLERY_MAX_IMAGE_PIXELS', 200_000_000) or 200_000_000)
-            if size > max_image_bytes:
-                raise ValueError(
-                    'Image exceeds the %d MB image processing limit. Resize it and try again.'
-                    % max(1, max_image_bytes // (1024 * 1024))
-                )
-            data = storage.path_for(original).read_bytes()
-            try:
-                thumb_data = make_thumbnail(data, size=(640, 400), max_bytes=max_image_bytes,
-                                            max_pixels=max_image_pixels)
-                display_data = make_thumbnail(data, size=(1920, 1080), quality=88,
-                                              max_bytes=max_image_bytes, max_pixels=max_image_pixels)
-            except ThumbnailError as exc:
-                raise ValueError(str(exc)) from exc
-            thumb, _ = storage.save_chunks([thumb_data], 4 * 1024 * 1024)
-            keys.append(thumb)
-            display, _ = storage.save_chunks([display_data], 16 * 1024 * 1024)
-            keys.append(display)
+        # One staged local view of the stored original, whichever backend holds
+        # the bytes (see storage.local_file). The header read, the ffprobe
+        # verification and the thumbnail source all use it; in fs mode it is the
+        # stored file itself, in object mode a read-only staged copy.
+        with storage.local_file(original) as stored:
+            with stored.open('rb') as f:
+                header = f.read(64)
+            kind, mime = identify(header)
+            notice = ''
+            if kind in ('video', 'audio'):
+                verified, notice = verify_av(stored, kind, mime)
+                if not verified:
+                    kind, mime = 'other', 'application/octet-stream'
+            thumb = display = ''
+            if kind == 'image':
+                # Limits come from settings and default to the gallery ceiling, so a
+                # 50 MP / 12 MB phone photo is processed instead of being rejected.
+                max_image_bytes = int(getattr(settings, 'TV_GALLERY_MAX_IMAGE_BYTES', max_bytes) or max_bytes)
+                max_image_pixels = int(getattr(settings, 'TV_GALLERY_MAX_IMAGE_PIXELS', 200_000_000) or 200_000_000)
+                if size > max_image_bytes:
+                    raise ValueError(
+                        'Image exceeds the %d MB image processing limit. Resize it and try again.'
+                        % max(1, max_image_bytes // (1024 * 1024))
+                    )
+                data = stored.read_bytes()
+                try:
+                    thumb_data = make_thumbnail(data, size=(640, 400), max_bytes=max_image_bytes,
+                                                max_pixels=max_image_pixels)
+                    display_data = make_thumbnail(data, size=(1920, 1080), quality=88,
+                                                  max_bytes=max_image_bytes, max_pixels=max_image_pixels)
+                except ThumbnailError as exc:
+                    raise ValueError(str(exc)) from exc
+                thumb, _ = storage.save_chunks([thumb_data], 4 * 1024 * 1024)
+                keys.append(thumb)
+                display, _ = storage.save_chunks([display_data], 16 * 1024 * 1024)
+                keys.append(display)
         return {'storage_key': original, 'size': size, 'kind': kind,
                 'content_type': mime, 'thumbnail_key': thumb, 'display_key': display,
                 'upload_fingerprint': digest.hexdigest(), '_notice': notice}

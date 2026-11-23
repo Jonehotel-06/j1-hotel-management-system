@@ -151,6 +151,16 @@ $trigger.Enabled = $true
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
     -LogonType InteractiveToken -RunLevel LeastPrivilege
 
+# Repair 2026-11-22: this settings block used to pass -DontHardTerminate:$false.
+# New-ScheduledTaskSettingsSet has NO such parameter (the real switch is
+# -DisallowHardTerminate), so with $ErrorActionPreference = 'Stop' the cmdlet
+# raised NamedParameterNotFound and the script terminated HERE — before
+# Register-ScheduledTask ever ran. The "J-ONE Fingerprint Bridge" task was
+# therefore never registered, the bridge never auto-started at logon, and every
+# reception PC reported "Fingerprint bridge is not running on this computer"
+# after each restart. Hard-terminate is ALLOWED by default (that is what the
+# dropped switch asked for), so simply removing the invalid parameter restores
+# the intended behaviour.
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
@@ -158,12 +168,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 0) `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
-    -MultipleInstances IgnoreNew `
-    -DontHardTerminate:$false
-
-# Windows 11 / Server 2019+: compatibility for the telemetry-free task we need.
-try { $settings | Add-Type -ErrorAction SilentlyContinue } catch {}
-$xml = $settings.Xml
+    -MultipleInstances IgnoreNew
 
 $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings
 

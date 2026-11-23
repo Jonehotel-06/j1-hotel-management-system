@@ -52,30 +52,13 @@ class Command(BaseCommand):
         gallery records lost their files while every upload had "succeeded".
         A root that shares a mount with / and is not itself a mountpoint is
         reported, because no amount of code can make such a directory survive.
-        """
-        import os
 
-        try:
-            if not root_path:
-                return {"mounted": None, "detail": "storage root not resolved"}
-            target = os.path.realpath(root_path)
-            device = os.stat(target).st_dev
-            root_device = os.stat("/").st_dev
-            mounts = []
-            try:
-                with open("/proc/mounts", encoding="utf-8", errors="replace") as handle:
-                    mounts = [line.split(" ")[1] for line in handle if len(line.split(" ")) > 1]
-            except OSError:
-                mounts = []
-            is_mountpoint = target.rstrip("/") in {m.rstrip("/") for m in mounts}
-            return {
-                "mounted": bool(device != root_device or is_mountpoint),
-                "detail": ("separate filesystem or mountpoint" if (device != root_device or is_mountpoint)
-                           else "same filesystem as / and not a mountpoint: NOT on a volume, "
-                                "files are lost on redeploy"),
-            }
-        except OSError as exc:
-            return {"mounted": None, "detail": "unavailable: %s" % exc}
+        Delegates to ``storage.fs_is_persistent`` so the command, the automatic
+        backend-mode decision (``auto``) and any future consumer all share ONE
+        probe implementation.
+        """
+        mounted, detail = storage.fs_is_persistent(root_path)
+        return {"mounted": mounted, "detail": detail or "storage root not resolved"}
 
     @staticmethod
     def _needed(item):
@@ -111,6 +94,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         configured = (getattr(settings, "TV_GALLERY_STORAGE_ROOT", "") or "")
         env_value = (storage.os.environ.get("TV_GALLERY_STORAGE_ROOT") or "")
+        backend, backend_reason = storage.backend_mode()
         ready, detail = storage.is_configured()
         report = {
             "storage_ready": ready,
@@ -118,6 +102,12 @@ class Command(BaseCommand):
             "setting": configured,
             "environment_variable": env_value,
             "resolved": detail if ready else "",
+            "backend": backend,
+            "backend_reason": backend_reason,
+            "backend_setting": (storage.os.environ.get("TV_GALLERY_STORAGE_BACKEND")
+                                or getattr(settings, "TV_GALLERY_STORAGE_BACKEND", "") or ""),
+            "durable": ("private object storage (TV_GALLERY_BUCKET_NAME)" if backend == "object"
+                        else "the resolved TV_GALLERY_STORAGE_ROOT directory"),
             "media_root": str(settings.MEDIA_ROOT),
             "max_upload_mb": getattr(settings, "TV_GALLERY_MAX_UPLOAD_MB", None),
             "ffmpeg": shutil.which("ffmpeg") or "",
@@ -127,9 +117,12 @@ class Command(BaseCommand):
 
         if ready and not options["skip_roundtrip"]:
             try:
+                # Backend-agnostic probe: save → resolve → read → remove, so the
+                # object backend is exercised through exactly the interface the
+                # upload/serve paths use instead of a filesystem-only shortcut.
                 key, size = storage.save_chunks([b"jone-gallery-probe"], 1024)
-                path = storage.path_for(key)
-                read_back = path.read_bytes()
+                path, outcome = storage.resolve(key)
+                read_back = path.read_bytes() if (outcome == storage.FILE_OK and path is not None) else b""
                 storage.remove(key)
                 report["roundtrip"] = "ok" if read_back == b"jone-gallery-probe" else "mismatch"
                 report["probe_bytes"] = size
@@ -138,7 +131,14 @@ class Command(BaseCommand):
                 ready = False
 
         if ready:
-            report["persistence"] = self._persistence(report["resolved"])
+            if backend == "object":
+                report["persistence"] = {
+                    "mounted": True,
+                    "detail": "bytes are durable in the configured private object store; "
+                              "the local directory is staging/cache only",
+                }
+            else:
+                report["persistence"] = self._persistence(storage.root())
         else:
             report["persistence"] = {"mounted": None, "detail": "storage not resolved"}
         if options["skip_media"]:
@@ -155,9 +155,11 @@ class Command(BaseCommand):
             self.stdout.write(jsonlib.dumps(report, indent=2))
         else:
             self.stdout.write(self.style.MIGRATE_HEADING("TV rooms-gallery storage"))
-            for key in ("storage_ready", "resolved", "detail", "setting", "environment_variable",
+            for key in ("storage_ready", "backend", "backend_reason", "durable", "resolved",
+                        "detail", "setting", "environment_variable",
                         "media_root", "max_upload_mb", "ffprobe", "ffmpeg", "roundtrip"):
-                self.stdout.write(f"  {key:22}: {report[key]}")
+                if key in report:
+                    self.stdout.write(f"  {key:22}: {report[key]}")
             self.stdout.write(f"  {'persistence':22}: {report['persistence']['mounted']} "
                               f"({report['persistence']['detail']})")
             for entry in report["media"]:
@@ -178,7 +180,11 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(
                     "  The storage root is NOT on a mounted volume. Every uploaded gallery file "
                     "is destroyed when this container is replaced by a deploy. Mount a volume at "
-                    "TV_GALLERY_STORAGE_ROOT (Docker image default: /var/lib/jone-gallery)."))
+                    "TV_GALLERY_STORAGE_ROOT (Docker image default: /var/lib/jone-gallery), or "
+                    "configure the private object store (TV_GALLERY_BUCKET_NAME with "
+                    "TV_GALLERY_BUCKET_KEY_ID / TV_GALLERY_BUCKET_APPLICATION_KEY, or the "
+                    "BACKBLAZE_* equivalents) and set TV_GALLERY_STORAGE_BACKEND=object (or leave "
+                    "'auto') so uploads survive deploys without a volume."))
             if not report["ffprobe"] or not report["ffmpeg"]:
                 self.stdout.write(self.style.WARNING(
                     "  ffmpeg/ffprobe are missing: video uploads will be stored as private "
