@@ -73,6 +73,8 @@
   var STATUS_CONNECTED = "connected";
   var STATUS_INITIALIZING = "initializing";
   var STATUS_NOT_CONNECTED = "not_connected";
+  var STATUS_USB_DETECTED = "usb_detected";
+  var STATUS_RECONNECTING = "reconnecting";
   var STATUS_DRIVER_MISSING = "driver_missing";
   var STATUS_SDK_UNAVAILABLE = "sdk_unavailable";
   var STATUS_PERMISSION_DENIED = "permission_denied";
@@ -87,15 +89,35 @@
   // when the bridge may well be running.
   var STATUS_PERMISSION_BLOCKED = "permission_blocked";
 
+  var UI_LABELS = {
+    not_connected: "Fingerprint reader not connected",
+    usb_detected: "Reader detected",
+    initializing: "Initializing fingerprint reader",
+    driver_missing: "Driver/interface unavailable",
+    sdk_unavailable: "Driver/interface unavailable",
+    service_unavailable: "Biometric service unavailable",
+    bridge_unavailable: "Biometric service unavailable",
+    connected: "Fingerprint reader ready",
+    busy: "Reading fingerprint",
+    capturing: "Reading fingerprint",
+    capture_success: "Fingerprint captured successfully",
+    reconnecting: "Reconnecting to fingerprint reader",
+    communication_failure: "Reconnecting to fingerprint reader",
+    permission_blocked: "Browser blocked local network access",
+    wrong_workstation: "Open this on the reception workstation"
+  };
+
   var STATUS_DESCRIPTIONS = {};
   STATUS_DESCRIPTIONS[STATUS_CONNECTED] = "Fingerprint reader connected and ready.";
-  STATUS_DESCRIPTIONS[STATUS_INITIALIZING] = "Fingerprint reader is initializing. Please wait.";
+  STATUS_DESCRIPTIONS[STATUS_INITIALIZING] = "Initializing fingerprint reader. Please wait.";
   STATUS_DESCRIPTIONS[STATUS_NOT_CONNECTED] = "No fingerprint reader detected. Connect the DigitalPersona 4500 reader to this workstation.";
+  STATUS_DESCRIPTIONS[STATUS_USB_DETECTED] = "DigitalPersona USB reader detected. Initializing driver interface.";
+  STATUS_DESCRIPTIONS[STATUS_RECONNECTING] = "Reconnecting to fingerprint reader. Please wait.";
   STATUS_DESCRIPTIONS[STATUS_DRIVER_MISSING] = "Reader detected but the Windows driver is missing or outdated. Install the DigitalPersona 4500 driver.";
   STATUS_DESCRIPTIONS[STATUS_SDK_UNAVAILABLE] = "Reader and driver are present but the DigitalPersona SDK is not installed or not running.";
   STATUS_DESCRIPTIONS[STATUS_PERMISSION_DENIED] = "Permission denied to access the fingerprint reader. Run the bridge as administrator.";
   STATUS_DESCRIPTIONS[STATUS_BUSY] = "The fingerprint reader is busy. Please wait and try again.";
-  STATUS_DESCRIPTIONS[STATUS_COMMUNICATION_FAILURE] = "Communication with the fingerprint reader failed. Disconnect and reconnect the reader, then retry.";
+  STATUS_DESCRIPTIONS[STATUS_COMMUNICATION_FAILURE] = "Communication with the fingerprint reader failed. Reconnecting automatically.";
   STATUS_DESCRIPTIONS[STATUS_SERVICE_UNAVAILABLE] = "The DigitalPersona driver is installed but its Windows service is not running or did not answer, so the reader cannot be opened. Start the DigitalPersona service on this workstation and replug the reader, then retry.";
   STATUS_DESCRIPTIONS[STATUS_PERMISSION_BLOCKED] = "This browser has not granted the page permission to reach the fingerprint bridge on this computer, so the request never left the browser. Press Allow reader access (the lock icon → Local network access also works), then press Retry. The bridge itself may already be running.";
 
@@ -437,18 +459,38 @@
     return payload;
   }
 
+  function uiLabelForReport(report) {
+    if (!report) return UI_LABELS.bridge_unavailable;
+    if (report.mode === "mobile" || report.status === "wrong_workstation") return UI_LABELS.wrong_workstation;
+    if (report.status === STATUS_PERMISSION_BLOCKED) return UI_LABELS.permission_blocked;
+    if (!report.bridge_reachable) return UI_LABELS.bridge_unavailable;
+    if (report.ready || report.status === STATUS_CONNECTED) return UI_LABELS.connected;
+    if (UI_LABELS[report.status]) return UI_LABELS[report.status];
+    if (report.ui_label) return report.ui_label;
+    return UI_LABELS.not_connected;
+  }
+
   function normalizeBridgeStatus(payload) {
     var d = (payload && (payload.data && typeof payload.data === "object" ? payload.data : payload)) || {};
     var status = String(d.status || "").toLowerCase();
     if (!STATUS_DESCRIPTIONS[status]) status = STATUS_NOT_CONNECTED;
     return {
       status: status,
+      ui_state: d.ui_state || status,
+      ui_label: d.ui_label || UI_LABELS[status] || STATUS_DESCRIPTIONS[status],
       detail: d.detail || STATUS_DESCRIPTIONS[status],
       connected: status === STATUS_CONNECTED || status === STATUS_BUSY ? true : !!d.connected,
+      ready: status === STATUS_CONNECTED,
       device_serial: d.device_serial || "",
+      device_product: d.device_product || "",
       capture_in_progress: !!d.capture_in_progress,
       driver_installed: d.driver_installed === undefined ? null : !!d.driver_installed,
+      driver_ready: d.driver_ready === undefined ? null : !!d.driver_ready,
       sdk_loaded: d.sdk_loaded === undefined ? null : !!d.sdk_loaded,
+      usb_detected: d.usb_detected === undefined ? null : !!d.usb_detected,
+      service_running: d.service_running === undefined ? null : d.service_running,
+      initializing: !!d.initializing,
+      reconnecting: !!d.reconnecting,
       bridge_url: bridgeBase(),
       bridge_reachable: true
     };
@@ -461,14 +503,21 @@
     else if (code === "BRIDGE_PERMISSION_BLOCKED") status = STATUS_PERMISSION_BLOCKED;
     else if (code === "BRIDGE_PERMISSION_PROMPT") status = STATUS_PERMISSION_BLOCKED;
     else if (code === "WRONG_WORKSTATION") status = "wrong_workstation";
+    var uiLabel = (status === STATUS_PERMISSION_BLOCKED)
+      ? UI_LABELS.permission_blocked
+      : (status === "wrong_workstation" ? UI_LABELS.wrong_workstation : UI_LABELS.bridge_unavailable);
     return {
       status: status,
+      ui_state: status,
+      ui_label: uiLabel,
       detail: (err && err.message) || "The fingerprint bridge is not reachable on this workstation.",
       connected: false,
+      ready: false,
       device_serial: "",
       capture_in_progress: false,
       driver_installed: null,
       sdk_loaded: null,
+      usb_detected: null,
       bridge_url: bridgeBase(),
       bridge_reachable: false,
       bridge_error_code: code,
@@ -602,6 +651,8 @@
   function isRecoverableBridgeFailure(err) {
     var code = String((err && err.code) || "");
     return code === "READER_NOT_CONNECTED" ||
+      code === "READER_RECONNECT_NEEDED" ||
+      code === "READER_OPEN_FAILED" ||
       code === "READER_COMMUNICATION_FAILURE" ||
       code === "COMMUNICATION_FAILURE" ||
       code === "READER_BUSY" ||
@@ -803,14 +854,22 @@
       mode: mode,
       ready: false,
       status: STATUS_NOT_CONNECTED,
+      ui_state: STATUS_NOT_CONNECTED,
+      ui_label: UI_LABELS.not_connected,
       detail: "",
       code: "",
       source: "policy",
       bridge_reachable: false,
       reader_connected: false,
       device_serial: "",
+      device_product: "",
       driver_installed: null,
+      driver_ready: null,
       sdk_loaded: null,
+      usb_detected: null,
+      service_running: null,
+      initializing: false,
+      reconnecting: false,
       local_network_permission: LNA_STATE.permission,
       permission_prompt_available: lnaSupported(),
       bridge_url: bridgeBase(),
@@ -818,6 +877,8 @@
     };
     if (mode === "mobile") {
       result.status = "wrong_workstation";
+      result.ui_state = "wrong_workstation";
+      result.ui_label = UI_LABELS.wrong_workstation;
       result.code = "WRONG_WORKSTATION";
       result.detail = WRONG_WORKSTATION_MESSAGE;
       result.retryable = false;
@@ -826,25 +887,35 @@
     if (options.requestPermission) await requestLocalNetworkAccess();
     var status = await getReaderStatus({ retries: options.retries === undefined ? 1 : options.retries });
     result.status = status.status;
+    result.ui_state = status.ui_state || status.status;
     result.detail = status.detail;
     result.code = status.bridge_error_code || "";
     result.bridge_reachable = !!status.bridge_reachable;
     result.reader_connected = !!status.connected;
     result.device_serial = status.device_serial || "";
+    result.device_product = status.device_product || "";
     result.driver_installed = status.driver_installed;
+    result.driver_ready = status.driver_ready === undefined ? null : status.driver_ready;
     result.sdk_loaded = status.sdk_loaded;
+    result.usb_detected = status.usb_detected === undefined ? null : status.usb_detected;
+    result.service_running = status.service_running === undefined ? null : status.service_running;
+    result.initializing = !!status.initializing;
+    result.reconnecting = !!status.reconnecting;
     result.local_network_permission = LNA_STATE.permission;
     result.source = status.bridge_reachable ? "bridge" : "browser";
 
     if (!status.bridge_reachable) {
       if (result.code === "BRIDGE_PERMISSION_BLOCKED" || result.code === "BRIDGE_PERMISSION_PROMPT") {
         result.status = STATUS_PERMISSION_BLOCKED;
+        result.ui_state = STATUS_PERMISSION_BLOCKED;
         // The grant happens on the next real capture attempt (user gesture);
         // there is nothing to retry automatically from here.
         result.retryable = true;
       } else if (result.code === "BRIDGE_TIMEOUT") {
         result.status = STATUS_COMMUNICATION_FAILURE;
+        result.ui_state = STATUS_COMMUNICATION_FAILURE;
       }
+      result.ui_label = uiLabelForReport(result);
       return result;
     }
 
@@ -852,15 +923,23 @@
       var reinitialized = await initializeReader({ reopen: true, requestPermission: false });
       if (reinitialized.bridge_reachable) {
         result.status = reinitialized.status;
+        result.ui_state = reinitialized.ui_state || reinitialized.status;
         result.detail = reinitialized.detail;
         result.reader_connected = !!reinitialized.connected;
         result.device_serial = reinitialized.device_serial || result.device_serial;
+        result.device_product = reinitialized.device_product || result.device_product;
         result.driver_installed = reinitialized.driver_installed;
+        result.driver_ready = reinitialized.driver_ready === undefined ? result.driver_ready : reinitialized.driver_ready;
         result.sdk_loaded = reinitialized.sdk_loaded;
+        result.usb_detected = reinitialized.usb_detected === undefined ? result.usb_detected : reinitialized.usb_detected;
+        result.service_running = reinitialized.service_running === undefined ? result.service_running : reinitialized.service_running;
+        result.initializing = !!reinitialized.initializing;
+        result.reconnecting = !!reinitialized.reconnecting;
         result.source = "bridge";
       }
     }
     result.ready = result.status === STATUS_CONNECTED;
+    result.ui_label = uiLabelForReport(result);
     if (!result.ready) {
       result.code = result.code || ("READER_" + String(result.status).toUpperCase());
       result.retryable = result.status !== STATUS_PERMISSION_DENIED;
@@ -868,21 +947,216 @@
     return result;
   }
 
+  function emitCaptureState(options, state, detail) {
+    var payload = {
+      state: state,
+      label: UI_LABELS[state] || detail || state,
+      detail: detail || UI_LABELS[state] || ""
+    };
+    try {
+      if (options && typeof options.onCaptureState === "function") {
+        options.onCaptureState(payload);
+      }
+    } catch (_) {}
+    try {
+      if (typeof window.CustomEvent === "function" && typeof window.dispatchEvent === "function") {
+        window.dispatchEvent(new window.CustomEvent("jone:reader-capture-state", { detail: payload }));
+      }
+    } catch (_) {}
+  }
+
+  function isCaptureReady(report) {
+    if (config().mode === READER_MODE_SIMULATED || readerBridge()) return true;
+    return !!(report && report.ready);
+  }
+
+  /* Live monitor for desk pages: keeps reader status synchronized automatically
+     when USB is plugged/unplugged, driver initializes, or bridge starts —
+     without requiring a manual page reload. Respects LNA policy: never fires
+     unsolicited loopback fetches while permission is 'prompt' or 'denied'. */
+  function startReaderMonitor(options) {
+    options = options || {};
+    var intervalMs = Math.max(1000, Number(options.intervalMs || 2000));
+    var onStatus = typeof options.onStatus === "function" ? options.onStatus : function () {};
+    var isBusyFn = typeof options.isBusy === "function" ? options.isBusy : function () { return false; };
+    var stopped = false;
+    var timer = null;
+    var eventSource = null;
+    var inFlight = false;
+
+    function reportFromBridgeSnapshot(raw) {
+      var norm = normalizeBridgeStatus(raw);
+      var out = {
+        mode: workstationMode(),
+        ready: norm.status === STATUS_CONNECTED,
+        status: norm.status,
+        ui_state: norm.ui_state || norm.status,
+        ui_label: norm.ui_label || UI_LABELS[norm.status] || "",
+        detail: norm.detail,
+        code: norm.status === STATUS_CONNECTED ? "" : ("READER_" + String(norm.status).toUpperCase()),
+        source: "bridge",
+        bridge_reachable: true,
+        reader_connected: !!norm.connected,
+        device_serial: norm.device_serial || "",
+        device_product: norm.device_product || "",
+        driver_installed: norm.driver_installed,
+        driver_ready: norm.driver_ready,
+        sdk_loaded: norm.sdk_loaded,
+        usb_detected: norm.usb_detected,
+        service_running: norm.service_running,
+        initializing: norm.initializing,
+        reconnecting: norm.reconnecting,
+        local_network_permission: LNA_STATE.permission,
+        permission_prompt_available: lnaSupported(),
+        bridge_url: bridgeBase(),
+        retryable: true
+      };
+      out.ui_label = uiLabelForReport(out);
+      return out;
+    }
+
+    function ensureEventStream() {
+      if (stopped || eventSource || typeof window.EventSource !== "function") return;
+      if (workstationMode() === "mobile") return;
+      if (LNA_STATE.permission !== "granted" && LNA_STATE.permission !== "unsupported") return;
+      try {
+        eventSource = new window.EventSource(bridgeUrl("/events"));
+        eventSource.addEventListener("status", function (ev) {
+          if (stopped || isBusyFn()) return;
+          try {
+            var parsed = JSON.parse(ev.data);
+            onStatus(reportFromBridgeSnapshot(parsed));
+          } catch (_) {}
+        });
+        eventSource.onerror = function () {
+          if (eventSource) {
+            try { eventSource.close(); } catch (_) {}
+            eventSource = null;
+          }
+        };
+      } catch (_) {
+        eventSource = null;
+      }
+    }
+
+    async function pollOnce(force) {
+      if (stopped || inFlight || isBusyFn()) return null;
+      if (!force && window.document && window.document.hidden) return null;
+      if (workstationMode() === "mobile") {
+        var mobileReport = await describeReader({ initialize: false, retries: 0 });
+        onStatus(mobileReport);
+        return mobileReport;
+      }
+      var perm = await localNetworkPermissionState();
+      if (perm === "prompt" || perm === "denied") {
+        LNA_STATE = { permission: perm, checked: true, read_error: LNA_STATE.read_error };
+        if (!force) {
+          onStatus({
+            mode: workstationMode(),
+            ready: false,
+            status: STATUS_PERMISSION_BLOCKED,
+            ui_state: STATUS_PERMISSION_BLOCKED,
+            ui_label: UI_LABELS.permission_blocked,
+            detail: perm === "denied" ? permissionBlockedError().message : permissionNotGrantedError().message,
+            code: perm === "denied" ? "BRIDGE_PERMISSION_BLOCKED" : "BRIDGE_PERMISSION_PROMPT",
+            source: "browser",
+            bridge_reachable: false,
+            reader_connected: false,
+            device_serial: "",
+            driver_installed: null,
+            sdk_loaded: null,
+            local_network_permission: perm,
+            permission_prompt_available: lnaSupported(),
+            bridge_url: bridgeBase(),
+            retryable: true
+          });
+          return null;
+        }
+      }
+      inFlight = true;
+      try {
+        var report = await describeReader({ initialize: !!options.autoInitialize, retries: 0 });
+        if (!stopped) onStatus(report);
+        if (report && report.bridge_reachable) ensureEventStream();
+        return report;
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    function schedule() {
+      if (stopped) return;
+      timer = setTimeout(async function () {
+        await pollOnce(false);
+        schedule();
+      }, intervalMs);
+    }
+
+    function onVisibilityOrFocus() {
+      if (!stopped && (!window.document || !window.document.hidden)) {
+        pollOnce(true);
+      }
+    }
+
+    try {
+      if (window.document && typeof window.document.addEventListener === "function") {
+        window.document.addEventListener("visibilitychange", onVisibilityOrFocus);
+      }
+      if (typeof window.addEventListener === "function") {
+        window.addEventListener("focus", onVisibilityOrFocus);
+      }
+    } catch (_) {}
+
+    pollOnce(false).then(function () { schedule(); });
+
+    return {
+      refreshNow: function () { return pollOnce(true); },
+      stop: function () {
+        stopped = true;
+        if (timer) clearTimeout(timer);
+        if (eventSource) {
+          try { eventSource.close(); } catch (_) {}
+          eventSource = null;
+        }
+        try {
+          if (window.document && typeof window.document.removeEventListener === "function") {
+            window.document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+          }
+          if (typeof window.removeEventListener === "function") {
+            window.removeEventListener("focus", onVisibilityOrFocus);
+          }
+        } catch (_) {}
+      }
+    };
+  }
+
   // Capture a minutiae probe. Tries the workstation bridge, then the lab
   // simulation (when explicitly configured), or throws an actionable error.
   async function captureMinutiaeProbe(options) {
     options = options || {};
+    emitCaptureState(options, "capturing", UI_LABELS.capturing);
 
     // 1. A vendor SDK installed directly in the page (highest precedence: it
     //    is already talking to the attached device).
-    var points = await captureFromLegacyBridge(options);
-    if (points) return points;
+    try {
+      var points = await captureFromLegacyBridge(options);
+      if (points) {
+        emitCaptureState(options, "capture_success", UI_LABELS.capture_success);
+        return points;
+      }
+    } catch (legacyErr) {
+      emitCaptureState(options, "capture_failed", (legacyErr && legacyErr.message) || "Fingerprint capture failed.");
+      throw legacyErr;
+    }
 
     // 2. The workstation bridge service (the supported path on Windows 11).
     var lastFailure = null;
     try {
       points = await captureFromHttpBridge(options);
-      if (points) return points;
+      if (points) {
+        emitCaptureState(options, "capture_success", UI_LABELS.capture_success);
+        return points;
+      }
     } catch (err) {
       /* FingerprintReaderError is a factory (it returns an Error with a name),
          so `instanceof` is always false — check the name it stamps instead, or
@@ -900,19 +1174,26 @@
           "This is a lab/demo setting and must not be enabled in production."
         );
       }
-      return simulateMinutiae(options.seed);
+      var sim = simulateMinutiae(options.seed);
+      emitCaptureState(options, "capture_success", UI_LABELS.capture_success);
+      return sim;
     }
 
     // No capture source produced a template. The reader error is the honest
     // answer; it names the bridge origin and what the operator must do.
-    if (lastFailure) throw lastFailure;
+    if (lastFailure) {
+      emitCaptureState(options, "capture_failed", lastFailure.message);
+      throw lastFailure;
+    }
 
-    throw FingerprintReaderError(
+    var fallbackErr = FingerprintReaderError(
       "No fingerprint reader is available to this browser. Start the J-ONE Fingerprint Bridge on this " +
       "workstation (" + bridgeBase() + "), confirm the DigitalPersona 4500 is connected, and try again — " +
       "or ask a manager or administrator to authorise a supervised fallback.",
       "READER_NOT_AVAILABLE"
     );
+    emitCaptureState(options, "capture_failed", fallbackErr.message);
+    throw fallbackErr;
   }
 
   // Request fingerprint enrollment (staff profile → Enroll / Re-Enroll)
@@ -1005,6 +1286,8 @@
     STATUS_CONNECTED: STATUS_CONNECTED,
     STATUS_INITIALIZING: STATUS_INITIALIZING,
     STATUS_NOT_CONNECTED: STATUS_NOT_CONNECTED,
+    STATUS_USB_DETECTED: STATUS_USB_DETECTED,
+    STATUS_RECONNECTING: STATUS_RECONNECTING,
     STATUS_DRIVER_MISSING: STATUS_DRIVER_MISSING,
     STATUS_SDK_UNAVAILABLE: STATUS_SDK_UNAVAILABLE,
     STATUS_PERMISSION_DENIED: STATUS_PERMISSION_DENIED,
@@ -1013,6 +1296,10 @@
     STATUS_SERVICE_UNAVAILABLE: STATUS_SERVICE_UNAVAILABLE,
     STATUS_PERMISSION_BLOCKED: STATUS_PERMISSION_BLOCKED,
     STATUS_DESCRIPTIONS: STATUS_DESCRIPTIONS,
+    UI_LABELS: UI_LABELS,
+    uiLabelForReport: uiLabelForReport,
+    isCaptureReady: isCaptureReady,
+    startReaderMonitor: startReaderMonitor,
     captureMinutiaeProbe: captureMinutiaeProbe,
     isMobileBrowserContext: isMobileBrowserContext,
     workstationMode: workstationMode,

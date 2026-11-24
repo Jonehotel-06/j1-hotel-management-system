@@ -32,7 +32,7 @@
 
 "use strict";
 
-const CACHE_VERSION = "jone-v1.1.30";
+const CACHE_VERSION = "jone-v1.1.36";
 const PRECACHE = `${CACHE_VERSION}-precache`;
 const PAGES_CACHE = `${CACHE_VERSION}-pages`;
 const IMAGES_CACHE = `${CACHE_VERSION}-images`;
@@ -71,6 +71,7 @@ const PRECACHE_URLS = [
      one" is exactly this. Precached here, it is refreshed on every install
      alongside the rest of the bootstrap. */
   "/js/biometrics.js",
+  "/js/reader-check.js",
   "/js/operations.js",
   "/js/table-fit.js",
   "/js/runtime-config.js",

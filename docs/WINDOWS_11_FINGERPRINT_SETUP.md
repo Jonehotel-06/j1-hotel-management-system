@@ -88,28 +88,37 @@ unknown device, the vendor driver is missing (§3).
 
 ## 4. Install the bridge
 
-1. Copy the `workstation_bridge` folder (from `J1_FINGERPRINT_BRIDGE_AND_MEDIA_REPAIR_OUTPUT/updated_files/workstation_bridge/`)
+1. Copy the `workstation_bridge` folder (from `JONE_FINGERPRINT_PERMANENT_REPAIR_OUTPUT/updated_files/workstation_bridge/`)
    to `C:\JONE\workstation_bridge`.
 2. No Python packages need installing: the bridge (including the
    ISO/IEC 19794-2 template parser, `iso19794_2.py`) uses only the Python
    standard library. Keep the complete `workstation_bridge` folder together
-   — an earlier copy that was missing `iso19794_2.py` crashed on startup,
-   which is exactly what "the fingerprint bridge is not reachable" meant.
-   The bridge finds `dpfpdd.dll` / `dpfj.dll` in the SDK `Lib\x64` folders,
-   in `C:\Program Files\DigitalPersona\Bin` (the runtime installer layout
-   checked in §3), in `System32`, or in a folder named by the
-   `JONE_DPFP_DLL_DIR` environment variable.
+   — commit `dfde0ce` deleted `iso19794_2.py`, which crashed the bridge on
+   startup and caused "the fingerprint bridge is not reachable".
+   The bridge finds `dpfpdd.dll` / `dpfj.dll` in `C:\Program Files\DigitalPersona\Bin`,
+   `C:\Program Files\HID Global\DigitalPersona\U.are.U SDK\Windows\Lib\x64`
+   (and the standard DigitalPersona / HID Global `x64` / `win32` SDK folders),
+   `System32`, or a folder named by `JONE_DPFP_DLL_DIR` /
+   `JONE_DIGITALPERSONA_DLL_DIR`.
 
-3. Test it in the foreground first:
+3. **One-time double-click workstation setup (recommended):**
+   Double-click `install_workstation_bridge.bat` (or run
+   `powershell -ExecutionPolicy Bypass -File install_service.ps1 -Force -StartNow`).
+   This registers the Windows 11 Scheduled Task **J-ONE Fingerprint Bridge**
+   running hidden via `launch_bridge_hidden.vbs` / `pythonw.exe` at logon for
+   the signed-in workstation user (so closing any terminal cannot kill it),
+   creates the Start Menu shortcut **J-ONE Fingerprint Bridge**, starts the
+   bridge immediately, and verifies `http://127.0.0.1:8787/health` and `/status`.
+
+4. Optional foreground diagnostic test:
 
    ```powershell
    cd C:\JONE\workstation_bridge
    .\run_fingerprint_bridge.bat
    ```
 
-   Expect log lines that name the service, version, `127.0.0.1:8787` and the two
-   allowed origins.
-4. From a second window, check the reader:
+   Expect log lines naming the service (`2.1.0`), `127.0.0.1:8787`, and the
+   allowed origins. From a second window, check:
 
    ```powershell
    curl.exe http://127.0.0.1:8787/health
@@ -117,29 +126,9 @@ unknown device, the vendor driver is missing (§3).
    ```
 
    A working reader answers `/status` with `"status":"connected"`,
-   `"connected":true` and a `device_serial`. See §7 for every other value.
-
-5. Install as an auto-starting background task (recommended):
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File install_service.ps1
-   ```
-
-   This registers the Scheduled Task **J-ONE Fingerprint Bridge**, which starts at
-   logon for that Windows account and restarts itself if it dies. It must run in
-   the interactive session of the account the reader is attached to — do not try
-   to run it as a Windows service under `SYSTEM`, the device is per-session.
-
-   It also creates a Start Menu shortcut with the same name, because the desk
-   page tells the operator to start **J-ONE Fingerprint Bridge** from the Start
-   menu. Add `-StartNow` to start it immediately instead of at the next logon:
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File install_service.ps1 -StartNow
-   ```
-
-   `run_fingerprint_bridge.bat` now checks Python, an already-running bridge and
-   the vendor DLLs *before* it starts, and names whichever one is missing.
+   `"connected":true`, `"ui_label":"Fingerprint reader ready"`, and a
+   `device_serial`. Plugging or unplugging the USB reader is automatically
+   detected within ~1 second and streamed over `GET /events` (`text/event-stream`).
 
 ---
 
@@ -354,3 +343,26 @@ all three before the message could be trusted:
    supported on the reception Windows workstation; every other permitted
    attendance action (including the supervised fallback, when policy allows it)
    still works from a phone, and the page says exactly that.
+
+---
+
+## 11. What was changed in the 2026-11-24 permanent repair
+
+1. **Restored missing bridge files deleted in `dfde0ce`:** Restored `iso19794_2.py`
+   (supporting both 24-byte ISO 19794-2:2005 and 26-byte ANSI 378-2004 headers),
+   `run_fingerprint_bridge.bat`, `README.md`, and the unit/recovery test suites.
+2. **Fixed DigitalPersona `dpfpdd.h` / `dpfj.h` C ABI defects:** Fixed `_DPFPDD_DEV_INFO`
+   1024-byte `name` + `descr` layout, `DPFPDD_E_MORE_DATA` (`0x05BA000D`) buffer-grow
+   retry in `dpfpdd_query_devices`, `dpfpdd_open(dev_name, &dev)` argument order,
+   6-argument `dpfpdd_capture`, `500` DPI / `PIXEL_BUFFER` capture parameters,
+   `DPFJ_FMD_ISO_19794_2_2005` (`0x01010001`), and `dpfpdd_init()` retry recovery.
+3. **Windows-native USB plug-and-play & service detection:** Added `SetupAPI`/`CfgMgr32`
+   (`VID_05BA`), hidden `WM_DEVICECHANGE` listener, `DpHost` SCM service check,
+   automatic background initialization/reconnection, and `GET /events` SSE stream.
+4. **Windowless startup & one-click installer:** Added `launch_bridge_hidden.vbs`
+   and `install_workstation_bridge.bat` alongside updated `install_service.ps1`.
+5. **Live frontend monitoring & capture button gating:** Updated `biometrics.js`,
+   `reader-check.js`, `workforce.html`, `terminals.html`, `staff-profile.html`,
+   and `sw.js` (`v1.1.36`) to stream live state transitions and disable capture
+   controls until `"Fingerprint reader ready"`.
+

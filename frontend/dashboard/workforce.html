@@ -178,8 +178,8 @@
     <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Operational staff profiles"><table class="table"><thead><tr><th>Staff</th><th>Employee code</th><th>Department</th><th>Title</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-wf-profile-rows></tbody></table></div><div class="pagination" data-wf-profile-pagination></div></div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.35"></script><script src="../js/config.js?v=1.1.35"></script><script src="../js/utils.js?v=1.1.35"></script><script src="../js/icons.js?v=1.1.35"></script><script src="../js/api.js?v=1.1.35"></script><script src="../js/theme.js?v=1.1.35"></script><script src="../js/ui.js?v=1.1.35"></script><script src="../js/auth.js?v=1.1.35"></script><script src="../js/navigation.js?v=1.1.35"></script><script src="../js/dashboard.js?v=1.1.35"></script><script src="../js/table-fit.js?v=1.1.35"></script><script src="../js/operations.js?v=1.1.35"></script><script src="../js/biometrics.js?v=1.1.35"></script>
-<script src="../js/reader-check.js?v=1.1.35"></script>
+<script src="../js/runtime-config.js?v=1.1.36"></script><script src="../js/config.js?v=1.1.36"></script><script src="../js/utils.js?v=1.1.36"></script><script src="../js/icons.js?v=1.1.36"></script><script src="../js/api.js?v=1.1.36"></script><script src="../js/theme.js?v=1.1.36"></script><script src="../js/ui.js?v=1.1.36"></script><script src="../js/auth.js?v=1.1.36"></script><script src="../js/navigation.js?v=1.1.36"></script><script src="../js/dashboard.js?v=1.1.36"></script><script src="../js/table-fit.js?v=1.1.36"></script><script src="../js/operations.js?v=1.1.36"></script><script src="../js/biometrics.js?v=1.1.36"></script>
+<script src="../js/reader-check.js?v=1.1.36"></script>
 <script>
 JONE.ui.initChrome();
 var __workforceAllowed=JONE.dashboard.boot(["admin","general_manager","accountant","procurement_officer","chef","kitchen_assistant","waiter","porter","receptionist","housekeeping","storekeeper","security"]);
@@ -275,10 +275,26 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
   var readerMeta=document.querySelector("[data-wf-rt-reader-meta]");
   var readerActions=document.querySelectorAll("[data-wf-rt-reader-action]");
   var readerBusy=false;
+  var captureButtons=document.querySelectorAll("button[data-wf-rt-action]");
+  var captureActive=false;
+  var latestReaderReport=null;
+  function gateCaptureButtons(report){
+    latestReaderReport=report||latestReaderReport;
+    var bio=window.JONE&&window.JONE.biometrics;
+    var ready=!captureActive&&!!(bio&&typeof bio.isCaptureReady==="function"?bio.isCaptureReady(latestReaderReport):(latestReaderReport&&latestReaderReport.ready));
+    var reason=(latestReaderReport&&(latestReaderReport.ui_label||latestReaderReport.detail))||"Fingerprint reader not connected";
+    captureButtons.forEach(function(btn){
+      btn.disabled=!ready;
+      btn.setAttribute("aria-disabled",ready?"false":"true");
+      if(ready)btn.removeAttribute("title");
+      else btn.setAttribute("title",reason);
+    });
+  }
+  gateCaptureButtons(null);
   /* Published so js/reader-check.js can refuse to start a second detection
      sequence while a capture is running on this reader (a capture holds the
      device; a status poll on top of it is what made the panel flicker). */
-  window.__JONE_READER_BUSY__=function(){return readerBusy;};
+  window.__JONE_READER_BUSY__=function(){return readerBusy||captureActive;};
   function readerSay(badge,title,detail,meta){
     if(readerBadge)readerBadge.textContent=badge;
     if(readerTitle)readerTitle.textContent=title;
@@ -290,7 +306,8 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
   }
   function readerRender(report){
     /* report: the object returned by JONE.biometrics.describeReader() */
-    if(!report){readerSay("Unknown","Fingerprint reader","Reader state could not be read.","");return;}
+    gateCaptureButtons(report);
+    if(!report){readerSay("Biometric service unavailable","Fingerprint reader","Reader state could not be read.","");return;}
     var meta=[];
     if(report.bridge_url)meta.push("Bridge: "+report.bridge_url);
     if(report.device_serial)meta.push("Serial: "+report.device_serial);
@@ -300,6 +317,8 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
     var metaText=meta.join(" · ");
     var code=String(report.code||"");
     var ready=!!report.ready;
+    var bio=window.JONE&&window.JONE.biometrics;
+    var label=(bio&&typeof bio.uiLabelForReport==="function")?bio.uiLabelForReport(report):(report.ui_label||"Fingerprint reader");
     if(report.mode==="mobile"){
       readerSay("Not available on this device","Fingerprint capture needs the reception workstation",
         report.detail,"Any other attendance function this page offers — including the supervised fallback, when policy allows it — still works from here. "+metaText);
@@ -310,48 +329,61 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
     readerShow("mobile",true);
     readerShow("desktop",false);
     if(ready){
-      readerSay("Ready","Fingerprint reader connected",report.detail||"Place a finger on the reader when you start an action.",metaText);
+      readerSay("Ready",label,report.detail||"Place a finger on the reader when you start an action.",metaText);
       readerShow("check",true);readerShow("allow",false);readerShow("initialize",true);
       return;
     }
-    if(code==="BRIDGE_PERMISSION_BLOCKED"){
-      readerSay("Blocked by this browser","Browser blocked local network access",
+    if(code==="BRIDGE_PERMISSION_BLOCKED"||code==="BRIDGE_PERMISSION_PROMPT"){
+      readerSay(code==="BRIDGE_PERMISSION_BLOCKED"?"Blocked by this browser":"Permission needed",
+        code==="BRIDGE_PERMISSION_BLOCKED"?"Browser blocked local network access":"Allow local network access to reach the reader",
         report.detail,"Press \"Allow local network access\" for this site (or allow it from the lock icon in the address bar), then press Check reader. The bridge itself does not need restarting. "+metaText);
       readerShow("check",true);readerShow("allow",true);readerShow("initialize",false);
       return;
     }
     if(!report.bridge_reachable){
-      /* "Not allowed yet" is not "not running". Until this site has been granted
-         local network access — a grant the browser only offers inside a click —
-         the bridge's refusal and its absence look identical, so both causes are
-         named here and "Check reader"/"Allow local network access" (both real
-         clicks) are the actions that settle it. */
       var permissionPending=report.local_network_permission==="prompt"||report.local_network_permission==="unknown";
-      readerSay(code==="BRIDGE_TIMEOUT"?"Bridge did not answer":(permissionPending?"Not checked yet":"Bridge not running"),
-        code==="BRIDGE_TIMEOUT"?"The fingerprint bridge accepted the request but did not reply":
-          (permissionPending?"This browser has not been allowed to reach the reader yet":"Fingerprint bridge is not running on this computer"),
+      readerSay(code==="BRIDGE_TIMEOUT"?"Bridge did not answer":(permissionPending?"Not checked yet":"Biometric service unavailable"),
+        code==="BRIDGE_TIMEOUT"?"Biometric service unavailable":
+          (permissionPending?"This browser has not been allowed to reach the reader yet":"Biometric service unavailable"),
         report.detail,metaText);
       readerShow("check",true);readerShow("allow",permissionPending);readerShow("initialize",false);
       return;
     }
-    readerSay("Reader not ready","The bridge is running but cannot read a finger",report.detail,metaText);
+    readerSay(label,label,report.detail,metaText);
     readerShow("check",true);readerShow("allow",false);readerShow("initialize",true);
   }
+  window.addEventListener("jone:reader-capture-state",function(ev){
+    var d=(ev&&ev.detail)||{};
+    if(d.state==="capturing"){
+      captureActive=true;
+      gateCaptureButtons(latestReaderReport);
+      readerSay("Reading fingerprint","Reading fingerprint","Place the staff member's finger flat on the DigitalPersona 4500 sensor...","");
+    }else if(d.state==="capture_success"){
+      captureActive=false;
+      gateCaptureButtons(latestReaderReport);
+      readerSay("Ready","Fingerprint captured successfully","Fingerprint captured successfully.","");
+    }else if(d.state==="capture_failed"){
+      captureActive=false;
+      gateCaptureButtons(latestReaderReport);
+      readerSay("Capture failed","Capture failed",d.detail||"Fingerprint capture failed.","");
+    }
+  });
   async function readerRefresh(options){
     options=options||{};
     if(readerBusy)return null;
     var bio=window.JONE&&window.JONE.biometrics;
-    if(!bio){readerSay("Unavailable","Fingerprint reader","The biometrics module did not load on this page.","");return null;}
+    if(!bio){readerSay("Unavailable","Biometric service unavailable","The biometrics module did not load on this page.","");return null;}
     readerBusy=true;
     try{
       var report=await bio.describeReader({initialize:options.initialize!==false,requestPermission:!!options.requestPermission});
       readerRender(report);
       return report;
     }catch(err){
-      readerSay("Unknown","Fingerprint reader",(err&&err.message)||"Reader state could not be read.","");
+      readerSay("Unknown","Biometric service unavailable",(err&&err.message)||"Reader state could not be read.","");
       return null;
     }finally{readerBusy=false;}
   }
+  var monitor=null;
   readerActions.forEach(function(btn){
     btn.addEventListener("click",async function(){
       var action=btn.getAttribute("data-wf-rt-reader-action");
@@ -367,6 +399,7 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
           JONE.ui.toast(state==="granted"?"Local network access allowed. Checking the reader again…":"The browser still reports local network access as "+state+". Allow it for this site, then press Check reader.",state==="granted"?"success":"warning");
         }
         await readerRefresh({initialize:false,requestPermission:false});
+        if(monitor)monitor.refreshNow();
         return;
       }
       if(action==="desktop"){bio.setWorkstationMode("desktop");JONE.ui.toast("Reader controls enabled for this device for this session.","info");await readerRefresh({});return;}
@@ -374,7 +407,19 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
       await readerRefresh({initialize:action!=="check"});
     });
   });
-  if(readerBox&&!readerBox.hidden)readerRefresh({});
+  if(readerBox&&!readerBox.hidden){
+    var bioMod=window.JONE&&window.JONE.biometrics;
+    if(bioMod&&typeof bioMod.startReaderMonitor==="function"){
+      monitor=bioMod.startReaderMonitor({
+        autoInitialize:true,
+        intervalMs:2000,
+        isBusy:function(){return readerBusy||captureActive;},
+        onStatus:function(report){readerRender(report);}
+      });
+    }else{
+      readerRefresh({});
+    }
+  }
 })();
 (function(){
   var stateLine=document.querySelector("[data-wf-rt-desktop-state]");
@@ -514,5 +559,5 @@ document.querySelectorAll("button[data-wf-rt-action]").forEach(function(btn){
   });
 });
 })();
-</script><script src="../js/pwa.js?v=1.1.35"></script><script src="../js/version.js?v=1.1.35"></script><script src="../js/update-checker.js?v=1.1.35"></script>
+</script><script src="../js/pwa.js?v=1.1.36"></script><script src="../js/version.js?v=1.1.36"></script><script src="../js/update-checker.js?v=1.1.36"></script>
 </body></html>

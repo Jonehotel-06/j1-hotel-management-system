@@ -21,7 +21,7 @@
   "js/auth.js": "044a54bd02c16cde18e3c3c41a8e56b533711110cfd592f38dfd7d00ae07979a",
   "js/barcode-labels.js": "d0001cd03ed88e046b6da271a88074139d364a1843442b12060895c1a9f0075b",
   "js/barcode-scanner.js": "720a9784adb1148a19ec5653256bfb1663f1dd1f89e086bd681ce9e2edb83c82",
-  "js/biometrics.js": "37bc48f4d9b6ad2c08db656890a58242d665fc553ddf0a2ec9721cdf7181a977",
+  "js/biometrics.js": "9f9ab91dcb814daba9ae4404a3a99410744080126dca5c8bac59e03a2f271716",
   "js/booking-calendar.js": "46724204c48a14cc5343cf7de1d4dd7aa402e0f8ec95cfea3cd137146b0bf5ef",
   "js/booking-stepper.js": "7e5b2e57faabefc1f4d43e5c60382f98da0edf0344d6b0f7316f13ee67ba4950",
   "js/breakfast.js": "7be30b89207bee664471b7bd63fed32505c4457ad9c672a905536c991a9a4806",
@@ -43,7 +43,7 @@
   "js/portal.js": "422360f795d78e71775ec79e70b967073d4a823b156434d3d1b29b8239248e1b",
   "js/pos-drafts.js": "807f2c907cc0f0df1dbcd0c38103afec78609ed4943453b42fcc2843915335a2",
   "js/pwa.js": "73ae65fb50b90c347c741a2b93c88e223a4283819e488d2fa80577a0f22c75e7",
-  "js/reader-check.js": "513b9e1596e43a830c9b0399574ce2c3cdc9f77d9de038753b8fba74dd523e8c",
+  "js/reader-check.js": "04847931fc3875b75689d872ef02deb0d8f043f8b40130de95b2f8489f4a8e63",
   "js/receipt-email-modal.js": "6bcab749219a59ae6cec3d03a24b0cfa9bd2929f6e87b079773662a411f54e1a",
   "js/receipt.js": "60e0220fd60ea55e211e3e86f0437584ab892836be69cef88da68b3278c962e8",
   "js/reception-services.js": "bea6da82ba250de1212cf9ac73af3ddb44045642322b4b89cb42171c75e9274f",
@@ -58,7 +58,7 @@
   "js/ui.js": "511bf18df17beacae3e030e77463b4ec4a9079eaeba03f808e63409b84657dc0",
   "js/update-checker.js": "a5ed2272d077fe7860c3555011d8e8318896eae7fd475ac7b3a811ff3e635475",
   "js/utils.js": "c1dd4acf03f86253f3fe0a6f1865d3139c0fd6a6620a8467379b39f6c7a592d6",
-  "js/version.js": "ac83bf380d42c10de7a30ee759db2c81d2805b535908ee643c14d3dadf3df415",
+  "js/version.js": "5536e6e03a6aa2e3f7cb1aa2c87ca25ddafb8f19226f64059ab9e24414e1e4f6",
   "rooms-gallery/admin.html": "8d1518d3fc570fe6dbe598d9b900027998106598c0a722ba951a436ce9f07998",
   "rooms-gallery/admin.js": "0c1af291d3cfeead6b34436e7f17acda4f693ace3ee1c876d78b2d4730e896b1",
   "rooms-gallery/gallery.css": "bc552dd7a39e2307f14640858c440a75770a30d27369850097309968baa9ff88",
@@ -70,5 +70,5 @@
   "rooms-gallery/sw.js": "bb5f13413969d5c20422c9e7745e745d20e951ee8ad6c3a2fa5fe79d0c50c08d",
   "rooms-gallery/sync-db.js": "9f3fb2fe017f74ee7718915a26343c1d86ab058f97dc6bb9152b7208cecdd462"
  },
- "version": "1.1.35"
+ "version": "1.1.36"
 }

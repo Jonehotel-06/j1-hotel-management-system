@@ -217,65 +217,110 @@
     </div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.35"></script><script src="../js/config.js?v=1.1.35"></script><script src="../js/utils.js?v=1.1.35"></script><script src="../js/icons.js?v=1.1.35"></script><script src="../js/api.js?v=1.1.35"></script><script src="../js/theme.js?v=1.1.35"></script><script src="../js/ui.js?v=1.1.35"></script><script src="../js/auth.js?v=1.1.35"></script><script src="../js/navigation.js?v=1.1.35"></script><script src="../js/dashboard.js?v=1.1.35"></script><script src="../js/table-fit.js?v=1.1.35"></script><script src="../js/operations.js?v=1.1.35"></script><script src="../js/biometrics.js?v=1.1.35"></script>
-<script src="../js/reader-check.js?v=1.1.35"></script>
+<script src="../js/runtime-config.js?v=1.1.36"></script><script src="../js/config.js?v=1.1.36"></script><script src="../js/utils.js?v=1.1.36"></script><script src="../js/icons.js?v=1.1.36"></script><script src="../js/api.js?v=1.1.36"></script><script src="../js/theme.js?v=1.1.36"></script><script src="../js/ui.js?v=1.1.36"></script><script src="../js/auth.js?v=1.1.36"></script><script src="../js/navigation.js?v=1.1.36"></script><script src="../js/dashboard.js?v=1.1.36"></script><script src="../js/table-fit.js?v=1.1.36"></script><script src="../js/operations.js?v=1.1.36"></script><script src="../js/biometrics.js?v=1.1.36"></script>
+<script src="../js/reader-check.js?v=1.1.36"></script>
 <script>
 /* Reader state panel — same contract as the Workforce page
    (JONE.biometrics.describeReader). This is the console staff actually open at
-   the front desk, so it carries the same honest status. */
+   the front desk, so it carries the same honest status + capture gating. */
 (function(){
   var badge=document.querySelector("[data-tm-reader-badge]");
   var title=document.querySelector("[data-tm-reader-title]");
   var detail=document.querySelector("[data-tm-reader-detail]");
   var meta=document.querySelector("[data-tm-reader-meta]");
   var actions=document.querySelectorAll("[data-tm-reader-action]");
-  var busy=false;
+  var busy=false,captureActive=false,latestReport=null;
+  function gateCaptureButtons(r){
+    latestReport=r||latestReport;
+    var bio=window.JONE&&window.JONE.biometrics;
+    var ready=!captureActive&&!!(bio&&typeof bio.isCaptureReady==="function"?bio.isCaptureReady(latestReport):(latestReport&&latestReport.ready));
+    var reason=(latestReport&&(latestReport.ui_label||latestReport.detail))||"Fingerprint reader not connected";
+    document.querySelectorAll("button[data-rt-action],button[data-rt-row-action]").forEach(function(btn){
+      btn.disabled=!ready;
+      btn.setAttribute("aria-disabled",ready?"false":"true");
+      if(ready)btn.removeAttribute("title");
+      else btn.setAttribute("title",reason);
+    });
+  }
+  window.__JONE_TERMINAL_GATE__=function(){gateCaptureButtons(latestReport);};
+  window.__JONE_READER_BUSY__=function(){return busy||captureActive;};
+  gateCaptureButtons(null);
   function say(b,t,d,m){if(badge)badge.textContent=b;if(title)title.textContent=t;if(detail)detail.textContent=d;if(meta)meta.textContent=m||"";}
   function show(action,visible){actions.forEach(function(x){if(x.getAttribute("data-tm-reader-action")===action)x.hidden=!visible;});}
   function render(r){
-    if(!r){say("Unknown","Fingerprint reader","Reader state could not be read.","");return;}
+    gateCaptureButtons(r);
+    if(!r){say("Biometric service unavailable","Fingerprint reader","Reader state could not be read.","");return;}
     var m=[];if(r.bridge_url)m.push("Bridge: "+r.bridge_url);if(r.device_serial)m.push("Serial: "+r.device_serial);
     if(r.local_network_permission&&r.local_network_permission!=="unsupported")m.push("Browser local network access: "+r.local_network_permission);
     var metaText=m.join(" · "),code=String(r.code||"");
+    var bio=window.JONE&&window.JONE.biometrics;
+    var label=(bio&&typeof bio.uiLabelForReport==="function")?bio.uiLabelForReport(r):(r.ui_label||"Fingerprint reader");
     if(r.mode==="mobile"){
       say("Not available on this device","Fingerprint capture needs the reception workstation",r.detail,
         "Supervised fallback and every other permitted action on this page still work from here. "+metaText);
       show("check",true);show("allow",false);show("initialize",false);show("desktop",true);show("mobile",false);return;
     }
     show("mobile",true);show("desktop",false);
-    if(r.ready){say("Ready","Fingerprint reader connected",r.detail||"Place a finger on the reader when you start an action.",metaText);show("check",true);show("allow",false);show("initialize",true);return;}
-    if(code==="BRIDGE_PERMISSION_BLOCKED"){say("Blocked by this browser","Browser blocked local network access",r.detail,"Allow local network access for this site, then press Check reader. The bridge does not need restarting. "+metaText);show("check",true);show("allow",true);show("initialize",false);return;}
+    if(r.ready){say("Ready",label,r.detail||"Place a finger on the reader when you start an action.",metaText);show("check",true);show("allow",false);show("initialize",true);return;}
+    if(code==="BRIDGE_PERMISSION_BLOCKED"||code==="BRIDGE_PERMISSION_PROMPT"){
+      say(code==="BRIDGE_PERMISSION_BLOCKED"?"Blocked by this browser":"Permission needed",
+        code==="BRIDGE_PERMISSION_BLOCKED"?"Browser blocked local network access":"Allow local network access to reach the reader",
+        r.detail,"Allow local network access for this site, then press Check reader. The bridge does not need restarting. "+metaText);
+      show("check",true);show("allow",true);show("initialize",false);return;
+    }
     if(!r.bridge_reachable){
-      /* A page that has not been granted local network access (or has not been
-         ASKED yet) cannot see the bridge, and the refusal is indistinguishable
-         from a stopped service. Name both possibilities and make "Check reader"
-         the single action that resolves it — inside a real click, which is the
-         only moment the browser offers its prompt. */
       var pending=r.local_network_permission==="prompt"||r.local_network_permission==="unknown";
-      say(code==="BRIDGE_TIMEOUT"?"Bridge did not answer":(pending?"Not checked yet":"Bridge not running"),
-        code==="BRIDGE_TIMEOUT"?"The fingerprint bridge accepted the request but did not reply":
-          (pending?"This browser has not been allowed to reach the reader yet":"Fingerprint bridge is not running on this computer"),
+      say(code==="BRIDGE_TIMEOUT"?"Bridge did not answer":(pending?"Not checked yet":"Biometric service unavailable"),
+        code==="BRIDGE_TIMEOUT"?"Biometric service unavailable":
+          (pending?"This browser has not been allowed to reach the reader yet":"Biometric service unavailable"),
         r.detail,metaText);
-      show("check",true);show("allow",pending);show("initialize",false);return;}
-    say("Reader not ready","The bridge is running but cannot read a finger",r.detail,metaText);show("check",true);show("allow",false);show("initialize",true);
+      show("check",true);show("allow",pending);show("initialize",false);return;
+    }
+    say(label,label,r.detail,metaText);show("check",true);show("allow",false);show("initialize",true);
   }
+  window.addEventListener("jone:reader-capture-state",function(ev){
+    var d=(ev&&ev.detail)||{};
+    if(d.state==="capturing"){
+      captureActive=true;gateCaptureButtons(latestReport);
+      say("Reading fingerprint","Reading fingerprint","Place the staff member's finger flat on the DigitalPersona 4500 sensor...","");
+    }else if(d.state==="capture_success"){
+      captureActive=false;gateCaptureButtons(latestReport);
+      say("Ready","Fingerprint captured successfully","Fingerprint captured successfully.","");
+    }else if(d.state==="capture_failed"){
+      captureActive=false;gateCaptureButtons(latestReport);
+      say("Capture failed","Capture failed",d.detail||"Fingerprint capture failed.","");
+    }
+  });
   async function refresh(options){
     options=options||{};if(busy)return null;
     var bio=window.JONE&&window.JONE.biometrics;
-    if(!bio){say("Unavailable","Fingerprint reader","The biometrics module did not load on this page.","");return null;}
+    if(!bio){say("Unavailable","Biometric service unavailable","The biometrics module did not load on this page.","");return null;}
     busy=true;
     try{var r=await bio.describeReader({initialize:options.initialize!==false,requestPermission:!!options.requestPermission});render(r);return r;}
-    catch(err){say("Unknown","Fingerprint reader",(err&&err.message)||"Reader state could not be read.","");return null;}
+    catch(err){say("Unknown","Biometric service unavailable",(err&&err.message)||"Reader state could not be read.","");return null;}
     finally{busy=false;}
   }
+  var monitor=null;
   actions.forEach(function(btn){btn.addEventListener("click",async function(){
     var action=btn.getAttribute("data-tm-reader-action"),bio=window.JONE&&window.JONE.biometrics;if(!bio)return;
-    if(action==="allow"||action==="check"){var s=await bio.requestLocalNetworkAccess();if(action==="allow")JONE.ui.toast(s==="granted"?"Local network access allowed.":"The browser reports local network access as "+s+".",s==="granted"?"success":"warning");await refresh({requestPermission:false});return;}
+    if(action==="allow"||action==="check"){var s=await bio.requestLocalNetworkAccess();if(action==="allow")JONE.ui.toast(s==="granted"?"Local network access allowed.":"The browser reports local network access as "+s+".",s==="granted"?"success":"warning");await refresh({requestPermission:false});if(monitor)monitor.refreshNow();return;}
     if(action==="desktop"){bio.setWorkstationMode("desktop");JONE.ui.toast("Reader controls enabled for this device for this session.","info");await refresh({});return;}
     if(action==="mobile"){bio.setWorkstationMode("mobile");JONE.ui.toast("This device is treated as a phone or tablet for this session.","info");await refresh({});return;}
     await refresh({initialize:action!=="check"});
   });});
-  if(document.querySelector("[data-tm-reader]"))refresh({});
+  if(document.querySelector("[data-tm-reader]")){
+    var bioMod=window.JONE&&window.JONE.biometrics;
+    if(bioMod&&typeof bioMod.startReaderMonitor==="function"){
+      monitor=bioMod.startReaderMonitor({
+        autoInitialize:true,
+        intervalMs:2000,
+        isBusy:function(){return busy||captureActive;},
+        onStatus:function(r){render(r);}
+      });
+    }else{
+      refresh({});
+    }
+  }
 })();
 </script>
 <script>
@@ -379,6 +424,7 @@ async function loadReceptionTerminal(){
         '</div></td>'+
       '</tr>';
     }).join("");
+    if(typeof window.__JONE_TERMINAL_GATE__==="function")window.__JONE_TERMINAL_GATE__();
   }catch(err){
     // A 403 here is a POLICY answer, not a failure to load: the server is
     // saying this browser is not (yet) the Reception Desk. Say exactly that,
@@ -593,4 +639,4 @@ loadReceptionTerminal();
   });
   renderDevices();
 })();
-</script><script src="../js/pwa.js?v=1.1.35"></script><script src="../js/version.js?v=1.1.35"></script><script src="../js/update-checker.js?v=1.1.35"></script></body></html>
+</script><script src="../js/pwa.js?v=1.1.36"></script><script src="../js/version.js?v=1.1.36"></script><script src="../js/update-checker.js?v=1.1.36"></script></body></html>

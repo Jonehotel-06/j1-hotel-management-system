@@ -1,58 +1,34 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    Installs (or removes) the J-ONE Fingerprint Bridge as a Windows Scheduled Task
-    that starts at logon for the signed-in reception user and restarts itself if it stops.
+    One-time setup for the J-ONE Fingerprint Bridge on a Windows 11 reception
+    or enrolment workstation.
 
 .DESCRIPTION
-    The DigitalPersona U.are.U 4500 reader is a per-session USB device: only the
-    interactive logon session of the reception operator can own it, so the bridge
-    MUST NOT run as SYSTEM or as a traditional Windows service. This script
-    registers a Scheduled Task named "J-ONE Fingerprint Bridge" that:
-
-      * starts run_fingerprint_bridge.bat at the user's logon,
-      * runs as that same user (interactive token, least privilege),
-      * restarts the bridge up to 3 times if the process or the PC misbehaves,
-      * never launches a second copy while one is already running (port 8787).
-
-    It also verifies the prerequisites the bridge needs (Python, the vendor
-    DLLs dpfpdd.dll/dpfj.dll, the workstation_bridge folder) and reports them
-    plainly — it never hides a missing driver or SDK.
+    Preserves all existing working DigitalPersona drivers and Windows biometric
+    services without reinstalling or overwriting them. Registers a Scheduled
+    Task ("J-ONE Fingerprint Bridge") running as the signed-in reception user
+    (InteractiveToken, LeastPrivilege) so the bridge starts automatically at
+    Windows logon, survives closed terminal windows via silent background launch,
+    enforces single-instance execution on 127.0.0.1:8787, and restarts on fault.
 
 .PARAMETER BridgeDir
-    Folder that contains run_fingerprint_bridge.bat and fingerprint_bridge_service.py.
-    Default: C:\JONE\workstation_bridge (the layout documented in
-    docs/WINDOWS_11_FINGERPRINT_SETUP.md §4). When this script is launched from
-    inside a workstation_bridge folder, that folder is used automatically.
+    Folder containing fingerprint_bridge_service.py, iso19794_2.py, and
+    run_fingerprint_bridge.bat. Defaults to the folder containing this script
+    when run from workstation_bridge\, otherwise %ProgramData%\JONE\workstation_bridge.
 
 .PARAMETER TaskName
     Scheduled Task name. Default: "J-ONE Fingerprint Bridge".
 
 .PARAMETER Uninstall
-    Removes the Scheduled Task instead of creating it. Does not delete the
-    workstation_bridge folder or any DLLs.
+    Removes the Scheduled Task without deleting drivers or bridge files.
 
 .PARAMETER Force
-    Overwrites an existing task of the same name without prompting.
+    Replaces an existing Scheduled Task of the same name without prompting.
 
 .PARAMETER StartNow
-    Starts the bridge immediately after registering the task, instead of waiting
-    for the next logon. The task is idempotent (MultipleInstances=IgnoreNew, and
-    the bridge itself refuses a second copy on the same port), so this never
-    leaves two bridges running.
-
-.EXAMPLE
-    powershell -ExecutionPolicy Bypass -File install_service.ps1
-    Installs the task for C:\JONE\workstation_bridge.
-
-.EXAMPLE
-    powershell -ExecutionPolicy Bypass -File install_service.ps1 -Uninstall
-    Removes the "J-ONE Fingerprint Bridge" task.
-
-.NOTES
-    Run as the reception operator (the account that will use the reader), not as
-    Administrator/SYSTEM. Elevation is only needed if BridgeDir itself must be
-    created under a protected location.
+    Starts the bridge immediately after registering the task and verifies
+    http://127.0.0.1:8787/health and /status.
 #>
 [CmdletBinding()]
 param(
@@ -70,20 +46,21 @@ function Write-Status($message) { Write-Host ($LogPrefix + $message) }
 function Write-Warn ($message) { Write-Host ($LogPrefix + 'WARNING: ' + $message) }
 function Write-Ok  ($message) { Write-Host ($LogPrefix + 'OK: ' + $message) }
 
-# Resolve the bridge folder: explicit parameter > script's own folder > default.
 if (-not $BridgeDir) {
     $scriptDir = Split-Path -Parent $PSCommandPath
-    if ((Split-Path -Leaf $scriptDir) -eq 'workstation_bridge') {
+    if (Test-Path (Join-Path $scriptDir 'fingerprint_bridge_service.py')) {
         $BridgeDir = $scriptDir
     } else {
         $BridgeDir = Join-Path $env:ProgramData 'JONE\workstation_bridge'
     }
 }
-$BridgeDir = Resolve-Path $BridgeDir -ErrorAction SilentlyContinue
-if (-not $BridgeDir) { $BridgeDir = [System.IO.Path]::GetFullPath('') }
+$resolved = Resolve-Path $BridgeDir -ErrorAction SilentlyContinue
+if ($resolved) { $BridgeDir = $resolved.Path }
 
 $Bat = Join-Path $BridgeDir 'run_fingerprint_bridge.bat'
+$HiddenVbs = Join-Path $BridgeDir 'launch_bridge_hidden.vbs'
 $Service = Join-Path $BridgeDir 'fingerprint_bridge_service.py'
+$IsoParser = Join-Path $BridgeDir 'iso19794_2.py'
 
 if ($Uninstall) {
     try {
@@ -100,67 +77,79 @@ if ($Uninstall) {
     exit 0
 }
 
-# ---- Prerequisites --------------------------------------------------------
-Write-Status "Checking prerequisites for the fingerprint bridge in $BridgeDir"
+Write-Status "Checking prerequisites in $BridgeDir"
 
 $missing = @()
 if (-not (Test-Path $Bat -PathType Leaf)) { $missing += 'run_fingerprint_bridge.bat' }
 if (-not (Test-Path $Service -PathType Leaf)) { $missing += 'fingerprint_bridge_service.py' }
+if (-not (Test-Path $IsoParser -PathType Leaf)) { $missing += 'iso19794_2.py' }
 if ($missing.Count) {
     Write-Status "Missing bridge files: $($missing -join ', '). Copy the whole workstation_bridge folder first."
     exit 1
 }
 
-# Python launcher or interpreter.
 $pythonCmd = if (Get-Command py -ErrorAction SilentlyContinue) { 'py -3' } elseif (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { $null }
 if (-not $pythonCmd) {
-    Write-Warn 'Python was not found on PATH. The task will still be registered, but the bridge cannot start until Python 3.10+ is installed.'
+    Write-Warn 'Python 3 was not found on PATH. Install Python 3.10+ (with "Add python.exe to PATH") so the bridge can run.'
 } else {
     Write-Ok "Python available: $pythonCmd"
 }
 
-# The vendor SDK DLLs — the bridge looks in the standard SDK/installer folders
-# and System32; report what can be found so a missing driver is obvious.
+# Read-only check for DigitalPersona runtime DLLs (never modifies or reinstalls drivers).
 $dllRoots = @(
     "${env:ProgramFiles}\DigitalPersona\Bin",
-    "${env:ProgramFiles(x86)}\DigitalPersona\Bin",
-    "${env:ProgramW6432}\DigitalPersona\U.are.U SDK\Windows\Lib\x64",
+    "${env:ProgramFiles}\DigitalPersona\U.are.U SDK\Windows\Lib\x64",
     "${env:ProgramFiles}\HID Global\DigitalPersona\U.are.U SDK\Windows\Lib\x64",
+    "${env:ProgramFiles}\HID Global\Authentication\Bin",
+    "${env:ProgramFiles(x86)}\DigitalPersona\Bin",
     "${env:SystemRoot}\System32"
 )
-$dllStatus = @{}
-foreach ($dll in @('dpfpdd.dll','dpfj.dll')) {
+foreach ($dll in @('dpfpdd.dll', 'dpfj.dll')) {
     $found = $null
     foreach ($root in $dllRoots) {
         $candidate = Join-Path $root $dll
         if (Test-Path $candidate -PathType Leaf) { $found = $candidate; break }
     }
-    $dllStatus[$dll] = $found
     if ($found) { Write-Ok "$dll found at $found" }
-    else { Write-Warn "$dll not found in the usual SDK locations — install the DigitalPersona U.are.U driver/SDK (see docs/WINDOWS_11_FINGERPRINT_SETUP.md §3) before the bridge can capture fingerprints." }
+    else { Write-Warn "$dll not found in standard DigitalPersona folders — install the DigitalPersona U.are.U Runtime/SDK once if not yet installed." }
 }
 
-# ---- Task definition ------------------------------------------------------
-$action = New-ScheduledTaskAction -Execute $Bat -WorkingDirectory $BridgeDir
+# Read-only check for attached DigitalPersona USB device (VID_05BA) and Windows service.
+try {
+    $dpDevices = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match 'VID_05BA' }
+    if ($dpDevices) {
+        foreach ($d in $dpDevices) {
+            Write-Ok "DigitalPersona USB device detected: $($d.FriendlyName) [$($d.Status)]"
+        }
+    } else {
+        Write-Warn 'No DigitalPersona USB reader (VID_05BA) is currently plugged in; the bridge will detect it automatically when plugged in.'
+    }
+} catch {
+    Write-Status "PnP device query skipped: $($_.Exception.Message)"
+}
 
-# Logon trigger: starts with the reception session. A short delay lets the
-# desktop and the USB stack settle before the bridge claims the reader.
-$trigger = New-ScheduledTaskTrigger -AtLogOn -Delay (New-TimeSpan -Seconds 30)
+foreach ($svcName in @('DpHost', 'DpHostW', 'WbioSrvc')) {
+    $svc = Get-Service -Name $svcName -ErrorAction SilentlyContinue
+    if ($svc) {
+        if ($svc.Status -eq 'Running') { Write-Ok "Windows service '$svcName' is Running." }
+        else { Write-Warn "Windows service '$svcName' is $($svc.Status). Start it in Services if the reader reports service_unavailable." }
+    }
+}
+
+# Prefer windowless VBS launcher so closing a terminal cannot kill the bridge.
+if (Test-Path $HiddenVbs -PathType Leaf) {
+    $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument """$HiddenVbs""" -WorkingDirectory $BridgeDir
+} else {
+    $action = New-ScheduledTaskAction -Execute $Bat -WorkingDirectory $BridgeDir
+}
+
+# Trigger at logon + short 10s delay so USB PnP and DpHost finish booting.
+$trigger = New-ScheduledTaskTrigger -AtLogOn -Delay (New-TimeSpan -Seconds 10)
 $trigger.Enabled = $true
 
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
     -LogonType InteractiveToken -RunLevel LeastPrivilege
 
-# Repair 2026-11-22: this settings block used to pass -DontHardTerminate:$false.
-# New-ScheduledTaskSettingsSet has NO such parameter (the real switch is
-# -DisallowHardTerminate), so with $ErrorActionPreference = 'Stop' the cmdlet
-# raised NamedParameterNotFound and the script terminated HERE — before
-# Register-ScheduledTask ever ran. The "J-ONE Fingerprint Bridge" task was
-# therefore never registered, the bridge never auto-started at logon, and every
-# reception PC reported "Fingerprint bridge is not running on this computer"
-# after each restart. Hard-terminate is ALLOWED by default (that is what the
-# dropped switch asked for), so simply removing the invalid parameter restores
-# the intended behaviour.
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
@@ -172,65 +161,71 @@ $settings = New-ScheduledTaskSettingsSet `
 
 $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings
 
-# ---- Register -------------------------------------------------------------
 try {
     if ($Force) {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     }
     Register-ScheduledTask -TaskName $TaskName -InputObject $task -User "$env:USERDOMAIN\$env:USERNAME" `
-        -Force:$Force -ErrorAction Stop
-    Write-Ok "Scheduled Task '$TaskName' registered — starts at logon for $env:USERDOMAIN\$env:USERNAME."
+        -Force:$Force -ErrorAction Stop | Out-Null
+    Write-Ok "Scheduled Task '$TaskName' registered — starts automatically at logon for $env:USERDOMAIN\$env:USERNAME."
 } catch {
-    Write-Status "Failed to register the task: $($_.Exception.Message)"
-    Write-Status "Run this script as the reception operator (not SYSTEM). Administrative rights may be needed to write to $BridgeDir."
+    Write-Status "Failed to register Scheduled Task: $($_.Exception.Message)"
     exit 1
 }
 
-# ---- Start Menu shortcut ---------------------------------------------------
-# The desk page tells the operator "Start -> J-ONE Fingerprint Bridge". Before
-# this, no program with that name existed anywhere on the workstation: the only
-# entry point was a .bat file inside the bridge folder, so the one instruction
-# the page gave could not be followed. The shortcut is a link to the same
-# foreground launcher the Scheduled Task runs.
 try {
     $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
     if (Test-Path $startMenu) {
         $linkPath = Join-Path $startMenu 'J-ONE Fingerprint Bridge.lnk'
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($linkPath)
-        $shortcut.TargetPath = $Bat
+        if (Test-Path $HiddenVbs -PathType Leaf) {
+            $shortcut.TargetPath = 'wscript.exe'
+            $shortcut.Arguments = """$HiddenVbs"""
+        } else {
+            $shortcut.TargetPath = $Bat
+        }
         $shortcut.WorkingDirectory = $BridgeDir
         $shortcut.WindowStyle = 7
-        $shortcut.Description = 'Starts the J-ONE fingerprint bridge for the DigitalPersona 4500 reader on this workstation.'
+        $shortcut.Description = 'Starts the J-ONE fingerprint bridge for the DigitalPersona 4500 reader.'
         $shortcut.Save()
         Write-Ok "Start Menu shortcut created: $linkPath"
-    } else {
-        Write-Warn "The Start Menu folder was not found; no shortcut was created. Start the bridge with $Bat instead."
     }
 } catch {
-    Write-Warn "The Start Menu shortcut could not be created ($($_.Exception.Message)). Start the bridge with $Bat instead."
+    Write-Warn "Start Menu shortcut could not be created ($($_.Exception.Message))."
 }
 
 if ($StartNow) {
     try {
         Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-        Start-Sleep -Seconds 3
-        $probe = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8787/health' -TimeoutSec 5
-        if ($probe.StatusCode -eq 200) { Write-Ok 'The bridge answered /health after starting.' }
-        else { Write-Warn "The bridge started but /health answered HTTP $($probe.StatusCode)." }
+        $healthy = $false
+        for ($i = 0; $i -lt 8; $i++) {
+            Start-Sleep -Seconds 1
+            try {
+                $probe = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8787/health' -TimeoutSec 2
+                if ($probe.StatusCode -eq 200) {
+                    $healthy = $true
+                    break
+                }
+            } catch {
+                # still starting
+            }
+        }
+        if ($healthy) {
+            Write-Ok 'Bridge is running and answered http://127.0.0.1:8787/health.'
+            try {
+                $st = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8787/status' -TimeoutSec 3
+                Write-Status ("Current /status: " + $st.Content)
+            } catch {}
+        } else {
+            Write-Warn "Task started, but http://127.0.0.1:8787/health did not answer within 8s. Run `"$Bat`" once in a terminal or check %LOCALAPPDATA%\JONE\fingerprint_bridge.log."
+        }
     } catch {
-        Write-Warn "The task was registered but the bridge did not answer /health: $($_.Exception.Message). Start it once by hand with $Bat to see the reason."
+        Write-Warn "Task registered, but Start-ScheduledTask failed: $($_.Exception.Message)"
     }
 }
 
 Write-Status ''
-Write-Status "Next steps:"
-Write-Status "  1. Confirm the bridge works in the foreground:"
-Write-Status "     cd \"$BridgeDir\""
-Write-Status "     .\\run_fingerprint_bridge.bat"
-Write-Status "  2. In another window:  curl.exe http://127.0.0.1:8787/health"
-Write-Status "  3. Log off and log back on — the task starts the bridge automatically."
-Write-Status "  4. To stop the bridge: Task Manager -> 'J-ONE Fingerprint Bridge' -> End task."
-Write-Status "  5. To remove the task: powershell -ExecutionPolicy Bypass -File install_service.ps1 -Uninstall"
-Write-Status "  6. Or press the Windows key and type 'J-ONE Fingerprint Bridge' to start it by hand."
+Write-Status 'Setup complete. Bridge runs automatically at logon and stays resident in the background.'
+Write-Status "Logs: $env:LOCALAPPDATA\JONE\fingerprint_bridge.log"
 exit 0

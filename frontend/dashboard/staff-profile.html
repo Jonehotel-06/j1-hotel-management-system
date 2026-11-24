@@ -246,19 +246,19 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.35"></script>
-<script src="../js/config.js?v=1.1.35"></script>
-<script src="../js/utils.js?v=1.1.35"></script>
-<script src="../js/icons.js?v=1.1.35"></script>
-<script src="../js/api.js?v=1.1.35"></script>
-<script src="../js/theme.js?v=1.1.35"></script>
-<script src="../js/ui.js?v=1.1.35"></script>
-<script src="../js/auth.js?v=1.1.35"></script>
-<script src="../js/navigation.js?v=1.1.35"></script>
-<script src="../js/dashboard.js?v=1.1.35"></script>
-<script src="../js/table-fit.js?v=1.1.35"></script>
-<script src="../js/biometrics.js?v=1.1.35"></script>
-<script src="../js/reader-check.js?v=1.1.35"></script>
+<script src="../js/runtime-config.js?v=1.1.36"></script>
+<script src="../js/config.js?v=1.1.36"></script>
+<script src="../js/utils.js?v=1.1.36"></script>
+<script src="../js/icons.js?v=1.1.36"></script>
+<script src="../js/api.js?v=1.1.36"></script>
+<script src="../js/theme.js?v=1.1.36"></script>
+<script src="../js/ui.js?v=1.1.36"></script>
+<script src="../js/auth.js?v=1.1.36"></script>
+<script src="../js/navigation.js?v=1.1.36"></script>
+<script src="../js/dashboard.js?v=1.1.36"></script>
+<script src="../js/table-fit.js?v=1.1.36"></script>
+<script src="../js/biometrics.js?v=1.1.36"></script>
+<script src="../js/reader-check.js?v=1.1.36"></script>
 <script>
 JONE.ui.initChrome();
 var __spAllowed = JONE.dashboard.boot(["admin", "general_manager", "procurement_officer"]);
@@ -628,25 +628,73 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
      first thing an operator saw was a capture failure caused by a permission
      prompt they were never shown. */
   var readerCheck = (window.JONE.readerCheck || null);
-  if (readerCheck) readerCheck.mount({ button: "#sp-btn-check-reader", host: "#sp-reader-check" });
+  var enrollBtn = document.getElementById("sp-btn-enroll-fp");
+  var checkHost = document.getElementById("sp-reader-check");
+  var enrollBusy = false;
+  var latestEnrollReport = null;
+  function gateEnrollButton(report) {
+    latestEnrollReport = report || latestEnrollReport;
+    if (!enrollBtn) return;
+    var bio = window.JONE && window.JONE.biometrics;
+    var ready = !enrollBusy && !!(bio && typeof bio.isCaptureReady === "function" ? bio.isCaptureReady(latestEnrollReport) : (latestEnrollReport && latestEnrollReport.ready));
+    enrollBtn.disabled = !ready;
+    enrollBtn.setAttribute("aria-disabled", ready ? "false" : "true");
+    if (ready) enrollBtn.removeAttribute("title");
+    else enrollBtn.setAttribute("title", (latestEnrollReport && (latestEnrollReport.ui_label || latestEnrollReport.detail)) || "Fingerprint reader not connected");
+  }
+  gateEnrollButton(null);
+  var mountedCheck = readerCheck
+    ? readerCheck.mount({
+        button: "#sp-btn-check-reader",
+        host: "#sp-reader-check",
+        onStateChange: gateEnrollButton
+      })
+    : null;
+  if (window.JONE.biometrics && typeof window.JONE.biometrics.startReaderMonitor === "function") {
+    window.JONE.biometrics.startReaderMonitor({
+      autoInitialize: true,
+      intervalMs: 2000,
+      isBusy: function () { return enrollBusy; },
+      onStatus: function (report) {
+        if (mountedCheck && typeof mountedCheck.renderReport === "function") {
+          mountedCheck.renderReport(report);
+        } else {
+          gateEnrollButton(report);
+        }
+      }
+    });
+  }
 
-  document.getElementById("sp-btn-enroll-fp").addEventListener("click", async function(){
+  enrollBtn.addEventListener("click", async function(){
+    if (enrollBusy) return;
+    enrollBusy = true;
+    gateEnrollButton(latestEnrollReport);
     try {
       var email = (fullData && fullData.user && fullData.user.email) || "";
       if (readerCheck) {
-        var report = await readerCheck.check(document.getElementById("sp-reader-check"));
+        var report = await readerCheck.check(checkHost, document.getElementById("sp-btn-check-reader"), gateEnrollButton);
         if (!report || !report.ready) {
           JONE.ui.toast((report && report.detail) || "The fingerprint reader is not ready on this workstation.", "error");
           return;
         }
       }
-      var probe = await JONE.biometrics.captureMinutiaeProbe({ seed: email });
+      var probe = await JONE.biometrics.captureMinutiaeProbe({
+        seed: email,
+        onCaptureState: function (payload) {
+          if (mountedCheck && typeof mountedCheck.renderCaptureState === "function") {
+            mountedCheck.renderCaptureState(payload);
+          }
+        }
+      });
       var ep = window.APP_CONFIG.API_ENDPOINTS.fingerprintStaff + encodeURIComponent(userId) + "/";
       await window.API.post(ep, { action: "enroll", minutiae: probe, finger_position: "RIGHT_INDEX", auto_approve: true });
-      JONE.ui.toast("Fingerprint enrolled and approved.", "success");
+      JONE.ui.toast("Fingerprint captured successfully. Enrollment approved.", "success");
       loadFullProfile();
     } catch (err) {
       JONE.ui.toast((err && err.message) || "Fingerprint enrollment failed.", "error");
+    } finally {
+      enrollBusy = false;
+      gateEnrollButton(latestEnrollReport);
     }
   });
 
@@ -875,8 +923,8 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
   loadFullProfile();
 })();
 </script>
-<script src="../js/pwa.js?v=1.1.35"></script>
-<script src="../js/version.js?v=1.1.35"></script>
-<script src="../js/update-checker.js?v=1.1.35"></script>
+<script src="../js/pwa.js?v=1.1.36"></script>
+<script src="../js/version.js?v=1.1.36"></script>
+<script src="../js/update-checker.js?v=1.1.36"></script>
 </body>
 </html>

@@ -48,14 +48,22 @@
   /* Human label for each state the transport can report. Kept in one place so
      the toast, the panel and the console all say the same thing. */
   var LABELS = {
-    ready: "Reader ready",
-    checking: "Checking…",
+    ready: "Fingerprint reader ready",
+    checking: "Initializing fingerprint reader",
     wrong_workstation: "Open this on the reception workstation",
     permission_blocked: "Browser blocked local network access",
-    bridge_unreachable: "Bridge not running",
-    bridge_timeout: "Bridge did not answer",
-    reader_not_ready: "Bridge running, reader not ready",
-    unauthorized: "Reader busy or access denied"
+    bridge_unreachable: "Biometric service unavailable",
+    bridge_timeout: "Biometric service unavailable",
+    reader_not_ready: "Fingerprint reader not connected",
+    usb_detected: "Reader detected",
+    initializing: "Initializing fingerprint reader",
+    reconnecting: "Reconnecting to fingerprint reader",
+    driver_missing: "Driver/interface unavailable",
+    sdk_unavailable: "Driver/interface unavailable",
+    service_unavailable: "Biometric service unavailable",
+    capturing: "Reading fingerprint",
+    capture_success: "Fingerprint captured successfully",
+    unauthorized: "Reading fingerprint"
   };
 
   function el(tag, className, text) {
@@ -66,10 +74,10 @@
   }
 
   /* Render one describeReader() report into *host*. The report already tells
-     six genuinely different failures apart (see js/biometrics.js), so the panel
+     genuinely different failures apart (see js/biometrics.js), so the panel
      only has to pick the right sentence and the right next action. */
   /* The single state key for a report. Also published as data-state on the host
-     so a page (and the test suite) can tell the six situations apart without
+     so a page (and the test suite) can tell the situations apart without
      parsing sentences. */
   function stateKey(report) {
     if (!report) return "unknown";
@@ -83,38 +91,37 @@
     return "reader_not_ready";
   }
 
+  function badgeLabelForReport(report, state) {
+    if (!report) return LABELS.reader_not_ready;
+    if (state === "wrong_workstation") return LABELS.wrong_workstation;
+    if (state === "ready") return LABELS.ready;
+    if (state === "checking") return LABELS.checking;
+    if (state === "bridge_timeout") return LABELS.bridge_timeout;
+    if (state === "bridge_unreachable") return LABELS.bridge_unreachable;
+    if (state === "permission_blocked") return LABELS.permission_blocked;
+    if (state === "busy") return LABELS.unauthorized;
+    if (report.ui_label) return report.ui_label;
+    var st = String(report.status || "").toLowerCase();
+    return LABELS[st] || LABELS.reader_not_ready;
+  }
+
   function render(host, report, onRetry) {
     if (!host) return;
     host.replaceChildren();
-    var status = report && report.status;
     var state = stateKey(report);
     host.setAttribute("data-state", state);
     if (report && report.mode) host.setAttribute("data-mode", report.mode);
     var row = el("div", "reader-check-row");
-    var badge = el("span", "badge", LABELS.ready);
-    if (state === "wrong_workstation") {
-      badge.textContent = LABELS.wrong_workstation;
+    var badge = el("span", "badge", badgeLabelForReport(report, state));
+    if (state === "wrong_workstation" || state === "busy") {
       badge.className = "badge badge-warning";
     } else if (state === "ready") {
-      badge.textContent = LABELS.ready;
       badge.className = "badge";
     } else if (state === "checking") {
-      badge.textContent = LABELS.checking;
       badge.className = "badge badge-muted";
-    } else if (state === "bridge_timeout") {
-      badge.textContent = LABELS.bridge_timeout;
+    } else if (state === "bridge_timeout" || state === "bridge_unreachable" || state === "permission_blocked") {
       badge.className = "badge badge-danger";
-    } else if (state === "bridge_unreachable") {
-      badge.textContent = LABELS.bridge_unreachable;
-      badge.className = "badge badge-danger";
-    } else if (state === "permission_blocked") {
-      badge.textContent = LABELS.permission_blocked;
-      badge.className = "badge badge-danger";
-    } else if (state === "busy") {
-      badge.textContent = LABELS.unauthorized;
-      badge.className = "badge badge-warning";
     } else {
-      badge.textContent = LABELS.reader_not_ready;
       badge.className = "badge badge-warning";
     }
     row.appendChild(badge);
@@ -156,17 +163,66 @@
     } catch (_) { return false; }
   }
 
-  async function check(host, button) {
+  var hostCallbacks = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function notifyHost(host, report) {
+    if (!host || !hostCallbacks) return;
+    var cb = hostCallbacks.get(host);
+    if (typeof cb === "function") {
+      try { cb(report); } catch (_) {}
+    }
+  }
+
+  function renderCaptureState(host, payload) {
+    if (!host || !payload) return;
+    var state = String(payload.state || "");
+    if (state === "capturing") {
+      render(host, {
+        status: "busy",
+        bridge_reachable: true,
+        mode: bio() && bio().workstationMode ? bio().workstationMode() : "desktop",
+        ui_label: LABELS.capturing,
+        detail: "Place the finger flat on the DigitalPersona 4500 sensor...",
+        code: "CAPTURING"
+      });
+    } else if (state === "capture_success") {
+      render(host, {
+        status: "connected",
+        ready: true,
+        bridge_reachable: true,
+        mode: bio() && bio().workstationMode ? bio().workstationMode() : "desktop",
+        ui_label: LABELS.capture_success,
+        detail: LABELS.capture_success + "."
+      }, function () { check(host); });
+    } else if (state === "capture_failed") {
+      render(host, {
+        status: "communication_failure",
+        ready: false,
+        bridge_reachable: true,
+        mode: bio() && bio().workstationMode ? bio().workstationMode() : "desktop",
+        ui_label: "Capture failed",
+        detail: payload.detail || "Fingerprint capture failed. Place the finger flat on the sensor and try again.",
+        code: "CAPTURE_FAILED"
+      }, function () { check(host); });
+    }
+  }
+
+  async function check(host, button, onStateChange) {
     /* Two presses must not start two detection sequences: the second one would
        race the first for the browser's permission prompt and the reader. */
     if (running) return null;
+    if (host && typeof onStateChange === "function" && hostCallbacks) {
+      hostCallbacks.set(host, onStateChange);
+    }
     if (pageRemainsBusy()) {
-      render(host, {
+      var busyReport = {
         status: "busy", bridge_reachable: true, mode: bio() && bio().workstationMode(),
         detail: "A fingerprint action is already using the reader. Finish it (or wait for it to " +
           "finish) and check again — starting a second read now would interrupt the first.",
         code: "READER_BUSY"
-      });
+      };
+      render(host, busyReport);
+      notifyHost(host, busyReport);
       return null;
     }
     running = true;
@@ -175,7 +231,7 @@
       button.setAttribute("aria-busy", "true");
     }
     try {
-      return await runCheck(host);
+      return await runCheck(host, button);
     } finally {
       running = false;
       if (button) {
@@ -185,21 +241,25 @@
     }
   }
 
-  async function runCheck(host) {
+  async function runCheck(host, button) {
     var api = bio();
     if (!api) {
-      render(host, {
+      var missingReport = {
         status: "unavailable", bridge_reachable: false, mode: "desktop",
         detail: "The biometrics module did not load on this page. Reload the page and try again.",
         code: "MODULE_MISSING"
-      });
+      };
+      render(host, missingReport);
+      notifyHost(host, missingReport);
       return null;
     }
-    render(host, {
+    var checkingReport = {
       status: "checking", bridge_reachable: false, mode: api.workstationMode(),
       detail: "Asking this browser for local network access, then checking the bridge at " +
         api.getBridgeUrl() + "…", code: "CHECKING"
-    });
+    };
+    render(host, checkingReport);
+    notifyHost(host, checkingReport);
     var report;
     try {
       report = await api.describeReader({ requestPermission: true, initialize: true });
@@ -210,7 +270,8 @@
         code: (err && err.code) || "CHECK_FAILED"
       };
     }
-    render(host, report, function () { check(host); });
+    render(host, report, function () { check(host, button); });
+    notifyHost(host, report);
     return report;
   }
 
@@ -224,6 +285,9 @@
       ? doc.querySelector(options.button) : options.button;
     var host = typeof options.host === "string"
       ? doc.querySelector(options.host) : options.host;
+    if (host && typeof options.onStateChange === "function" && hostCallbacks) {
+      hostCallbacks.set(host, options.onStateChange);
+    }
     /* Nothing has been observed yet, and the panel says so. Before this the
        host was either empty (which reads as "fine") or carried a sentence from
        a gesture-less boot that could not be trusted. */
@@ -234,12 +298,28 @@
     }
     if (button) {
       button.hidden = false;
-      button.addEventListener("click", function () { check(host, button); });
+      button.addEventListener("click", function () { check(host, button, options.onStateChange); });
     }
-    var run = function () { return check(host, button); };
-    return { run: run, host: host, button: button };
+    var run = function () { return check(host, button, options.onStateChange); };
+    return {
+      run: run,
+      host: host,
+      button: button,
+      renderReport: function (report) {
+        render(host, report, function () { check(host, button, options.onStateChange); });
+        notifyHost(host, report);
+      },
+      renderCaptureState: function (payload) { renderCaptureState(host, payload); }
+    };
   }
 
   window.JONE = window.JONE || {};
-  window.JONE.readerCheck = { check: check, mount: mount, render: render, stateKey: stateKey, LABELS: LABELS };
+  window.JONE.readerCheck = {
+    check: check,
+    mount: mount,
+    render: render,
+    renderCaptureState: renderCaptureState,
+    stateKey: stateKey,
+    LABELS: LABELS
+  };
 })(window);

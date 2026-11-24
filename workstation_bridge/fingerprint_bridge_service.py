@@ -1,981 +1,2101 @@
-#!/usr/bin/env python3
-"""J-ONE Fingerprint Bridge — Windows 11 workstation service (DigitalPersona 4500).
+"""J-ONE Hotel Management System — Workstation Fingerprint Bridge (Windows 11).
 
-WHAT THIS IS
-============
-The fingerprint reader is a USB device plugged into ONE Windows workstation.
-No browser and no data-centre server can reach it. This small service runs on
-that workstation, owns the reader through the vendor SDK (``dpfpdd.dll`` +
-``dpfj.dll`` from the HID Global / DigitalPersona U.are.U SDK), and exposes a
-loopback-only HTTP API that the J-ONE desk pages call directly:
+Runs ONLY on the reception/enrolment workstation as a single-instance loopback
+HTTP service (``http://127.0.0.1:8787`` by default). The browser page served
+from ``https://jonehotels.com`` calls this bridge to detect, initialize, and
+capture from the attached DigitalPersona U.are.U 4500 USB fingerprint reader
+without installing browser plugins or exposing the reader over the LAN.
 
-    GET  /health      liveness of this service (no device access)
-    GET  /status      honest reader status (device, driver, SDK, busy)
-    POST /initialize  (re)enumerate + open the reader after a restart/replug
-    POST /capture     capture one finger and return ISO/IEC 19794-2 minutiae
-
-Security posture
-----------------
-* Binds 127.0.0.1 only by default — not reachable from the hotel LAN.
-* Holds NO credential: it cannot verify, enrol, clock anyone in, or call the
-  API. Verification stays server-side, on the JWT-authenticated endpoints.
-* Only *minutiae* leave the process. The captured grayscale image is discarded
-  immediately and is never written to disk.
-* Origin allowlist (CORS) is explicit: https://jonehotels.com,
-  https://www.jonehotels.com and local development origins. Any other page that
-  tries to call the bridge gets no CORS grant, so a random site the operator
-  visits cannot drive the reader.
-* No simulation mode exists here. If the reader is absent or the SDK cannot be
-  loaded, the bridge says so; it never fabricates a capture.
-
-Installation, driver/SDK layout, the Windows service registration and the
-troubleshooting matrix are in ``docs/WINDOWS_11_FINGERPRINT_SETUP.md``.
-
-Run:
-    python fingerprint_bridge_service.py                # start on 127.0.0.1:8787
-    python fingerprint_bridge_service.py --diagnose     # print device/SDK report
-    python fingerprint_bridge_service.py --port 8787 --allow-origin https://jonehotels.com
-
-Requires: Windows 10/11, 64-bit Python 3.9+, DigitalPersona U.are.U 4500 driver
-and the U.are.U SDK (which provides dpfpdd.dll and dpfj.dll). No third-party
-Python packages.
+Architecture & hardware invariants
+----------------------------------
+1. Windows-native USB monitoring (``SetupAPI`` + ``CfgMgr32`` + ``WM_DEVICECHANGE``)
+   detects DigitalPersona hardware (``VID_05BA``) insertion, removal, PnP driver
+   problem codes, and DigitalPersona Windows service (``DpHost``/``DpHostW``)
+   state in real time.
+2. DigitalPersona U.are.U SDK (``dpfpdd.dll`` + ``dpfj.dll``) ctypes bindings
+   match the official SDK C ABI (``dpfpdd.h`` and ``dpfj.h``):
+   - ``_DPFPDD_DEV_INFO`` with ``name[1024]``, ``descr`` (3x128), ``id`` (VID/PID),
+     ``ver``, ``modality``, ``technology``;
+   - ``dpfpdd_query_devices`` handling ``DPFPDD_E_MORE_DATA`` (``0x05BA000D``);
+   - ``dpfpdd_open(dev_info.name, &dev)``;
+   - ``dpfpdd_capture(dev, param, timeout_ms, result, &size, buf)`` with full
+     ``_DPFPDD_CAPTURE_RESULT`` + ``_DPFPDD_IMAGE_INFO`` and ``PIXEL_BUFFER=0`` /
+     ``500`` DPI;
+   - ``dpfj_create_fmd_from_raw`` with ``DPFJ_FMD_ISO_19794_2_2005=0x01010001``
+     (and ``DPFJ_FMD_ANSI_378_2004=0x001B0001`` fallback).
+3. Background monitor thread automatically initializes newly connected readers,
+   retries delayed Windows startup/driver init, and cleanly recovers/reconnects
+   after USB unplug/replug without manual intervention or page refresh.
+4. Security: binds ``127.0.0.1`` only, enforces an explicit Origin allowlist
+   (never ``*``), sends ``Access-Control-Allow-Private-Network: true`` for
+   Chromium Local Network Access, never synthesizes fake fingerprints, and
+   returns extracted ISO/ANSI minutiae points only (never raw fingerprint images).
 """
 from __future__ import annotations
 
 import argparse
 import ctypes
+from ctypes import wintypes
+import hashlib
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
+from pathlib import Path
 import platform
+import queue
+import re
+import signal
+import socket
 import sys
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-try:  # Optional import: this module must stay importable on Linux/CI too.
-    from . import iso19794_2
-except ImportError:  # pragma: no cover - direct script execution
-    import iso19794_2  # type: ignore
+import iso19794_2
 
-SERVICE_NAME = "jone-fingerprint-bridge"
-SERVICE_VERSION = "2.1.0"
+# ---------------------------------------------------------------------------
+# Service defaults & status vocabulary
+# ---------------------------------------------------------------------------
+
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = int(os.environ.get("JONE_FINGERPRINT_BRIDGE_PORT", "8787"))
-
-DEFAULT_ALLOWED_ORIGINS = (
+DEFAULT_PORT = 8787
+SERVICE_VERSION = "2.1.0"
+MIN_CAPTURE_TIMEOUT_MS = 5000
+MAX_CAPTURE_TIMEOUT_MS = 60000
+DEFAULT_ALLOWED_ORIGINS: Tuple[str, ...] = (
     "https://jonehotels.com",
     "https://www.jonehotels.com",
-    "http://localhost:5500",
-    "http://127.0.0.1:5500",
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
+    "https://api.jonehotels.com",
 )
 
-# ---------------------------------------------------------------------------
-# Reader status vocabulary — MUST match frontend/js/biometrics.js.
-# ---------------------------------------------------------------------------
+DIGITALPERSONA_VID = 0x05BA
+DIGITALPERSONA_PIDS: Dict[int, str] = {
+    0x000A: "DigitalPersona U.are.U 4500 Fingerprint Reader",
+    0x0007: "DigitalPersona U.are.U 4000B Fingerprint Reader",
+    0x0008: "DigitalPersona U.are.U 4000 Fingerprint Reader",
+    0x000B: "DigitalPersona U.are.U 5100 Fingerprint Reader",
+    0x000C: "DigitalPersona U.are.U 5160 Fingerprint Reader",
+}
+
 STATUS_CONNECTED = "connected"
-STATUS_INITIALIZING = "initializing"
 STATUS_NOT_CONNECTED = "not_connected"
+STATUS_USB_DETECTED = "usb_detected"
+STATUS_INITIALIZING = "initializing"
+STATUS_RECONNECTING = "reconnecting"
+STATUS_BUSY = "busy"
 STATUS_DRIVER_MISSING = "driver_missing"
 STATUS_SDK_UNAVAILABLE = "sdk_unavailable"
-STATUS_PERMISSION_DENIED = "permission_denied"
-STATUS_BUSY = "busy"
-STATUS_COMMUNICATION_FAILURE = "communication_failure"
-# The vendor DLLs are present (the driver IS installed) but dpfpdd_init() did
-# not succeed — in practice the DigitalPersona runtime service is stopped or
-# still starting. Distinct from driver_missing because the repair is different:
-# start a service, not reinstall a driver.
 STATUS_SERVICE_UNAVAILABLE = "service_unavailable"
+STATUS_COMMUNICATION_FAILURE = "communication_failure"
 
-STATUS_DETAILS = {
+# User-facing labels aligned with the frontend UI state contract.
+UI_LABELS: Dict[str, str] = {
+    STATUS_NOT_CONNECTED: "Fingerprint reader not connected",
+    STATUS_USB_DETECTED: "Reader detected",
+    STATUS_INITIALIZING: "Initializing fingerprint reader",
+    STATUS_RECONNECTING: "Reconnecting to fingerprint reader",
+    STATUS_DRIVER_MISSING: "Driver/interface unavailable",
+    STATUS_SDK_UNAVAILABLE: "Driver/interface unavailable",
+    STATUS_SERVICE_UNAVAILABLE: "Biometric service unavailable",
+    STATUS_COMMUNICATION_FAILURE: "Reconnecting to fingerprint reader",
+    STATUS_CONNECTED: "Fingerprint reader ready",
+    STATUS_BUSY: "Reading fingerprint",
+}
+
+STATUS_DETAILS: Dict[str, str] = {
     STATUS_CONNECTED: "Fingerprint reader connected and ready.",
-    STATUS_INITIALIZING: "Fingerprint reader is initializing. Please wait.",
-    STATUS_NOT_CONNECTED: "No fingerprint reader detected. Connect the DigitalPersona 4500 reader to this workstation.",
-    STATUS_DRIVER_MISSING: "The DigitalPersona 4500 driver (dpfpdd.dll) was not found. Install the U.are.U driver/SDK on this workstation.",
-    STATUS_SDK_UNAVAILABLE: "The reader driver is present but the DigitalPersona feature-extraction library (dpfj.dll) is not available.",
-    STATUS_PERMISSION_DENIED: "Windows denied access to the fingerprint reader. Close other fingerprint software or run the bridge as an administrator.",
-    STATUS_BUSY: "The fingerprint reader is busy with another capture.",
-    STATUS_COMMUNICATION_FAILURE: "Communication with the fingerprint reader failed. Unplug and reconnect the reader, then press Retry.",
+    STATUS_NOT_CONNECTED: (
+        "No fingerprint reader detected. Connect the DigitalPersona 4500 USB "
+        "reader to this workstation."
+    ),
+    STATUS_USB_DETECTED: (
+        "DigitalPersona USB reader detected on this workstation. Waiting for "
+        "driver interface..."
+    ),
+    STATUS_INITIALIZING: "Initializing DigitalPersona fingerprint reader...",
+    STATUS_RECONNECTING: (
+        "Reconnecting to the DigitalPersona fingerprint reader after a device "
+        "or USB state change..."
+    ),
+    STATUS_BUSY: "The fingerprint reader is busy.",
+    STATUS_DRIVER_MISSING: (
+        "DigitalPersona driver/SDK runtime (dpfpdd.dll) is unavailable on this "
+        "workstation. Install or repair the DigitalPersona U.are.U runtime once."
+    ),
+    STATUS_SDK_UNAVAILABLE: (
+        "DigitalPersona feature extraction SDK (dpfj.dll) is unavailable on this "
+        "workstation."
+    ),
     STATUS_SERVICE_UNAVAILABLE: (
-        "The DigitalPersona driver is installed but its Windows service is not running or did not "
-        "answer, so the reader cannot be opened. Start the \"DigitalPersona\" service (services.msc) "
-        "and replug the reader, then press Retry."
+        "The DigitalPersona driver is installed, but its Windows biometric "
+        "service (DpHost) is not running or failed to initialize."
+    ),
+    STATUS_COMMUNICATION_FAILURE: (
+        "The workstation lost communication with the fingerprint reader. "
+        "Reconnecting automatically..."
     ),
 }
 
-# dpfpdd.dll status codes. Only 0 (success) is treated as success; every other
-# value is reported verbatim (hex) rather than being mapped to a guessed name,
-# because the vendor's code list differs between SDK releases.
+# ---------------------------------------------------------------------------
+# DigitalPersona U.are.U SDK constants (from dpfpdd.h & dpfj.h)
+# ---------------------------------------------------------------------------
+
 DPFPDD_OK = 0
-# DPFPDD_E_DEVICE_FAILURE / DEVICE_MISSING / DEVICE_BUSY are the vendor's
-# "device went away" family. They are grouped only to decide ONE thing: whether
-# the handle must be re-opened before the next read (see _capture_raw).
-DPFPDD_DEVICE_GONE = (0x05BA0001, 0x05BA0002, 0x05BA0003, 0x05BA0004)
-DPFPDD_IMG_FMT_PIXEL_BUFFER = 1
+DPFPDD_E_FAILURE = 0x05BA000B
+DPFPDD_E_MORE_DATA = 0x05BA000D
+DPFPDD_E_INVALID_PARAMETER = 0x05BA0014
+DPFPDD_E_INVALID_DEVICE = 0x05BA0015
+DPFPDD_E_DEVICE_BUSY = 0x05BA001E
+DPFPDD_E_DEVICE_FAILURE = 0x05BA001F
+
+DPFPDD_DEVICE_GONE: Tuple[int, ...] = (
+    DPFPDD_E_INVALID_DEVICE,
+    DPFPDD_E_DEVICE_FAILURE,
+    DPFPDD_E_FAILURE,
+    # Legacy DigitalPersona error aliases retained for older SDK builds:
+    0x05BA0001,
+    0x05BA0002,
+    0x05BA0003,
+    0x05BA0004,
+)
+
+DPFPDD_STATUS_READY = 0
+DPFPDD_STATUS_BUSY = 1
+DPFPDD_STATUS_NEED_CALIBRATION = 2
+DPFPDD_STATUS_FAILURE = 3
+
+DPFPDD_IMG_FMT_PIXEL_BUFFER = 0
+DPFPDD_IMG_FMT_ANSI381 = 0x001B0401
+DPFPDD_IMG_FMT_ISOIEC19794 = 0x01010007
+
 DPFPDD_IMG_PROC_DEFAULT = 0
-DPFPDD_IMG_RES_500 = 1
-DPFPDD_MAX_IMAGE_BYTES = 500 * 1024  # generous: 500 dpi frames are ~250 KB
+DPFPDD_IMG_PROC_PIV = 1
+DPFPDD_IMG_PROC_ENHANCED = 2
+DPFPDD_IMG_RES_500 = 500
 
-# dpfj.dll format identifiers. The candidate lists are tried in order and the
-# winning combination is reported by --diagnose, so an SDK whose constants
-# differ is detected on the workstation instead of being assumed.
-FMD_FORMAT_CANDIDATES = (
-    ("ISO_19794_2_2005", 0x001B0100),
-    ("ANSI_378_2004", 0x001B0001),
+DPFPDD_QUALITY_GOOD = 0
+DPFPDD_QUALITY_NO_FINGER = 1 << 1
+DPFPDD_QUALITY_FAKE_FINGER = 1 << 2
+DPFPDD_QUALITY_TOO_SMALL = 1 << 3
+DPFPDD_QUALITY_TOO_LIGHT = 1 << 4
+DPFPDD_QUALITY_TOO_DARK = 1 << 5
+DPFPDD_QUALITY_TOO_NOISY = 1 << 6
+DPFPDD_QUALITY_LOW_CONTRAST = 1 << 7
+DPFPDD_QUALITY_NOT_ENOUGH_FEATURES = 1 << 8
+DPFPDD_QUALITY_NOT_CENTERED = 1 << 9
+DPFPDD_QUALITY_NOT_A_FINGER = 1 << 10
+DPFPDD_QUALITY_TOO_HIGH = 1 << 11
+DPFPDD_QUALITY_TOO_LOW = 1 << 12
+DPFPDD_QUALITY_TOO_LEFT = 1 << 13
+DPFPDD_QUALITY_TOO_RIGHT = 1 << 14
+DPFPDD_QUALITY_TOO_STRANGE = 1 << 15
+DPFPDD_QUALITY_TOO_FAST = 1 << 16
+DPFPDD_QUALITY_TOO_SKEWED = 1 << 17
+DPFPDD_QUALITY_TOO_SHORT = 1 << 18
+DPFPDD_QUALITY_TOO_SLOW = 1 << 19
+DPFPDD_QUALITY_SCAN_FAILURE = 1 << 31
+
+DPFJ_OK = 0
+DPFJ_E_MORE_DATA = 0x05BA000D
+DPFJ_FMD_ANSI_378_2004 = 0x001B0001
+DPFJ_FMD_ISO_19794_2_2005 = 0x01010001
+DPFJ_FID_ANSI_381_2004 = 0x001B0401
+DPFJ_FID_ISO_19794_4_2005 = 0x01010007
+
+FINGER_POSITION_CODES: Dict[str, int] = {
+    "UNKNOWN": 0,
+    "RIGHT_THUMB": 1,
+    "RIGHT_INDEX": 2,
+    "RIGHT_MIDDLE": 3,
+    "RIGHT_RING": 4,
+    "RIGHT_LITTLE": 5,
+    "LEFT_THUMB": 6,
+    "LEFT_INDEX": 7,
+    "LEFT_MIDDLE": 8,
+    "LEFT_RING": 9,
+    "LEFT_LITTLE": 10,
+}
+
+# Candidate installation folders for DigitalPersona U.are.U / HID SDK on Windows.
+_WINDOWS_DLL_DIRS: Tuple[Path, ...] = (
+    Path(r"C:\Program Files\DigitalPersona\Bin"),
+    Path(r"C:\Program Files\DigitalPersona\U.are.U SDK\Windows\Lib\x64"),
+    Path(r"C:\Program Files\DigitalPersona\U.are.U SDK\Windows\Lib\win32"),
+    Path(r"C:\Program Files\HID Global\DigitalPersona\U.are.U SDK\Windows\Lib\x64"),
+    Path(r"C:\Program Files\HID Global\DigitalPersona\U.are.U SDK\Windows\Lib\win32"),
+    Path(r"C:\Program Files\HID Global\Authentication\Bin"),
+    Path(r"C:\Program Files (x86)\DigitalPersona\Bin"),
+    Path(r"C:\Program Files (x86)\DigitalPersona\U.are.U SDK\Windows\Lib\win32"),
+    Path(r"C:\Windows\System32"),
 )
-FID_FORMAT_CANDIDATES = (
-    ("ANSI_381_2004", 0x001B1011),
-    ("ISO_19794_4_2005", 0x001B1110),
-)
-
-logger = logging.getLogger(SERVICE_NAME)
-
-
-class ReaderError(Exception):
-    """A reader operation failed. Carries a machine code and a user message.
-
-    ``retry`` marks a transient device fault (the USB handle went stale after a
-    replug or a driver restart). Only those may re-open the reader and capture
-    again — a genuine "no finger on the sensor" timeout is reported as-is.
-    """
-
-    def __init__(self, code: str, message: str, status: str = STATUS_COMMUNICATION_FAILURE,
-                 retry: bool = False, **extra: Any):
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.status = status
-        self.retry = retry
-        self.extra = extra
-
 
 # ---------------------------------------------------------------------------
-# DLL discovery
+# DigitalPersona U.are.U ctypes structures (dpfpdd.h)
 # ---------------------------------------------------------------------------
-def _candidate_dll_dirs() -> List[Path]:
-    """Directories the U.are.U SDK is installed into, most specific first."""
-    dirs: List[Path] = []
-    override = (os.environ.get("JONE_DPFP_DLL_DIR") or "").strip()
-    if override:
-        dirs.append(Path(override))
-    for env in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
-        base = (os.environ.get(env) or "").strip()
-        if not base:
-            continue
-        dirs.extend([
-            Path(base) / "DigitalPersona" / "U.are.U SDK" / "Windows" / "Lib" / "x64",
-            Path(base) / "DigitalPersona" / "U.are.U SDK" / "Windows" / "Lib" / "x86",
-            Path(base) / "HID Global" / "U.are.U SDK" / "Windows" / "Lib" / "x64",
-            Path(base) / "HID Global" / "DigitalPersona" / "U.are.U SDK" / "Windows" / "Lib" / "x64",
-            Path(base) / "Crossmatch" / "U.are.U SDK" / "Windows" / "Lib" / "x64",
-            Path(base) / "DigitalPersona" / "U.are.U 4500 Fingerprint Reader",
-            # The runtime (RTE) installer — the package the setup guide tells
-            # the operator to verify with Test-Path — drops both DLLs in Bin.
-            # The first revision never looked there, so a workstation that
-            # passed the guide's own check still reported driver_missing.
-            Path(base) / "DigitalPersona" / "Bin",
-            Path(base) / "HID Global" / "DigitalPersona" / "Bin",
-            Path(base) / "DigitalPersona" / "U.are.U SDK" / "Bin",
-        ])
-    system_root = (os.environ.get("SystemRoot") or r"C:\Windows")
-    dirs.append(Path(system_root) / "System32")
-    return [d for d in dirs if d and d.is_dir()]
 
 
-def find_dll(name: str) -> Optional[Path]:
-    """Locate a vendor DLL, honouring JONE_DPFP_DLL_DIR then the SDK layout."""
-    override = (os.environ.get("JONE_DPFP_DLL_DIR") or "").strip()
-    if override and (Path(override) / name).is_file():
-        return Path(override) / name
-    for directory in _candidate_dll_dirs():
-        candidate = directory / name
-        if candidate.is_file():
-            return candidate
-    return None
-
-
-# ---------------------------------------------------------------------------
-# ctypes structures (dpfpdd.h)
-# ---------------------------------------------------------------------------
-class _DPFPDD_CAPTURE_PARAM(ctypes.Structure):
+class _DPFPDD_VER_INFO(ctypes.Structure):
     _fields_ = [
-        ("size", ctypes.c_uint32),
-        ("image_fmt", ctypes.c_uint32),
-        ("image_proc", ctypes.c_uint32),
-        ("image_res", ctypes.c_uint32),
+        ("major", ctypes.c_int),
+        ("minor", ctypes.c_int),
+        ("maintenance", ctypes.c_int),
     ]
 
 
-class _DPFPDD_CAPTURE_RESULT(ctypes.Structure):
+class _DPFPDD_VERSION(ctypes.Structure):
     _fields_ = [
-        ("success", ctypes.c_uint8),
-        ("quality", ctypes.c_uint32),
-        ("score", ctypes.c_uint32),
-        ("info", ctypes.c_uint32),
+        ("size", ctypes.c_uint),
+        ("lib_ver", _DPFPDD_VER_INFO),
+        ("api_ver", _DPFPDD_VER_INFO),
+    ]
+
+
+class _DPFPDD_HW_VERSION(ctypes.Structure):
+    _fields_ = [
+        ("hw_ver", _DPFPDD_VER_INFO),
+        ("fw_ver", _DPFPDD_VER_INFO),
+        ("bcd_rev", ctypes.c_uint16),
+    ]
+
+
+class _DPFPDD_DEV_DESCR(ctypes.Structure):
+    _fields_ = [
+        ("vendor_name", ctypes.c_char * 128),
+        ("product_name", ctypes.c_char * 128),
+        ("serial_num", ctypes.c_char * 128),
+    ]
+
+
+class _DPFPDD_DEV_ID(ctypes.Structure):
+    _fields_ = [
+        ("vendor_id", ctypes.c_uint16),
+        ("product_id", ctypes.c_uint16),
     ]
 
 
 class _DPFPDD_DEV_INFO(ctypes.Structure):
     _fields_ = [
-        ("size", ctypes.c_uint32),
-        ("vendor_name", ctypes.c_char * 128),
-        ("product_name", ctypes.c_char * 128),
-        ("serial_num", ctypes.c_char * 16),
+        ("size", ctypes.c_uint),
+        ("name", ctypes.c_char * 1024),
+        ("descr", _DPFPDD_DEV_DESCR),
+        ("id", _DPFPDD_DEV_ID),
+        ("ver", _DPFPDD_HW_VERSION),
+        ("modality", ctypes.c_uint),
+        ("technology", ctypes.c_uint),
     ]
 
 
-def _decode(raw: bytes) -> str:
-    return raw.split(b"\x00", 1)[0].decode("utf-8", "replace").strip()
+class _DPFPDD_DEV_STATUS(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint),
+        ("status", ctypes.c_uint),
+        ("finger_detected", ctypes.c_int),
+        ("data", ctypes.c_ubyte * 1),
+    ]
+
+
+class _DPFPDD_CAPTURE_PARAM(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint),
+        ("image_fmt", ctypes.c_uint),
+        ("image_proc", ctypes.c_uint),
+        ("image_res", ctypes.c_uint),
+    ]
+
+
+class _DPFPDD_IMAGE_INFO(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint),
+        ("width", ctypes.c_uint),
+        ("height", ctypes.c_uint),
+        ("res", ctypes.c_uint),
+        ("bpp", ctypes.c_uint),
+    ]
+
+
+class _DPFPDD_CAPTURE_RESULT(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint),
+        ("success", ctypes.c_int),
+        ("quality", ctypes.c_uint),
+        ("score", ctypes.c_uint),
+        ("info", _DPFPDD_IMAGE_INFO),
+    ]
 
 
 # ---------------------------------------------------------------------------
-# Reader
+# Logging & Windows single-instance / diagnostics helpers
 # ---------------------------------------------------------------------------
-class DigitalPersonaReader:
-    """Owns the attached DigitalPersona reader through the vendor SDK.
 
-    All device access is serialised by ``self._lock``: two captures at once is
-    the fastest way to make a reader look "broken", and the frontend reports
-    ``busy`` honestly instead.
-    """
+LOGGER = logging.getLogger("jone.fingerprint_bridge")
+
+
+def default_log_path() -> Path:
+    if platform.system() == "Windows":
+        base = Path(os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or ".")
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    return base / "JONE" / "fingerprint_bridge.log"
+
+
+def configure_logging(log_file: Optional[Path] = None, verbose: bool = False) -> None:
+    if LOGGER.handlers:
+        return
+    LOGGER.setLevel(logging.DEBUG if verbose else logging.INFO)
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    stream_handler = logging.StreamHandler(sys.stderr)
+    stream_handler.setFormatter(fmt)
+    LOGGER.addHandler(stream_handler)
+    target = log_file or default_log_path()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            target, maxBytes=2 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+        file_handler.setFormatter(fmt)
+        LOGGER.addHandler(file_handler)
+    except OSError:
+        pass
+
+
+def _decode_cstr(raw: bytes) -> str:
+    return raw.split(b"\x00", 1)[0].decode("utf-8", errors="replace").strip()
+
+
+def _format_rc(rc: int) -> str:
+    return f"0x{int(rc) & 0xFFFFFFFF:08X}"
+
+
+def _quality_explanation(quality: int) -> str:
+    if quality == DPFPDD_QUALITY_GOOD:
+        return "Capture did not succeed."
+    reasons = []
+    if quality & DPFPDD_QUALITY_NO_FINGER:
+        reasons.append("no finger detected on the sensor")
+    if quality & DPFPDD_QUALITY_FAKE_FINGER:
+        reasons.append("sensor rejected sample as non-live")
+    if quality & DPFPDD_QUALITY_TOO_SMALL:
+        reasons.append("fingerprint contact area was too small")
+    if quality & DPFPDD_QUALITY_TOO_LIGHT:
+        reasons.append("print was too faint — press slightly firmer")
+    if quality & DPFPDD_QUALITY_TOO_DARK:
+        reasons.append("print was too dark or wet — wipe sensor and finger")
+    if quality & DPFPDD_QUALITY_TOO_NOISY:
+        reasons.append("image was noisy — clean the sensor window")
+    if quality & DPFPDD_QUALITY_LOW_CONTRAST:
+        reasons.append("ridge contrast was too low")
+    if quality & DPFPDD_QUALITY_NOT_ENOUGH_FEATURES:
+        reasons.append("not enough ridge minutiae detected — center the finger pad")
+    if quality & DPFPDD_QUALITY_NOT_CENTERED:
+        reasons.append("finger was not centered on the glass")
+    if quality & DPFPDD_QUALITY_NOT_A_FINGER:
+        reasons.append("object on sensor was not a fingerprint")
+    if quality & (DPFPDD_QUALITY_TOO_HIGH | DPFPDD_QUALITY_TOO_LOW | DPFPDD_QUALITY_TOO_LEFT | DPFPDD_QUALITY_TOO_RIGHT):
+        reasons.append("finger was off-center on the sensor")
+    if quality & (DPFPDD_QUALITY_TOO_FAST | DPFPDD_QUALITY_TOO_SHORT):
+        reasons.append("finger was lifted too quickly")
+    if quality & DPFPDD_QUALITY_SCAN_FAILURE:
+        reasons.append("sensor scan failed")
+    if not reasons:
+        return f"Fingerprint capture quality check failed (code {_format_rc(quality)})."
+    return "Fingerprint capture failed: " + "; ".join(reasons) + ". Place the finger flat on the sensor and try again."
+
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+
+class ReaderError(Exception):
+    """Structured hardware/driver/capture exception mapped cleanly to HTTP JSON."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status: str = STATUS_COMMUNICATION_FAILURE,
+        reader_status: Optional[int] = None,
+        retry: bool = False,
+        http_status: int = 502,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
+        self.reader_status = reader_status
+        self.retry = retry
+        self.http_status = http_status
+
+
+# ---------------------------------------------------------------------------
+# Windows-native USB device & service detection (SetupAPI + CfgMgr32 + SCM)
+# ---------------------------------------------------------------------------
+
+_VID_PID_RE = re.compile(r"VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})", re.IGNORECASE)
+
+
+class UsbSnapshot:
+    """Point-in-time snapshot of DigitalPersona USB hardware & Windows service."""
+
+    def __init__(
+        self,
+        *,
+        usb_present: bool,
+        devices: Optional[List[Dict[str, Any]]] = None,
+        driver_problem_code: Optional[int] = None,
+        service_running: Optional[bool] = None,
+        service_name: str = "",
+        detection_method: str = "none",
+    ) -> None:
+        self.usb_present = bool(usb_present)
+        self.devices = list(devices or [])
+        self.driver_problem_code = driver_problem_code
+        self.service_running = service_running
+        self.service_name = service_name
+        self.detection_method = detection_method
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "usb_present": self.usb_present,
+            "devices": self.devices,
+            "driver_problem_code": self.driver_problem_code,
+            "service_running": self.service_running,
+            "service_name": self.service_name,
+            "detection_method": self.detection_method,
+        }
+
+
+class BaseUsbMonitor:
+    """Abstract USB & service monitor; subclassed for Windows and test doubles."""
+
+    def inspect(self) -> UsbSnapshot:
+        return UsbSnapshot(usb_present=False, detection_method="unsupported")
+
+    def start_event_listener(self, on_change: Callable[[], None]) -> None:
+        return None
+
+    def stop_event_listener(self) -> None:
+        return None
+
+
+class WindowsUsbMonitor(BaseUsbMonitor):
+    """Pure-ctypes Windows PnP SetupAPI + CfgMgr32 + WM_DEVICECHANGE + SCM monitor."""
+
+    DIGCF_PRESENT = 0x00000002
+    DIGCF_ALLCLASSES = 0x00000004
+    SPDRP_DEVICEDESC = 0x00000000
+    SPDRP_HARDWAREID = 0x00000001
+    SPDRP_SERVICE = 0x00000004
+    SPDRP_MFG = 0x0000000B
+    DN_HAS_PROBLEM = 0x00000400
+
+    SC_MANAGER_CONNECT = 0x0001
+    SERVICE_QUERY_STATUS = 0x0004
+    SERVICE_RUNNING = 0x00000004
+
+    WM_DEVICECHANGE = 0x0219
+    WM_QUIT = 0x0012
+    DBT_DEVICEARRIVAL = 0x8000
+    DBT_DEVICEREMOVECOMPLETE = 0x8004
+    DBT_DEVNODES_CHANGED = 0x0007
+    DBT_DEVTYP_DEVICEINTERFACE = 0x00000005
+    DEVICE_NOTIFY_WINDOW_HANDLE = 0x00000000
+    HWND_MESSAGE = ctypes.c_void_p(-3)
 
     def __init__(self) -> None:
-        # RLock, not Lock: capture() holds the lock while _capture_raw() may
-        # call initialize() (which re-enters it) when the device was never
-        # opened. With a plain Lock that first capture deadlocked forever
-        # and every capture ended as a frontend BRIDGE_TIMEOUT.
-        self._lock = threading.RLock()
-        self._dd = None            # dpfpdd.dll handle
-        self._fj = None            # dpfj.dll handle
-        self._device = ctypes.c_void_p(0)
-        self._device_open = False
-        self._serial = ""
-        self._product = ""
-        self._last_error = ""
-        self._fmd_format: Optional[Tuple[str, int]] = None
-        self._fid_format: Optional[Tuple[str, int]] = None
-        self._capturing = False
-        # dpfpdd_init() outcome, kept apart from "the DLL is missing" — see
-        # _load_dd(). Both are reported honestly by status().
-        self._init_failed = False
-        self._init_rc = 0
-        self._dd_path: Optional[Path] = None
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._hwnd = None
+        self._tid: Optional[int] = None
 
-    # -- introspection -----------------------------------------------------
+    def inspect(self) -> UsbSnapshot:
+        if platform.system() != "Windows":
+            return UsbSnapshot(usb_present=False, detection_method="non_windows")
+        devices, problem_code = self._enumerate_pnp_usb()
+        svc_running, svc_name = self._query_dp_service()
+        return UsbSnapshot(
+            usb_present=bool(devices),
+            devices=devices,
+            driver_problem_code=problem_code,
+            service_running=svc_running,
+            service_name=svc_name,
+            detection_method="windows_setupapi",
+        )
+
+    def _enumerate_pnp_usb(self) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        found: List[Dict[str, Any]] = []
+        first_problem: Optional[int] = None
+        try:
+            setupapi = ctypes.WinDLL("setupapi", use_last_error=True)
+            cfgmgr32 = ctypes.WinDLL("cfgmgr32", use_last_error=True)
+        except (OSError, AttributeError):
+            return found, None
+
+        class SP_DEVINFO_DATA(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("ClassGuid", ctypes.c_ubyte * 16),
+                ("DevInst", wintypes.DWORD),
+                ("Reserved", ctypes.c_size_t),
+            ]
+
+        setupapi.SetupDiGetClassDevsW.argtypes = [
+            ctypes.c_void_p, wintypes.LPCWSTR, wintypes.HWND, wintypes.DWORD
+        ]
+        setupapi.SetupDiGetClassDevsW.restype = ctypes.c_void_p
+        setupapi.SetupDiEnumDeviceInfo.argtypes = [
+            ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(SP_DEVINFO_DATA)
+        ]
+        setupapi.SetupDiEnumDeviceInfo.restype = wintypes.BOOL
+        setupapi.SetupDiGetDeviceRegistryPropertyW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(SP_DEVINFO_DATA),
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        setupapi.SetupDiGetDeviceRegistryPropertyW.restype = wintypes.BOOL
+        setupapi.SetupDiDestroyDeviceInfoList.argtypes = [ctypes.c_void_p]
+        setupapi.SetupDiDestroyDeviceInfoList.restype = wintypes.BOOL
+
+        cfgmgr32.CM_Get_DevNode_Status.argtypes = [
+            ctypes.POINTER(wintypes.ULONG),
+            ctypes.POINTER(wintypes.ULONG),
+            wintypes.DWORD,
+            wintypes.ULONG,
+        ]
+        cfgmgr32.CM_Get_DevNode_Status.restype = wintypes.DWORD
+
+        invalid_handle = ctypes.c_void_p(-1).value
+        hdev = setupapi.SetupDiGetClassDevsW(
+            None, "USB", None, self.DIGCF_PRESENT | self.DIGCF_ALLCLASSES
+        )
+        if not hdev or hdev == invalid_handle:
+            return found, None
+
+        def _get_prop(dev_info, prop_id: int) -> str:
+            buf = ctypes.create_unicode_buffer(1024)
+            req = wintypes.DWORD(0)
+            ok = setupapi.SetupDiGetDeviceRegistryPropertyW(
+                hdev, ctypes.byref(dev_info), prop_id, None,
+                buf, ctypes.sizeof(buf), ctypes.byref(req),
+            )
+            if not ok:
+                return ""
+            # MULTI_SZ hardware IDs contain embedded NULs; replace with spaces.
+            raw = ctypes.wstring_at(buf, max(0, (req.value // 2) - 1))
+            return raw.replace("\x00", " ").strip()
+
+        try:
+            idx = 0
+            dev_info = SP_DEVINFO_DATA()
+            dev_info.cbSize = ctypes.sizeof(SP_DEVINFO_DATA)
+            while setupapi.SetupDiEnumDeviceInfo(hdev, idx, ctypes.byref(dev_info)):
+                idx += 1
+                hw_id = _get_prop(dev_info, self.SPDRP_HARDWAREID)
+                if not hw_id:
+                    continue
+                match = _VID_PID_RE.search(hw_id)
+                if not match:
+                    continue
+                vid = int(match.group(1), 16)
+                pid = int(match.group(2), 16)
+                if vid != DIGITALPERSONA_VID:
+                    continue
+                desc = _get_prop(dev_info, self.SPDRP_DEVICEDESC)
+                mfg = _get_prop(dev_info, self.SPDRP_MFG)
+                svc = _get_prop(dev_info, self.SPDRP_SERVICE)
+                status_flags = wintypes.ULONG(0)
+                problem_num = wintypes.ULONG(0)
+                cm_rc = cfgmgr32.CM_Get_DevNode_Status(
+                    ctypes.byref(status_flags),
+                    ctypes.byref(problem_num),
+                    dev_info.DevInst,
+                    0,
+                )
+                has_problem = (cm_rc == 0) and bool(status_flags.value & self.DN_HAS_PROBLEM)
+                pcode = int(problem_num.value) if has_problem else None
+                if pcode is not None and first_problem is None:
+                    first_problem = pcode
+                found.append({
+                    "vid": f"0x{vid:04X}",
+                    "pid": f"0x{pid:04X}",
+                    "product": DIGITALPERSONA_PIDS.get(pid, desc or "DigitalPersona USB Reader"),
+                    "manufacturer": mfg,
+                    "service": svc,
+                    "hardware_id": hw_id.split(" ")[0],
+                    "problem_code": pcode,
+                })
+        finally:
+            setupapi.SetupDiDestroyDeviceInfoList(hdev)
+        return found, first_problem
+
+    def _query_dp_service(self) -> Tuple[Optional[bool], str]:
+        try:
+            advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        except (OSError, AttributeError):
+            return None, ""
+
+        class SERVICE_STATUS(ctypes.Structure):
+            _fields_ = [
+                ("dwServiceType", wintypes.DWORD),
+                ("dwCurrentState", wintypes.DWORD),
+                ("dwControlsAccepted", wintypes.DWORD),
+                ("dwWin32ExitCode", wintypes.DWORD),
+                ("dwServiceSpecificExitCode", wintypes.DWORD),
+                ("dwCheckPoint", wintypes.DWORD),
+                ("dwWaitHint", wintypes.DWORD),
+            ]
+
+        advapi32.OpenSCManagerW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
+        advapi32.OpenSCManagerW.restype = ctypes.c_void_p
+        advapi32.OpenServiceW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, wintypes.DWORD]
+        advapi32.OpenServiceW.restype = ctypes.c_void_p
+        advapi32.QueryServiceStatus.argtypes = [ctypes.c_void_p, ctypes.POINTER(SERVICE_STATUS)]
+        advapi32.QueryServiceStatus.restype = wintypes.BOOL
+        advapi32.CloseServiceHandle.argtypes = [ctypes.c_void_p]
+        advapi32.CloseServiceHandle.restype = wintypes.BOOL
+
+        scm = advapi32.OpenSCManagerW(None, None, self.SC_MANAGER_CONNECT)
+        if not scm:
+            return None, ""
+        try:
+            candidates = (
+                "DpHost",
+                "DpHostW",
+                "DigitalPersona Authentication Service",
+                "WbioSrvc",
+            )
+            found_any = False
+            for name in candidates:
+                svc = advapi32.OpenServiceW(scm, name, self.SERVICE_QUERY_STATUS)
+                if not svc:
+                    continue
+                found_any = True
+                try:
+                    st = SERVICE_STATUS()
+                    if advapi32.QueryServiceStatus(svc, ctypes.byref(st)):
+                        if st.dwCurrentState == self.SERVICE_RUNNING:
+                            return True, name
+                        return False, name
+                finally:
+                    advapi32.CloseServiceHandle(svc)
+            return (False, "") if not found_any else (None, "")
+        finally:
+            advapi32.CloseServiceHandle(scm)
+
+    def start_event_listener(self, on_change: Callable[[], None]) -> None:
+        if platform.system() != "Windows" or self._thread is not None:
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._run_message_loop,
+            args=(on_change,),
+            name="jone-usb-wm-devicechange",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop_event_listener(self) -> None:
+        self._stop_event.set()
+        if platform.system() == "Windows" and self._tid is not None:
+            try:
+                user32 = ctypes.WinDLL("user32", use_last_error=False)
+                user32.PostThreadMessageW(self._tid, self.WM_QUIT, 0, 0)
+            except OSError:
+                pass
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+
+    def _run_message_loop(self, on_change: Callable[[], None]) -> None:
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            self._tid = int(kernel32.GetCurrentThreadId())
+
+            WNDPROC = ctypes.WINFUNCTYPE(
+                ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+            )
+
+            class WNDCLASSEXW(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.UINT),
+                    ("style", wintypes.UINT),
+                    ("lpfnWndProc", WNDPROC),
+                    ("cbClsExtra", ctypes.c_int),
+                    ("cbWndExtra", ctypes.c_int),
+                    ("hInstance", wintypes.HINSTANCE),
+                    ("hIcon", wintypes.HICON),
+                    ("hCursor", wintypes.HCURSOR),
+                    ("hbrBackground", wintypes.HBRUSH),
+                    ("lpszMenuName", wintypes.LPCWSTR),
+                    ("lpszClassName", wintypes.LPCWSTR),
+                    ("hIconSm", wintypes.HICON),
+                ]
+
+            class GUID(ctypes.Structure):
+                _fields_ = [
+                    ("Data1", wintypes.DWORD),
+                    ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD),
+                    ("Data4", ctypes.c_ubyte * 8),
+                ]
+
+            class DEV_BROADCAST_DEVICEINTERFACE_W(ctypes.Structure):
+                _fields_ = [
+                    ("dbcc_size", wintypes.DWORD),
+                    ("dbcc_devicetype", wintypes.DWORD),
+                    ("dbcc_reserved", wintypes.DWORD),
+                    ("dbcc_classguid", GUID),
+                    ("dbcc_name", ctypes.c_wchar * 1),
+                ]
+
+            def wndproc(hwnd, msg, wparam, lparam):
+                if msg == self.WM_DEVICECHANGE and wparam in (
+                    self.DBT_DEVICEARRIVAL,
+                    self.DBT_DEVICEREMOVECOMPLETE,
+                    self.DBT_DEVNODES_CHANGED,
+                ):
+                    try:
+                        on_change()
+                    except Exception:
+                        pass
+                return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+            cb = WNDPROC(wndproc)
+            hinst = kernel32.GetModuleHandleW(None)
+            cls_name = f"JoneUsbWatch_{os.getpid()}"
+            wc = WNDCLASSEXW()
+            wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
+            wc.lpfnWndProc = cb
+            wc.hInstance = hinst
+            wc.lpszClassName = cls_name
+            if not user32.RegisterClassExW(ctypes.byref(wc)):
+                return
+
+            hwnd = user32.CreateWindowExW(
+                0, cls_name, "JONE USB Watch", 0, 0, 0, 0, 0,
+                self.HWND_MESSAGE, None, hinst, None,
+            )
+            if not hwnd:
+                return
+            self._hwnd = hwnd
+
+            # GUID_DEVINTERFACE_USB_DEVICE = {A5DCBF10-6530-11D2-901F-00C04FB951ED}
+            usb_guid = GUID(
+                0xA5DCBF10, 0x6530, 0x11D2,
+                (ctypes.c_ubyte * 8)(0x90, 0x1F, 0x00, 0xC0, 0x4F, 0xB9, 0x51, 0xED),
+            )
+            flt = DEV_BROADCAST_DEVICEINTERFACE_W()
+            flt.dbcc_size = ctypes.sizeof(DEV_BROADCAST_DEVICEINTERFACE_W)
+            flt.dbcc_devicetype = self.DBT_DEVTYP_DEVICEINTERFACE
+            flt.dbcc_classguid = usb_guid
+            hnotify = user32.RegisterDeviceNotificationW(
+                hwnd, ctypes.byref(flt), self.DEVICE_NOTIFY_WINDOW_HANDLE
+            )
+            msg = wintypes.MSG()
+            while not self._stop_event.is_set():
+                ret = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                if ret <= 0:
+                    break
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+            if hnotify:
+                user32.UnregisterDeviceNotification(hnotify)
+            user32.DestroyWindow(hwnd)
+        except Exception as exc:
+            LOGGER.debug("WM_DEVICECHANGE monitor exited: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# DigitalPersona U.are.U Reader Controller + Auto-Init / Reconnect Monitor
+# ---------------------------------------------------------------------------
+
+
+def _find_dll(name: str, extra_dirs: Iterable[Path] = ()) -> Optional[Path]:
+    candidates = []
+    for env_key in ("JONE_DPFP_DLL_DIR", "JONE_DIGITALPERSONA_DLL_DIR"):
+        env_override = os.environ.get(env_key)
+        if env_override:
+            candidates.append(Path(env_override))
+    candidates.extend(extra_dirs)
+    candidates.extend(_WINDOWS_DLL_DIRS)
+    for folder in candidates:
+        candidate = folder / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+class DigitalPersonaReader:
+    """Thread-safe controller for the DigitalPersona U.are.U 4500 reader."""
+
+    def __init__(
+        self,
+        *,
+        usb_monitor: Optional[BaseUsbMonitor] = None,
+        poll_interval_s: float = 1.5,
+        auto_monitor: bool = False,
+    ) -> None:
+        self._lock = threading.RLock()
+        self._usb_monitor: BaseUsbMonitor = usb_monitor or WindowsUsbMonitor()
+        self._poll_interval_s = max(0.2, float(poll_interval_s))
+
+        self._dd: Any = None
+        self._fj: Any = None
+        self._dd_path: Optional[Path] = None
+        self._fj_path: Optional[Path] = None
+        self._init_succeeded = False
+        self._init_failed = False
+        self._init_rc: Optional[int] = None
+
+        self._device: Optional[ctypes.c_void_p] = None
+        self._device_open = False
+        self._device_name: bytes = b""
+        self._device_serial = ""
+        self._device_product = ""
+        self._device_vendor = ""
+        self._device_count = 0
+
+        self._capture_in_progress = False
+        self._initializing = False
+        self._reconnecting = False
+        self._last_error = ""
+        self._last_usb: UsbSnapshot = UsbSnapshot(usb_present=False)
+        self._reconnect_attempts = 0
+        self._next_retry_monotonic = 0.0
+
+        self._stop_monitor = threading.Event()
+        self._wake_monitor = threading.Event()
+        self._monitor_thread: Optional[threading.Thread] = None
+        self._listeners_lock = threading.Lock()
+        self._listeners: List[queue.Queue] = []
+        self._last_emitted_state: Tuple[Any, ...] = ()
+
+        if auto_monitor:
+            self.start_monitor()
+
+    # ---- Status event subscription (used by GET /events SSE) --------------
+
+    def subscribe_events(self) -> queue.Queue:
+        q: queue.Queue = queue.Queue(maxsize=32)
+        with self._listeners_lock:
+            self._listeners.append(q)
+        return q
+
+    def unsubscribe_events(self, q: queue.Queue) -> None:
+        with self._listeners_lock:
+            try:
+                self._listeners.remove(q)
+            except ValueError:
+                pass
+
+    def _emit_state_if_changed(self) -> None:
+        snap = self.status()
+        sig = (
+            snap.get("status"),
+            snap.get("connected"),
+            snap.get("usb_detected"),
+            snap.get("device_serial"),
+            snap.get("capture_in_progress"),
+            snap.get("last_error"),
+        )
+        if sig == self._last_emitted_state:
+            return
+        self._last_emitted_state = sig
+        with self._listeners_lock:
+            targets = list(self._listeners)
+        for q in targets:
+            try:
+                q.put_nowait(snap)
+            except queue.Full:
+                try:
+                    q.get_nowait()
+                    q.put_nowait(snap)
+                except queue.Empty:
+                    pass
+
+    # ---- Background USB + Driver Auto-Init & Reconnection Monitor ---------
+
+    def start_monitor(self) -> None:
+        if self._monitor_thread is not None and self._monitor_thread.is_alive():
+            return
+        self._stop_monitor.clear()
+        self._usb_monitor.start_event_listener(self._wake_monitor.set)
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop,
+            name="jone-reader-monitor",
+            daemon=True,
+        )
+        self._monitor_thread.start()
+
+    def stop_monitor(self) -> None:
+        self._stop_monitor.set()
+        self._wake_monitor.set()
+        self._usb_monitor.stop_event_listener()
+        if self._monitor_thread is not None:
+            self._monitor_thread.join(timeout=2.0)
+            self._monitor_thread = None
+
+    def _monitor_loop(self) -> None:
+        while not self._stop_monitor.is_set():
+            try:
+                self.reconcile_once()
+            except Exception as exc:
+                LOGGER.debug("Reader monitor reconcile error: %s", exc)
+            self._emit_state_if_changed()
+            self._wake_monitor.wait(timeout=self._poll_interval_s)
+            self._wake_monitor.clear()
+
+    def reconcile_once(self) -> Dict[str, Any]:
+        """Single non-blocking-to-captures reconciliation step for USB/SDK/device."""
+        if self._capture_in_progress:
+            return self.status()
+        acquired = self._lock.acquire(blocking=False)
+        if not acquired:
+            return self.status()
+        try:
+            usb = self._usb_monitor.inspect()
+            prev_usb_present = self._last_usb.usb_present
+            self._last_usb = usb
+
+            # USB was unplugged -> release stale handle immediately so replug
+            # never hits a dead device handle.
+            if not usb.usb_present and self._device_open and usb.detection_method in ("windows_setupapi", "injected"):
+                LOGGER.info("DigitalPersona USB reader disconnected; closing handle cleanly.")
+                self._close_device_unlocked()
+                self._device_count = 0
+                self._reconnecting = False
+                self._initializing = False
+                self._reconnect_attempts = 0
+                return self.status()
+
+            # USB arrived or device not yet open -> try initialization when
+            # backoff allows and no missing-driver problem code is flagged.
+            if usb.usb_present and usb.driver_problem_code not in (28,):
+                if not prev_usb_present and not self._device_open:
+                    LOGGER.info("DigitalPersona USB reader detected (%s).", usb.devices)
+                if not self._device_open:
+                    now = time.monotonic()
+                    if now >= self._next_retry_monotonic:
+                        self._reconnecting = self._reconnect_attempts > 0
+                        self._initializing = not self._reconnecting
+                        try:
+                            self._open_first_device_unlocked()
+                            self._reconnect_attempts = 0
+                            self._next_retry_monotonic = 0.0
+                            self._reconnecting = False
+                            self._initializing = False
+                        except ReaderError as exc:
+                            self._reconnect_attempts += 1
+                            backoff = min(5.0, 0.5 * (2 ** min(self._reconnect_attempts - 1, 3)))
+                            self._next_retry_monotonic = time.monotonic() + backoff
+                            self._last_error = exc.message
+                            self._initializing = False
+                            if exc.status in (STATUS_DRIVER_MISSING, STATUS_SDK_UNAVAILABLE, STATUS_SERVICE_UNAVAILABLE):
+                                self._reconnecting = False
+                            else:
+                                self._reconnecting = True
+                        return self.status()
+
+            # Already open -> verify device health with dpfpdd_get_device_status
+            if self._device_open:
+                ok, reason = self._probe_open_device_unlocked()
+                if not ok:
+                    LOGGER.warning("Reader health probe failed (%s); scheduling reconnect.", reason)
+                    self._close_device_unlocked()
+                    self._reconnecting = True
+                    self._reconnect_attempts += 1
+                    self._next_retry_monotonic = time.monotonic() + 0.5
+                    self._last_error = reason
+            return self.status()
+        finally:
+            self._lock.release()
+
+    # ---- DLL loading & C ABI setup ----------------------------------------
+
     def _load_dd(self) -> bool:
-        if self._dd is not None:
+        if self._dd is not None and self._init_succeeded:
             return True
         if platform.system() != "Windows":
-            self._last_error = "The fingerprint bridge must run on Windows (this host is %s)." % platform.system()
             return False
-        path = find_dll("dpfpdd.dll")
-        if path is None:
-            self._last_error = "dpfpdd.dll was not found. Install the DigitalPersona U.are.U driver/SDK."
-            return False
-        try:
-            dd = ctypes.WinDLL(str(path))
-        except OSError as exc:  # wrong architecture / blocked DLL
-            self._last_error = "dpfpdd.dll could not be loaded (%s). Install the 64-bit U.are.U SDK." % exc
-            return False
-        dd.dpfpdd_init.restype = ctypes.c_int
-        dd.dpfpdd_init.argtypes = []
-        dd.dpfpdd_exit.restype = ctypes.c_int
-        dd.dpfpdd_exit.argtypes = []
-        dd.dpfpdd_query_devices.restype = ctypes.c_int
-        dd.dpfpdd_query_devices.argtypes = [ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(_DPFPDD_DEV_INFO)]
-        dd.dpfpdd_open.restype = ctypes.c_int
-        dd.dpfpdd_open.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_char_p]
-        dd.dpfpdd_close.restype = ctypes.c_int
-        dd.dpfpdd_close.argtypes = [ctypes.c_void_p]
-        dd.dpfpdd_capture.restype = ctypes.c_int
-        dd.dpfpdd_capture.argtypes = [
-            ctypes.c_void_p,
-            ctypes.POINTER(_DPFPDD_CAPTURE_PARAM),
-            ctypes.POINTER(ctypes.c_uint32),
-            ctypes.c_void_p,
-            ctypes.POINTER(_DPFPDD_CAPTURE_RESULT),
-        ]
-        try:
-            init_rc = dd.dpfpdd_init()
-        except OSError as exc:  # pragma: no cover - vendor DLL init failure
-            self._last_error = "dpfpdd_init failed (%s)." % exc
-            return False
-        # dpfpdd_init() returning an error is NOT the same fault as a missing
-        # DLL, and the two need completely different repairs on the workstation.
-        # This code is the one recorded when the DigitalPersona runtime service
-        # is installed but not running/answered:
-        #
-        #   dpfpdd_init() -> DPFPDD_E_DEVICE_FAILURE (0x05BA0005)
-        #
-        # The DLL loaded, so the driver IS installed; nothing can enumerate the
-        # reader until the vendor service is running. Reporting that as
-        # "driver_missing" sent technicians to reinstall a driver that was
-        # already present, so it gets its own status and its own sentence.
-        if init_rc != DPFPDD_OK:
-            self._last_error = "dpfpdd_init returned 0x%04X." % init_rc
-            self._init_failed = True
-            self._init_rc = init_rc
-            # Keep the handle: dpfj (template extraction) is still usable and
-            # /diagnose must be able to report the exact code.
-            self._dd = dd
+
+        if self._dd is None:
+            path = _find_dll("dpfpdd.dll")
+            if path is None:
+                self._dd_path = None
+                self._init_failed = False
+                self._last_error = "dpfpdd.dll was not found in the DigitalPersona installation folders."
+                return False
             self._dd_path = path
+            try:
+                # Add DLL folder to loader search path on Windows Python 3.8+
+                if hasattr(os, "add_dll_directory"):
+                    try:
+                        os.add_dll_directory(str(path.parent))
+                    except OSError:
+                        pass
+                dd = ctypes.WinDLL(str(path)) if hasattr(ctypes, "WinDLL") else ctypes.CDLL(str(path))
+            except OSError as exc:
+                self._last_error = f"Failed to load {path}: {exc}"
+                return False
+
+            # Configure exact DigitalPersona dpfpdd.h C ABI signatures (when loaded as ctypes DLL)
+            if isinstance(dd, ctypes.CDLL):
+                dd.dpfpdd_init.argtypes = []
+                dd.dpfpdd_init.restype = ctypes.c_uint
+
+                dd.dpfpdd_exit.argtypes = []
+                dd.dpfpdd_exit.restype = ctypes.c_uint
+
+                dd.dpfpdd_query_devices.argtypes = [
+                    ctypes.POINTER(ctypes.c_uint),
+                    ctypes.POINTER(_DPFPDD_DEV_INFO),
+                ]
+                dd.dpfpdd_query_devices.restype = ctypes.c_uint
+
+                dd.dpfpdd_open.argtypes = [
+                    ctypes.c_char_p,
+                    ctypes.POINTER(ctypes.c_void_p),
+                ]
+                dd.dpfpdd_open.restype = ctypes.c_uint
+
+                dd.dpfpdd_close.argtypes = [ctypes.c_void_p]
+                dd.dpfpdd_close.restype = ctypes.c_uint
+
+                if hasattr(dd, "dpfpdd_get_device_status"):
+                    dd.dpfpdd_get_device_status.argtypes = [
+                        ctypes.c_void_p,
+                        ctypes.POINTER(_DPFPDD_DEV_STATUS),
+                    ]
+                    dd.dpfpdd_get_device_status.restype = ctypes.c_uint
+
+                if hasattr(dd, "dpfpdd_reset"):
+                    dd.dpfpdd_reset.argtypes = [ctypes.c_void_p]
+                    dd.dpfpdd_reset.restype = ctypes.c_uint
+
+                if hasattr(dd, "dpfpdd_cancel"):
+                    dd.dpfpdd_cancel.argtypes = [ctypes.c_void_p]
+                    dd.dpfpdd_cancel.restype = ctypes.c_uint
+
+                dd.dpfpdd_capture.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.POINTER(_DPFPDD_CAPTURE_PARAM),
+                    ctypes.c_uint,
+                    ctypes.POINTER(_DPFPDD_CAPTURE_RESULT),
+                    ctypes.POINTER(ctypes.c_uint),
+                    ctypes.c_void_p,
+                ]
+                dd.dpfpdd_capture.restype = ctypes.c_uint
+
+            self._dd = dd
+
+        rc = int(self._dd.dpfpdd_init()) & 0xFFFFFFFF
+        if rc != DPFPDD_OK:
+            self._init_succeeded = False
+            self._init_failed = True
+            self._init_rc = rc
+            self._last_error = (
+                f"dpfpdd_init returned {_format_rc(rc)} (DigitalPersona biometric service may still be starting or stopped)."
+            )
+            try:
+                self._dd.dpfpdd_exit()
+            except Exception:
+                pass
             return False
+
+        self._init_succeeded = True
         self._init_failed = False
-        self._init_rc = 0
-        self._dd = dd
-        self._dd_path = path
+        self._init_rc = DPFPDD_OK
         return True
 
     def _load_fj(self) -> bool:
         if self._fj is not None:
             return True
-        path = find_dll("dpfj.dll")
+        if platform.system() != "Windows":
+            return False
+        extra = [self._dd_path.parent] if self._dd_path else []
+        path = _find_dll("dpfj.dll", extra_dirs=extra)
         if path is None:
-            self._last_error = "dpfj.dll was not found. Install the complete U.are.U SDK (not only the driver)."
+            self._fj_path = None
+            self._last_error = "dpfj.dll was not found in the DigitalPersona installation folders."
             return False
+        self._fj_path = path
         try:
-            fj = ctypes.WinDLL(str(path))
+            fj = ctypes.WinDLL(str(path)) if hasattr(ctypes, "WinDLL") else ctypes.CDLL(str(path))
         except OSError as exc:
-            self._last_error = "dpfj.dll could not be loaded (%s)." % exc
+            self._last_error = f"Failed to load {path}: {exc}"
             return False
-        for name in ("dpfj_create_fmd_from_raw", "dpfj_create_fid", "dpfj_create_fmd_from_fid"):
-            fn = getattr(fj, name, None)
-            if fn is not None:
-                fn.restype = ctypes.c_int
-        if getattr(fj, "dpfj_create_fmd_from_raw", None) is not None:
+
+        if isinstance(fj, ctypes.CDLL):
             fj.dpfj_create_fmd_from_raw.argtypes = [
-                ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint32,
-                ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
-                ctypes.c_int, ctypes.c_int, ctypes.c_uint32,
-                ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(ctypes.c_uint32),
+                ctypes.c_void_p,          # image_data
+                ctypes.c_uint,            # image_size
+                ctypes.c_uint,            # image_width
+                ctypes.c_uint,            # image_height
+                ctypes.c_uint,            # image_dpi
+                ctypes.c_uint,            # finger_pos
+                ctypes.c_uint,            # cbeff_id
+                ctypes.c_uint,            # fmd_type
+                ctypes.c_void_p,          # fmd
+                ctypes.POINTER(ctypes.c_uint),  # fmd_size
             ]
-        if getattr(fj, "dpfj_create_fid", None) is not None:
-            fj.dpfj_create_fid.argtypes = [
-                ctypes.c_uint32, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint32,
-                ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(ctypes.c_uint32),
-            ]
-        if getattr(fj, "dpfj_create_fmd_from_fid", None) is not None:
-            fj.dpfj_create_fmd_from_fid.argtypes = [
-                ctypes.c_uint32, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint32,
-                ctypes.c_uint32, ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(ctypes.c_uint32),
-            ]
+            fj.dpfj_create_fmd_from_raw.restype = ctypes.c_uint
+
+            if hasattr(fj, "dpfj_create_fmd_from_fid"):
+                fj.dpfj_create_fmd_from_fid.argtypes = [
+                    ctypes.c_uint,                  # fid_type
+                    ctypes.c_void_p,                # fid
+                    ctypes.c_uint,                  # fid_size
+                    ctypes.c_uint,                  # fmd_type
+                    ctypes.c_void_p,                # fmd
+                    ctypes.POINTER(ctypes.c_uint),  # fmd_size
+                ]
+                fj.dpfj_create_fmd_from_fid.restype = ctypes.c_uint
+
         self._fj = fj
         return True
 
-    def _enumerate(self) -> List[Dict[str, str]]:
-        dd = self._dd
-        if dd is None:
+    # ---- Device enumeration / open / close / health probe -----------------
+
+    def _enumerate_unlocked(self) -> List[_DPFPDD_DEV_INFO]:
+        if not self._load_dd():
             return []
-        count = ctypes.c_uint32(0)
-        rc = dd.dpfpdd_query_devices(ctypes.byref(count), None)
-        if rc != DPFPDD_OK or count.value == 0:
-            if rc != DPFPDD_OK:
-                self._last_error = "dpfpdd_query_devices returned 0x%04X." % rc
+        count = ctypes.c_uint(0)
+        rc = int(self._dd.dpfpdd_query_devices(ctypes.byref(count), None)) & 0xFFFFFFFF
+        if rc == DPFPDD_OK and count.value == 0:
             return []
-        infos = (_DPFPDD_DEV_INFO * count.value)()
-        for info in infos:
-            info.size = ctypes.sizeof(_DPFPDD_DEV_INFO)
-        rc = dd.dpfpdd_query_devices(ctypes.byref(count), infos)
+        if rc not in (DPFPDD_OK, DPFPDD_E_MORE_DATA):
+            self._last_error = f"dpfpdd_query_devices sizing failed ({_format_rc(rc)})."
+            return []
+        if count.value == 0:
+            return []
+
+        # Allocate with headroom in case a device arrives concurrently
+        allocated = int(count.value)
+        buf = (_DPFPDD_DEV_INFO * allocated)()
+        for idx in range(allocated):
+            buf[idx].size = ctypes.sizeof(_DPFPDD_DEV_INFO)
+        req_count = ctypes.c_uint(allocated)
+        rc = int(self._dd.dpfpdd_query_devices(ctypes.byref(req_count), buf)) & 0xFFFFFFFF
+        if rc == DPFPDD_E_MORE_DATA and req_count.value > allocated:
+            allocated = int(req_count.value)
+            buf = (_DPFPDD_DEV_INFO * allocated)()
+            for idx in range(allocated):
+                buf[idx].size = ctypes.sizeof(_DPFPDD_DEV_INFO)
+            req_count = ctypes.c_uint(allocated)
+            rc = int(self._dd.dpfpdd_query_devices(ctypes.byref(req_count), buf)) & 0xFFFFFFFF
         if rc != DPFPDD_OK:
-            self._last_error = "dpfpdd_query_devices returned 0x%04X." % rc
+            self._last_error = f"dpfpdd_query_devices failed ({_format_rc(rc)})."
             return []
-        devices = []
-        for info in list(infos)[: count.value]:
-            devices.append({
-                "vendor": _decode(info.vendor_name),
-                "product": _decode(info.product_name),
-                "serial": _decode(info.serial_num),
-            })
-        return devices
+        actual = min(int(req_count.value), allocated)
+        return [buf[i] for i in range(actual)]
 
-    def _close_device(self) -> None:
-        if self._device_open and self._dd is not None:
-            try:
-                self._dd.dpfpdd_close(self._device)
-            except OSError:  # pragma: no cover - best effort on a dead handle
-                pass
+    def _close_device_unlocked(self) -> None:
+        handle = self._device
+        self._device = None
         self._device_open = False
-        self._device = ctypes.c_void_p(0)
-        self._serial = ""
-        self._product = ""
+        if handle is not None and self._dd is not None:
+            try:
+                self._dd.dpfpdd_close(handle)
+            except Exception:
+                pass
 
-    def is_capturing(self) -> bool:
-        """True while a capture holds the reader (used by /status)."""
-        return bool(self._capturing)
+    def _probe_open_device_unlocked(self) -> Tuple[bool, str]:
+        if not self._device_open or self._device is None or self._dd is None:
+            return False, "Device handle is closed."
+        if not hasattr(self._dd, "dpfpdd_get_device_status"):
+            return True, ""
+        st = _DPFPDD_DEV_STATUS()
+        st.size = ctypes.sizeof(_DPFPDD_DEV_STATUS)
+        rc = int(self._dd.dpfpdd_get_device_status(self._device, ctypes.byref(st))) & 0xFFFFFFFF
+        if rc in DPFPDD_DEVICE_GONE or rc != DPFPDD_OK:
+            return False, f"dpfpdd_get_device_status returned {_format_rc(rc)}."
+        if st.status == DPFPDD_STATUS_FAILURE:
+            return False, "DigitalPersona device reported DPFPDD_STATUS_FAILURE."
+        return True, ""
+
+    def _open_first_device_unlocked(self) -> Dict[str, Any]:
+        usb = self._usb_monitor.inspect()
+        self._last_usb = usb
+        if not self._load_dd():
+            if self._dd is not None and self._init_failed:
+                raise ReaderError(
+                    "DRIVER_SERVICE_UNAVAILABLE",
+                    self._last_error or STATUS_DETAILS[STATUS_SERVICE_UNAVAILABLE],
+                    status=STATUS_SERVICE_UNAVAILABLE,
+                    retry=True,
+                )
+            raise ReaderError(
+                "DRIVER_MISSING",
+                self._last_error or STATUS_DETAILS[STATUS_DRIVER_MISSING],
+                status=STATUS_DRIVER_MISSING,
+                retry=False,
+            )
+        if not self._load_fj():
+            raise ReaderError(
+                "SDK_UNAVAILABLE",
+                self._last_error or STATUS_DETAILS[STATUS_SDK_UNAVAILABLE],
+                status=STATUS_SDK_UNAVAILABLE,
+                retry=False,
+            )
+
+        devices = self._enumerate_unlocked()
+        self._device_count = len(devices)
+        if not devices:
+            self._close_device_unlocked()
+            if usb.usb_present:
+                if usb.driver_problem_code == 28:
+                    raise ReaderError(
+                        "DRIVER_MISSING",
+                        "DigitalPersona USB hardware was detected, but Windows reports no driver is installed (Code 28).",
+                        status=STATUS_DRIVER_MISSING,
+                        retry=False,
+                    )
+                raise ReaderError(
+                    "READER_INITIALIZING",
+                    STATUS_DETAILS[STATUS_USB_DETECTED],
+                    status=STATUS_USB_DETECTED,
+                    retry=True,
+                )
+            raise ReaderError(
+                "READER_NOT_CONNECTED",
+                STATUS_DETAILS[STATUS_NOT_CONNECTED],
+                status=STATUS_NOT_CONNECTED,
+                retry=True,
+            )
+
+        # Prefer DigitalPersona U.are.U 4500 / VID 0x05BA if multiple readers exist
+        chosen = devices[0]
+        for info in devices:
+            if info.id.vendor_id == DIGITALPERSONA_VID:
+                chosen = info
+                break
+
+        dev_name = bytes(chosen.name).split(b"\x00", 1)[0]
+        handle = ctypes.c_void_p()
+        rc = int(self._dd.dpfpdd_open(dev_name, ctypes.byref(handle))) & 0xFFFFFFFF
+        if rc != DPFPDD_OK or not handle:
+            self._close_device_unlocked()
+            if rc == DPFPDD_E_DEVICE_BUSY:
+                raise ReaderError(
+                    "READER_BUSY",
+                    "The DigitalPersona reader is currently held by another process.",
+                    status=STATUS_BUSY,
+                    reader_status=rc,
+                    retry=True,
+                )
+            raise ReaderError(
+                "READER_OPEN_FAILED",
+                f"dpfpdd_open failed ({_format_rc(rc)}).",
+                status=STATUS_COMMUNICATION_FAILURE,
+                reader_status=rc,
+                retry=True,
+            )
+
+        self._device = handle
+        self._device_open = True
+        self._device_name = dev_name
+        self._device_vendor = _decode_cstr(bytes(chosen.descr.vendor_name))
+        self._device_product = _decode_cstr(bytes(chosen.descr.product_name)) or "U.are.U 4500"
+        self._device_serial = _decode_cstr(bytes(chosen.descr.serial_num)) or _decode_cstr(dev_name)[:32]
+        self._last_error = ""
+        return self._build_status_unlocked()
+
+    # ---- Status construction (non-blocking during active capture) ---------
+
+    def _build_status_unlocked(self) -> Dict[str, Any]:
+        usb = self._last_usb
+        if usb.detection_method == "none":
+            usb = self._usb_monitor.inspect()
+            self._last_usb = usb
+
+        driver_installed = self._dd is not None or _find_dll("dpfpdd.dll") is not None
+        sdk_loaded = self._fj is not None or _find_dll("dpfj.dll") is not None
+
+        if self._capture_in_progress:
+            status_code = STATUS_BUSY
+        elif self._dd is not None and self._init_failed:
+            status_code = STATUS_SERVICE_UNAVAILABLE
+        elif not driver_installed:
+            status_code = STATUS_DRIVER_MISSING
+        elif not sdk_loaded:
+            status_code = STATUS_SDK_UNAVAILABLE
+        elif self._device_open:
+            status_code = STATUS_CONNECTED
+        elif usb.usb_present and usb.driver_problem_code == 28:
+            status_code = STATUS_DRIVER_MISSING
+        elif usb.service_running is False:
+            status_code = STATUS_SERVICE_UNAVAILABLE
+        elif self._reconnecting:
+            status_code = STATUS_RECONNECTING
+        elif self._initializing:
+            status_code = STATUS_INITIALIZING
+        elif usb.usb_present:
+            status_code = STATUS_USB_DETECTED
+        else:
+            status_code = STATUS_NOT_CONNECTED
+
+        connected = status_code in (STATUS_CONNECTED, STATUS_BUSY)
+        ready = status_code == STATUS_CONNECTED
+        detail = STATUS_DETAILS.get(status_code, "")
+        if status_code == STATUS_SERVICE_UNAVAILABLE and self._last_error:
+            detail = f"{STATUS_DETAILS[STATUS_SERVICE_UNAVAILABLE]} ({self._last_error})"
+
+        payload: Dict[str, Any] = {
+            "status": status_code,
+            "ui_state": status_code,
+            "ui_label": UI_LABELS.get(status_code, "Fingerprint reader"),
+            "connected": connected,
+            "ready": ready,
+            "busy": status_code == STATUS_BUSY,
+            "detail": detail,
+            "device_serial": self._device_serial if connected else "",
+            "device_product": self._device_product if connected else (
+                usb.devices[0]["product"] if usb.devices else ""
+            ),
+            "device_vendor": self._device_vendor if connected else "",
+            "capture_in_progress": self._capture_in_progress,
+            "driver_installed": bool(driver_installed),
+            "driver_ready": bool(driver_installed and not self._init_failed and usb.driver_problem_code is None),
+            "sdk_loaded": bool(sdk_loaded),
+            "usb_detected": bool(usb.usb_present or self._device_open),
+            "usb_devices": usb.devices,
+            "service_running": usb.service_running,
+            "initializing": status_code in (STATUS_INITIALIZING, STATUS_USB_DETECTED),
+            "reconnecting": status_code == STATUS_RECONNECTING,
+            "device_count": self._device_count if connected else (1 if usb.usb_present else 0),
+            "last_error": self._last_error,
+            "bridge_pid": os.getpid(),
+        }
+        if self._init_rc is not None and self._init_failed:
+            payload["init_status"] = _format_rc(self._init_rc)
+        return payload
 
     def status(self) -> Dict[str, Any]:
-        """Report device state without capturing. Cheap enough to poll.
+        # Never block GET /status behind a live capture wait!
+        if self._capture_in_progress:
+            return {
+                "status": STATUS_BUSY,
+                "ui_state": STATUS_BUSY,
+                "ui_label": UI_LABELS[STATUS_BUSY],
+                "connected": True,
+                "ready": False,
+                "busy": True,
+                "detail": STATUS_DETAILS[STATUS_BUSY],
+                "device_serial": self._device_serial,
+                "device_product": self._device_product,
+                "capture_in_progress": True,
+                "driver_installed": True,
+                "driver_ready": True,
+                "sdk_loaded": self._fj is not None,
+                "usb_detected": True,
+                "usb_devices": self._last_usb.devices,
+                "service_running": self._last_usb.service_running,
+                "initializing": False,
+                "reconnecting": False,
+                "device_count": max(1, self._device_count),
+                "last_error": self._last_error,
+                "bridge_pid": os.getpid(),
+            }
 
-        Never blocks on a capture: while a capture is in flight the busy flag
-        is what the desk needs, and waiting for the sensor would make the page
-        look frozen for the whole capture timeout.
-        """
-        base = {
-            "status": STATUS_NOT_CONNECTED,
-            "connected": False,
-            "detail": STATUS_DETAILS[STATUS_NOT_CONNECTED],
-            "device_serial": self._serial,
-            "device_product": self._product,
-            "capture_in_progress": self._capturing,
-            "driver_installed": False,
-            "sdk_loaded": False,
-            "device_count": 0,
-            "last_error": self._last_error,
-            "service": SERVICE_NAME,
-            "version": SERVICE_VERSION,
-        }
-        if platform.system() != "Windows":
-            base.update(status=STATUS_SDK_UNAVAILABLE,
-                        detail="This bridge must run on the Windows workstation that has the reader attached.")
-            return base
-        if not self._load_dd():
-            if self._init_failed:
-                # DLLs found and loaded; dpfpdd_init() itself failed.
-                base.update(status=STATUS_SERVICE_UNAVAILABLE,
-                            detail=STATUS_DETAILS[STATUS_SERVICE_UNAVAILABLE],
-                            driver_installed=True,
-                            driver_dll=str(self._dd_path or ""),
-                            init_status="0x%04X" % self._init_rc)
-                base["last_error"] = self._last_error
-                return base
-            base.update(status=STATUS_DRIVER_MISSING, detail=STATUS_DETAILS[STATUS_DRIVER_MISSING])
-            base["last_error"] = self._last_error
-            return base
-        base["driver_installed"] = True
-        sdk = self._load_fj()
-        base["sdk_loaded"] = sdk
-        devices = self._enumerate()
-        base["device_count"] = len(devices)
-        if devices:
-            base["device_serial"] = devices[0]["serial"]
-            base["device_product"] = devices[0]["product"]
-        if not devices:
-            base.update(status=STATUS_NOT_CONNECTED, detail=STATUS_DETAILS[STATUS_NOT_CONNECTED])
-            return base
-        if not sdk:
-            base.update(status=STATUS_SDK_UNAVAILABLE, detail=STATUS_DETAILS[STATUS_SDK_UNAVAILABLE])
-            return base
-        base.update(status=STATUS_CONNECTED, connected=True, detail=STATUS_DETAILS[STATUS_CONNECTED])
-        if self._capturing:
-            # A second capture attempt would be refused; say so now instead of
-            # letting the page start (and time out) on a reader that is busy.
-            base.update(status=STATUS_BUSY, captured_state=STATUS_CONNECTED,
-                        detail=STATUS_DETAILS[STATUS_BUSY], capture_in_progress=True)
-        return base
-
-    def initialize(self) -> Dict[str, Any]:
-        """(Re)open the reader — used after a replug or a bridge restart.
-
-        Called from an HTTP thread while a capture may be running on another.
-        A blocking acquire here made /initialize hang for the whole capture
-        timeout (and the desk page treat the bridge as dead); instead it answers
-        \"busy\" immediately and the caller retries after the capture.
-        """
-        if not self._lock.acquire(blocking=False):
-            state = self.status()
-            state.update(status=STATUS_BUSY, detail=STATUS_DETAILS[STATUS_BUSY],
-                         busy=True, initialized=False)
-            return state
+        acquired = self._lock.acquire(blocking=False)
+        if not acquired:
+            return {
+                "status": STATUS_BUSY,
+                "ui_state": STATUS_BUSY,
+                "ui_label": UI_LABELS[STATUS_BUSY],
+                "connected": self._device_open,
+                "ready": False,
+                "busy": True,
+                "detail": STATUS_DETAILS[STATUS_BUSY],
+                "device_serial": self._device_serial,
+                "device_product": self._device_product,
+                "capture_in_progress": self._capture_in_progress,
+                "driver_installed": bool(self._dd is not None or _find_dll("dpfpdd.dll") is not None),
+                "sdk_loaded": bool(self._fj is not None or _find_dll("dpfj.dll") is not None),
+                "usb_detected": bool(self._last_usb.usb_present or self._device_open),
+                "device_count": self._device_count,
+                "last_error": self._last_error,
+                "bridge_pid": os.getpid(),
+            }
         try:
-            return self._initialize_locked()
+            usb = self._usb_monitor.inspect()
+            self._last_usb = usb
+            # Attempt a lightweight sync if DLLs haven't been checked yet
+            if not self._device_open and not self._init_failed and platform.system() == "Windows":
+                if self._load_dd() and self._load_fj():
+                    devs = self._enumerate_unlocked()
+                    self._device_count = len(devs)
+                    if devs and not self._device_open:
+                        try:
+                            self._open_first_device_unlocked()
+                        except ReaderError as exc:
+                            self._last_error = exc.message
+            return self._build_status_unlocked()
         finally:
             self._lock.release()
 
-    def _initialize_locked(self) -> Dict[str, Any]:
-        if True:  # structure preserved: the body below runs under self._lock
-            self._close_device()
-            self._last_error = ""
-            state = self.status()
-            if not state.get("driver_installed"):
-                return state
-            devices = self._enumerate()
-            if not devices:
-                return state
-            name = devices[0].get("serial") or devices[0].get("product") or ""
-            rc = self._dd.dpfpdd_open(ctypes.byref(self._device), name.encode("utf-8"))
-            if rc != DPFPDD_OK or not self._device.value:
-                self._last_error = "dpfpdd_open returned 0x%04X." % rc
-                mapped = STATUS_PERMISSION_DENIED if rc in (0x0A01, 0x0A02) else STATUS_COMMUNICATION_FAILURE
-                state.update(status=mapped, connected=False,
-                             detail=STATUS_DETAILS[mapped], last_error=self._last_error)
-                return state
-            self._device_open = True
-            self._serial = devices[0].get("serial", "")
-            self._product = devices[0].get("product", "")
-            state.update(connected=True, status=STATUS_CONNECTED, detail=STATUS_DETAILS[STATUS_CONNECTED],
-                         device_serial=self._serial, device_product=self._product, last_error="")
-            return state
-
-    # -- capture -----------------------------------------------------------
-    def _capture_raw(self, timeout_ms: int) -> Tuple[bytes, int, int]:
-        """Capture one frame; returns (gray pixels, width, height)."""
-        if not self._device_open:
-            state = self.initialize()
-            if not state.get("connected"):
-                raise ReaderError("READER_NOT_CONNECTED", state.get("detail") or STATUS_DETAILS[STATUS_NOT_CONNECTED],
-                                  status=STATUS_NOT_CONNECTED)
-        param = _DPFPDD_CAPTURE_PARAM(
-            size=ctypes.sizeof(_DPFPDD_CAPTURE_PARAM),
-            image_fmt=DPFPDD_IMG_FMT_PIXEL_BUFFER,
-            image_proc=DPFPDD_IMG_PROC_DEFAULT,
-            image_res=DPFPDD_IMG_RES_500,
-        )
-        buffer = (ctypes.c_ubyte * DPFPDD_MAX_IMAGE_BYTES)()
-        result = _DPFPDD_CAPTURE_RESULT()
-        deadline = time.monotonic() + max(1.0, timeout_ms / 1000.0)
-        last_rc = 0
-        while time.monotonic() < deadline:
-            size = ctypes.c_uint32(DPFPDD_MAX_IMAGE_BYTES)
-            rc = self._dd.dpfpdd_capture(self._device, ctypes.byref(param), ctypes.byref(size),
-                                         buffer, ctypes.byref(result))
-            last_rc = rc
-            if rc in DPFPDD_DEVICE_GONE:
-                # The USB handle is stale (reader replugged, driver restarted or
-                # the device was reset). The handle must be closed and re-opened
-                # or every later read fails the same way — which is exactly how
-                # a replugged reader stayed "broken" until the bridge restarted.
-                try:
-                    self._close_device()
-                except Exception:  # pragma: no cover - closing a dead handle
-                    self._device_open = False
-                raise ReaderError(
-                    "READER_RECONNECT_NEEDED",
-                    "The fingerprint reader was disconnected or re-plugged. Re-open the reader and try again.",
-                    status=STATUS_COMMUNICATION_FAILURE,
-                    retry=True,
-                    reader_status=rc,
-                )
-            if rc == DPFPDD_OK and result.success:
-                width, height = self._frame_dimensions(size.value)
-                if width and height and size.value == width * height:
-                    return bytes(buffer[: size.value]), width, height
-                # Non-square / padded frame: ask the device for its geometry.
-                width, height = 0, 0
-                self._last_error = "Captured frame geometry could not be determined (%d bytes)." % size.value
-            # A zero-quality or absent finger is a normal retry within the
-            # timeout; keep waiting until the deadline.
-            time.sleep(0.05)
-        raise ReaderError(
-            "READER_CAPTURE_TIMEOUT",
-            "No fingerprint was captured within %d seconds (last reader status 0x%04X). "
-            "Place the finger flat on the sensor and try again." % (int(timeout_ms / 1000), last_rc),
-            status=STATUS_COMMUNICATION_FAILURE,
-            reader_status=last_rc,
-        )
-
-    @staticmethod
-    def _frame_dimensions(size_bytes: int) -> Tuple[int, int]:
-        """Infer 500 dpi frame geometry from the pixel count.
-
-        The U.are.U 4500 sensor is 356 x 344 px (``dpfpdd`` returns a raw 8-bit
-        grayscale buffer). A few SDK builds expose other geometries, so the
-        candidates are tried in order and an unknown size is reported instead of
-        guessed.
-        """
-        known = [(356, 344), (352, 344), (356, 328), (300, 400), (256, 400), (384, 384)]
-        for width, height in known:
-            if width * height == size_bytes:
-                return width, height
-        for side in range(200, 513, 8):
-            if side * side == size_bytes:
-                return side, side
-        return 0, 0
-
-    def _extract_minutiae(self, pixels: bytes, width: int, height: int) -> List[Dict[str, object]]:
-        fj = self._fj
-        if fj is None:
-            raise ReaderError("SDK_UNAVAILABLE", STATUS_DETAILS[STATUS_SDK_UNAVAILABLE], status=STATUS_SDK_UNAVAILABLE)
-        image = (ctypes.c_ubyte * len(pixels)).from_buffer_copy(pixels)
-        last_error = ""
-
-        # Preferred path: raw image -> FMD (template) in one SDK call.
-        creator = getattr(fj, "dpfj_create_fmd_from_raw", None)
-        if creator is not None:
-            for label, fmd_format in FMD_FORMAT_CANDIDATES:
-                size = ctypes.c_uint32(0)
-                rc = creator(image, len(pixels), width, height, 500, 0, 0, fmd_format, None, ctypes.byref(size))
-                if rc != 0 or size.value == 0:
-                    last_error = "dpfj_create_fmd_from_raw(%s) returned 0x%04X." % (label, rc)
-                    continue
-                buf = (ctypes.c_ubyte * size.value)()
-                rc = creator(image, len(pixels), width, height, 500, 0, 0, fmd_format, buf, ctypes.byref(size))
-                if rc != 0 or size.value == 0:
-                    last_error = "dpfj_create_fmd_from_raw(%s) returned 0x%04X." % (label, rc)
-                    continue
-                try:
-                    points = iso19794_2.parse_template(bytes(buf[: size.value]))
-                except iso19794_2.TemplateParseError as exc:
-                    last_error = "%s template could not be parsed (%s)." % (label, exc)
-                    continue
-                self._fmd_format = (label, fmd_format)
-                return points
-
-        # Fallback: raw image -> FID (image record) -> FMD.
-        create_fid = getattr(fj, "dpfj_create_fid", None)
-        create_fmd = getattr(fj, "dpfj_create_fmd_from_fid", None)
-        if create_fid is not None and create_fmd is not None:
-            for fid_label, fid_format in FID_FORMAT_CANDIDATES:
-                fid_size = ctypes.c_uint32(0)
-                rc = create_fid(fid_format, image, len(pixels), width, height, 500, None, ctypes.byref(fid_size))
-                if rc != 0 or fid_size.value == 0:
-                    last_error = "dpfj_create_fid(%s) returned 0x%04X." % (fid_label, rc)
-                    continue
-                fid = (ctypes.c_ubyte * fid_size.value)()
-                rc = create_fid(fid_format, image, len(pixels), width, height, 500, fid, ctypes.byref(fid_size))
-                if rc != 0 or fid_size.value == 0:
-                    continue
-                for label, fmd_format in FMD_FORMAT_CANDIDATES:
-                    size = ctypes.c_uint32(0)
-                    rc = create_fmd(fid_format, fid, ctypes.byref(fid_size), fmd_format, None, ctypes.byref(size))
-                    if rc != 0 or size.value == 0:
-                        last_error = "dpfj_create_fmd_from_fid(%s) returned 0x%04X." % (label, rc)
-                        continue
-                    buf = (ctypes.c_ubyte * size.value)()
-                    rc = create_fmd(fid_format, fid, ctypes.byref(fid_size), fmd_format, buf, ctypes.byref(size))
-                    if rc != 0 or size.value == 0:
-                        continue
-                    try:
-                        points = iso19794_2.parse_template(bytes(buf[: size.value]))
-                    except iso19794_2.TemplateParseError as exc:
-                        last_error = "%s template could not be parsed (%s)." % (label, exc)
-                        continue
-                    self._fmd_format = (label, fmd_format)
-                    self._fid_format = (fid_label, fid_format)
-                    return points
-
-        raise ReaderError(
-            "TEMPLATE_EXTRACTION_FAILED",
-            "The reader captured a finger but the SDK could not produce usable minutiae. %s "
-            "Run the bridge with --diagnose and check the U.are.U SDK installation." % (last_error or ""),
-            status=STATUS_COMMUNICATION_FAILURE,
-        )
-
-    def capture(self, timeout_ms: int = 30000, finger_position: str = "RIGHT_INDEX") -> Dict[str, Any]:
-        """Capture one finger and return vitals + minutiae (never an image)."""
-        if not self._lock.acquire(blocking=False):
-            raise ReaderError("READER_BUSY", STATUS_DETAILS[STATUS_BUSY], status=STATUS_BUSY)
-        self._capturing = True
-        started = time.monotonic()
-        try:
-            if not self._load_dd():
-                if self._init_failed:
-                    raise ReaderError(
-                        "DRIVER_SERVICE_UNAVAILABLE",
-                        STATUS_DETAILS[STATUS_SERVICE_UNAVAILABLE] + " (%s)" % self._last_error,
-                        status=STATUS_SERVICE_UNAVAILABLE,
-                        retry=True,
-                    )
-                raise ReaderError("DRIVER_MISSING", STATUS_DETAILS[STATUS_DRIVER_MISSING], status=STATUS_DRIVER_MISSING)
-            if not self._load_fj():
-                raise ReaderError("SDK_UNAVAILABLE", STATUS_DETAILS[STATUS_SDK_UNAVAILABLE], status=STATUS_SDK_UNAVAILABLE)
-            try:
-                pixels, width, height = self._capture_raw(timeout_ms)
-            except ReaderError as first:
-                # ONLY a stale device handle is retried automatically, and only
-                # once. The lock is already held here, so a second device open
-                # cannot race another capture. A no-finger timeout is NOT
-                # retried: it would double the caller's own timeout and tell
-                # the operator nothing new.
-                if not getattr(first, "retry", False):
-                    raise
-                logger.info("Re-opening the fingerprint reader after %s", first.code)
-                state = self.initialize()
-                if not state.get("connected"):
-                    raise ReaderError(
-                        "READER_RECONNECT_FAILED",
-                        "The fingerprint reader was re-plugged but could not be re-opened: %s"
-                        % (state.get("detail") or STATUS_DETAILS[STATUS_NOT_CONNECTED]),
-                        status=state.get("status") or STATUS_COMMUNICATION_FAILURE,
-                    ) from first
-                pixels, width, height = self._capture_raw(timeout_ms)
-            points = self._extract_minutiae(pixels, width, height)
-            # The raw frame never leaves this function and is never written to
-            # disk: only the minutiae below are returned.
-            del pixels
+    def initialize(self, *, reopen: bool = True) -> Dict[str, Any]:
+        # Must never hang behind an active capture or a held lock!
+        if self._capture_in_progress:
+            snap = self.status()
+            snap["busy"] = True
+            return snap
+        acquired = self._lock.acquire(blocking=False)
+        if not acquired:
             return {
-                "success": True,
-                "minutiae": points,
-                "finger_position": finger_position,
-                "count": len(points),
-                "device_serial": self._serial,
-                "duration_ms": int((time.monotonic() - started) * 1000),
-                "format": self._fmd_format[0] if self._fmd_format else "",
+                "status": STATUS_BUSY,
+                "ui_state": STATUS_BUSY,
+                "ui_label": UI_LABELS[STATUS_BUSY],
+                "connected": self._device_open,
+                "ready": False,
+                "busy": True,
+                "detail": STATUS_DETAILS[STATUS_BUSY],
+                "capture_in_progress": self._capture_in_progress,
+                "driver_installed": bool(self._dd is not None or _find_dll("dpfpdd.dll") is not None),
+                "sdk_loaded": bool(self._fj is not None or _find_dll("dpfj.dll") is not None),
+                "device_count": self._device_count,
+                "last_error": self._last_error,
             }
-        except ReaderError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - report, never mask
-            logger.exception("Unexpected capture failure")
-            raise ReaderError("CAPTURE_FAILED", "The fingerprint capture failed unexpectedly (%s)." % exc) from exc
+        try:
+            self._initializing = True
+            if reopen and self._device_open:
+                self._close_device_unlocked()
+            try:
+                return self._open_first_device_unlocked()
+            except ReaderError as exc:
+                self._last_error = exc.message
+                return self._build_status_unlocked()
+            finally:
+                self._initializing = False
+                self._reconnecting = False
         finally:
-            self._capturing = False
             self._lock.release()
 
     def diagnose(self) -> Dict[str, Any]:
-        """Print-ready report used by ``--diagnose`` and the setup guide."""
-        report: Dict[str, Any] = {
-            "service": SERVICE_NAME,
-            "version": SERVICE_VERSION,
+        return {
+            "service": "jone-fingerprint-bridge",
             "platform": platform.platform(),
             "python": sys.version.split()[0],
-            "architecture": platform.machine(),
-            "dpfpdd_dll": str(find_dll("dpfpdd.dll") or ""),
-            "dpfj_dll": str(find_dll("dpfj.dll") or ""),
-            "sdk_directories": [str(d) for d in _candidate_dll_dirs()],
-            "last_error": self._last_error,
+            "dd_path": str(self._dd_path) if self._dd_path else "",
+            "fj_path": str(self._fj_path) if self._fj_path else "",
+            "usb": self._usb_monitor.inspect().to_dict(),
+            "status": self.status(),
         }
-        report["status"] = self.status()
-        report["fmd_format"] = self._fmd_format[0] if self._fmd_format else ""
-        report["fid_format"] = self._fid_format[0] if self._fid_format else ""
-        return report
+
+    # ---- Capture & ISO/ANSI minutiae extraction ---------------------------
+
+    def capture(self, *, timeout_ms: int = 30000, finger_position: str = "RIGHT_INDEX") -> Dict[str, Any]:
+        try:
+            timeout_int = int(timeout_ms)
+        except (TypeError, ValueError):
+            raise ReaderError(
+                "BAD_REQUEST", "timeout_ms must be an integer.",
+                status=STATUS_COMMUNICATION_FAILURE, http_status=400,
+            )
+        if timeout_int < 5000 or timeout_int > 120000:
+            raise ReaderError(
+                "BAD_REQUEST",
+                "timeout_ms must be between 5000 and 120000 milliseconds.",
+                status=STATUS_COMMUNICATION_FAILURE,
+                http_status=400,
+            )
+        pos_key = str(finger_position or "RIGHT_INDEX").strip().upper()
+        if pos_key not in FINGER_POSITION_CODES:
+            raise ReaderError(
+                "BAD_REQUEST",
+                f"Unsupported finger_position {finger_position!r}.",
+                status=STATUS_COMMUNICATION_FAILURE,
+                http_status=400,
+            )
+
+        if not self._lock.acquire(blocking=False):
+            raise ReaderError(
+                "READER_BUSY", STATUS_DETAILS[STATUS_BUSY],
+                status=STATUS_BUSY, retry=True, http_status=409,
+            )
+        try:
+            self._capture_in_progress = True
+            started = time.monotonic()
+            # Re-open if not currently open; retry once if handle went stale.
+            for attempt in range(2):
+                if not self._device_open:
+                    self._open_first_device_unlocked()
+                try:
+                    raw_bytes, img_info, quality = self._capture_raw_unlocked(timeout_int)
+                    minutiae, fmd_format = self._extract_minutiae_unlocked(
+                        raw_bytes,
+                        width=img_info.width,
+                        height=img_info.height,
+                        res=img_info.res or DPFPDD_IMG_RES_500,
+                        finger_pos=FINGER_POSITION_CODES[pos_key],
+                    )
+                    duration_ms = int((time.monotonic() - started) * 1000)
+                    return {
+                        "success": True,
+                        "minutiae": minutiae,
+                        "finger_position": pos_key,
+                        "count": len(minutiae),
+                        "device_serial": self._device_serial,
+                        "device_product": self._device_product,
+                        "duration_ms": duration_ms,
+                        "format": fmd_format,
+                        "quality": quality,
+                    }
+                except ReaderError as exc:
+                    if exc.retry and attempt == 0:
+                        LOGGER.info("Retrying capture after recoverable device error (%s).", exc.code)
+                        self._close_device_unlocked()
+                        continue
+                    raise
+        finally:
+            self._capture_in_progress = False
+            self._lock.release()
+
+    def _capture_raw_unlocked(self, timeout_ms: int) -> Tuple[bytes, _DPFPDD_IMAGE_INFO, int]:
+        if not self._device_open or self._device is None or self._dd is None:
+            raise ReaderError(
+                "READER_NOT_CONNECTED",
+                STATUS_DETAILS[STATUS_NOT_CONNECTED],
+                status=STATUS_NOT_CONNECTED,
+                retry=True,
+            )
+
+        param = _DPFPDD_CAPTURE_PARAM()
+        param.size = ctypes.sizeof(_DPFPDD_CAPTURE_PARAM)
+        param.image_fmt = DPFPDD_IMG_FMT_PIXEL_BUFFER
+        param.image_proc = DPFPDD_IMG_PROC_DEFAULT
+        param.image_res = DPFPDD_IMG_RES_500
+
+        result = _DPFPDD_CAPTURE_RESULT()
+        result.size = ctypes.sizeof(_DPFPDD_CAPTURE_RESULT)
+        result.info.size = ctypes.sizeof(_DPFPDD_IMAGE_INFO)
+
+        buf_size = 262144  # 256 KiB comfortably fits 500 DPI 8-bit U.are.U 4500 frames
+        image_size = ctypes.c_uint(buf_size)
+        buf = (ctypes.c_ubyte * buf_size)()
+
+        rc = int(self._dd.dpfpdd_capture(
+            self._device,
+            ctypes.byref(param),
+            ctypes.c_uint(timeout_ms),
+            ctypes.byref(result),
+            ctypes.byref(image_size),
+            buf,
+        )) & 0xFFFFFFFF
+
+        if rc == DPFPDD_E_MORE_DATA and image_size.value > buf_size:
+            buf_size = int(image_size.value)
+            buf = (ctypes.c_ubyte * buf_size)()
+            result.size = ctypes.sizeof(_DPFPDD_CAPTURE_RESULT)
+            result.info.size = ctypes.sizeof(_DPFPDD_IMAGE_INFO)
+            rc = int(self._dd.dpfpdd_capture(
+                self._device,
+                ctypes.byref(param),
+                ctypes.c_uint(timeout_ms),
+                ctypes.byref(result),
+                ctypes.byref(image_size),
+                buf,
+            )) & 0xFFFFFFFF
+
+        if rc in DPFPDD_DEVICE_GONE:
+            raise ReaderError(
+                "READER_RECONNECT_NEEDED",
+                "The fingerprint reader was disconnected or reset during capture.",
+                status=STATUS_COMMUNICATION_FAILURE,
+                reader_status=rc,
+                retry=True,
+            )
+        if rc == DPFPDD_E_DEVICE_BUSY:
+            raise ReaderError(
+                "READER_BUSY",
+                STATUS_DETAILS[STATUS_BUSY],
+                status=STATUS_BUSY,
+                reader_status=rc,
+                retry=False,
+                http_status=409,
+            )
+        if rc != DPFPDD_OK:
+            raise ReaderError(
+                "READER_CAPTURE_FAILED",
+                f"dpfpdd_capture failed ({_format_rc(rc)}).",
+                status=STATUS_COMMUNICATION_FAILURE,
+                reader_status=rc,
+                retry=False,
+            )
+
+        if result.success == 0:
+            if result.quality & DPFPDD_QUALITY_NO_FINGER:
+                raise ReaderError(
+                    "READER_CAPTURE_TIMEOUT",
+                    f"No fingerprint was captured within {timeout_ms // 1000} seconds. Place the finger flat on the sensor and try again.",
+                    status=STATUS_COMMUNICATION_FAILURE,
+                    reader_status=int(result.quality),
+                    retry=False,
+                )
+            raise ReaderError(
+                "READER_POOR_QUALITY",
+                _quality_explanation(int(result.quality)),
+                status=STATUS_COMMUNICATION_FAILURE,
+                reader_status=int(result.quality),
+                retry=False,
+                http_status=422,
+            )
+
+        actual_len = int(image_size.value)
+        if actual_len <= 0 or result.info.width == 0 or result.info.height == 0:
+            raise ReaderError(
+                "READER_EMPTY_IMAGE",
+                "The reader returned an empty image frame. Clean the sensor and try again.",
+                status=STATUS_COMMUNICATION_FAILURE,
+                retry=False,
+            )
+        return bytes(buf[:actual_len]), result.info, int(result.quality)
+
+    def _extract_minutiae_unlocked(
+        self,
+        raw_bytes: bytes,
+        *,
+        width: int,
+        height: int,
+        res: int,
+        finger_pos: int,
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        if not self._load_fj():
+            raise ReaderError(
+                "SDK_UNAVAILABLE",
+                STATUS_DETAILS[STATUS_SDK_UNAVAILABLE],
+                status=STATUS_SDK_UNAVAILABLE,
+                retry=False,
+            )
+        raw_buf = (ctypes.c_ubyte * len(raw_bytes)).from_buffer_copy(raw_bytes)
+        last_rc = 0
+        for fmd_const, fmd_name, std_hint in (
+            (DPFJ_FMD_ISO_19794_2_2005, "ISO_19794_2_2005", "iso"),
+            (DPFJ_FMD_ANSI_378_2004, "ANSI_378_2004", "ansi"),
+        ):
+            fmd_cap = 4096
+            fmd_size = ctypes.c_uint(fmd_cap)
+            fmd_buf = (ctypes.c_ubyte * fmd_cap)()
+            rc = int(self._fj.dpfj_create_fmd_from_raw(
+                raw_buf,
+                ctypes.c_uint(len(raw_bytes)),
+                ctypes.c_uint(width),
+                ctypes.c_uint(height),
+                ctypes.c_uint(res),
+                ctypes.c_uint(finger_pos),
+                ctypes.c_uint(0),
+                ctypes.c_uint(fmd_const),
+                fmd_buf,
+                ctypes.byref(fmd_size),
+            )) & 0xFFFFFFFF
+            if rc == DPFJ_E_MORE_DATA and fmd_size.value > fmd_cap:
+                fmd_cap = int(fmd_size.value)
+                fmd_buf = (ctypes.c_ubyte * fmd_cap)()
+                rc = int(self._fj.dpfj_create_fmd_from_raw(
+                    raw_buf,
+                    ctypes.c_uint(len(raw_bytes)),
+                    ctypes.c_uint(width),
+                    ctypes.c_uint(height),
+                    ctypes.c_uint(res),
+                    ctypes.c_uint(finger_pos),
+                    ctypes.c_uint(0),
+                    ctypes.c_uint(fmd_const),
+                    fmd_buf,
+                    ctypes.byref(fmd_size),
+                )) & 0xFFFFFFFF
+            if rc != DPFJ_OK or fmd_size.value == 0:
+                last_rc = rc
+                continue
+            blob = bytes(fmd_buf[: int(fmd_size.value)])
+            try:
+                points = iso19794_2.parse_template(blob, standard=std_hint)
+            except iso19794_2.TemplateParseError as exc:
+                self._last_error = str(exc)
+                continue
+            return points, fmd_name
+
+        raise ReaderError(
+            "TEMPLATE_EXTRACTION_FAILED",
+            f"The reader captured a finger image, but minutiae extraction failed ({_format_rc(last_rc)}). Place the finger flat on the sensor and try again.",
+            status=STATUS_COMMUNICATION_FAILURE,
+            reader_status=last_rc,
+            retry=False,
+            http_status=422,
+        )
 
     def shutdown(self) -> None:
+        self.stop_monitor()
         with self._lock:
-            self._close_device()
-            if self._dd is not None:
+            self._close_device_unlocked()
+            if self._dd is not None and self._init_succeeded:
                 try:
                     self._dd.dpfpdd_exit()
-                except OSError:  # pragma: no cover
+                except Exception:
                     pass
+                self._init_succeeded = False
 
 
 # ---------------------------------------------------------------------------
-# HTTP layer
+# HTTP Loopback Server (CORS + Private Network Access + SSE)
 # ---------------------------------------------------------------------------
-def make_handler(reader: Any, allowed_origins: Iterable[str]) -> type:
-    """Build a request handler bound to *reader* (injected for testability)."""
-    origins = tuple(o.rstrip("/") for o in allowed_origins if o)
+
+
+def _normalize_origin(origin: str) -> str:
+    parsed = urllib.parse.urlparse((origin or "").strip())
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+
+def _origin_is_allowed(origin: str, allowlist: Sequence[str]) -> bool:
+    norm = _normalize_origin(origin)
+    if not norm:
+        return False
+    allowed = {_normalize_origin(item) for item in allowlist if item}
+    return norm in allowed
+
+
+class BridgeHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    # On Windows, SO_REUSEADDR allows multiple processes to bind the same port!
+    # Keep SO_REUSEADDR disabled on Windows and enforce SO_EXCLUSIVEADDRUSE.
+    allow_reuse_address = platform.system() != "Windows"
+
+    def server_bind(self) -> None:
+        if platform.system() == "Windows" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            except OSError:
+                pass
+        super().server_bind()
+
+
+def make_handler(reader: Any, allowed_origins: Sequence[str] = DEFAULT_ALLOWED_ORIGINS):
+    origins = tuple(allowed_origins or DEFAULT_ALLOWED_ORIGINS)
 
     class BridgeHandler(BaseHTTPRequestHandler):
-        server_version = "%s/%s" % (SERVICE_NAME, SERVICE_VERSION)
-        sys_version = ""
         protocol_version = "HTTP/1.1"
-        max_body_bytes = 8192
 
-        # -- helpers -------------------------------------------------------
-        def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
-            logger.info("%s - %s", self.address_string(), fmt % args)
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            LOGGER.debug("HTTP %s - " + format, self.client_address[0], *args)
 
         def _origin(self) -> str:
-            return (self.headers.get("Origin") or "").rstrip("/")
+            return str(self.headers.get("Origin") or "").strip()
 
-        def _cors_headers(self) -> Dict[str, str]:
+        def _check_origin(self) -> Tuple[bool, str]:
             origin = self._origin()
-            if origin and origin in origins:
-                return {
-                    "Access-Control-Allow-Origin": origin,
-                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                    "Access-Control-Allow-Headers": "Content-Type",
-                    "Access-Control-Max-Age": "600",
-                    "Vary": "Origin",
-                }
-            return {"Vary": "Origin"}
+            if not origin:
+                # Non-browser loopback CLI diagnostics without Origin header
+                return True, ""
+            if _origin_is_allowed(origin, origins):
+                return True, origin
+            return False, origin
 
-        def _send(self, payload: Dict[str, Any], code: int = 200) -> None:
-            body = json.dumps(payload).encode("utf-8")
-            self.send_response(code)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
+        def _send_cors_headers(self, origin: str) -> None:
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Vary", "Origin")
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            for key, value in self._cors_headers().items():
-                self.send_header(key, value)
-            self.end_headers()
-            self.wfile.write(body)
 
-        def _origin_allowed(self) -> bool:
-            origin = self._origin()
-            return not origin or origin in origins
+        def _send_json(self, status_code: int, payload: Dict[str, Any], origin: str = "") -> None:
+            raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(status_code)
+            self._send_cors_headers(origin)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
 
         def _read_json(self) -> Dict[str, Any]:
+            raw_len = self.headers.get("Content-Length")
+            if not raw_len:
+                return {}
             try:
-                length = int(self.headers.get("Content-Length") or 0)
+                length = int(raw_len)
             except ValueError:
-                length = 0
-            if length > self.max_body_bytes:
-                raise ValueError("Request body is too large.")
+                raise ValueError("Invalid Content-Length")
             if length <= 0:
                 return {}
-            raw = self.rfile.read(length)
-            if not raw:
-                return {}
-            try:
-                parsed = json.loads(raw.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise ValueError("Request body must be JSON.") from exc
-            return parsed if isinstance(parsed, dict) else {}
+            if length > 65536:
+                raise ValueError("Payload too large")
+            body = self.rfile.read(length)
+            parsed = json.loads(body.decode("utf-8"))
+            if not isinstance(parsed, dict):
+                raise ValueError("JSON body must be an object")
+            return parsed
 
-        # -- verbs ---------------------------------------------------------
         def do_OPTIONS(self) -> None:  # noqa: N802
-            if not self._origin_allowed():
-                self._send({"success": False, "error": "ORIGIN_NOT_ALLOWED",
-                            "message": "This origin is not allowed to use the fingerprint bridge."}, 403)
+            ok, origin = self._check_origin()
+            if not ok:
+                self._send_json(403, {
+                    "success": False,
+                    "error": "ORIGIN_NOT_ALLOWED",
+                    "message": f"Origin {origin!r} is not allowlisted on this workstation bridge.",
+                })
                 return
             self.send_response(204)
-            for key, value in self._cors_headers().items():
-                self.send_header(key, value)
-            # Chrome/Edge Private Network Access: a public page (the hosted
-            # desk) calling loopback sends a preflight carrying
-            # Access-Control-Request-Private-Network, and the grant below is
-            # what lets that preflight succeed. Loopback-only, and only ever
-            # sent in answer to that exact request header.
-            if (self.headers.get("Access-Control-Request-Private-Network") or "").strip().lower() == "true":
-                self.send_header("Access-Control-Allow-Private-Network", "true")
+            self._send_cors_headers(origin)
             self.send_header("Content-Length", "0")
             self.end_headers()
 
         def do_GET(self) -> None:  # noqa: N802
-            self._route("GET")
+            ok, origin = self._check_origin()
+            if not ok:
+                self._send_json(403, {
+                    "success": False,
+                    "error": "ORIGIN_NOT_ALLOWED",
+                    "message": f"Origin {origin!r} is not allowlisted on this workstation bridge.",
+                })
+                return
+            path = urllib.parse.urlparse(self.path).path
+            if path == "/health":
+                self._send_json(200, {
+                    "success": True,
+                    "service": "jone-fingerprint-bridge",
+                    "version": SERVICE_VERSION,
+                    "loopback_only": True,
+                    "pid": os.getpid(),
+                }, origin=origin)
+                return
+            if path == "/status":
+                self._send_json(200, reader.status(), origin=origin)
+                return
+            if path == "/diagnose":
+                self._send_json(200, reader.diagnose(), origin=origin)
+                return
+            if path == "/events":
+                self._handle_sse(origin)
+                return
+            if path in ("/initialize", "/capture"):
+                self._send_json(405, {
+                    "success": False,
+                    "error": "METHOD_NOT_ALLOWED",
+                    "message": f"Use POST for {path}.",
+                }, origin=origin)
+                return
+            self._send_json(404, {
+                "success": False,
+                "error": "NOT_FOUND",
+                "message": f"Unknown bridge route {path}.",
+            }, origin=origin)
 
-        def do_HEAD(self) -> None:  # noqa: N802
-            self._route("HEAD")
+        def _handle_sse(self, origin: str) -> None:
+            if not hasattr(reader, "subscribe_events"):
+                self._send_json(404, {"success": False, "error": "SSE_UNSUPPORTED"}, origin=origin)
+                return
+            self.send_response(200)
+            self._send_cors_headers(origin)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            q = reader.subscribe_events()
+            try:
+                initial = json.dumps(reader.status(), ensure_ascii=False)
+                self.wfile.write(f"event: status\ndata: {initial}\n\n".encode("utf-8"))
+                self.wfile.flush()
+                while True:
+                    try:
+                        snap = q.get(timeout=15.0)
+                        line = json.dumps(snap, ensure_ascii=False)
+                        self.wfile.write(f"event: status\ndata: {line}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                    except queue.Empty:
+                        self.wfile.write(b": keepalive\n\n")
+                        self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                reader.unsubscribe_events(q)
 
         def do_POST(self) -> None:  # noqa: N802
-            self._route("POST")
-
-        def _route(self, method: str) -> None:
-            if not self._origin_allowed():
-                self._send({"success": False, "error": "ORIGIN_NOT_ALLOWED",
-                            "message": "This origin is not allowed to use the fingerprint bridge."}, 403)
+            ok, origin = self._check_origin()
+            if not ok:
+                self._send_json(403, {
+                    "success": False,
+                    "error": "ORIGIN_NOT_ALLOWED",
+                    "message": f"Origin {origin!r} is not allowlisted on this workstation bridge.",
+                })
                 return
-            path = (self.path or "/").split("?", 1)[0].rstrip("/") or "/"
+            path = urllib.parse.urlparse(self.path).path
             try:
-                if path in ("/", "/health"):
-                    self._send({"success": True, "service": SERVICE_NAME, "version": SERVICE_VERSION,
-                                "platform": platform.platform(), "loopback_only": True})
-                elif path == "/status":
-                    self._send({"success": True, **reader.status()})
-                elif path == "/initialize":
-                    if method != "POST":
-                        self._send({"success": False, "error": "METHOD_NOT_ALLOWED",
-                                    "message": "Use POST for /initialize."}, 405)
-                        return
-                    self._read_json_safe()
-                    self._send({"success": True, **reader.initialize()})
-                elif path == "/capture":
-                    if method != "POST":
-                        self._send({"success": False, "error": "METHOD_NOT_ALLOWED",
-                                    "message": "Use POST for /capture."}, 405)
-                        return
-                    body = self._read_json_safe()
-                    # Repair 2026-11-22: an EXPLICIT timeout below the 5 s floor
-                    # used to be clamped up and turned into a REAL five-second
-                    # capture. The desk page's preflight probe (see
-                    # frontend/js/biometrics.js probeBridgeViaPreflight) sends
-                    # exactly such a deliberately-invalid body to test whether
-                    # this bridge is reachable without touching the device, so
-                    # the old behaviour (a) held the reader busy for five
-                    # seconds and flashed its LED during what must be a
-                    # side-effect-free reachability check, and (b) made the
-                    # documented "the bridge answers 400 before any device
-                    # access" contract false. Reject the request instead. A
-                    # MISSING timeout keeps the documented 30 s default, and a
-                    # non-numeric value still falls through to the ValueError
-                    # handler (400 BAD_REQUEST) below.
-                    raw_timeout = body.get("timeout_ms")
-                    timeout_ms = int(raw_timeout) if raw_timeout is not None else 30000
-                    if timeout_ms < 5000:
-                        self._send({
+                body = self._read_json()
+            except (ValueError, UnicodeDecodeError) as exc:
+                self._send_json(400, {
+                    "success": False,
+                    "error": "BAD_REQUEST",
+                    "message": f"Invalid JSON request body: {exc}",
+                }, origin=origin)
+                return
+
+            if path == "/initialize":
+                try:
+                    if "reopen" in body and hasattr(reader, "initialize"):
+                        try:
+                            state = reader.initialize(reopen=bool(body.get("reopen", True)))
+                        except TypeError:
+                            state = reader.initialize()
+                    else:
+                        state = reader.initialize()
+                except ReaderError as exc:
+                    self._send_json(exc.http_status, {
+                        "success": False,
+                        "error": exc.code,
+                        "message": exc.message,
+                        "status": exc.status,
+                    }, origin=origin)
+                    return
+                self._send_json(200, state, origin=origin)
+                return
+
+            if path == "/capture":
+                if "timeout_ms" in body and body["timeout_ms"] is not None:
+                    raw_timeout = body["timeout_ms"]
+                    if isinstance(raw_timeout, bool):
+                        timeout_int = -1
+                    else:
+                        try:
+                            timeout_int = int(raw_timeout)
+                        except (TypeError, ValueError):
+                            timeout_int = -1
+                    if timeout_int < MIN_CAPTURE_TIMEOUT_MS or timeout_int > MAX_CAPTURE_TIMEOUT_MS:
+                        self._send_json(400, {
                             "success": False,
                             "error": "INVALID_CAPTURE_TIMEOUT",
-                            "message": "timeout_ms must be at least 5000 (probe rejected before any device access).",
-                            "min_timeout_ms": 5000,
-                            "max_timeout_ms": 60000,
-                        }, 400)
+                            "message": (
+                                f"timeout_ms must be between {MIN_CAPTURE_TIMEOUT_MS} and "
+                                f"{MAX_CAPTURE_TIMEOUT_MS} milliseconds."
+                            ),
+                            "min_timeout_ms": MIN_CAPTURE_TIMEOUT_MS,
+                            "max_timeout_ms": MAX_CAPTURE_TIMEOUT_MS,
+                        }, origin=origin)
                         return
-                    timeout_ms = max(5000, min(timeout_ms, 60000))
-                    finger = str(body.get("finger_position") or "RIGHT_INDEX")
-                    try:
-                        result = reader.capture(timeout_ms=timeout_ms, finger_position=finger)
-                    except ReaderError as exc:
-                        self._send({"success": False, "error": exc.code, "message": exc.message,
-                                    "status": exc.status, **exc.extra})
-                        return
-                    self._send({"success": True, **result})
-                elif path == "/diagnose":
-                    self._send({"success": True, **reader.diagnose()})
+                    timeout_ms = timeout_int
                 else:
-                    self._send({"success": False, "error": "NOT_FOUND",
-                                "message": "Unknown bridge endpoint."}, 404)
-            except ValueError as exc:
-                self._send({"success": False, "error": "BAD_REQUEST", "message": str(exc)}, 400)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Bridge request failed: %s", path)
-                self._send({"success": False, "error": "INTERNAL_ERROR",
-                            "message": "The fingerprint bridge hit an internal error (%s)." % exc}, 500)
+                    timeout_ms = 30000
+                finger_position = body.get("finger_position", "RIGHT_INDEX")
+                try:
+                    result = reader.capture(timeout_ms=timeout_ms, finger_position=finger_position)
+                except ReaderError as exc:
+                    self._send_json(exc.http_status, {
+                        "success": False,
+                        "error": exc.code,
+                        "message": exc.message,
+                        "status": exc.status,
+                        "retry": exc.retry,
+                    }, origin=origin)
+                    return
+                self._send_json(200, result, origin=origin)
+                return
 
-        def _read_json_safe(self) -> Dict[str, Any]:
-            # Malformed JSON is a client error (HTTP 400 via _route), not an
-            # empty body: silently treating it as {} made a broken caller
-            # indistinguishable from a valid capture with default options.
-            return self._read_json()
+            self._send_json(404, {
+                "success": False,
+                "error": "NOT_FOUND",
+                "message": f"Unknown bridge route {path}.",
+            }, origin=origin)
 
     return BridgeHandler
 
 
-def serve(reader: Any, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
-          allowed_origins: Iterable[str] = DEFAULT_ALLOWED_ORIGINS) -> ThreadingHTTPServer:
-    handler = make_handler(reader, allowed_origins)
-    server = ThreadingHTTPServer((host, port), handler)
-    server.daemon_threads = True
-    return server
+def serve(
+    reader: Any,
+    *,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    allowed_origins: Sequence[str] = DEFAULT_ALLOWED_ORIGINS,
+) -> BridgeHTTPServer:
+    if host not in ("127.0.0.1", "localhost", "::1") and not os.environ.get("JONE_BRIDGE_ALLOW_NON_LOOPBACK"):
+        raise ValueError(
+            f"Refusing non-loopback bind host {host!r}; loopback 127.0.0.1 is required."
+        )
+    handler = make_handler(reader, allowed_origins=allowed_origins)
+    return BridgeHTTPServer((host, int(port)), handler)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="J-ONE Fingerprint Bridge (DigitalPersona 4500)")
-    parser.add_argument("--host", default=DEFAULT_HOST, help="Bind address (default 127.0.0.1 — loopback only)")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="TCP port (default 8787)")
-    parser.add_argument("--allow-origin", action="append", default=None,
-                        help="Browser origin allowed to call the bridge (repeatable)")
-    parser.add_argument("--diagnose", action="store_true", help="Print a device/SDK report and exit")
-    parser.add_argument("--log-level", default="INFO")
+def _acquire_single_instance_mutex(port: int) -> Optional[Any]:
+    """Acquire a Windows kernel mutex so only one bridge runs per workstation."""
+    if platform.system() != "Windows":
+        return None
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        name = f"Local\\JONE_FingerprintBridge_{port}"
+        handle = kernel32.CreateMutexW(None, False, name)
+        err = ctypes.get_last_error()
+        ERROR_ALREADY_EXISTS = 183
+        if err == ERROR_ALREADY_EXISTS:
+            if handle:
+                kernel32.CloseHandle(handle)
+            return False
+        return handle
+    except OSError:
+        return None
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="J-ONE Workstation Fingerprint Bridge")
+    parser.add_argument("--host", default=os.environ.get("JONE_BRIDGE_HOST", DEFAULT_HOST))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("JONE_BRIDGE_PORT", DEFAULT_PORT)))
+    parser.add_argument(
+        "--allowed-origins",
+        default=os.environ.get("JONE_BRIDGE_ALLOWED_ORIGINS", ",".join(DEFAULT_ALLOWED_ORIGINS)),
+    )
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=getattr(logging, str(args.log_level).upper(), logging.INFO),
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    configure_logging(verbose=args.verbose)
 
-    origins = tuple(args.allow_origin) if args.allow_origin else DEFAULT_ALLOWED_ORIGINS
-    reader = DigitalPersonaReader()
-
-    if args.diagnose:
-        print(json.dumps(reader.diagnose(), indent=2))
-        reader.shutdown()
+    mutex = _acquire_single_instance_mutex(args.port)
+    if mutex is False:
+        LOGGER.info("J-ONE Fingerprint Bridge is already running on port %d; exiting duplicate instance.", args.port)
         return 0
 
-    if args.host not in ("127.0.0.1", "localhost", "::1"):
-        logger.warning("Binding the fingerprint bridge to %s exposes the reader to the network. "
-                       "Use loopback unless you understand the risk.", args.host)
-
+    origins = tuple(o.strip() for o in str(args.allowed_origins).split(",") if o.strip())
+    reader = DigitalPersonaReader(auto_monitor=True)
     try:
         server = serve(reader, host=args.host, port=args.port, allowed_origins=origins)
     except OSError as exc:
-        # Almost always "port already in use": a second copy of the bridge,
-        # or the previous one never stopped. Name it instead of dumping a
-        # traceback the reception operator cannot act on.
-        logger.error(
-            "The fingerprint bridge cannot listen on http://%s:%d (%s). "
-            "If the bridge is already running, use that copy; otherwise stop "
-            "the process holding the port or start with --port and set the "
-            "same port in the desk page configuration.",
-            args.host, args.port, exc,
-        )
+        LOGGER.error("Cannot bind %s:%d (%s). Another service may already own this port.", args.host, args.port, exc)
         reader.shutdown()
-        return 2
-    logger.info("%s %s listening on http://%s:%d (origins: %s)",
-                SERVICE_NAME, SERVICE_VERSION, args.host, args.port, ", ".join(origins))
-    state = reader.status()
-    logger.info("Reader status at start: %s — %s", state.get("status"), state.get("detail"))
+        return 1
+
+    LOGGER.info(
+        "J-ONE Fingerprint Bridge listening on http://%s:%d (PID %d, origins=%s)",
+        args.host, args.port, os.getpid(), ",".join(origins),
+    )
+
+    def _shutdown(*_args: Any) -> None:
+        LOGGER.info("Shutting down J-ONE Fingerprint Bridge...")
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGINT, _shutdown)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _shutdown)
+
     try:
         server.serve_forever()
-    except KeyboardInterrupt:
-        logger.info("Stopping the fingerprint bridge.")
     finally:
-        server.server_close()
         reader.shutdown()
+        server.server_close()
+        if mutex and platform.system() == "Windows":
+            try:
+                ctypes.WinDLL("kernel32").CloseHandle(mutex)
+            except OSError:
+                pass
     return 0
 
 
