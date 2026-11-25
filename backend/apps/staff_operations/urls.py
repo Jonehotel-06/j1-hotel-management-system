@@ -1,6 +1,14 @@
 from django.urls import path
 
-from . import payroll_views, views, views_biometrics, views_bridge, views_face, views_self_profile
+from . import (
+    payroll_views,
+    views,
+    views_biometrics,
+    views_bridge,
+    views_face,
+    views_reader_agent,
+    views_self_profile,
+)
 
 app_name = "staff_operations"
 
@@ -43,6 +51,20 @@ urlpatterns = [
     path("biometrics/bridge/submit/", views_bridge.BridgeReaderSubmitCaptureView.as_view(), name="biometrics-bridge-submit"),
     path("biometrics/bridge/devices/", views_bridge.BridgeReaderDevicesView.as_view(), name="biometrics-bridge-devices"),
     path("attendance/<str:reference>/", views.AttendanceRecordDetailView.as_view(), name="attendance-detail"),
+    # --- J-ONE Reader Agent (native Windows capture component) --------------
+    # Browser surface (existing JWT authentication): sessions, provisioning,
+    # enrolment queue. No biometric result ever comes from the browser.
+    path("reader-agent/sessions/", views_reader_agent.ReaderAgentSessionCreateView.as_view(), name="reader-agent-session-create"),
+    path("reader-agent/sessions/<str:token>/", views_reader_agent.ReaderAgentSessionDetailView.as_view(), name="reader-agent-session-detail"),
+    path("reader-agent/agents/", views_reader_agent.ReaderAgentListView.as_view(), name="reader-agent-list"),
+    path("reader-agent/agents/provision/", views_reader_agent.ReaderAgentProvisionView.as_view(), name="reader-agent-provision"),
+    path("reader-agent/templates/", views_reader_agent.ReaderAgentTemplatesView.as_view(), name="reader-agent-templates"),
+    path("reader-agent/templates/<int:pk>/<str:action>/", views_reader_agent.ReaderAgentTemplateActionView.as_view(), name="reader-agent-template-action"),
+    # Agent surface (HMAC-signed requests from the provisioned workstation agent).
+    path("reader-agent/agent/heartbeat/", views_reader_agent.AgentHeartbeatView.as_view(), name="reader-agent-heartbeat"),
+    path("reader-agent/agent/gallery/", views_reader_agent.AgentGalleryView.as_view(), name="reader-agent-gallery"),
+    path("reader-agent/agent/identify/", views_reader_agent.AgentIdentifyView.as_view(), name="reader-agent-identify"),
+    path("reader-agent/agent/enroll/", views_reader_agent.AgentEnrollView.as_view(), name="reader-agent-enroll"),
     path("leave-requests/", views.LeaveRequestListCreateView.as_view(), name="leave-requests"),
     path("leave-requests/<str:reference>/", views.LeaveRequestDetailView.as_view(), name="leave-detail"),
     path("leave-requests/<str:reference>/review/", views.LeaveReviewView.as_view(), name="leave-review"),

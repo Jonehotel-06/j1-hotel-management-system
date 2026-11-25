@@ -148,6 +148,10 @@
           </div>
         </div>
         <div class="panel-body" id="sp-reader-check" aria-live="polite"></div>
+        <!-- J-ONE Reader Agent panel: enrolment and verification for the staff
+             member on this page. The finger is read by the native agent on this
+             computer; no biometric data passes through the browser. -->
+        <div class="panel-body" id="sp-reader-agent"></div>
         <div class="panel-body" id="sp-biometrics-summary"></div>
         <div class="panel-body no-pad">
           <div class="table-wrap"><table class="table">
@@ -259,6 +263,7 @@
 <script src="../js/table-fit.js?v=1.1.36"></script>
 <script src="../js/biometrics.js?v=1.1.36"></script>
 <script src="../js/reader-check.js?v=1.1.36"></script>
+<script src="../js/reader-agent.js?v=1.1.36"></script>
 <script>
 JONE.ui.initChrome();
 var __spAllowed = JONE.dashboard.boot(["admin", "general_manager", "procurement_officer"]);
@@ -926,5 +931,30 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
 <script src="../js/pwa.js?v=1.1.36"></script>
 <script src="../js/version.js?v=1.1.36"></script>
 <script src="../js/update-checker.js?v=1.1.36"></script>
+<script>
+/* Mount the J-ONE Reader Agent panel for the staff member shown on this page.
+   Enrolment is initiated here; the finger is read by the agent on this PC and
+   the enrolment is queued for a supervisor to approve (maker/checker). */
+(function () {
+  "use strict";
+  if (!window.JONE || !window.JONE.readerAgent) return;
+  var host = document.getElementById("sp-reader-agent");
+  if (!host) return;
+  function staffId() {
+    var params = new URLSearchParams(window.location.search);
+    var explicit = params.get("id") || params.get("user_id");
+    if (explicit) return explicit;
+    var state = (window.Auth && window.Auth.state) || {};
+    var user = state.user || state.profile || null;
+    return user ? (user.id || user.user_id || null) : null;
+  }
+  window.JONE.readerAgent.mount(host, {
+    actions: ["CLOCK_IN", "CLOCK_OUT"],
+    allowEnroll: true,
+    enrollStaffId: staffId,
+    fingerPosition: function () { return "RIGHT_INDEX"; }
+  });
+})();
+</script>
 </body>
 </html>

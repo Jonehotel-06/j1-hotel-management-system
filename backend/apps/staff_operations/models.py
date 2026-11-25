@@ -542,3 +542,7 @@ from .biometric_models import (  # noqa: E402,F401
     FingerprintTemplate, FingerprintVerificationAttempt, TemporaryWorkstationCredential,
     FingerprintDevice, FingerprintDeviceEvent,
 )
+# J-ONE reader agent (native Windows capture component) records.
+from .reader_agent_models import (  # noqa: E402,F401
+    ReaderAgent, ReaderAgentEvent, ReaderAgentSession, ReaderAgentTemplate,
+)

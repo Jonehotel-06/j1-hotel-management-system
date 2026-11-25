@@ -72,6 +72,11 @@ const PRECACHE_URLS = [
      alongside the rest of the bootstrap. */
   "/js/biometrics.js",
   "/js/reader-check.js",
+  /* The reader-agent panel is what actually starts a fingerprint action now
+     (single-use session + jone-reader: hand-off). Precached for the same
+     reason as biometrics.js above: a cached older copy of this file on a
+     desk PC would silently keep the old behaviour. */
+  "/js/reader-agent.js",
   "/js/operations.js",
   "/js/table-fit.js",
   "/js/runtime-config.js",

@@ -100,6 +100,15 @@
         </div>
       </div>
     </div>
+    <!-- J-ONE Reader Agent (js/reader-agent.js).
+         This is the fingerprint capture path. The reader is owned by the native
+         agent on THIS computer: the page only asks the API for a single-use
+         session and hands that token to Windows, and the result comes back
+         signed and verified by the API. There is no loopback address here and
+         nothing for the receptionist to start. -->
+    <div class="card card-pad" data-jone-reader-agent-host
+         data-reader-actions="CLOCK_IN,CLOCK_OUT,BREAK_START,BREAK_END"
+         style="margin-top:1rem;"></div>
     <div class="panel-body">
       <div class="grid grid-2" style="gap:1.25rem;align-items:start;">
         <div class="card card-pad">
@@ -180,6 +189,7 @@
 </main></div></div>
 <script src="../js/runtime-config.js?v=1.1.36"></script><script src="../js/config.js?v=1.1.36"></script><script src="../js/utils.js?v=1.1.36"></script><script src="../js/icons.js?v=1.1.36"></script><script src="../js/api.js?v=1.1.36"></script><script src="../js/theme.js?v=1.1.36"></script><script src="../js/ui.js?v=1.1.36"></script><script src="../js/auth.js?v=1.1.36"></script><script src="../js/navigation.js?v=1.1.36"></script><script src="../js/dashboard.js?v=1.1.36"></script><script src="../js/table-fit.js?v=1.1.36"></script><script src="../js/operations.js?v=1.1.36"></script><script src="../js/biometrics.js?v=1.1.36"></script>
 <script src="../js/reader-check.js?v=1.1.36"></script>
+<script src="../js/reader-agent.js?v=1.1.36"></script>
 <script>
 JONE.ui.initChrome();
 var __workforceAllowed=JONE.dashboard.boot(["admin","general_manager","accountant","procurement_officer","chef","kitchen_assistant","waiter","porter","receptionist","housekeeping","storekeeper","security"]);
