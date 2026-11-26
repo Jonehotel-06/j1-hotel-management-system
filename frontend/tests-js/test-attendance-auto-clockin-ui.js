@@ -103,9 +103,14 @@ test("a refused clock-in is explained and immediately re-reads the real state", 
 });
 
 test("the terminal console reports what the action did to attendance", () => {
-  assert.match(TERMINALS, /var attendanceNote=JONE\.biometrics\.attendanceNote\(res\);/);
-  assert.match(TERMINALS, /data-rt-attendance-note/);
+  /* The attendance sentence itself now comes from ONE module — the reader agent
+     panel for fingerprint actions, and JONE.readerAgent.terminal.attendanceNote
+     for the supervised fallback on the workforce console. The terminal page no
+     longer renders its own verdict (it did, from a browser-made probe). */
+  assert.match(WORKFORCE, /terminalApi\.attendanceNote\(res\)/);
   assert.match(WORKFORCE, /data-wf-rt-attendance-note/);
+  assert.match(TERMINALS, /data-jone-reader-agent-host|JONE\.readerAgent\.terminal\.status/,
+    "the terminals console shows the panel's verdict instead of rendering its own");
   assert.doesNotMatch(TERMINALS, /Clocked in now|Already clocked in/,
     "the wording lives in one module, not copied per page");
   assert.doesNotMatch(WORKFORCE, /Clocked in now|Already clocked in/);
@@ -114,8 +119,9 @@ test("the terminal console reports what the action did to attendance", () => {
 test("the shared note distinguishes a clock-in from a reused record, and stays silent otherwise", () => {
   const ctx = makeContext();
   loadScript(ctx, "js/utils.js");
-  loadScript(ctx, "js/biometrics.js");
-  const note = ctx.window.JONE.biometrics.attendanceNote;
+  ctx.window.JONE = ctx.window.JONE || {};
+  loadScript(ctx, "js/reader-agent.js");
+  const note = ctx.window.JONE.readerAgent.terminal.attendanceNote;
   assert.equal(typeof note, "function");
 
   const clockedInNow = note({ action: "CLOCK_IN", created: true, status: "CLOCKED_IN" });

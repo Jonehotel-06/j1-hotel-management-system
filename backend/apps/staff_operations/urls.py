@@ -57,6 +57,7 @@ urlpatterns = [
     path("reader-agent/sessions/", views_reader_agent.ReaderAgentSessionCreateView.as_view(), name="reader-agent-session-create"),
     path("reader-agent/sessions/<str:token>/", views_reader_agent.ReaderAgentSessionDetailView.as_view(), name="reader-agent-session-detail"),
     path("reader-agent/agents/", views_reader_agent.ReaderAgentListView.as_view(), name="reader-agent-list"),
+    path("reader-agent/agents/setup-status/", views_reader_agent.ReaderAgentSetupStatusView.as_view(), name="reader-agent-setup-status"),
     path("reader-agent/agents/provision/", views_reader_agent.ReaderAgentProvisionView.as_view(), name="reader-agent-provision"),
     path("reader-agent/templates/", views_reader_agent.ReaderAgentTemplatesView.as_view(), name="reader-agent-templates"),
     path("reader-agent/templates/<int:pk>/<str:action>/", views_reader_agent.ReaderAgentTemplateActionView.as_view(), name="reader-agent-template-action"),

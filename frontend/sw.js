@@ -32,7 +32,7 @@
 
 "use strict";
 
-const CACHE_VERSION = "jone-v1.1.36";
+const CACHE_VERSION = "jone-v1.1.37";
 const PRECACHE = `${CACHE_VERSION}-precache`;
 const PAGES_CACHE = `${CACHE_VERSION}-pages`;
 const IMAGES_CACHE = `${CACHE_VERSION}-images`;
@@ -64,18 +64,14 @@ const PRECACHE_URLS = [
   "/js/hotel-data.js",
   "/js/navigation.js",
   "/js/pwa.js",
-  /* biometrics.js is loaded by every desk page that can clock a staff member
-     in. It was missing from this list, so the shell could keep serving an
-     older cached copy from the stale-while-revalidate branch even after a
-     release fixed it — "we changed the file but production still runs the old
-     one" is exactly this. Precached here, it is refreshed on every install
-     alongside the rest of the bootstrap. */
-  "/js/biometrics.js",
-  "/js/reader-check.js",
-  /* The reader-agent panel is what actually starts a fingerprint action now
-     (single-use session + jone-reader: hand-off). Precached for the same
-     reason as biometrics.js above: a cached older copy of this file on a
-     desk PC would silently keep the old behaviour. */
+  /* js/reader-agent.js is the fingerprint panel on every desk page that can
+     clock a staff member in (workforce, terminals, staff-profile). Precached
+     here — and its ?v= stamp bumped with the release — because a cached older
+     copy on a desk PC would silently keep the previous panel: "we changed the
+     file but production still runs the old one" is exactly that failure.
+     js/biometrics.js and js/reader-check.js are deliberately NOT precached any
+     more: no page loads them now (they existed to drive the loopback bridge),
+     so installing them into a fresh cache would only re-ship dead code. */
   "/js/reader-agent.js",
   "/js/operations.js",
   "/js/table-fit.js",

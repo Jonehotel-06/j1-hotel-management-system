@@ -27,7 +27,10 @@ test("the fallback needs an identifier and a substantive reason", () => {
   assert.match(WORKFORCE, /if\(reason\.length<10\)\{JONE\.ui\.toast\("Give a reason of at least 10 characters\.","warning"\);return;\}/);
   assert.match(WORKFORCE, /payload=\{action:"MANUAL_FALLBACK",manual_override_reason:reason\}/);
   assert.match(WORKFORCE, /manual_override_reason/, "the reason travels with the request");
-  assert.match(WORKFORCE, /JONE\.biometrics\.identifierPayload\(idVal\)/, "the identifier is bucketed by the shared classifier (email / staff_id / employee_code)");
+  /* The classifier moved with the console glue into js/reader-agent.js
+     (JONE.readerAgent.terminal.identifierPayload) when the bridge modules left
+     the page: the same one implementation, no loopback client attached. */
+  assert.match(WORKFORCE, /terminalApi\.identifierPayload\(idVal\)/, "the identifier is bucketed by the shared classifier (email / staff_id / employee_code)");
   assert.match(WORKFORCE, /data-wf-rt-fallback-picker/, "the fallback offers a directory-backed staff selector");
   assert.match(WORKFORCE, /function terminalStaffPicker\(\)/, "the terminal selector uses the staff directory");
   assert.match(WORKFORCE, /resource:"staffDirectory"/, "the selector is backed by the authoritative account directory");
@@ -58,7 +61,7 @@ test("the console states whether this browser is an enrolled Receptionist Deskto
      old localStorage-only message ("the server will refuse to record attendance
      here") was FALSE for a desk enrolled by address. The console now asks the
      server and reports its verdict; the false claim must never come back. */
-  assert.match(WORKFORCE, /getReceptionTerminalStatus/, "the console asks the server instead of assuming from localStorage");
+  assert.match(WORKFORCE, /terminalApi\.status\(\)/, "the console asks the server instead of assuming from localStorage");
   assert.match(WORKFORCE, /The server recognises this workstation as an enrolled Receptionist Desktop/);
   assert.match(WORKFORCE, /workstation_reference/, "the server-named workstation is shown");
   assert.match(WORKFORCE, /status===401\|\|status===403/, "a server refusal is reported with the server's own reason");

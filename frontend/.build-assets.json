@@ -43,6 +43,7 @@
   "js/portal.js": "422360f795d78e71775ec79e70b967073d4a823b156434d3d1b29b8239248e1b",
   "js/pos-drafts.js": "807f2c907cc0f0df1dbcd0c38103afec78609ed4943453b42fcc2843915335a2",
   "js/pwa.js": "73ae65fb50b90c347c741a2b93c88e223a4283819e488d2fa80577a0f22c75e7",
+  "js/reader-agent.js": "6a62e6b6654424a9a43f88c4a4f353f89f13be47c6817256a7c6437131632c09",
   "js/reader-check.js": "04847931fc3875b75689d872ef02deb0d8f043f8b40130de95b2f8489f4a8e63",
   "js/receipt-email-modal.js": "6bcab749219a59ae6cec3d03a24b0cfa9bd2929f6e87b079773662a411f54e1a",
   "js/receipt.js": "60e0220fd60ea55e211e3e86f0437584ab892836be69cef88da68b3278c962e8",
@@ -58,7 +59,7 @@
   "js/ui.js": "511bf18df17beacae3e030e77463b4ec4a9079eaeba03f808e63409b84657dc0",
   "js/update-checker.js": "a5ed2272d077fe7860c3555011d8e8318896eae7fd475ac7b3a811ff3e635475",
   "js/utils.js": "c1dd4acf03f86253f3fe0a6f1865d3139c0fd6a6620a8467379b39f6c7a592d6",
-  "js/version.js": "5536e6e03a6aa2e3f7cb1aa2c87ca25ddafb8f19226f64059ab9e24414e1e4f6",
+  "js/version.js": "d82e2f4209a18ee8cddeb332134109e57ba85bb26c7adee8469fd9480212895d",
   "rooms-gallery/admin.html": "8d1518d3fc570fe6dbe598d9b900027998106598c0a722ba951a436ce9f07998",
   "rooms-gallery/admin.js": "0c1af291d3cfeead6b34436e7f17acda4f693ace3ee1c876d78b2d4730e896b1",
   "rooms-gallery/gallery.css": "bc552dd7a39e2307f14640858c440a75770a30d27369850097309968baa9ff88",
@@ -70,5 +71,5 @@
   "rooms-gallery/sw.js": "bb5f13413969d5c20422c9e7745e745d20e951ee8ad6c3a2fa5fe79d0c50c08d",
   "rooms-gallery/sync-db.js": "9f3fb2fe017f74ee7718915a26343c1d86ab058f97dc6bb9152b7208cecdd462"
  },
- "version": "1.1.36"
+ "version": "1.1.37"
 }

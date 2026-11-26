@@ -6,7 +6,7 @@
 /* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
 (function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
 </script><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="robots" content="noindex, nofollow">
-  <title>Workstations | J-ONE Staff</title><meta name="theme-color" content="#373435"><link rel="icon" href="../favicon/favicon-32.png" sizes="32x32"><link rel="stylesheet" href="../css/main.css?v=1.1.35">
+  <title>Workstations | J-ONE Staff</title><meta name="theme-color" content="#373435"><link rel="icon" href="../favicon/favicon-32.png" sizes="32x32"><link rel="stylesheet" href="../css/main.css?v=1.1.37">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -69,56 +69,16 @@
         <div class="card card-pad"><div class="caption muted">On Break / Clocked Out Today</div><div id="rt-kpi-break-out" style="font-size:1.4rem;font-weight:700;">0 / 0</div></div>
         <div class="card card-pad"><div class="caption muted">Active 6-Digit Access Codes</div><div id="rt-kpi-codes" style="font-size:1.4rem;font-weight:700;">0</div></div>
       </div>
-      <!-- Reader state for THIS browser (mirrors the Workforce page panel).
-           Six different situations — phone/tablet, browser loopback block,
-           bridge not running, bridge not answering, reader/driver missing,
-           reader ready — each get their own sentence and control instead of
-           one "bridge not reachable" for all of them. -->
-      <div class="card card-pad" data-tm-reader style="margin-bottom:1.25rem;" aria-live="polite">
-        <div class="row" style="display:flex;gap:0.75rem;align-items:flex-start;flex-wrap:wrap;">
-          <div style="flex:1 1 320px;">
-            <div style="display:flex;align-items:center;gap:0.5rem;">
-              <span class="badge" data-tm-reader-badge>Checking reader…</span>
-              <strong data-tm-reader-title>Fingerprint reader</strong>
-            </div>
-            <p class="caption muted" data-tm-reader-detail role="status" aria-live="polite" style="margin-top:0.35rem;">Checking this computer and the J-ONE Fingerprint Bridge…</p>
-            <p class="caption" data-tm-reader-meta style="margin-top:0.25rem;opacity:0.75;"></p>
-          </div>
-          <div class="row-actions" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-            <button class="btn btn-sm btn-outline" type="button" data-tm-reader-action="check">Check reader</button>
-            <button class="btn btn-sm btn-outline" type="button" data-tm-reader-action="allow" hidden>Allow local network access</button>
-            <button class="btn btn-sm btn-outline" type="button" data-tm-reader-action="initialize" hidden>Re-initialise reader</button>
-            <button class="btn btn-sm btn-outline" type="button" data-tm-reader-action="desktop" hidden>Use reader on this device</button>
-            <button class="btn btn-sm btn-outline" type="button" data-tm-reader-action="mobile" hidden>This is a phone or tablet</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="grid grid-2" style="gap:1.25rem;align-items:start;">
-        <div class="card card-pad">
-          <h3 style="font-size:1rem;margin-bottom:0.5rem;">Biometric Fingerprint Verification &amp; Clock Action</h3>
-          <p class="caption muted" style="margin-bottom:0.75rem;">Enter Employee Code or Email (or leave blank for 1:N reader identification) and place finger on reader.</p>
-          <div class="field">
-            <label class="field-label" for="rt-staff-identifier">Staff email, employee code or staff ID</label>
-            <input class="input" id="rt-staff-identifier" type="text" placeholder="e.g. staff@jonehotel.com, STF-..., EMP-... or 12">
-          </div>
-          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
-            <button class="btn btn-sm" type="button" data-rt-action="CLOCK_IN">Clock In &amp; Issue 6-Digit Code</button>
-            <button class="btn btn-sm btn-outline" type="button" data-rt-action="ISSUE_CODE">Re-Issue 6-Digit Code</button>
-            <button class="btn btn-sm btn-outline" type="button" data-rt-action="VERIFY_STATUS">Verify Status</button>
-            <button class="btn btn-sm btn-outline" type="button" data-rt-action="BREAK_START">Start Break</button>
-            <button class="btn btn-sm btn-outline" type="button" data-rt-action="BREAK_END">End Break</button>
-            <button class="btn btn-sm btn-danger" type="button" data-rt-action="CLOCK_OUT">Clock Out (Expire Code)</button>
-          </div>
-        </div>
-
-        <div class="card card-pad" id="rt-result-card">
-          <h3 style="font-size:1rem;margin-bottom:0.5rem;">Verified Employee &amp; Issued Workstation Code</h3>
-          <div id="rt-result-body">
-            <p class="caption muted">Scan a staff member's fingerprint on the left to verify attendance status or issue a 6-digit numeric workstation access code.</p>
-          </div>
-        </div>
-      </div>
+      <!-- J-ONE Reader Agent (js/reader-agent.js). ONE fingerprint panel for this
+           console, and no other: the fingerprint used to be read by a loopback
+           bridge this page had to be told to start, then "verified" by posting a
+           synthetic probe the browser made up. The panel below asks the API for a
+           single-use challenge, hands it to the Windows agent, and shows the
+           verified result the API returns. -->
+      <div class="card card-pad" data-jone-reader-agent-host
+           data-reader-actions="CLOCK_IN,BREAK_START,BREAK_END,CLOCK_OUT,ISSUE_CODE,VERIFY"
+           style="margin-bottom:1.25rem;"></div>
+      <p class="caption muted" style="margin:-0.5rem 0 1.25rem;">Every fingerprint action for this terminal is on the panel above. The table below is a live view of who is clocked in and which workstation codes are open.</p>
     </div>
 
     <div class="panel-body no-pad">
@@ -217,111 +177,11 @@
     </div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.36"></script><script src="../js/config.js?v=1.1.36"></script><script src="../js/utils.js?v=1.1.36"></script><script src="../js/icons.js?v=1.1.36"></script><script src="../js/api.js?v=1.1.36"></script><script src="../js/theme.js?v=1.1.36"></script><script src="../js/ui.js?v=1.1.36"></script><script src="../js/auth.js?v=1.1.36"></script><script src="../js/navigation.js?v=1.1.36"></script><script src="../js/dashboard.js?v=1.1.36"></script><script src="../js/table-fit.js?v=1.1.36"></script><script src="../js/operations.js?v=1.1.36"></script><script src="../js/biometrics.js?v=1.1.36"></script>
-<script src="../js/reader-check.js?v=1.1.36"></script>
+<script src="../js/runtime-config.js?v=1.1.37"></script><script src="../js/config.js?v=1.1.37"></script><script src="../js/utils.js?v=1.1.37"></script><script src="../js/icons.js?v=1.1.37"></script><script src="../js/api.js?v=1.1.37"></script><script src="../js/theme.js?v=1.1.37"></script><script src="../js/ui.js?v=1.1.37"></script><script src="../js/auth.js?v=1.1.37"></script><script src="../js/navigation.js?v=1.1.37"></script><script src="../js/dashboard.js?v=1.1.37"></script><script src="../js/table-fit.js?v=1.1.37"></script><script src="../js/operations.js?v=1.1.37"></script><script src="../js/reader-agent.js?v=1.1.37"></script>
 <script>
-/* Reader state panel — same contract as the Workforce page
-   (JONE.biometrics.describeReader). This is the console staff actually open at
-   the front desk, so it carries the same honest status + capture gating. */
-(function(){
-  var badge=document.querySelector("[data-tm-reader-badge]");
-  var title=document.querySelector("[data-tm-reader-title]");
-  var detail=document.querySelector("[data-tm-reader-detail]");
-  var meta=document.querySelector("[data-tm-reader-meta]");
-  var actions=document.querySelectorAll("[data-tm-reader-action]");
-  var busy=false,captureActive=false,latestReport=null;
-  function gateCaptureButtons(r){
-    latestReport=r||latestReport;
-    var bio=window.JONE&&window.JONE.biometrics;
-    var ready=!captureActive&&!!(bio&&typeof bio.isCaptureReady==="function"?bio.isCaptureReady(latestReport):(latestReport&&latestReport.ready));
-    var reason=(latestReport&&(latestReport.ui_label||latestReport.detail))||"Fingerprint reader not connected";
-    document.querySelectorAll("button[data-rt-action],button[data-rt-row-action]").forEach(function(btn){
-      btn.disabled=!ready;
-      btn.setAttribute("aria-disabled",ready?"false":"true");
-      if(ready)btn.removeAttribute("title");
-      else btn.setAttribute("title",reason);
-    });
-  }
-  window.__JONE_TERMINAL_GATE__=function(){gateCaptureButtons(latestReport);};
-  window.__JONE_READER_BUSY__=function(){return busy||captureActive;};
-  gateCaptureButtons(null);
-  function say(b,t,d,m){if(badge)badge.textContent=b;if(title)title.textContent=t;if(detail)detail.textContent=d;if(meta)meta.textContent=m||"";}
-  function show(action,visible){actions.forEach(function(x){if(x.getAttribute("data-tm-reader-action")===action)x.hidden=!visible;});}
-  function render(r){
-    gateCaptureButtons(r);
-    if(!r){say("Biometric service unavailable","Fingerprint reader","Reader state could not be read.","");return;}
-    var m=[];if(r.bridge_url)m.push("Bridge: "+r.bridge_url);if(r.device_serial)m.push("Serial: "+r.device_serial);
-    if(r.local_network_permission&&r.local_network_permission!=="unsupported")m.push("Browser local network access: "+r.local_network_permission);
-    var metaText=m.join(" · "),code=String(r.code||"");
-    var bio=window.JONE&&window.JONE.biometrics;
-    var label=(bio&&typeof bio.uiLabelForReport==="function")?bio.uiLabelForReport(r):(r.ui_label||"Fingerprint reader");
-    if(r.mode==="mobile"){
-      say("Not available on this device","Fingerprint capture needs the reception workstation",r.detail,
-        "Supervised fallback and every other permitted action on this page still work from here. "+metaText);
-      show("check",true);show("allow",false);show("initialize",false);show("desktop",true);show("mobile",false);return;
-    }
-    show("mobile",true);show("desktop",false);
-    if(r.ready){say("Ready",label,r.detail||"Place a finger on the reader when you start an action.",metaText);show("check",true);show("allow",false);show("initialize",true);return;}
-    if(code==="BRIDGE_PERMISSION_BLOCKED"||code==="BRIDGE_PERMISSION_PROMPT"){
-      say(code==="BRIDGE_PERMISSION_BLOCKED"?"Blocked by this browser":"Permission needed",
-        code==="BRIDGE_PERMISSION_BLOCKED"?"Browser blocked local network access":"Allow local network access to reach the reader",
-        r.detail,"Allow local network access for this site, then press Check reader. The bridge does not need restarting. "+metaText);
-      show("check",true);show("allow",true);show("initialize",false);return;
-    }
-    if(!r.bridge_reachable){
-      var pending=r.local_network_permission==="prompt"||r.local_network_permission==="unknown";
-      say(code==="BRIDGE_TIMEOUT"?"Bridge did not answer":(pending?"Not checked yet":"Biometric service unavailable"),
-        code==="BRIDGE_TIMEOUT"?"Biometric service unavailable":
-          (pending?"This browser has not been allowed to reach the reader yet":"Biometric service unavailable"),
-        r.detail,metaText);
-      show("check",true);show("allow",pending);show("initialize",false);return;
-    }
-    say(label,label,r.detail,metaText);show("check",true);show("allow",false);show("initialize",true);
-  }
-  window.addEventListener("jone:reader-capture-state",function(ev){
-    var d=(ev&&ev.detail)||{};
-    if(d.state==="capturing"){
-      captureActive=true;gateCaptureButtons(latestReport);
-      say("Reading fingerprint","Reading fingerprint","Place the staff member's finger flat on the DigitalPersona 4500 sensor...","");
-    }else if(d.state==="capture_success"){
-      captureActive=false;gateCaptureButtons(latestReport);
-      say("Ready","Fingerprint captured successfully","Fingerprint captured successfully.","");
-    }else if(d.state==="capture_failed"){
-      captureActive=false;gateCaptureButtons(latestReport);
-      say("Capture failed","Capture failed",d.detail||"Fingerprint capture failed.","");
-    }
-  });
-  async function refresh(options){
-    options=options||{};if(busy)return null;
-    var bio=window.JONE&&window.JONE.biometrics;
-    if(!bio){say("Unavailable","Biometric service unavailable","The biometrics module did not load on this page.","");return null;}
-    busy=true;
-    try{var r=await bio.describeReader({initialize:options.initialize!==false,requestPermission:!!options.requestPermission});render(r);return r;}
-    catch(err){say("Unknown","Biometric service unavailable",(err&&err.message)||"Reader state could not be read.","");return null;}
-    finally{busy=false;}
-  }
-  var monitor=null;
-  actions.forEach(function(btn){btn.addEventListener("click",async function(){
-    var action=btn.getAttribute("data-tm-reader-action"),bio=window.JONE&&window.JONE.biometrics;if(!bio)return;
-    if(action==="allow"||action==="check"){var s=await bio.requestLocalNetworkAccess();if(action==="allow")JONE.ui.toast(s==="granted"?"Local network access allowed.":"The browser reports local network access as "+s+".",s==="granted"?"success":"warning");await refresh({requestPermission:false});if(monitor)monitor.refreshNow();return;}
-    if(action==="desktop"){bio.setWorkstationMode("desktop");JONE.ui.toast("Reader controls enabled for this device for this session.","info");await refresh({});return;}
-    if(action==="mobile"){bio.setWorkstationMode("mobile");JONE.ui.toast("This device is treated as a phone or tablet for this session.","info");await refresh({});return;}
-    await refresh({initialize:action!=="check"});
-  });});
-  if(document.querySelector("[data-tm-reader]")){
-    var bioMod=window.JONE&&window.JONE.biometrics;
-    if(bioMod&&typeof bioMod.startReaderMonitor==="function"){
-      monitor=bioMod.startReaderMonitor({
-        autoInitialize:true,
-        intervalMs:2000,
-        isBusy:function(){return busy||captureActive;},
-        onStatus:function(r){render(r);}
-      });
-    }else{
-      refresh({});
-    }
-  }
-})();
+/* The reader panel on this page is js/reader-agent.js, mounted from the
+   reader-agent host element above. The bridge status panel that
+   lived here was removed together with the bridge. */
 </script>
 <script>
 JONE.ui.initChrome();var __terminalAllowed=JONE.dashboard.boot(["admin","general_manager"]);document.querySelector("[data-logout]")&&document.querySelector("[data-logout]").addEventListener("click",function(){window.Auth.logout();});
@@ -394,11 +254,11 @@ renderEnrolState();loadDetectedAddress();document.querySelector("[data-terminal-
 load(1);
 
 // Reception Attendance Workstation logic
-var rtRows=document.getElementById("rt-active-attendance-rows"),rtResult=document.getElementById("rt-result-body");
+var rtRows=document.getElementById("rt-active-attendance-rows");
 async function loadReceptionTerminal(){
   if(!rtRows)return;
   try{
-    var data=await JONE.biometrics.getReceptionTerminalStatus();
+    var data=await JONE.readerAgent.terminal.status();
     var sum=(data&&data.summary)||{};
     var elEnr=document.getElementById("rt-kpi-enrolled"),elDuty=document.getElementById("rt-kpi-on-duty"),elBrk=document.getElementById("rt-kpi-break-out"),elCodes=document.getElementById("rt-kpi-codes");
     if(elEnr)elEnr.textContent=String(sum.enrolled_staff_count||0);
@@ -418,13 +278,9 @@ async function loadReceptionTerminal(){
         '<td>'+JONE.dashboard.statusPill(row.status)+'</td>'+
         '<td>'+JONE.esc(row.clock_in_at?JONE.formatDateTime(row.clock_in_at):"—")+'</td>'+
         '<td>'+codeState+'</td>'+
-        '<td><div class="row-actions">'+
-          '<button class="btn btn-sm btn-outline" type="button" data-rt-row-action="ISSUE_CODE" data-rt-email="'+JONE.esc(row.staff_email)+'">Re-Issue Code</button>'+
-          '<button class="btn btn-sm btn-danger" type="button" data-rt-row-action="CLOCK_OUT" data-rt-email="'+JONE.esc(row.staff_email)+'">Clock Out</button>'+
-        '</div></td>'+
+        '<td><span class="caption muted">Use the reader panel above &mdash; the finger decides who this is</span></td>'+
       '</tr>';
     }).join("");
-    if(typeof window.__JONE_TERMINAL_GATE__==="function")window.__JONE_TERMINAL_GATE__();
   }catch(err){
     // A 403 here is a POLICY answer, not a failure to load: the server is
     // saying this browser is not (yet) the Reception Desk. Say exactly that,
@@ -437,56 +293,11 @@ async function loadReceptionTerminal(){
   }
 }
 
-function renderRtActionResult(res){
-  if(!rtResult||!res)return;
-  var codeHtml="";
-  /* Item F: say whether this action is the clock-in or reused an open record. */
-  var attendanceNote=JONE.biometrics.attendanceNote(res);
-  if(res.access_code){
-    codeHtml='<div style="margin-top:0.75rem;padding:0.85rem;border:1px dashed var(--color-primary,#373435);border-radius:8px;text-align:center;">'+
-      '<div class="caption muted">6-DIGIT NUMERIC WORKSTATION ACCESS CODE</div>'+
-      '<div data-reception-issued-code style="font-size:1.75rem;font-weight:800;letter-spacing:0.3em;margin:0.35rem 0;">'+JONE.esc(res.access_code)+'</div>'+
-      '<div class="caption muted">Bound to '+JONE.esc(res.staff_name)+' ('+JONE.esc(res.department)+') · Expires automatically upon clock-out</div>'+
-    '</div>';
-  }
-  rtResult.innerHTML=
-    '<div><strong>'+JONE.esc(res.staff_name||"—")+'</strong> ('+JONE.esc(res.employee_code||"—")+')</div>'+
-    '<div class="caption muted">Department: '+JONE.esc(res.department||"—")+' · Role: '+JONE.esc(String(res.role||"").replace(/_/g," "))+'</div>'+
-    '<div style="margin-top:0.5rem;">Attendance Status: '+JONE.dashboard.statusPill(res.attendance_status||res.status||"VERIFIED")+'</div>'+
-    (attendanceNote?'<p class="caption muted" data-rt-attendance-note>'+JONE.esc(attendanceNote)+'</p>':'')+
-    codeHtml;
-}
+/* A result is rendered by the reader panel itself (js/reader-agent.js), which
+   only ever displays what the API reported as DONE. Nothing on this page can
+   render a "verified" card of its own, which is exactly what the old
+   probe-and-post path did. */
 
-async function runRtAction(action,identifierOverride,btn){
-  var idInput=document.getElementById("rt-staff-identifier");
-  var rawId=String(identifierOverride!=null?identifierOverride:(idInput?idInput.value:"")).trim();
-  var payload={action:action};
-  Object.assign(payload,JONE.biometrics.identifierPayload(rawId));
-  var wsRef=window.API.getWorkstationReference();
-  if(wsRef)payload.workstation_reference=wsRef;
-  if(btn&&!JONE.guardSubmit(btn))return;
-  try{
-    var res=await JONE.biometrics.executeReceptionTerminalAction(payload);
-    renderRtActionResult(res);
-    JONE.ui.toast("Biometric "+action.toLowerCase().replace(/_/g," ")+" completed for "+(res.staff_name||"staff")+".","success");
-    loadReceptionTerminal();
-  }catch(err){
-    JONE.ui.toast((err&&err.message)||"Biometric verification failed.","error");
-  }finally{
-    if(btn)JONE.releaseGuard(btn);
-  }
-}
-
-document.querySelectorAll("button[data-rt-action]").forEach(function(btn){
-  btn.addEventListener("click",function(){runRtAction(btn.getAttribute("data-rt-action"),null,btn);});
-});
-if(rtRows){
-  rtRows.addEventListener("click",function(e){
-    var b=e.target.closest("button[data-rt-row-action]");
-    if(!b)return;
-    runRtAction(b.getAttribute("data-rt-row-action"),b.getAttribute("data-rt-email"),b);
-  });
-}
 var rtRefresh=document.getElementById("reception-terminal-refresh");
 if(rtRefresh)rtRefresh.addEventListener("click",function(){loadReceptionTerminal();});
 loadReceptionTerminal();
@@ -639,4 +450,4 @@ loadReceptionTerminal();
   });
   renderDevices();
 })();
-</script><script src="../js/pwa.js?v=1.1.36"></script><script src="../js/version.js?v=1.1.36"></script><script src="../js/update-checker.js?v=1.1.36"></script></body></html>
+</script><script src="../js/pwa.js?v=1.1.37"></script><script src="../js/version.js?v=1.1.37"></script><script src="../js/update-checker.js?v=1.1.37"></script></body></html>

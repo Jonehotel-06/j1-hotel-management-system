@@ -161,10 +161,19 @@ test("startReaderMonitor tracks live USB plug/init/ready/unplug without page ref
   disposeAll();
 });
 
-test("desk HTML pages gate capture buttons on reader readiness and load updated biometrics", () => {
+test("desk HTML pages carry ONE reader-agent panel and no bridge module", () => {
+  /* Superseded by the 2026-11-25 repair: the bridge monitor and its capture
+     gating were removed from every desk page (the panel now reports state from
+     the API and the agent, and the browser never decides whether a capture is
+     ready). js/biometrics.js still exists for the legacy endpoints and its own
+     unit tests above, but no page loads it. */
   for (const rel of ["dashboard/workforce.html", "dashboard/terminals.html", "dashboard/staff-profile.html"]) {
     const html = fs.readFileSync(path.join(FRONTEND, rel), "utf8");
-    assert.match(html, /biometrics\.js\?v=1\.1\.36/, rel + " must load bumped biometrics.js");
-    assert.match(html, /startReaderMonitor|isCaptureReady/, rel + " must wire live monitor and capture gating");
+    assert.match(html, /reader-agent\.js\?v=/, rel + " must load the reader-agent panel");
+    assert.doesNotMatch(html, /biometrics\.js\?v=/, rel + " must not load the bridge module");
+    assert.doesNotMatch(html, /startReaderMonitor/, rel + " must not start the bridge monitor");
+    const hosts = (html.match(/data-jone-reader-agent-host/g) || []).length;
+    const mounts = (html.match(/JONE\.readerAgent\.mount\(/g) || []).length;
+    assert.equal(hosts + mounts, 1, rel + " must carry exactly one fingerprint panel");
   }
 });

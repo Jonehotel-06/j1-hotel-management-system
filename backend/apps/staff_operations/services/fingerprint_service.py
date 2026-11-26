@@ -838,6 +838,91 @@ def issue_temporary_workstation_credential(
     return details["temporary_token"], details["expires_at"]
 
 
+def issue_workstation_code_for_verified_staff(
+    *,
+    staff: User,
+    workstation_reference: str,
+    verified_template=None,
+    match_score=None,
+    actor: User | None = None,
+    session_reference: str = "",
+) -> dict:
+    """Issue the 6-digit numeric workstation code for an ALREADY verified finger.
+
+    The verification happened in ``reader_agent_service.process_identify``: the
+    signed agent read the finger, the vendor engine matched it against an ACTIVE
+    template, and the API re-derived the binding, the threshold and the staff
+    member's eligibility before calling this. Passing ``verified_template`` is
+    therefore the evidence — nothing is captured or scored here, and this
+    function never invents one.
+
+    Everything after the match is deliberately identical to
+    ``issue_temporary_workstation_credential``: the open attendance record is
+    reused or opened (never duplicated), the code is minted by
+    ``mint_temporary_workstation_credential`` and bound to that record, so the
+    existing clock-out rule still expires it, and clock-in/clock-out/break stay
+    under ``clock_attendance``'s state machine.
+    """
+    if verified_template is None:
+        raise ValidationError({"verification": "A verified fingerprint template is required."})
+    if not staff or not staff.is_active:
+        raise PermissionDenied("Inactive staff accounts cannot receive workstation credentials.")
+    if verified_template.staff_id != staff.pk:
+        raise PermissionDenied("The verified fingerprint does not belong to this staff member.")
+    if verified_template.status != FingerprintTemplate.Status.ACTIVE:
+        raise PermissionDenied("The verified fingerprint template is not an active enrolment.")
+    profile = getattr(staff, "staff_profile", None)
+    if profile and profile.employment_status in ("SUSPENDED", "INACTIVE", "ON_LEAVE"):
+        raise PermissionDenied(
+            f"Staff member is currently {profile.employment_status.lower()} and cannot receive workstation credentials."
+        )
+
+    from .staff_operations_service import ensure_open_attendance_record
+
+    attendance_record, attendance_created = ensure_open_attendance_record(
+        staff=staff,
+        idempotency_key=f"agent-code:{staff.pk}:{session_reference or secrets.token_hex(6)}",
+    )
+
+    # The verification attempt row is written here so the biometric evidence
+    # trail names exactly what happened (agent, template, score) — the same row
+    # the legacy path writes only after its own scorer agrees.
+    attempt = FingerprintVerificationAttempt.objects.create(
+        staff=staff,
+        action="ISSUE_CODE",
+        outcome=FingerprintOutcome.VERIFIED,
+        match_score=match_score,
+        source_key=f"fp-agent-issue:{staff.pk}:{secrets.token_hex(6)}",
+        workstation_reference=workstation_reference or "",
+    )
+
+    details = mint_temporary_workstation_credential(
+        staff=staff,
+        workstation_reference=workstation_reference,
+        attendance_record=attendance_record,
+        issue_numeric_code=True,
+        issued_by=actor or staff,
+        mode="READER_AGENT",
+    )
+    details["attendance_created"] = attendance_created
+    details["attendance_reference"] = attendance_record.reference if attendance_record else ""
+    details["match_score"] = match_score
+    details["verification_attempt"] = attempt.pk
+    log_action(
+        actor=actor or staff,
+        action="READER_AGENT_CODE_ISSUED",
+        instance=attempt,
+        metadata={
+            "staff_id": staff.pk,
+            "workstation": workstation_reference,
+            "template_id": getattr(verified_template, "pk", None),
+            "score": match_score,
+            "session": session_reference,
+        },
+    )
+    return details
+
+
 def record_failed_attempt(
     *,
     staff: User,

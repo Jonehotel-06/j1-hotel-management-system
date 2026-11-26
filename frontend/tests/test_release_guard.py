@@ -88,8 +88,15 @@ def test_the_guard_does_not_block_an_actual_release(workspace):
     assert tuple(map(int, after.split("."))) > tuple(map(int, before.split("."))), (before, after)
     # version.json, the worker cache namespace and every page stamp move together.
     assert re.search(r'CACHE_VERSION = "jone-v%s"' % re.escape(after), (workspace / "sw.js").read_text())
-    stamp = re.search(r'biometrics\.js\?v=([0-9.]+)', (workspace / "dashboard" / "workforce.html").read_text())
-    assert stamp and stamp.group(1) == after, "pages must be stamped with the released version"
+    # The reception page loads js/reader-agent.js (the fingerprint panel) and
+    # every asset it references must carry the released stamp — a single stale
+    # ?v= on this page is how production kept running the old panel.
+    page = (workspace / "dashboard" / "workforce.html").read_text()
+    assert re.search(r'reader-agent\.js\?v=%s' % re.escape(after), page), (
+        "the workforce page must load the reader-agent panel at the released version"
+    )
+    stamps = set(re.findall(r'\?v=([0-9.]+)', page))
+    assert stamps == {after}, f"every asset stamp on the page must be {after}, found {sorted(stamps)}"
 
 
 def test_the_escape_hatch_is_explicit(workspace):

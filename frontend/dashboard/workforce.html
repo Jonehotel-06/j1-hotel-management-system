@@ -8,7 +8,7 @@
 </script><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow"><title>Workforce | J-ONE Staff</title><meta name="theme-color" content="#373435">
   <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
-  <link rel="stylesheet" href="../css/main.css?v=1.1.35">
+  <link rel="stylesheet" href="../css/main.css?v=1.1.37">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -74,40 +74,14 @@
         <p class="caption" data-wf-rt-desktop-state role="status" aria-live="polite" style="margin-top:0.35rem;"></p>
       </div>
     </div>
-    <!-- Fingerprint reader state for THIS browser. Rendered from
-         JONE.biometrics.describeReader(), which tells apart a phone/tablet
-         (wrong workstation), a browser that blocked loopback access
-         (Local Network Access), an unreachable bridge, a missing driver/SDK,
-         an unplugged reader and a ready reader. It is deliberately NOT a
-         single "bridge not reachable" line: those five situations need five
-         different actions and previously all produced the same sentence. -->
-    <div class="card card-pad" data-wf-rt-reader style="margin-top:1rem;" aria-live="polite">
-      <div class="row" style="display:flex;gap:0.75rem;align-items:flex-start;flex-wrap:wrap;">
-        <div style="flex:1 1 320px;">
-          <div style="display:flex;align-items:center;gap:0.5rem;">
-            <span class="badge" data-wf-rt-reader-badge>Checking reader…</span>
-            <strong data-wf-rt-reader-title>Fingerprint reader</strong>
-          </div>
-          <p class="caption muted" data-wf-rt-reader-detail role="status" aria-live="polite" style="margin-top:0.35rem;">Checking this computer and the J-ONE Fingerprint Bridge…</p>
-          <p class="caption" data-wf-rt-reader-meta style="margin-top:0.25rem;opacity:0.75;"></p>
-        </div>
-        <div class="row-actions" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-          <button class="btn btn-sm btn-outline" type="button" data-wf-rt-reader-action="check">Check reader</button>
-          <button class="btn btn-sm btn-outline" type="button" data-wf-rt-reader-action="allow" hidden>Allow local network access</button>
-          <button class="btn btn-sm btn-outline" type="button" data-wf-rt-reader-action="initialize" hidden>Re-initialise reader</button>
-          <button class="btn btn-sm btn-outline" type="button" data-wf-rt-reader-action="desktop" hidden>Use reader on this device</button>
-          <button class="btn btn-sm btn-outline" type="button" data-wf-rt-reader-action="mobile" hidden>This is a phone or tablet</button>
-        </div>
-      </div>
-    </div>
-    <!-- J-ONE Reader Agent (js/reader-agent.js).
-         This is the fingerprint capture path. The reader is owned by the native
-         agent on THIS computer: the page only asks the API for a single-use
-         session and hands that token to Windows, and the result comes back
-         signed and verified by the API. There is no loopback address here and
-         nothing for the receptionist to start. -->
+    <!-- J-ONE Reader Agent (js/reader-agent.js) — THE fingerprint panel.
+         The reader belongs to the native agent on this computer: the page asks
+         the API for a single-use challenge, hands that token to Windows through
+         the jone-reader: scheme, and renders only what the API verified. There
+         is no loopback address here, nothing for the receptionist to start, and
+         no second set of fingerprint buttons anywhere else on this page. -->
     <div class="card card-pad" data-jone-reader-agent-host
-         data-reader-actions="CLOCK_IN,CLOCK_OUT,BREAK_START,BREAK_END"
+         data-reader-actions="CLOCK_IN,BREAK_START,BREAK_END,CLOCK_OUT,ISSUE_CODE,VERIFY"
          style="margin-top:1rem;"></div>
     <div class="panel-body">
       <div class="grid grid-2" style="gap:1.25rem;align-items:start;">
@@ -116,14 +90,7 @@
             <label class="field-label" for="wf-rt-identifier">Staff email, employee code or staff ID (optional for 1:N fingerprint match)</label>
             <input class="input" id="wf-rt-identifier" type="text" placeholder="e.g. staff@jonehotel.com, STF-..., EMP-... or 12">
           </div>
-          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
-            <button class="btn btn-sm" type="button" data-wf-rt-action="CLOCK_IN">Clock In &amp; Issue 6-Digit Code</button>
-            <button class="btn btn-sm btn-outline" type="button" data-wf-rt-action="ISSUE_CODE">Re-Issue 6-Digit Code</button>
-            <button class="btn btn-sm btn-outline" type="button" data-wf-rt-action="VERIFY_STATUS">Verify Status</button>
-            <button class="btn btn-sm btn-outline" type="button" data-wf-rt-action="BREAK_START">Start Break</button>
-            <button class="btn btn-sm btn-outline" type="button" data-wf-rt-action="BREAK_END">End Break</button>
-            <button class="btn btn-sm btn-danger" type="button" data-wf-rt-action="CLOCK_OUT">Clock Out (Expire Code)</button>
-          </div>
+          <p class="caption muted" style="margin-top:0.75rem;">Every fingerprint action — clock in, start or end break, clock out, issue the 6-digit code, verify status — is on the reader panel above. This box only names the staff member for the supervised fallback below.</p>
         </div>
         <div class="card card-pad" id="wf-rt-result">
           <p class="caption muted">Scan a staff member's fingerprint on the left to verify attendance status or issue a 6-digit numeric workstation access code.</p>
@@ -187,9 +154,7 @@
     <div class="panel-body no-pad"><div class="table-wrap" tabindex="0" role="region" aria-label="Operational staff profiles"><table class="table"><thead><tr><th>Staff</th><th>Employee code</th><th>Department</th><th>Title</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody data-wf-profile-rows></tbody></table></div><div class="pagination" data-wf-profile-pagination></div></div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.36"></script><script src="../js/config.js?v=1.1.36"></script><script src="../js/utils.js?v=1.1.36"></script><script src="../js/icons.js?v=1.1.36"></script><script src="../js/api.js?v=1.1.36"></script><script src="../js/theme.js?v=1.1.36"></script><script src="../js/ui.js?v=1.1.36"></script><script src="../js/auth.js?v=1.1.36"></script><script src="../js/navigation.js?v=1.1.36"></script><script src="../js/dashboard.js?v=1.1.36"></script><script src="../js/table-fit.js?v=1.1.36"></script><script src="../js/operations.js?v=1.1.36"></script><script src="../js/biometrics.js?v=1.1.36"></script>
-<script src="../js/reader-check.js?v=1.1.36"></script>
-<script src="../js/reader-agent.js?v=1.1.36"></script>
+<script src="../js/runtime-config.js?v=1.1.37"></script><script src="../js/config.js?v=1.1.37"></script><script src="../js/utils.js?v=1.1.37"></script><script src="../js/icons.js?v=1.1.37"></script><script src="../js/api.js?v=1.1.37"></script><script src="../js/theme.js?v=1.1.37"></script><script src="../js/ui.js?v=1.1.37"></script><script src="../js/auth.js?v=1.1.37"></script><script src="../js/navigation.js?v=1.1.37"></script><script src="../js/dashboard.js?v=1.1.37"></script><script src="../js/table-fit.js?v=1.1.37"></script><script src="../js/operations.js?v=1.1.37"></script><script src="../js/reader-agent.js?v=1.1.37"></script>
 <script>
 JONE.ui.initChrome();
 var __workforceAllowed=JONE.dashboard.boot(["admin","general_manager","accountant","procurement_officer","chef","kitchen_assistant","waiter","porter","receptionist","housekeeping","storekeeper","security"]);
@@ -272,166 +237,17 @@ loadAttendance(1);
 /* Capabilities settle after the first paint: upgrade the scope control when the server confirms attendance.manage, and reload once so the team view is what the viewer actually gets. */
 if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.loadCapabilities().then(function(){if(!canViewTeam&&window.Auth.hasCapability&&window.Auth.hasCapability("attendance.manage")){canViewTeam=true;applyAttendanceScope();loadAttendance(1);}}).catch(function(){});}
 (function(){
-  /* ---- Reader state panel -------------------------------------------------
-     Every distinct failure the operator can fix gets its own sentence and its
-     own control. Nothing here decides whether attendance may be recorded: the
-     server still enforces the desk key / registered address / manager
-     fallback rules, and the supervised-fallback card below keeps working on a
-     phone or tablet exactly as the policy allows. */
-  var readerBox=document.querySelector("[data-wf-rt-reader]");
-  var readerBadge=document.querySelector("[data-wf-rt-reader-badge]");
-  var readerTitle=document.querySelector("[data-wf-rt-reader-title]");
-  var readerDetail=document.querySelector("[data-wf-rt-reader-detail]");
-  var readerMeta=document.querySelector("[data-wf-rt-reader-meta]");
-  var readerActions=document.querySelectorAll("[data-wf-rt-reader-action]");
-  var readerBusy=false;
-  var captureButtons=document.querySelectorAll("button[data-wf-rt-action]");
-  var captureActive=false;
-  var latestReaderReport=null;
-  function gateCaptureButtons(report){
-    latestReaderReport=report||latestReaderReport;
-    var bio=window.JONE&&window.JONE.biometrics;
-    var ready=!captureActive&&!!(bio&&typeof bio.isCaptureReady==="function"?bio.isCaptureReady(latestReaderReport):(latestReaderReport&&latestReaderReport.ready));
-    var reason=(latestReaderReport&&(latestReaderReport.ui_label||latestReaderReport.detail))||"Fingerprint reader not connected";
-    captureButtons.forEach(function(btn){
-      btn.disabled=!ready;
-      btn.setAttribute("aria-disabled",ready?"false":"true");
-      if(ready)btn.removeAttribute("title");
-      else btn.setAttribute("title",reason);
-    });
-  }
-  gateCaptureButtons(null);
-  /* Published so js/reader-check.js can refuse to start a second detection
-     sequence while a capture is running on this reader (a capture holds the
-     device; a status poll on top of it is what made the panel flicker). */
-  window.__JONE_READER_BUSY__=function(){return readerBusy||captureActive;};
-  function readerSay(badge,title,detail,meta){
-    if(readerBadge)readerBadge.textContent=badge;
-    if(readerTitle)readerTitle.textContent=title;
-    if(readerDetail)readerDetail.textContent=detail;
-    if(readerMeta)readerMeta.textContent=meta||"";
-  }
-  function readerShow(action,visible){
-    readerActions.forEach(function(btn){if(btn.getAttribute("data-wf-rt-reader-action")===action)btn.hidden=!visible;});
-  }
-  function readerRender(report){
-    /* report: the object returned by JONE.biometrics.describeReader() */
-    gateCaptureButtons(report);
-    if(!report){readerSay("Biometric service unavailable","Fingerprint reader","Reader state could not be read.","");return;}
-    var meta=[];
-    if(report.bridge_url)meta.push("Bridge: "+report.bridge_url);
-    if(report.device_serial)meta.push("Serial: "+report.device_serial);
-    if(report.local_network_permission&&report.local_network_permission!=="unsupported"){
-      meta.push("Browser local network access: "+report.local_network_permission);
-    }
-    var metaText=meta.join(" · ");
-    var code=String(report.code||"");
-    var ready=!!report.ready;
-    var bio=window.JONE&&window.JONE.biometrics;
-    var label=(bio&&typeof bio.uiLabelForReport==="function")?bio.uiLabelForReport(report):(report.ui_label||"Fingerprint reader");
-    if(report.mode==="mobile"){
-      readerSay("Not available on this device","Fingerprint capture needs the reception workstation",
-        report.detail,"Any other attendance function this page offers — including the supervised fallback, when policy allows it — still works from here. "+metaText);
-      readerShow("check",true);readerShow("allow",false);readerShow("initialize",false);
-      readerShow("desktop",true);readerShow("mobile",false);
-      return;
-    }
-    readerShow("mobile",true);
-    readerShow("desktop",false);
-    if(ready){
-      readerSay("Ready",label,report.detail||"Place a finger on the reader when you start an action.",metaText);
-      readerShow("check",true);readerShow("allow",false);readerShow("initialize",true);
-      return;
-    }
-    if(code==="BRIDGE_PERMISSION_BLOCKED"||code==="BRIDGE_PERMISSION_PROMPT"){
-      readerSay(code==="BRIDGE_PERMISSION_BLOCKED"?"Blocked by this browser":"Permission needed",
-        code==="BRIDGE_PERMISSION_BLOCKED"?"Browser blocked local network access":"Allow local network access to reach the reader",
-        report.detail,"Press \"Allow local network access\" for this site (or allow it from the lock icon in the address bar), then press Check reader. The bridge itself does not need restarting. "+metaText);
-      readerShow("check",true);readerShow("allow",true);readerShow("initialize",false);
-      return;
-    }
-    if(!report.bridge_reachable){
-      var permissionPending=report.local_network_permission==="prompt"||report.local_network_permission==="unknown";
-      readerSay(code==="BRIDGE_TIMEOUT"?"Bridge did not answer":(permissionPending?"Not checked yet":"Biometric service unavailable"),
-        code==="BRIDGE_TIMEOUT"?"Biometric service unavailable":
-          (permissionPending?"This browser has not been allowed to reach the reader yet":"Biometric service unavailable"),
-        report.detail,metaText);
-      readerShow("check",true);readerShow("allow",permissionPending);readerShow("initialize",false);
-      return;
-    }
-    readerSay(label,label,report.detail,metaText);
-    readerShow("check",true);readerShow("allow",false);readerShow("initialize",true);
-  }
-  window.addEventListener("jone:reader-capture-state",function(ev){
-    var d=(ev&&ev.detail)||{};
-    if(d.state==="capturing"){
-      captureActive=true;
-      gateCaptureButtons(latestReaderReport);
-      readerSay("Reading fingerprint","Reading fingerprint","Place the staff member's finger flat on the DigitalPersona 4500 sensor...","");
-    }else if(d.state==="capture_success"){
-      captureActive=false;
-      gateCaptureButtons(latestReaderReport);
-      readerSay("Ready","Fingerprint captured successfully","Fingerprint captured successfully.","");
-    }else if(d.state==="capture_failed"){
-      captureActive=false;
-      gateCaptureButtons(latestReaderReport);
-      readerSay("Capture failed","Capture failed",d.detail||"Fingerprint capture failed.","");
-    }
-  });
-  async function readerRefresh(options){
-    options=options||{};
-    if(readerBusy)return null;
-    var bio=window.JONE&&window.JONE.biometrics;
-    if(!bio){readerSay("Unavailable","Biometric service unavailable","The biometrics module did not load on this page.","");return null;}
-    readerBusy=true;
-    try{
-      var report=await bio.describeReader({initialize:options.initialize!==false,requestPermission:!!options.requestPermission});
-      readerRender(report);
-      return report;
-    }catch(err){
-      readerSay("Unknown","Biometric service unavailable",(err&&err.message)||"Reader state could not be read.","");
-      return null;
-    }finally{readerBusy=false;}
-  }
-  var monitor=null;
-  readerActions.forEach(function(btn){
-    btn.addEventListener("click",async function(){
-      var action=btn.getAttribute("data-wf-rt-reader-action");
-      var bio=window.JONE&&window.JONE.biometrics;
-      if(!bio)return;
-      if(action==="allow"||action==="check"){
-        /* Both actions are user gestures, which is the ONLY moment the browser
-           offers its local network access prompt. Running the request here —
-           instead of only on a capture click — is what makes the reader panel
-           able to report the real state before any biometric action starts. */
-        var state=await bio.requestLocalNetworkAccess();
-        if(action==="allow"){
-          JONE.ui.toast(state==="granted"?"Local network access allowed. Checking the reader again…":"The browser still reports local network access as "+state+". Allow it for this site, then press Check reader.",state==="granted"?"success":"warning");
-        }
-        await readerRefresh({initialize:false,requestPermission:false});
-        if(monitor)monitor.refreshNow();
-        return;
-      }
-      if(action==="desktop"){bio.setWorkstationMode("desktop");JONE.ui.toast("Reader controls enabled for this device for this session.","info");await readerRefresh({});return;}
-      if(action==="mobile"){bio.setWorkstationMode("mobile");JONE.ui.toast("This device will be treated as a phone or tablet for this session.","info");await readerRefresh({});return;}
-      await readerRefresh({initialize:action!=="check"});
-    });
-  });
-  if(readerBox&&!readerBox.hidden){
-    var bioMod=window.JONE&&window.JONE.biometrics;
-    if(bioMod&&typeof bioMod.startReaderMonitor==="function"){
-      monitor=bioMod.startReaderMonitor({
-        autoInitialize:true,
-        intervalMs:2000,
-        isBusy:function(){return readerBusy||captureActive;},
-        onStatus:function(report){readerRender(report);}
-      });
-    }else{
-      readerRefresh({});
-    }
-  }
-})();
-(function(){
+  /* ------------------------------------------------------------------------
+     Reception terminal support. FINGERPRINT CAPTURE IS NOT HERE: every
+     fingerprint action on this screen is the J-ONE Reader Agent panel above
+     (js/reader-agent.js), which hands a one-time challenge to the Windows agent
+     and polls the API for the verified result. This block only
+       * reports whether the SERVER recognises this browser as the desk, and
+       * runs the supervised fallback, which by design carries no fingerprint.
+     There is no bridge, no loopback address and no fabricated probe in this
+     file: the old panel that told staff to start a fingerprint bridge on a
+     loopback port was removed rather than reworded.
+  ------------------------------------------------------------------------- */
   var stateLine=document.querySelector("[data-wf-rt-desktop-state]");
   // Either credential proves this browser is the desk: an installed desktop key
   // or an administrator-approved device token.
@@ -478,8 +294,9 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
      what the backend will actually do. The server still re-checks every
      action; nothing here grants anything. */
   if(!enrol&&!management){
-    if(JONE.biometrics&&JONE.biometrics.getReceptionTerminalStatus){
-      JONE.biometrics.getReceptionTerminalStatus().then(function(data){
+    var terminalApi=window.JONE&&window.JONE.readerAgent&&window.JONE.readerAgent.terminal;
+    if(terminalApi&&typeof terminalApi.status==="function"){
+      terminalApi.status().then(function(data){
         say("The server recognises this workstation as an enrolled Receptionist Desktop"
           +(data&&data.workstation_reference?" ("+data.workstation_reference+")":"")
           +", so attendance recorded here is recorded at the desk.");
@@ -521,13 +338,15 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
     if(!JONE.guardSubmit(issue))return;
     try{
       var payload={action:"MANUAL_FALLBACK",manual_override_reason:reason};
-      if(idVal)Object.assign(payload,JONE.biometrics.identifierPayload(idVal));else payload.staff_id=pickedStaffId;
-      var res=await JONE.biometrics.executeReceptionTerminalAction(payload);
+      var terminalApi=window.JONE&&window.JONE.readerAgent&&window.JONE.readerAgent.terminal;
+      if(!terminalApi){JONE.ui.toast("The reception module did not load on this page. Refresh and try again.","error");return;}
+      if(idVal)Object.assign(payload,terminalApi.identifierPayload(idVal));else payload.staff_id=pickedStaffId;
+      var res=await terminalApi.fallback(payload);
       var box=document.getElementById("wf-rt-result");
       if(box&&res){
         box.innerHTML='<div><strong>'+JONE.esc(res.staff_name||"—")+'</strong> ('+JONE.esc(res.employee_code||"—")+')</div>'+
           '<div class="caption muted">Supervised fallback · '+JONE.esc(res.authority||"")+' · evidence: '+JONE.esc(res.evidence||"")+'</div>'+
-          (JONE.biometrics.attendanceNote(res)?'<p class="caption muted" data-wf-rt-attendance-note>'+JONE.esc(JONE.biometrics.attendanceNote(res))+'</p>':'')+
+          (terminalApi.attendanceNote(res)?'<p class="caption muted" data-wf-rt-attendance-note>'+JONE.esc(terminalApi.attendanceNote(res))+'</p>':'')+
           (res.access_code?'<div style="margin-top:0.65rem;padding:0.75rem;border:1px dashed var(--color-primary,#373435);border-radius:8px;text-align:center;"><div class="caption muted">6-DIGIT NUMERIC ACCESS CODE</div><div data-reception-issued-code style="font-size:1.6rem;font-weight:800;letter-spacing:0.28em;">'+JONE.esc(res.access_code)+'</div></div>':'')+
           (res.access_code?'<p class="caption muted" style="margin-top:0.5rem;">The employee can sign in with this code as often as they need to until they clock out.</p>':'');
       }
@@ -541,33 +360,6 @@ if(window.Auth&&typeof window.Auth.loadCapabilities==="function"){window.Auth.lo
     }finally{JONE.releaseGuard(issue);}
   });
 })();
-document.querySelectorAll("button[data-wf-rt-action]").forEach(function(btn){
-  btn.addEventListener("click",async function(){
-    var action=btn.getAttribute("data-wf-rt-action");
-    var idVal=(document.getElementById("wf-rt-identifier").value||"").trim();
-    var payload={action:action};
-    Object.assign(payload,JONE.biometrics.identifierPayload(idVal));
-    if(!JONE.guardSubmit(btn))return;
-    try{
-      var res=await JONE.biometrics.executeReceptionTerminalAction(payload);
-      var box=document.getElementById("wf-rt-result");
-      if(box&&res){
-        var attendanceNote=JONE.biometrics.attendanceNote(res);
-        box.innerHTML='<div><strong>'+JONE.esc(res.staff_name||"—")+'</strong> ('+JONE.esc(res.employee_code||"—")+')</div>'+
-          '<div class="caption muted">'+JONE.esc(res.department||"—")+' · '+JONE.esc(res.attendance_status||res.status||"")+'</div>'+
-          (attendanceNote?'<p class="caption muted" data-wf-rt-attendance-note>'+JONE.esc(attendanceNote)+'</p>':'')+
-          (res.access_code?'<div style="margin-top:0.65rem;padding:0.75rem;border:1px dashed var(--color-primary,#373435);border-radius:8px;text-align:center;"><div class="caption muted">6-DIGIT NUMERIC ACCESS CODE</div><div data-reception-issued-code style="font-size:1.6rem;font-weight:800;letter-spacing:0.28em;">'+JONE.esc(res.access_code)+'</div></div>':'')+
-          (res.access_code?'<p class="caption muted" style="margin-top:0.5rem;">The employee can sign in with this code as often as they need to until they clock out.</p>':'');
-      }
-      JONE.ui.toast("Biometric "+action.toLowerCase().replace(/_/g," ")+" completed.","success");
-      loadAttendance(1);
-    }catch(err){
-      JONE.ui.toast((err&&err.message)||"Biometric verification failed.","error");
-    }finally{
-      JONE.releaseGuard(btn);
-    }
-  });
-});
 })();
-</script><script src="../js/pwa.js?v=1.1.36"></script><script src="../js/version.js?v=1.1.36"></script><script src="../js/update-checker.js?v=1.1.36"></script>
+</script><script src="../js/pwa.js?v=1.1.37"></script><script src="../js/version.js?v=1.1.37"></script><script src="../js/update-checker.js?v=1.1.37"></script>
 </body></html>

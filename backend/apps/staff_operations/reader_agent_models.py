@@ -126,6 +126,13 @@ class ReaderAgentSession(TimeStampedModel):
         BREAK_START = "BREAK_START", "Start break"
         BREAK_END = "BREAK_END", "End break"
         VERIFY = "VERIFY", "Verify identity only"
+        # Issue (or re-issue) the 6-digit numeric workstation code. The finger is
+        # verified by the agent exactly as for the clock actions; the code is then
+        # bound to the staff member's open attendance record by the server, so
+        # clock-out still expires it. This replaces the old terminal's fabricated
+        # "probe" (js/biometrics.js captureMinutiaeProbe), which was the only way
+        # the console could reach that endpoint.
+        ISSUE_CODE = "ISSUE_CODE", "Issue workstation code"
         ENROLL = "ENROLL", "Enrol fingerprint"
 
     token_hash = models.CharField(max_length=64, unique=True, default=_new_session_token_hash, editable=False)

@@ -64,6 +64,10 @@ ATTENDANCE_ACTIONS = {
     ReaderAgentSession.Action.BREAK_START,
     ReaderAgentSession.Action.BREAK_END,
 }
+#: Actions that end in a numeric workstation code rather than a status change.
+#: The finger still has to be verified; only what the server does afterwards
+#: differs, and that afterwards is the existing credential/attendance code.
+CODE_ACTIONS = {ReaderAgentSession.Action.ISSUE_CODE}
 
 
 class AgentAuthError(Exception):
@@ -185,10 +189,102 @@ def _close_event(*, agent: ReaderAgent, nonce: str, outcome: str, **fields) -> N
 # --------------------------------------------------------------------------
 # Provisioning
 # --------------------------------------------------------------------------
-def provision_agent(*, actor: User, workstation, label: str = "", device_serial: str = "") -> tuple[ReaderAgent, str]:
-    """Create (or re-key) the agent for a workstation. Returns (agent, key)."""
-    if not has_capability(actor, "attendance.manage"):
-        raise PermissionDenied("Only attendance management can provision a fingerprint reader agent.")
+PROVISION_CAPABILITY = "attendance.manage"
+
+
+def _capability_codes(actor: User):
+    from apps.accounts.capabilities import capability_codes_for_user
+
+    return capability_codes_for_user(actor)
+
+
+def may_provision(actor: User) -> bool:
+    """Whether this account may provision (or re-key) a reader agent.
+
+    One definition, used by the endpoint, the refusal message and the read-only
+    setup-status diagnosis, so the screen and the server can never disagree.
+    """
+    return PROVISION_CAPABILITY in _capability_codes(actor)
+
+
+def provisioning_status(actor: User) -> dict[str, Any]:
+    """Why can (or can't) THIS account provision the reader on its computer?
+
+    The dashboard used to answer that question with a single sentence, which left
+    the operator guessing whether the account was wrong, the role mapping was
+    wrong, or the workstation was. Every input to the decision is reported here
+    so the refusal can name the exact missing link. Nothing in this payload
+    grants authority: ``can_provision`` is computed with the same
+    ``has_capability`` call the provisioning endpoint enforces.
+    """
+    from apps.accounts.capabilities import capability_codes_for_user
+    from apps.accounts.departments import department_context_is_valid
+
+    codes = capability_codes_for_user(actor)
+    role = str(getattr(actor, "role", "") or "")
+    department = ""
+    profile = getattr(actor, "staff_profile", None)
+    if profile is not None:
+        department = str(getattr(profile, "department", "") or "")
+    context_ok = department_context_is_valid(actor) if actor is not None else False
+    can = PROVISION_CAPABILITY in codes
+    missing = "" if can else PROVISION_CAPABILITY
+    if can:
+        reason = ""
+    elif not context_ok:
+        reason = (
+            "This account has no valid staff-profile department for its role, so the server "
+            "resolves no capabilities for it. An administrator must set the account's department "
+            "on its staff profile."
+        )
+    elif not codes:
+        reason = (
+            "This account's role has no capabilities recorded in the database, so it cannot "
+            "manage attendance. An administrator must review the role's capability grants."
+        )
+    else:
+        reason = (
+            "This account does not hold the attendance management capability, which is what "
+            "provisioning a reader requires."
+        )
+    return {
+        "can_provision": can,
+        "missing_capability": missing,
+        "reason": reason,
+        "role": role,
+        "department": department,
+        "department_context_valid": context_ok,
+        "capability_count": len(codes),
+        "holds": sorted(codes),
+        "capability_label": "Manage attendance",
+        "grant_hint": (
+            "Sign in on this computer with an administrator, general manager or attendance "
+            "manager account and press Set up again; or ask an administrator to grant this "
+            "account the “Manage attendance” permission."
+        ) if not can else "",
+    }
+
+
+def provision_agent(
+    *, actor: User, workstation, label: str = "", device_serial: str = "", allow_rotate: bool = False
+) -> tuple[ReaderAgent, str | None]:
+    """Create this workstation's agent, or reuse the one that is already valid.
+
+    Returns ``(agent, raw_key)``. ``raw_key`` is None when a healthy ACTIVE agent
+    already existed and no re-key was requested: re-keying on every press would
+    silently break the agent that is already running on the reception PC, and the
+    browser that presses the button cannot know whether the PC in front of it is
+    the one holding the key. The operator re-keys deliberately (``allow_rotate``,
+    the "Set up this computer again" control) when a machine is replaced or the
+    key is lost.
+    """
+    if PROVISION_CAPABILITY not in _capability_codes(actor):
+        status = provisioning_status(actor)
+        raise PermissionDenied(
+            "Provisioning a fingerprint reader requires the “Manage attendance” permission "
+            f"({PROVISION_CAPABILITY}), which this account does not hold. {status['reason']} "
+            f"{status['grant_hint']}".strip()
+        )
     if workstation is None:
         raise ValidationError({"workstation": "Choose the workstation this reader is attached to."})
     label = str(label or "").strip() or f"{workstation.name} reader"
@@ -202,6 +298,14 @@ def provision_agent(*, actor: User, workstation, label: str = "", device_serial:
                 signing_key=secrets.token_hex(32),
                 provisioned_by=actor,
             )
+            raw_key = agent.signing_key
+        elif agent.status == ReaderAgent.Status.ACTIVE and not allow_rotate:
+            # Reuse: update the descriptive fields only. The signing key stays.
+            agent.label = label[:120]
+            if device_serial:
+                agent.device_serial = str(device_serial).strip()[:80]
+            agent.save(update_fields=["label", "device_serial", "updated_at"])
+            raw_key = None
         else:
             agent.label = label[:120]
             if device_serial:
@@ -210,15 +314,19 @@ def provision_agent(*, actor: User, workstation, label: str = "", device_serial:
             agent.provisioned_by = actor
             agent.rotate_signing_key()
             agent.save(update_fields=["label", "device_serial", "status", "provisioned_by", "updated_at"])
-    raw_key = agent.signing_key
+            raw_key = agent.signing_key
     log_action(actor=actor, action="READER_AGENT_PROVISIONED", instance=agent,
-               metadata={"workstation": getattr(workstation, "reference", ""), "reference": agent.reference})
+               metadata={"workstation": getattr(workstation, "reference", ""), "reference": agent.reference,
+                         "rekeyed": raw_key is not None})
     return agent, raw_key
 
 
 def rotate_agent_key(*, actor: User, agent: ReaderAgent) -> str:
-    if not has_capability(actor, "attendance.manage"):
-        raise PermissionDenied("Only attendance management can rotate a reader agent key.")
+    if PROVISION_CAPABILITY not in _capability_codes(actor):
+        raise PermissionDenied(
+            "Rotating a reader agent key requires the “Manage attendance” permission "
+            f"({PROVISION_CAPABILITY})."
+        )
     key = agent.rotate_signing_key()
     log_action(actor=actor, action="READER_AGENT_KEY_ROTATED", instance=agent, metadata={})
     return key
@@ -495,6 +603,31 @@ def process_identify(
                     result["attendance_created"] = created
                 except (ValidationError, PermissionDenied) as exc:
                     refusal = ("ATTENDANCE_REFUSED", _first_message(exc), 409)
+
+            if refusal is None and session.action in CODE_ACTIONS:
+                # The finger is verified exactly as for a clock action; the only
+                # difference is what the server does next. This is what removed
+                # the console's fabricated "probe": the old terminal posted
+                # synthetic minutiae to reception-terminal/ purely to satisfy its
+                # validator, so the code it issued was never tied to a real read.
+                from . import fingerprint_service
+
+                try:
+                    details = fingerprint_service.issue_workstation_code_for_verified_staff(
+                        staff=staff,
+                        workstation_reference=session.workstation_reference or "",
+                        verified_template=template,
+                        match_score=score,
+                        actor=staff,
+                        session_reference=session.token_hash[:16],
+                    )
+                    result["access_code"] = details.get("access_code", "")
+                    result["code_expires_at"] = details.get("expires_at")
+                    result["code_valid_until"] = details.get("code_valid_until", "CLOCK_OUT")
+                    result["attendance_reference"] = details.get("attendance_reference", "")
+                    result["attendance_created"] = details.get("attendance_created")
+                except (ValidationError, PermissionDenied) as exc:
+                    refusal = ("CODE_ISSUE_REFUSED", _first_message(exc), 409)
 
             if refusal is None:
                 session.status = ReaderAgentSession.Status.DONE

@@ -292,42 +292,132 @@ class ReaderAgentListView(APIView):
         return success_response([svc.agent_status(agent) for agent in agents])
 
 
+def _workstation_for_request(request):
+    """The workstation this request is acting for, decided by the SERVER.
+
+    Provisioning used to trust whatever ``workstation_reference`` the browser
+    posted, and fell back to "the oldest front-desk workstation" — two ways to
+    attach a signing key to the wrong terminal. The desk is resolved exactly like
+    every other terminal action (installed desk key, approved device token, or
+    the workstation's registered address); only an account that may manage
+    attendance can name a workstation explicitly, and the reference must exist.
+    Returns (workstation, source).
+    """
+    from apps.accounts.models import Workstation
+    from .views_biometrics import _resolve_reception_terminal
+
+    try:
+        reference, workstation = _resolve_reception_terminal(request)
+        if workstation is not None:
+            return workstation, "desk"
+    except (ValidationError, DjangoPermissionDenied):
+        pass
+
+    if not svc.may_provision(request.user):
+        # Let the provisioning service produce the capability refusal, which
+        # names the permission and what to do about it.
+        return None, "unresolved"
+
+    posted = str(request.data.get("workstation_reference", "") or "").strip()
+    if posted:
+        workstation = Workstation.objects.filter(reference=posted, is_active=True).first()
+        if workstation is None:
+            raise ValidationError({"workstation": f"No active workstation has the reference '{posted}'."})
+        return workstation, "named"
+
+    workstation = (
+        Workstation.objects.filter(department=Workstation.Department.FRONT_DESK, is_active=True)
+        .order_by("created_at")
+        .first()
+    )
+    if workstation is None:
+        raise ValidationError({"workstation": "No active reception workstation is configured for this property."})
+    return workstation, "front_desk"
+
+
+class ReaderAgentSetupStatusView(APIView):
+    """GET /reader-agent/setup-status/ — can THIS account set up THIS computer?
+
+    Read-only diagnosis for the reader panel. It exists because the live screen
+    could only say "Only attendance management can provision a fingerprint reader
+    agent": the operator could not tell whether the account lacked the
+    capability, or the role→capability mapping was broken. Nothing here grants
+    anything — ``can_provision`` is the same check the endpoint enforces.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        status = svc.provisioning_status(request.user)
+        workstation, source = (None, "unresolved")
+        workstation_error = ""
+        try:
+            workstation, source = _workstation_for_request(request)
+        except (ValidationError, DjangoPermissionDenied) as exc:
+            workstation_error = str(getattr(exc, "detail", exc))
+        agent_payload = None
+        if workstation is not None:
+            agent = ReaderAgent.objects.filter(workstation=workstation).first()
+            if agent is not None:
+                agent_payload = {
+                    "reference": agent.reference,
+                    "label": agent.label,
+                    "status": agent.status,
+                    "device_serial": agent.device_serial,
+                    "last_seen_at": agent.last_seen_at,
+                }
+        return success_response({
+            **status,
+            "workstation_reference": getattr(workstation, "reference", ""),
+            "workstation_name": getattr(workstation, "name", ""),
+            "workstation_source": source,
+            "workstation_error": workstation_error,
+            "agent": agent_payload,
+            "setup_ready": bool(status["can_provision"] and workstation is not None),
+        })
+
+
 class ReaderAgentProvisionView(APIView):
-    """POST /reader-agent/agents/provision/ — create or re-key this workstation's agent."""
+    """POST /reader-agent/agents/provision/ — create or deliberately re-key this workstation's agent."""
 
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from apps.accounts.models import Workstation
-
-        reference = str(request.data.get("workstation_reference", "") or "").strip()
-        workstation = Workstation.objects.filter(reference=reference).first() if reference else None
-        if workstation is None:
-            workstation = Workstation.objects.filter(
-                department=Workstation.Department.FRONT_DESK, is_active=True
-            ).order_by("created_at").first()
-        if workstation is None:
-            raise ValidationError({"workstation": "No active workstation is configured for this property."})
-
+        workstation, source = _workstation_for_request(request)
+        rotate = bool(request.data.get("rotate", False))
         try:
             agent, key = svc.provision_agent(
-                actor=request.user, workstation=workstation,
+                actor=request.user,
+                workstation=workstation,
                 label=str(request.data.get("label", "") or ""),
                 device_serial=str(request.data.get("device_serial", "") or ""),
+                allow_rotate=rotate,
             )
         except DjangoPermissionDenied as exc:
             raise DjangoPermissionDenied(str(exc))
 
         api_base = request.build_absolute_uri("/").rstrip("/")
-        return success_response({
+        payload = {
             "reference": agent.reference,
-            "signing_key": key,
-            "api_base": api_base,
-            "workstation_reference": workstation.reference,
-            "workstation_name": workstation.name,
-            "install_uri": "jone-reader:provision?payload=" + _provision_payload(agent.reference, key, api_base),
-            "note": "This key is shown once. Store it with the one-click agent setup on the reception PC.",
-        })
+            "workstation_reference": agent.workstation.reference if agent.workstation_id else "",
+            "workstation_name": agent.workstation.name if agent.workstation_id else "",
+            "workstation_source": source,
+            "already_provisioned": key is None,
+            "rotated": bool(rotate and key is not None),
+        }
+        if key is not None:
+            payload.update({
+                "signing_key": key,
+                "api_base": api_base,
+                "install_uri": "jone-reader:provision?payload=" + _provision_payload(agent.reference, key, api_base),
+                "note": "This key is shown once. It is handed straight to the reader agent on this computer.",
+            })
+        else:
+            payload["note"] = (
+                "This computer already has a valid reader agent, so its key was left untouched. "
+                "Use the re-key control only if this machine or its key was replaced."
+            )
+        return success_response(payload)
 
 
 def _provision_payload(reference: str, key: str, api_base: str) -> str:

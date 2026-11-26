@@ -115,8 +115,11 @@ test("dedicated 10-tab staff profile page and reception biometric workstation co
 
   const terminalsPage = fs.readFileSync(path.join(FRONTEND, "dashboard", "terminals.html"), "utf8");
   assert.match(terminalsPage, /reception-attendance-workstation-panel/);
-  assert.match(terminalsPage, /data-reception-issued-code/);
-  assert.match(terminalsPage, /executeReceptionTerminalAction/);
+  /* The reception console's fingerprint work is the reader-agent panel: one
+     panel, no bridge, and no browser-made probe pretending to be a capture. */
+  assert.match(terminalsPage, /data-jone-reader-agent-host/);
+  assert.match(terminalsPage, /JONE\.readerAgent\.terminal\.status\(\)/);
+  assert.doesNotMatch(terminalsPage, /executeReceptionTerminalAction/);
 
   const staffPage = fs.readFileSync(path.join(FRONTEND, "dashboard", "staff.html"), "utf8");
   assert.match(staffPage, /staff-profile\.html\?id=/);

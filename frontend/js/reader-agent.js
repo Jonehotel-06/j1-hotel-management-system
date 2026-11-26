@@ -38,9 +38,15 @@
   /* Relative routes only — the origin comes from the existing centralised API
      client (window.API) via window.APP_CONFIG.API_BASE_URL. No host is ever
      hardcoded here. */
+  /* Build stamp. It is rendered into the panel (data-jone-reader-agent-version)
+     so "is the live page running this build?" is answerable from the screen
+     itself, without devtools and without trusting a repository listing. */
+  var VERSION = "1.1.37";
+
   var ROUTES = {
     sessions: "/api/admin/staff-operations/reader-agent/sessions/",
     agents: "/api/admin/staff-operations/reader-agent/agents/",
+    setupStatus: "/api/admin/staff-operations/reader-agent/agents/setup-status/",
     provision: "/api/admin/staff-operations/reader-agent/agents/provision/",
     templates: "/api/admin/staff-operations/reader-agent/templates/"
   };
@@ -49,7 +55,9 @@
     CLOCK_IN: { label: "Clock in with fingerprint", verb: "clock in" },
     CLOCK_OUT: { label: "Clock out with fingerprint", verb: "clock out" },
     BREAK_START: { label: "Start break with fingerprint", verb: "start a break" },
-    BREAK_END: { label: "End break with fingerprint", verb: "end the break" }
+    BREAK_END: { label: "End break with fingerprint", verb: "end the break" },
+    ISSUE_CODE: { label: "Issue 6-digit code", verb: "issue a workstation code" },
+    VERIFY: { label: "Verify staff status", verb: "verify their status" }
   };
 
   /* One sentence per state, written for a receptionist rather than a developer. */
@@ -89,6 +97,10 @@
     offline: {
       badge: "No internet connection",
       detail: "This computer cannot reach the J-ONE server, so a fingerprint cannot be verified. Attendance is never recorded offline."
+    },
+    setup_forbidden: {
+      badge: "Reader setup needs a manager",
+      detail: "This computer's reader has not been set up yet, and this account cannot set it up. An administrator, general manager or attendance manager must press “Set up fingerprint reader on this computer” on this computer once."
     },
     backend_unavailable: {
       badge: "J-ONE server unavailable",
@@ -159,6 +171,14 @@
 
     host.replaceChildren();
     host.setAttribute("data-jone-reader-agent", "mounted");
+    /* A host that was mounted explicitly (staff-profile.html) needs no markup
+       attribute to work, but stamping it keeps one check usable everywhere:
+       querySelectorAll("[data-jone-reader-agent-host]").length === 1, and it
+       lets autoMount recognise the panel as already mounted instead of adding
+       a second one. */
+    if (host.getAttribute("data-jone-reader-agent-host") === null) {
+      host.setAttribute("data-jone-reader-agent-host", "explicit");
+    }
 
     var badge = el("span", "badge badge-muted", "Checking reader…");
     var title = el("strong", "reader-agent-title", "Fingerprint reader");
@@ -178,17 +198,23 @@
     var startButton = el("button", "btn btn-sm btn-outline", "Start reader agent");
     startButton.type = "button";
     startButton.hidden = true;
+    var rekeyButton = el("button", "btn btn-sm btn-outline", "Set up this computer again (replaces its key)");
+    rekeyButton.type = "button";
+    rekeyButton.hidden = true;
 
     var busy = false;
     var sessionToken = "";
     var pollTimer = null;
     var startedAt = 0;
+    var setupStatus = null;   /* last /agents/setup-status/ answer for this account */
+    var codeBox = null;       /* the issued 6-digit code, when one was issued */
 
     host.appendChild(head);
     host.appendChild(detail);
     host.appendChild(actions);
     host.appendChild(setupButton);
     host.appendChild(startButton);
+    host.appendChild(rekeyButton);
 
     function say(state, override) {
       var text = STATE_TEXT[state] || STATE_TEXT.not_connected;
@@ -228,18 +254,18 @@
         var live = agents[0] || null;
         if (!live) {
           say("not_provisioned");
-          setupButton.hidden = false;
+          renderSetupAffordance();
           startButton.hidden = true;
           return null;
         }
         if (!live.online) {
           say("agent_missing");
-          setupButton.hidden = false;
+          renderSetupAffordance();
           startButton.hidden = false;
           return live;
         }
         startButton.hidden = true;
-        setupButton.hidden = live.driver_mode === "LEGACY_SDK";
+        renderSetupAffordance();
         var status = String(live.device_status || "").toLowerCase();
         if (live.driver_mode === "WBF") {
           say("driver_mode_mismatch", { badge: "Driver mode incompatible", detail: STATE_TEXT.driver_mode_mismatch.detail });
@@ -261,6 +287,61 @@
         say("backend_unavailable");
         return null;
       }
+    }
+
+    /* ------------------------------------------------------- setup diagnosis
+       "Only attendance management can provision a fingerprint reader agent" was
+       true but useless: the operator could not tell whether the account or the
+       server's role mapping was at fault. The API now answers that question
+       exactly (missing capability, role, department, why), so the panel can say
+       who has to press the button instead of repeating a refusal. */
+    async function refreshSetupStatus() {
+      var client = api();
+      if (!client || !client.get) return null;
+      try {
+        var response = await client.get(ROUTES.setupStatus, { cache: "no-store" });
+        setupStatus = (response && response.data) || null;
+      } catch (err) {
+        setupStatus = null;
+      }
+      renderSetupAffordance();
+      return setupStatus;
+    }
+
+    function renderSetupAffordance() {
+      /* No answer from the API yet: show the setup control and let the server
+         refuse it. Claiming "a manager must do this" without evidence would be
+         the same guess the old screen made. */
+      if (!setupStatus || typeof setupStatus.can_provision !== "boolean") {
+        setupButton.hidden = false;
+        rekeyButton.hidden = true;
+        return;
+      }
+      var canProvision = !!setupStatus.can_provision;
+      var hasAgent = !!(setupStatus && setupStatus.agent && setupStatus.agent.status === "ACTIVE");
+      if (hasAgent) {
+        /* A valid agent exists: never offer a button that would silently re-key
+           it. Re-keying is a deliberate act, only for a replaced machine. */
+        setupButton.hidden = true;
+        rekeyButton.hidden = !canProvision;
+        return;
+      }
+      rekeyButton.hidden = true;
+      if (canProvision) {
+        setupButton.hidden = false;
+        setupButton.textContent = "Set up fingerprint reader on this computer";
+        setupButton.removeAttribute("title");
+        return;
+      }
+      setupButton.hidden = true;
+      var reason = (setupStatus && setupStatus.reason) || "";
+      var hint = (setupStatus && setupStatus.grant_hint) ||
+        "Ask an administrator, general manager or attendance manager to set this computer up.";
+      if (host.getAttribute("data-state") === "ready") return;
+      say("setup_forbidden", {
+        badge: "Reader setup needs a manager",
+        detail: hint + (reason ? " " + reason : "")
+      });
     }
 
     /* ------------------------------------------------------------- polling */
@@ -295,6 +376,7 @@
             var result = data.result || {};
             var who = result.staff_name || data.staff_name || "staff member";
             var extra = result.attendance_reference ? " Attendance " + result.attendance_reference + " recorded." : "";
+            if (result.access_code) showCode(result.access_code, result.code_expires_at);
             say("success", {
               badge: "Fingerprint verified",
               detail: who + " verified for " + (ACTIONS[action] ? ACTIONS[action].verb : "attendance") + "." + extra
@@ -319,6 +401,35 @@
       }, 900);
     }
 
+    /* The 6-digit code is the one thing the operator has to read off this
+       screen, so it is rendered large and separate from the status sentence.
+       It only ever arrives from the API's own DONE result. */
+    function showCode(code, expiresAt) {
+      if (!code) return;
+      if (!codeBox) {
+        codeBox = el("div", "reader-agent-code");
+        codeBox.style.marginTop = "0.65rem";
+        codeBox.style.padding = "0.75rem";
+        codeBox.style.border = "1px dashed var(--color-primary,#373435)";
+        codeBox.style.borderRadius = "8px";
+        codeBox.style.textAlign = "center";
+        host.appendChild(codeBox);
+      }
+      while (codeBox.firstChild) codeBox.removeChild(codeBox.firstChild);
+      var caption = el("div", "caption muted", "6-DIGIT WORKSTATION CODE");
+      var value = el("div", "reader-agent-code-value", String(code));
+      value.style.fontSize = "1.6rem";
+      value.style.fontWeight = "800";
+      value.style.letterSpacing = "0.28em";
+      codeBox.appendChild(caption);
+      codeBox.appendChild(value);
+      if (expiresAt) {
+        codeBox.appendChild(el("p", "caption muted", "Valid until " + expiresAt + " for signing in, and expired by clock-out."));
+      } else {
+        codeBox.appendChild(el("p", "caption muted", "The code stays valid for this staff member until they clock out."));
+      }
+    }
+
     /* -------------------------------------------------------------- actions */
     async function startAction(action) {
       if (busy) return null;
@@ -340,7 +451,7 @@
         if (!data.agent_reference) {
           setDisabled(false);
           say("not_provisioned");
-          setupButton.hidden = false;
+          renderSetupAffordance();
           return null;
         }
         if (!data.agent_online) {
@@ -402,26 +513,39 @@
       }
     }
 
-    async function provision() {
+    async function provision(options) {
       if (busy) return null;
+      options = options || {};
       var client = api();
       if (!client) return null;
       setDisabled(true);
       say("initializing", { badge: "Setting up", detail: "Connecting this computer to the fingerprint reader…" });
       try {
         var response = await client.post(ROUTES.provision, {
-          workstation_reference: (client.getWorkstationReference && client.getWorkstationReference()) || ""
+          workstation_reference: (client.getWorkstationReference && client.getWorkstationReference()) || "",
+          rotate: !!options.rotate
         });
         var data = (response && response.data) || {};
-        if (data.install_uri) launch(data.install_uri);
+        if (data.already_provisioned) {
+          /* The server kept the existing key: this computer is already set up and
+             nothing was re-keyed. No install URI is launched. */
+          JONE.ui && JONE.ui.toast && JONE.ui.toast(
+            "This computer already has a valid reader agent; nothing was changed.", "info");
+        } else if (data.install_uri) {
+          launch(data.install_uri);
+          JONE.ui && JONE.ui.toast && JONE.ui.toast(
+            "This computer is being connected to the fingerprint reader. The reader state appears here in a moment.",
+            "success");
+        }
+        await refreshSetupStatus();
         window.setTimeout(refreshAgent, 2500);
-        JONE.ui && JONE.ui.toast && JONE.ui.toast(
-          "This computer is being connected to the fingerprint reader. The reader state appears here in a moment.",
-          "success"
-        );
         return data;
       } catch (err) {
-        say("backend_unavailable", { badge: "Setup refused", detail: (err && err.message) || "" });
+        /* The server's refusal names the capability and who can grant it, so it
+           is shown verbatim instead of being replaced by a generic sentence. */
+        var message = (err && err.message) || "The reader could not be set up on this computer.";
+        say("setup_forbidden", { badge: "Setup refused", detail: message });
+        JONE.ui && JONE.ui.toast && JONE.ui.toast(message, "error");
         return null;
       } finally {
         setDisabled(false);
@@ -459,11 +583,26 @@
       actions.appendChild(enrollButton);
     }
 
-    setupButton.addEventListener("click", provision);
+    setupButton.addEventListener("click", function () { provision(); });
     startButton.addEventListener("click", startAgent);
+    rekeyButton.addEventListener("click", function () {
+      var proceed = true;
+      if (JONE.ui && typeof JONE.ui.confirm === "function") {
+        proceed = false;
+        JONE.ui.confirm({
+          title: "Replace this computer's reader key?",
+          message: "Only do this if this computer was replaced or its key was lost. The reader agent on this computer must be set up again immediately, and the old key stops working.",
+          confirmText: "Replace the key",
+          danger: true
+        }).then(function (ok) { if (ok) provision({ rotate: true }); });
+      }
+      if (proceed) provision({ rotate: true });
+    });
 
+    host.setAttribute("data-jone-reader-agent-version", VERSION);
     say("initializing");
     refreshAgent();
+    refreshSetupStatus();
 
     window.addEventListener("online", function () { refreshAgent(); });
 
@@ -493,8 +632,73 @@
     });
   }
 
+  /* ------------------------------------------------------------------------
+     Terminal glue that is NOT about the reader: the numeric-code console and
+     the supervised fallback both need the desk headers, the identifier bucket
+     and the "was a record created?" sentence. These helpers used to live in
+     js/biometrics.js, whose other job was the loopback bridge — so loading that
+     file to reach them dragged the bridge back onto the page. Re-implemented
+     here without a single bridge call: nothing is fabricated, and only the
+     audited supervised fallback posts to the legacy terminal endpoint (the
+     server accepts that action without a probe by design and refuses every
+     fingerprint action that has no verified read behind it).
+  ------------------------------------------------------------------------- */
+  function deskHeaders() {
+    try {
+      return (window.Auth && typeof window.Auth.desktopHeaders === "function")
+        ? window.Auth.desktopHeaders() : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function terminalEndpoint() {
+    var cfg = window.APP_CONFIG || {};
+    var map = cfg.API_ENDPOINTS || {};
+    return map.receptionTerminal || "/api/admin/staff-operations/biometrics/reception-terminal/";
+  }
+
+  var terminal = {
+    identifierPayload: function (raw) {
+      var value = String(raw || "")
+        .replace(/[\u200B-\u200D\uFEFF]/g, "")
+        .replace(/[\u2010-\u2014\u2212]/g, "-")
+        .trim();
+      if (!value) return {};
+      if (value.indexOf("@") !== -1) return { email: value.replace(/\s+/g, "") };
+      if (/^\d+$/.test(value)) return { staff_id: Number(value) };
+      return { employee_code: value };
+    },
+    status: async function () {
+      var client = api();
+      if (!client) throw new Error("The API client did not load on this page.");
+      var response = await client.get(terminalEndpoint(), { headers: deskHeaders(), cache: "no-store" });
+      return (response && response.data) || {};
+    },
+    /* Only ever used for MANUAL_FALLBACK — a supervisor's audited override,
+       which the server deliberately allows without a fingerprint. */
+    fallback: async function (payload) {
+      var client = api();
+      if (!client) throw new Error("The API client did not load on this page.");
+      var response = await client.post(terminalEndpoint(), payload, { headers: deskHeaders() });
+      return (response && response.data) || {};
+    },
+    attendanceNote: function (result) {
+      var res = result || {};
+      if (res.created === true || res.attendance_created === true) {
+        return "Clocked in now. One attendance record is open for this staff member, and their Clock in stays disabled until they clock out.";
+      }
+      if (res.created === false || res.attendance_created === false) {
+        return "Already clocked in. The open attendance record was reused — no second record was created — and Clock in stays disabled until they clock out.";
+      }
+      return "";
+    }
+  };
+
   window.JONE = window.JONE || {};
   window.JONE.readerAgent = {
+    VERSION: VERSION,
+    terminal: terminal,
     mount: mount,
     autoMount: autoMount,
     launch: launch,

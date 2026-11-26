@@ -74,8 +74,10 @@ test("every inline <script> in the shipped pages parses", () => {
 
 test("the pages that drive attendance/POS/audit carry their handlers", () => {
   const required = {
-    "dashboard/workforce.html": ["data-wf-rt-action", "[data-wf-tab]", "loadAttendance"],
-    "dashboard/terminals.html": ["data-rt-action", "executeReceptionTerminalAction"],
+    /* The fingerprint handlers are the reader-agent panel's; these are the page's
+       own responsibilities (tabs, attendance table, terminal KPIs). */
+    "dashboard/workforce.html": ["data-jone-reader-agent-host", "[data-wf-tab]", "loadAttendance"],
+    "dashboard/terminals.html": ["data-jone-reader-agent-host", "loadReceptionTerminal"],
     "dashboard/pos.html": ["pos-create-error", "reportCreateFailure"],
     "dashboard/audit-logs.html": ["data-audit-open", "addEventListener"],
   };
