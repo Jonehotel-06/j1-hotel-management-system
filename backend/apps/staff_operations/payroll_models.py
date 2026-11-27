@@ -803,3 +803,221 @@ class PayrollEvent(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("Payroll events are append-only and cannot be deleted.")
+
+
+# ---------------------------------------------------------------------------
+# Salary adjustments (partial month, unpaid absence, disciplinary, other)
+#
+# An adjustment is recorded against one employee and one payroll month. It is
+# a controlled instruction to the payroll run for that month: the run (not the
+# adjustment) is still the only place salary is computed, frozen, accrued and
+# paid. The original monthly salary terms (StaffCompensation) are never
+# changed by an adjustment; the record keeps its own snapshot of the terms it
+# was calculated from so history stays readable after a later salary change.
+# ---------------------------------------------------------------------------
+def _new_salary_adjustment_reference():
+    return _payroll_reference("ADJ")
+
+
+class PayrollSalaryAdjustment(TimeStampedModel):
+    class Type(models.TextChoices):
+        PRORATED = "PRORATED", "Partial month / prorated salary"
+        ABSENCE = "ABSENCE", "Unpaid absence deduction"
+        DISCIPLINARY = "DISCIPLINARY", "Disciplinary / rule-violation deduction"
+        OTHER = "OTHER", "Other salary adjustment"
+
+    class Basis(models.TextChoices):
+        CALENDAR_DAYS = "CALENDAR_DAYS", "Actual calendar days in the month"
+        FIXED_30 = "FIXED_30", "Fixed 30-day month"
+        SCHEDULED_DAYS = "SCHEDULED_DAYS", "Scheduled working days"
+
+    class Direction(models.TextChoices):
+        DEDUCTION = "DEDUCTION", "Deduction"
+        ADDITION = "ADDITION", "Additional payment"
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        PENDING_APPROVAL = "PENDING_APPROVAL", "Pending approval"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        PAID = "PAID", "Paid"
+        REVERSED = "REVERSED", "Reversed"
+
+    #: Statuses that still (or will) affect pay. Rejected and reversed records
+    #: are history only and never block a new record for the same month.
+    ACTIVE_STATUSES = ("DRAFT", "PENDING_APPROVAL", "APPROVED", "PAID")
+
+    reference = models.CharField(max_length=64, unique=True, default=_new_salary_adjustment_reference, editable=False)
+    idempotency_key = models.CharField(max_length=128, null=True, blank=True, unique=True)
+    staff = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="salary_adjustments")
+    compensation = models.ForeignKey(StaffCompensation, on_delete=models.PROTECT, related_name="salary_adjustments")
+    payroll_year = models.PositiveSmallIntegerField(validators=[MinValueValidator(2000), MaxValueValidator(2200)])
+    payroll_month = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(12)])
+    adjustment_type = models.CharField(max_length=16, choices=Type.choices, db_index=True)
+    calculation_basis = models.CharField(max_length=16, choices=Basis.choices, default=Basis.CALENDAR_DAYS)
+    currency = models.CharField(max_length=3, default="NGN")
+
+    # Snapshot of the salary terms the adjustment was calculated from.
+    monthly_basic = models.DecimalField(max_digits=14, decimal_places=2, validators=[MinValueValidator(ZERO)])
+    monthly_housing = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+    monthly_transport = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+    monthly_salary = models.DecimalField(max_digits=14, decimal_places=2, validators=[MinValueValidator(ZERO)])
+
+    # Day inputs (meaning depends on the type) and the derived daily rate.
+    applicable_days = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(31)])
+    days_worked = models.PositiveSmallIntegerField(null=True, blank=True)
+    absence_days = models.PositiveSmallIntegerField(null=True, blank=True)
+    daily_rate = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+
+    # Calculated money. ``prorated_*`` equal the monthly amounts for every type
+    # other than PRORATED, so a reader never has to guess which applies.
+    prorated_basic = models.DecimalField(max_digits=14, decimal_places=2, validators=[MinValueValidator(ZERO)])
+    prorated_housing = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+    prorated_transport = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+    prorated_salary = models.DecimalField(max_digits=14, decimal_places=2, validators=[MinValueValidator(ZERO)])
+    absence_deduction = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+    disciplinary_deduction = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+    other_deduction = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+    additional_payment = models.DecimalField(max_digits=14, decimal_places=2, default=ZERO, validators=[MinValueValidator(ZERO)])
+    final_payable = models.DecimalField(max_digits=14, decimal_places=2, validators=[MinValueValidator(ZERO)])
+
+    # Justification and evidence.
+    reason = models.TextField(blank=True, default="")
+    violation_category = models.CharField(max_length=60, blank=True, default="")
+    incident_date = models.DateField(null=True, blank=True)
+    evidence_reference = models.CharField(max_length=160, blank=True, default="")
+    additional_payment_reason = models.CharField(max_length=500, blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+
+    # Workflow.
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="salary_adjustments_created")
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="salary_adjustments_decided")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(blank=True, default="")
+    applied_payroll_line = models.ForeignKey(PayrollLine, null=True, blank=True, on_delete=models.PROTECT, related_name="salary_adjustments")
+    applied_at = models.DateTimeField(null=True, blank=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="salary_adjustments_reversed")
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversal_reason = models.TextField(blank=True, default="")
+
+    # Duplicate guard. A PLAIN unique column (never a conditional constraint —
+    # MySQL/MariaDB silently drop those, models.W036). It holds the identity of
+    # an ACTIVE record and is NULL once the record is rejected or reversed, so
+    # the same employee/month/type can be recorded again only after the
+    # earlier record stopped affecting pay. NULLs are distinct on every
+    # supported backend.
+    active_key = models.CharField(max_length=160, null=True, blank=True, unique=True, editable=False)
+
+    class Meta:
+        ordering = ["-payroll_year", "-payroll_month", "-created_at", "-pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(payroll_month__gte=1) & Q(payroll_month__lte=12),
+                name="salary_adjustment_month_range",
+            ),
+            models.CheckConstraint(
+                condition=Q(final_payable__gte=ZERO) & Q(prorated_salary__gte=ZERO)
+                & Q(absence_deduction__gte=ZERO) & Q(disciplinary_deduction__gte=ZERO)
+                & Q(other_deduction__gte=ZERO) & Q(additional_payment__gte=ZERO),
+                name="salary_adjustment_amounts_nonnegative",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["staff", "payroll_year", "payroll_month"]),
+            models.Index(fields=["status", "payroll_year", "payroll_month"]),
+            models.Index(fields=["adjustment_type", "status"]),
+        ]
+
+    #: Fields the service layer may still change once a record is approved.
+    _APPROVED_MUTABLE = {
+        "status", "applied_payroll_line_id", "applied_at", "paid_at", "reversed_by_id", "reversed_at",
+        "reversal_reason", "active_key", "updated_at",
+    }
+
+    def build_active_key(self):
+        parts = [str(self.staff_id), str(self.payroll_year), f"{int(self.payroll_month):02d}", self.adjustment_type]
+        if self.adjustment_type == self.Type.DISCIPLINARY:
+            # Several distinct incidents in one month are legitimate; the same
+            # incident recorded twice is not.
+            parts.append((self.violation_category or "").strip().casefold()[:60])
+            parts.append(self.incident_date.isoformat() if self.incident_date else "")
+        return ":".join(parts)[:160]
+
+    def save(self, *args, **kwargs):
+        self.active_key = self.build_active_key() if self.status in self.ACTIVE_STATUSES else None
+        if self.pk:
+            prior = type(self).objects.filter(pk=self.pk).first()
+            if prior:
+                changes = {
+                    field.attname for field in self._meta.concrete_fields
+                    if getattr(prior, field.attname) != getattr(self, field.attname)
+                }
+                if prior.status in {self.Status.REJECTED, self.Status.REVERSED}:
+                    raise ValidationError("A rejected or reversed salary adjustment is history and cannot be changed.")
+                if prior.status in {self.Status.APPROVED, self.Status.PAID} and not changes.issubset(self._APPROVED_MUTABLE):
+                    raise ValidationError("An approved salary adjustment cannot be edited; reverse it and record a new one.")
+                if prior.status == self.Status.PAID and self.status not in {self.Status.PAID, self.Status.APPROVED}:
+                    raise ValidationError("A paid salary adjustment can only be reopened by an audited salary-payment reversal.")
+                if prior.status == self.Status.APPROVED and self.status not in {
+                    self.Status.APPROVED, self.Status.PAID, self.Status.REVERSED,
+                }:
+                    raise ValidationError("An approved salary adjustment can only be paid or reversed.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Salary adjustment history cannot be deleted.")
+
+    @property
+    def total_deductions(self):
+        return (self.absence_deduction + self.disciplinary_deduction + self.other_deduction).quantize(Decimal("0.01"))
+
+    @property
+    def month_label(self):
+        import calendar as _calendar
+        return f"{_calendar.month_name[int(self.payroll_month)]} {self.payroll_year}"
+
+    def __str__(self):
+        return f"{self.reference} · {self.adjustment_type} · {self.month_label} · {self.status}"
+
+
+class PayrollSalaryAdjustmentEvent(models.Model):
+    """Append-only timeline of one salary adjustment."""
+
+    class Type(models.TextChoices):
+        CREATED = "CREATED", "Recorded"
+        SUBMITTED = "SUBMITTED", "Submitted for approval"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        APPLIED = "APPLIED", "Applied to payroll run"
+        RELEASED = "RELEASED", "Released from rejected payroll run"
+        PAID = "PAID", "Paid"
+        PAYMENT_REVERSED = "PAYMENT_REVERSED", "Salary payment reversed"
+        REVERSED = "REVERSED", "Reversed"
+
+    adjustment = models.ForeignKey(PayrollSalaryAdjustment, on_delete=models.PROTECT, related_name="events")
+    type = models.CharField(max_length=20, choices=Type.choices, db_index=True)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="salary_adjustment_events")
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["created_at", "pk"]
+        indexes = [models.Index(fields=["adjustment", "created_at"])]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("Salary adjustment events are append-only and cannot be updated.")
+        from apps.core.request_context import get_request_context
+        context = get_request_context()
+        self.details = dict(self.details or {})
+        if context.get("request_id"):
+            self.details.setdefault("request_id", context["request_id"])
+        if self.actor_id:
+            self.details.setdefault("actor_role", self.actor.role)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Salary adjustment events are append-only and cannot be deleted.")

@@ -529,7 +529,8 @@ class StaffPerformanceReview(TimeStampedModel):
 # Kept in a focused module because compensation and payroll evidence have
 # different privacy and lifecycle rules from ordinary workforce records.
 from .payroll_models import (  # noqa: E402,F401
-    LatenessDeductionPolicy, PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryPayment,
+    LatenessDeductionPolicy, PayrollEvent, PayrollLine, PayrollPeriod, PayrollSalaryAdjustment,
+    PayrollSalaryAdjustmentEvent, PayrollSalaryPayment,
     PayrollStatutoryRuleEvent, PayrollStockShortageAllocation, PayrollStockShortageCase,
     PayrollStatutoryRuleSet, StaffCompensation, StaffLatenessDeduction, PayrollTaxIdentity,
 )

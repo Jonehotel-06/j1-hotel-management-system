@@ -26,6 +26,10 @@ from ..models import (
     PayrollSalaryPayment, PayrollStockShortageAllocation, PayrollStockShortageCase, StaffCompensation,
     StaffLatenessDeduction, StaffProfile,
 )
+from .payroll_adjustment_service import (
+    consume_salary_adjustments, mark_salary_adjustments_applied, release_salary_adjustments_for_period,
+    sync_salary_adjustment_payment_status,
+)
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")
@@ -800,11 +804,27 @@ def create_payroll_period(
                 })
 
         bonus = _decimal(inputs.get("bonus", 0), "bonus")
-        basic = Decimal(compensation.basic_salary).quantize(CENT)
-        housing = Decimal(compensation.housing_allowance).quantize(CENT)
-        transport = Decimal(compensation.transport_allowance).quantize(CENT)
+        # Approved salary adjustments for this payroll month (partial-month
+        # proration, unpaid absence, disciplinary, other). The run is the only
+        # place they take effect: proration replaces the monthly basic /
+        # housing / transport for this line; deductions and additional
+        # payments become labelled components. A pending adjustment blocks the
+        # run so a full salary is never frozen while a reduction awaits review.
+        salary_adjustments = consume_salary_adjustments(
+            staff_id=staff_id, profile=profile, compensation=compensation,
+            starts_on=starts_on, ends_on=ends_on, currency=currency,
+        )
+        basic = salary_adjustments.basic
+        housing = salary_adjustments.housing
+        transport = salary_adjustments.transport
+        for extra_allowance in salary_adjustments.allowances:
+            if not any(extra_allowance["label"] == str(row.get("label", "")) for row in allowances):
+                allowances.append(extra_allowance)
         gross = (basic + housing + transport + overtime_pay + _components_total(allowances) + bonus).quantize(CENT)
         deductions = list(manual_deductions)
+        for extra_deduction in salary_adjustments.deductions:
+            if not any(extra_deduction["label"] == str(row.get("label", "")) for row in deductions):
+                deductions.append(extra_deduction)
 
         from ..models import StaffDisciplinaryRecord
 
@@ -887,6 +907,7 @@ def create_payroll_period(
             deductions_total=deductions_total,
             net_pay=net,
         )
+        mark_salary_adjustments_applied(adjustments=salary_adjustments.adjustments, line=line, actor=actor)
         if approved_disciplinary:
             StaffDisciplinaryRecord.objects.filter(
                 pk__in=[d.pk for d in approved_disciplinary]
@@ -1024,6 +1045,9 @@ def review_payroll_period(*, period, reviewer, approved: bool, review_note=""):
         period.status = PayrollPeriod.Status.REJECTED
         _event(period, PayrollEvent.Type.REJECTED, reviewer,
                override_event_details({"review_note": period.review_note}, override))
+        # The rejected run never took effect, so the salary adjustments it had
+        # frozen go back to "approved, awaiting payroll" for the replacement run.
+        release_salary_adjustments_for_period(period=period, actor=reviewer)
     period.save(update_fields=[
         "status", "reviewed_by", "reviewed_at", "review_note", "approved_by", "approved_at",
         "accrual_transaction", "updated_at",
@@ -1283,6 +1307,7 @@ def record_payroll_salary_payment(
 
     previous_status = period.status
     new_status, cumulative_paid, balance = _sync_payroll_payment_status(period=period, actor=actor)
+    sync_salary_adjustment_payment_status(line=line, actor=actor)
     # Keep the run timeline bounded to payment-state transitions; every record
     # remains available in the paginated employee history and audit log.
     if previous_status != new_status:
@@ -1462,6 +1487,7 @@ def reverse_payroll_salary_payment(
 
     previous_status = period.status
     new_status, cumulative_paid, balance = _sync_payroll_payment_status(period=period, actor=actor)
+    sync_salary_adjustment_payment_status(line=payment.line, actor=actor)
     if previous_status != new_status:
         _event(period, PayrollEvent.Type.PAYMENT_REVERSED, actor, {
             "payment_reference": payment.reference,
@@ -1566,6 +1592,7 @@ def pay_payroll_period(*, period, actor, method, external_reference="", cash_ses
         cash_session=session,
         recorded_at=now,
     )
+    sync_salary_adjustment_payment_status(period=period, actor=actor)
     _event(period, PayrollEvent.Type.PAID, actor, {
         "financial_reference": payment.reference,
         "method": method,

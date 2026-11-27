@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import (
+    payroll_adjustment_views,
     payroll_views,
     views,
     views_biometrics,
@@ -78,6 +79,12 @@ urlpatterns = [
     path("payroll/lateness-deductions/", payroll_views.StaffLatenessDeductionListView.as_view(), name="payroll-lateness-deductions"),
     path("payroll/lateness-deductions/<str:reference>/request-revocation/", payroll_views.StaffLatenessDeductionRevocationRequestView.as_view(), name="payroll-lateness-request-revocation"),
     path("payroll/lateness-deductions/<str:reference>/decision/", payroll_views.StaffLatenessDeductionRevocationDecisionView.as_view(), name="payroll-lateness-decision"),
+    path("payroll/salary-adjustments/", payroll_adjustment_views.SalaryAdjustmentListCreateView.as_view(), name="payroll-salary-adjustments"),
+    path("payroll/salary-adjustments/preview/", payroll_adjustment_views.SalaryAdjustmentPreviewView.as_view(), name="payroll-salary-adjustment-preview"),
+    path("payroll/salary-adjustments/<str:reference>/submit/", payroll_adjustment_views.SalaryAdjustmentSubmitView.as_view(), name="payroll-salary-adjustment-submit"),
+    path("payroll/salary-adjustments/<str:reference>/decision/", payroll_adjustment_views.SalaryAdjustmentDecisionView.as_view(), name="payroll-salary-adjustment-decision"),
+    path("payroll/salary-adjustments/<str:reference>/reverse/", payroll_adjustment_views.SalaryAdjustmentReverseView.as_view(), name="payroll-salary-adjustment-reverse"),
+    path("payroll/salary-adjustments/<str:reference>/", payroll_adjustment_views.SalaryAdjustmentDetailView.as_view(), name="payroll-salary-adjustment-detail"),
     path("payroll/periods/", payroll_views.PayrollPeriodListCreateView.as_view(), name="payroll-periods"),
     path("payroll/periods/<str:reference>/submit/", payroll_views.PayrollSubmitView.as_view(), name="payroll-submit"),
     path("payroll/periods/<str:reference>/review/", payroll_views.PayrollReviewView.as_view(), name="payroll-review"),

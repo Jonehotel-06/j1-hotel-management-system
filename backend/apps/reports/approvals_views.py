@@ -168,6 +168,27 @@ class ApprovalsInboxView(APIView):
                 for p in qs[:MAX_ITEMS_PER_CATEGORY]
             ], count=qs.count())
 
+        # --- Salary adjustments awaiting independent approval ----------------
+        if allowed("payroll.approve"):
+            from apps.staff_operations.payroll_models import PayrollSalaryAdjustment
+
+            qs = (
+                PayrollSalaryAdjustment.objects.filter(status=PayrollSalaryAdjustment.Status.PENDING_APPROVAL)
+                .select_related("staff", "created_by")
+                .order_by("submitted_at", "created_at", "pk")
+            )
+            add("salary_adjustments", "Salary adjustments awaiting approval", "payroll", [
+                _item(
+                    reference=a.reference,
+                    title=f"{_name(a.staff)} · {a.get_adjustment_type_display()}",
+                    detail=f"{a.month_label} · final payable {a.final_payable} {a.currency}",
+                    requested_by=_email(a.created_by),
+                    requested_at=a.submitted_at or a.created_at,
+                    amount=a.total_deductions if a.total_deductions > 0 else a.additional_payment, currency=a.currency,
+                )
+                for a in qs[:MAX_ITEMS_PER_CATEGORY]
+            ], count=qs.count())
+
         # --- Leave requests --------------------------------------------------
         if allowed("leave.approve"):
             from apps.staff_operations.models import LeaveRequest

@@ -382,6 +382,9 @@
     payrollLatenessPolicy: "/api/admin/staff-operations/payroll/lateness-policy/",
     payrollLatenessDeductions: "/api/admin/staff-operations/payroll/lateness-deductions/",
     payrollPeriods:       "/api/admin/staff-operations/payroll/periods/",
+    /* Payroll — approved salary adjustments (partial month, unpaid absence,
+       disciplinary, other) applied by the payroll run for their month. */
+    payrollSalaryAdjustments: "/api/admin/staff-operations/payroll/salary-adjustments/",
     /* Payroll (client) — the signed-in user's OWN approved payslips. */
     payrollPayslips:      "/api/admin/staff-operations/payroll/payslips/",
     myPayslips:           "/api/admin/staff-operations/payroll/my-payslips/",
