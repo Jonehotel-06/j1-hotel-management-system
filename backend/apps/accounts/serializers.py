@@ -19,6 +19,9 @@ from apps.core.storage import absolute_media_url
 from .capabilities import capability_codes_for_user, has_capability
 from .desktop_policy import (
     DESKTOP_BY_DEVICE,
+    DESKTOP_BY_IP,
+    DESKTOP_BY_SETTINGS_IP,
+    auto_enrol_desktop_key_payload,
     desktop_key_override_for_unusable_ip_pin,
     device_belongs_to_staff,
     device_credential_overrides_unusable_ip_pin,
@@ -197,6 +200,13 @@ class JOneTokenObtainPairSerializer(TokenObtainPairSerializer):
                     )
                     raise DjangoPermissionDenied("Your account is not authorized to sign in to this department dashboard.")
         log_staff_sign_in(self.user, request, desktop, method=desktop_method)
+        # A browser accepted because it sits at the REGISTERED DESK ADDRESS is
+        # given a durable workstation credential once (repair 2026-11-26): an
+        # address is handed out by the ISP and changes, so it must never be a
+        # workstation's only identity.
+        enrolment = auto_enrol_desktop_key_payload(self.user, request, desktop, desktop_method)
+        if enrolment:
+            data["desk_enrolment"] = enrolment
         data["user"] = UserSerializer(self.user, context=self.context).data
         return data
 

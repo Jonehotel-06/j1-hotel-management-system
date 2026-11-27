@@ -271,8 +271,16 @@ class NoAutomaticRecipeTests(InventoryManagementTestCase):
 class DirectSaleDeductionTests(InventoryManagementTestCase):
     """Requirement 3: the exact quantity sold, from the configured store, once."""
 
-    def test_a_configured_crate_does_not_deduct_at_delivery(self):
-        """REQ-5: direct-sale configuration is recorded but delivery does not deduct."""
+    def test_a_configured_crate_deducts_its_quantity_from_the_configured_store(self):
+        """Direct sale (policy confirmed 2026-11-26): the exact quantity, once, at its store.
+
+        This replaces the previous REQ-5 assertion that delivery deducts nothing.
+        The hotel's P2 brief requires a direct sale — a product sold exactly as it
+        is stocked — to reduce the store that sells it (Bar Store, never Main
+        Store). Recipe/ingredient deduction remains disabled (see
+        ``tests/test_inventory_sales_depletion.py``), so the distinction the old
+        test protected is still enforced, just for the other configuration.
+        """
         self.configure_direct_sale(
             self.bottle, menu_item=self.crate_menu, location=self.bar, quantity="24.0000"
         )
@@ -281,27 +289,37 @@ class DirectSaleDeductionTests(InventoryManagementTestCase):
 
         self.sell(mode=PosOrder.Mode.BAR, menu_item=self.crate_menu, quantity=1, table_number="T-1")
 
-        # REQ-5: no stock movement is posted at delivery.
-        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("30.0000"))
-        self.assertFalse(
-            StockMovement.objects.filter(item=self.bottle, type=StockMovement.Type.POS_CONSUMPTION).exists()
-        )
-        # The hand-off record exists as evidence.
+        # One crate (24 bottles) is taken from the store the sale was configured
+        # against, and nothing else moves.
+        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("6.0000"))
+        movements = StockMovement.objects.filter(item=self.bottle, type=StockMovement.Type.POS_CONSUMPTION)
+        self.assertEqual(movements.count(), 1)
+        self.assertEqual(movements.get().quantity_delta, Decimal("-24.0000"))
+        self.assertEqual(movements.get().location_id, self.bar.pk)
+        # The hand-off is the evidence that ties the movement to the order.
         request = PosOrder.objects.latest("pk").stock_consumption_request
-        self.assertEqual(request.status, "SKIPPED")
+        self.assertEqual(request.status, "PROCESSED")
+        # No recipe was created to make the deduction happen.
         self.assertFalse(StockRecipe.objects.filter(menu_item=self.crate_menu).exists())
 
-    def test_the_sale_does_not_deplete_any_store(self):
-        """REQ-5: delivery posts no stock movement to any store."""
+    def test_the_sale_depletes_only_the_configured_store(self):
+        """Direct sale deducts the store it names, and never a neighbouring one.
+
+        Replaces the REQ-5 assertion "no store was depleted". The point that
+        mattered — a deduction must land in exactly one, configured place and
+        must never spread to another store — is asserted the other way round.
+        """
         self.configure_direct_sale(self.bottle, menu_item=self.crate_menu, location=self.kitchen)
         self.stock_in(self.bottle, self.kitchen, 5)
         self.stock_in(self.bottle, self.bar, 7)
 
         self.sell(mode=PosOrder.Mode.BAR, menu_item=self.crate_menu, quantity=2, table_number="T-2")
 
-        self.assertEqual(self.balance(self.bottle, self.kitchen), Decimal("5.0000"))
-        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("7.0000"), "no store was depleted")
-        self.assertEqual(self.total(self.bottle), Decimal("12.0000"))
+        self.assertEqual(self.balance(self.bottle, self.kitchen), Decimal("3.0000"),
+                         "the configured store is deducted")
+        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("7.0000"),
+                         "no other store is touched")
+        self.assertEqual(self.total(self.bottle), Decimal("10.0000"))
 
     def test_a_configured_product_reports_its_saleable_stock_to_the_pos(self):
         self.configure_direct_sale(self.bottle, menu_item=self.crate_menu, location=self.bar, quantity="24.0000")
@@ -580,28 +598,38 @@ class IdempotencyTests(InventoryManagementTestCase):
         self.assertEqual(first.pk, second.pk)
         self.assertEqual(self.balance(self.detergent, self.store), Decimal("7.0000"))
 
-    def test_a_retried_delivery_or_catch_up_sweep_posts_no_deduction(self):
-        """REQ-5: retry and sweep converge on zero deductions."""
+    def test_a_retried_delivery_or_catch_up_sweep_deducts_exactly_once(self):
+        """A repeated delivery callback and the catch-up sweep converge on ONE deduction.
+
+        Replaces the REQ-5 assertion "zero deductions"; the invariant that
+        actually protects the bar (a retried payment/delivery callback must never
+        deduct twice) is asserted against the new direct-sale deduction.
+        """
         self.configure_direct_sale(self.bottle, menu_item=self.crate_menu, location=self.bar, quantity="2.0000")
         self.stock_in(self.bottle, self.bar, 10)
 
         order = self.sell(mode=PosOrder.Mode.BAR, menu_item=self.crate_menu, quantity=1, table_number="T-3")
         request = PosOrder.objects.get(pk=order.pk).stock_consumption_request
-        self.assertEqual(request.status, "SKIPPED")
-        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("10.0000"))
+        self.assertEqual(request.status, "PROCESSED")
+        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("8.0000"))
 
-        # A repeated delivery transition and the catch-up sweep post nothing.
+        # A repeated delivery transition and the catch-up sweep post nothing more.
         transition_order(
             order=PosOrder.objects.get(pk=order.pk), target_status=PosOrder.Status.DELIVERED, actor=self.cashier
         )
         process_pending_pos_consumption(actor=self.clerk)
-        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("10.0000"))
+        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("8.0000"))
         self.assertEqual(
-            StockMovement.objects.filter(item=self.bottle, type=StockMovement.Type.POS_CONSUMPTION).count(), 0
+            StockMovement.objects.filter(item=self.bottle, type=StockMovement.Type.POS_CONSUMPTION).count(), 1
         )
 
-    def test_a_mixed_order_posts_no_deductions(self):
-        """REQ-5: delivery posts no stock movement for any line."""
+    def test_a_mixed_order_deducts_only_its_configured_line(self):
+        """A configured line deducts; an unconfigured one is reported, not guessed.
+
+        Replaces the REQ-5 assertion "no line deducts". The distinction the old
+        test protected — an unconfigured product must never be invented into a
+        stock movement — is still asserted on the unconfigured line.
+        """
         self.configure_direct_sale(self.bottle, menu_item=self.crate_menu, location=self.bar, quantity="2.0000")
         self.stock_in(self.bottle, self.bar, 10)
         self.stock_in(self.rice, self.store, 5)
@@ -621,11 +649,14 @@ class IdempotencyTests(InventoryManagementTestCase):
         for status_value in (PosOrder.Status.PREPARING, PosOrder.Status.READY, PosOrder.Status.DELIVERED):
             transition_order(order=order, target_status=status_value, actor=self.cashier)
 
-        # No store was depleted.
-        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("10.0000"))
+        # The configured line deducts (1 × 2 bottles); the unconfigured one does not.
+        self.assertEqual(self.balance(self.bottle, self.bar), Decimal("8.0000"))
+        self.assertEqual(self.balance(self.rice, self.store), Decimal("5.0000"), "an unrelated store is never touched")
         request = PosOrder.objects.get(pk=order.pk).stock_consumption_request
-        self.assertEqual(request.status, "SKIPPED")
-        self.assertTrue(request.resolution_payload.get("recipe_deduction_disabled", False))
+        self.assertEqual(request.status, "PROCESSED")
+        self.assertIn("ITM-SNACK", request.resolution_payload.get("uncontrolled", []))
+        self.assertEqual(request.resolution_payload.get("movement_count"), 1)
+        self.assertIn("Not deducted", request.resolution_note)
 
 
 class ConcurrencyTests(InventoryManagementTestCase):

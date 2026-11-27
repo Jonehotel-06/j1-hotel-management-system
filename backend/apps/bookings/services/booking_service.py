@@ -2102,8 +2102,10 @@ def reschedule_booking(booking: Booking, *, check_in, check_out, staff_user, req
         "check_out": booking.check_out,
         "status": booking.status,
         "total_amount": booking.total_amount,
+        "discount_amount": booking.discount_amount,
         "rooms": [a.room.room_number for a in booking.room_assignments.select_related("room")],
     }
+    previous_due = booking.amount_due
     rooms_needed = booking.number_of_rooms
 
     # Lock the room type, then re-check inventory for the NEW window while
@@ -2150,6 +2152,15 @@ def reschedule_booking(booking: Booking, *, check_in, check_out, staff_user, req
         rooms=rooms_needed, adults=booking.adults, children=booking.children,
         settings_obj=settings_obj, for_staff=True, guest=booking.guest,
     )
+    # A reschedule must not withdraw a discount the guest was already granted.
+    # ``calculate_quote`` only grants what the guest/offer qualifies for TODAY,
+    # so a personal discount that has since been deactivated or expired (or a
+    # fixed amount recorded on the booking) disappeared and the guest was
+    # re-billed at full rate. The terms already granted travel with the
+    # booking; only the arithmetic on the new stay is recalculated, once.
+    carried_discount = pricing.carried_discount_for_booking(booking)
+    if carried_discount is not None:
+        quote = pricing.apply_carried_discount(quote, carried_discount)
 
     if staff_booking:
         booking.room_assignments.update(check_in=check_in, check_out=check_out)
@@ -2193,9 +2204,18 @@ def reschedule_booking(booking: Booking, *, check_in, check_out, staff_user, req
             "check_out": [str(previous["check_out"]), str(booking.check_out)],
             "status": [previous["status"], booking.status],
             "total_amount": [str(previous["total_amount"]), str(booking.total_amount)],
+            "discount_amount": [str(previous["discount_amount"]), str(booking.discount_amount)],
+            "amount_due": [str(previous_due), str(booking.amount_due)],
         },
         metadata={
             "reference": booking.booking_reference,
+            # Evidence of the discount that was carried across the date change:
+            # where the terms came from, who approved them and what they are
+            # worth on the NEW stay. The original grant is never rewritten.
+            "discount_preserved": (
+                carried_discount.to_evidence() if carried_discount is not None else {}
+            ),
+            "discount_applied": str(booking.discount_amount),
             "previous_rooms": previous["rooms"],
             "new_rooms": [r.room_number for r in free_rooms],
             "balance_due": str(balance_due),
@@ -2226,6 +2246,11 @@ def reschedule_booking(booking: Booking, *, check_in, check_out, staff_user, req
         )
 
     booking.reschedule_result = {
+        "previous_discount_amount": str(previous["discount_amount"]),
+        "discount_amount": str(booking.discount_amount),
+        "discount_preserved": (
+            carried_discount.to_evidence() if carried_discount is not None else None
+        ),
         "previous_check_in": previous["check_in"].isoformat(),
         "previous_check_out": previous["check_out"].isoformat(),
         "previous_rooms": previous["rooms"],

@@ -45,6 +45,11 @@ minimart_admin_urlpatterns = [
     path("categories/<int:pk>/", minimart_admin.MiniMartCategoryDetailView.as_view(), name="minimart-category-detail"),
     path("products/", minimart_admin.MiniMartProductListCreateView.as_view(), name="minimart-products-admin"),
     path("products/<int:pk>/", minimart_admin.MiniMartProductDetailView.as_view(), name="minimart-product-detail"),
+    path(
+        "products/<int:pk>/stock-adjustment/",
+        minimart_admin.MiniMartProductStockAdjustmentView.as_view(),
+        name="minimart-product-stock-adjustment",
+    ),
 ]
 
 

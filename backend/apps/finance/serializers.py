@@ -439,3 +439,15 @@ class ExpenseAccountingPrepareSerializer(serializers.Serializer):
     payment_method = serializers.ChoiceField(choices=Expense.PaymentMethod.choices, required=False)
     incurred_on = serializers.DateField(required=False)
     receipt_url = serializers.URLField(required=False, allow_blank=True, max_length=200)
+
+
+class FolioPostingVoidSerializer(serializers.Serializer):
+    """Reason for voiding a posted folio entry (minimum five characters)."""
+
+    reason = serializers.CharField(max_length=500, trim_whitespace=True)
+
+    def validate_reason(self, value):
+        reason = str(value or "").strip()
+        if len(reason) < 5:
+            raise serializers.ValidationError("Give the reason for voiding this entry (at least 5 characters).")
+        return reason

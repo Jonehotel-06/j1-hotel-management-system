@@ -140,16 +140,32 @@
      as a fallback; both paths only ever hand over the one-time session token.
   -------------------------------------------------------------------------- */
   function launch(uri) {
+    /* Repair (2026-11-26) — why this is an anchor and not an iframe.
+       The previous version navigated a hidden iframe to ``jone-reader:…``.
+       Chromium only starts an external protocol handler from a navigation the
+       user actually initiated; a hidden-iframe navigation is silently dropped,
+       so Windows never launched the agent, the API session stayed PENDING, and
+       the receptionist was told "No fingerprint read in time" after two and a
+       half minutes of holding a finger on a reader that had never been asked to
+       do anything. Clicking a real anchor inside the click handler is the
+       gesture-anchored path every browser honours, it leaves the dashboard
+       where it is, and its failure is observable instead of silent. */
     if (!uri) return false;
     try {
-      var frame = doc.createElement("iframe");
-      frame.style.display = "none";
-      frame.setAttribute("aria-hidden", "true");
-      frame.src = uri;
-      doc.body.appendChild(frame);
+      var anchor = doc.createElement("a");
+      anchor.href = uri;
+      anchor.style.display = "none";
+      anchor.setAttribute("aria-hidden", "true");
+      anchor.rel = "noopener";
+      doc.body.appendChild(anchor);
+      if (typeof anchor.click === "function") {
+        anchor.click();
+      } else {
+        window.location.href = uri;
+      }
       window.setTimeout(function () {
-        try { frame.parentNode && frame.parentNode.removeChild(frame); } catch (_) {}
-      }, 8000);
+        try { anchor.parentNode && anchor.parentNode.removeChild(anchor); } catch (_) {}
+      }, 2000);
       return true;
     } catch (_) {
       try {
@@ -352,6 +368,25 @@
       pollTimer = window.setInterval(async function () {
         if (!client) return;
         ticks += 1;
+        /* Repair (2026-11-26): a hand-off that never launched the agent used to
+           be indistinguishable from a slow finger, and the operator waited for
+           the full timeout to be told the wrong thing. The server knows whether
+           any agent has a live heartbeat, so ask it once, early, and say which
+           of the two situations this is. */
+        if (ticks === 3) {
+          var agent = await refreshAgent();
+          if (!agent || agent.online !== true) {
+            stopPolling();
+            setDisabled(false);
+            say("agent_missing", {
+              badge: "Reader agent did not start",
+              detail: "Windows did not start the J-ONE reader agent on this computer, so no fingerprint could be read. " +
+                "Press “Start reader agent”; if that does not help, the agent has not been installed on this PC yet " +
+                "(one-time install — see the fingerprint setup guide). The request above has not been used."
+            });
+            return;
+          }
+        }
         if (Date.now() > deadline) {
           stopPolling();
           setDisabled(false);

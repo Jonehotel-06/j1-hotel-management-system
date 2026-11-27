@@ -522,6 +522,64 @@ def unusable_saved_desktop_addresses(client_ip: str) -> list[str]:
     return [value for value in unusable if not (value in seen or seen.add(value))]
 
 
+def desk_credential_survives_address_change(request, method: str) -> bool:
+    """True when a LIVE desk session may outlast a change of its public address.
+
+    Repair (2026-11-26) — the reported fault: "the receptionist is logged out
+    whenever the public IP changes".
+
+    Why it happened. The desk browser proved what it was by the ADDRESS the
+    hotel registered. An ISP lease renewal, a router restart or a failover link
+    changes that address several times a day, so:
+
+    * ``resolve_receptionist_desktop`` no longer recognised the desk, and
+    * the hotel-wide ``HotelSettings.front_desk_desktop_ip`` pin — usually a
+      single public address — no longer matched either,
+
+    and the token-refresh check therefore ended every open shift. The address
+    had become the workstation's ONLY identity, which is exactly what it must
+    never be: it is assigned by a third party and changes without notice.
+
+    The durable identity is a workstation credential this hotel issued: a
+    hashed ``X-JONE-Desktop-Key`` that resolves to an ACTIVE FRONT_DESK
+    ``Workstation``. When one is presented, an address change is a fact to
+    record, not a reason to end a shift.
+
+    What is deliberately NOT loosened:
+
+    * SIGN-IN stays pinned. A key that resolves still has to satisfy the
+      configured front-desk network, so a stolen key cannot START a session
+      off-site (see the two ``*_overrides_unusable_ip_pin`` helpers for the
+      one case where the saved pin can never match);
+    * revocation is immediate: rotating the key, deactivating the workstation
+      or deactivating the staff account stops the next refresh;
+    * no forwarded header is trusted any more than before — an address is
+      never what admits the request on this path.
+
+    Only the *key* route qualifies. Address-only desks have nothing durable to
+    recognise, and an approved-device token is already address-independent, so
+    it never reaches this decision.
+    """
+    return method == DESKTOP_BY_KEY
+
+
+def desk_address_changed(request, workstation) -> bool:
+    """True when this request does not arrive from the desk's known address.
+
+    Used to RECORD an address change on a session that continues anyway. It is
+    never used to refuse anything: the refusal decision stays in the sign-in
+    policy, and the whole point of the repair is that a third party's lease
+    change must not be able to end a shift.
+    """
+    client_ip = request_client_ip(request)
+    if not client_ip:
+        return False
+    registered = str(getattr(workstation, "ip_address", "") or "").strip()
+    if registered:
+        return not address_in_network(client_ip, registered)
+    return not front_desk_desktop_ip_allowed(request)
+
+
 def presented_desktop_key(request) -> str:
     if request is None:
         return ""
@@ -668,3 +726,76 @@ def desktop_key_override_for_unusable_ip_pin(request, method: str) -> bool:
     if method != DESKTOP_BY_KEY:
         return False
     return configured_front_desk_desktop_cannot_match(request_client_ip(request))
+
+
+def auto_enrol_desktop_key_payload(user, request, desktop, method) -> dict:
+    """Give a desk browser a durable credential the first time it signs in.
+
+    Repair (2026-11-26) — companion to ``desk_credential_survives_address_change``.
+
+    An address-registered desk has no credential a network change cannot take
+    away, and issuing one previously required an administrator to read a key
+    off the Terminals page and type it into that browser. A browser that has
+    just been accepted BECAUSE it is at the registered desk address, and that
+    presents no credential of its own, is therefore issued the workstation's
+    desktop key once, returned in the sign-in payload and stored by the page.
+    From then on the machine is recognised by the hotel's own credential rather
+    than by whichever public address the ISP handed it that morning.
+
+    Guard rails, all of them deliberate:
+
+    * only for staff who are bound to the desk (management signs in anywhere
+      and needs no enrolment);
+    * only when the desk was identified by an ADDRESS, and only when the
+      browser presented neither a key nor an approved-device token;
+    * never a rotation: if the workstation already has a key, nothing is
+      issued, so an enrolled browser cannot be silently displaced by a second
+      browser at the same desk (an administrator rotates it explicitly);
+    * the raw key is returned once, in this response only, and the audit trail
+      records that it happened, for which workstation, from which address.
+    """
+    if request is None or desktop is None:
+        return {}
+    from .models import Workstation  # noqa: F401  (kept local for import order)
+
+    if not sign_in_policy_applies(user):
+        return {}
+    if method not in (DESKTOP_BY_IP, DESKTOP_BY_SETTINGS_IP):
+        return {}
+    if presented_desktop_key(request) or presented_device_token(request):
+        return {}
+    if desktop.department != "FRONT_DESK" or not desktop.is_active:
+        return {}
+    if str(desktop.sign_in_key_hash or "").strip():
+        # A key already exists: a second browser at the same desk must not be
+        # able to rotate it by signing in.
+        return {
+            "workstation_reference": desktop.reference,
+            "desktop_key": "",
+            "note": (
+                "This workstation already has a desktop key. An administrator can issue a new one "
+                "from the Terminals page if this browser needs to be enrolled."
+            ),
+        }
+    raw_key = issue_desktop_key(desktop)
+    desktop.save(update_fields=["sign_in_key_hash", "sign_in_key_issued_at", "updated_at"])
+    from apps.audit.services import log_action
+
+    log_action(
+        actor=user, action="DESKTOP_KEY_AUTO_ISSUED", instance=desktop, request=request,
+        metadata={
+            "workstation_reference": desktop.reference,
+            "desktop_method": method,
+            "client_ip": request_client_ip(request),
+            "reason": "address-enrolled desk browser issued a durable credential on sign-in",
+        },
+        summary="Receptionist Desktop key issued automatically at the registered desk",
+    )
+    return {
+        "workstation_reference": desktop.reference,
+        "desktop_key": raw_key,
+        "note": (
+            "This browser is now enrolled to the workstation. Keep this page's storage intact: the "
+            "key is what identifies the desk, so a change of public address no longer ends the session."
+        ),
+    }

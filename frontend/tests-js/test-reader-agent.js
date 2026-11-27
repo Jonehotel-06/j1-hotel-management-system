@@ -61,6 +61,14 @@ function boot(scenario) {
     text: () => host.children.map((child) => child.textContent).join(" "),
     state: () => host.getAttribute("data-state"),
     frames: () => context.document._created.filter((node) => node.tagName === "IFRAME"),
+    /* Repair (2026-11-26): the hand-off is now a gesture-anchored anchor click
+       (a hidden-iframe navigation to an external protocol is silently dropped
+       by Chromium, which is why the agent never started in production). The
+       contract under test is unchanged: exactly one jone-reader: hand-off, and
+       it carries nothing but the one-time session token. */
+    handoffs: () => context.document._created.filter(
+      (node) => /^jone-reader:/.test(node.href || node.src || "")
+    ),
     actionButton: (action) => host.children
       .flatMap((child) => child.children || [])
       .find((child) => child.getAttribute && child.getAttribute("data-reader-action") === action),
@@ -135,9 +143,9 @@ test("clocking in creates a session and hands only the token to Windows", async 
   assert.equal(post.route, "/api/admin/staff-operations/reader-agent/sessions/");
   assert.equal(post.body.action, "CLOCK_IN");
   assert.ok(!("staff_id" in post.body), "identification comes from the finger, not the page");
-  const frame = app.frames().pop();
-  assert.ok(frame, "a jone-reader: hand-off should be launched");
-  assert.match(frame.src, /^jone-reader:capture\?session=T1/);
+  const handoff = app.handoffs().pop();
+  assert.ok(handoff, "a jone-reader: hand-off should be launched");
+  assert.match(handoff.href, /^jone-reader:capture\?session=T1/);
   assert.equal(app.state(), "waiting_finger");
   assert.ok(app.hasTimer(), "the面板 must poll for the signed result");
 });
@@ -224,7 +232,7 @@ test("a session without a provisioned agent does not launch anything", async () 
   await flush();
   await app.actionButton("CLOCK_IN").click();
   await flush();
-  assert.equal(app.frames().length, 0);
+  assert.equal(app.handoffs().length, 0);
   assert.equal(app.state(), "not_provisioned");
 });
 
@@ -328,7 +336,7 @@ test("provisioning that the server answers with 'already provisioned' launches n
   await setup.click();
   await flush();
   await flush();
-  assert.equal(app.frames().length, 0, "no jone-reader: hand-off may run when the key was kept");
+  assert.equal(app.handoffs().length, 0, "no jone-reader: hand-off may run when the key was kept");
 });
 
 test("a setup refusal is shown verbatim, with the permission the server named", async () => {

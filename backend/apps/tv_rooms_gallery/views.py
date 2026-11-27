@@ -21,6 +21,7 @@ resolved, so the TV screen rotates only over media that can actually play.
 import os
 import re
 import logging
+import threading
 
 from django.conf import settings
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse, StreamingHttpResponse
@@ -102,6 +103,16 @@ def _rendition_key(item, rendition, private=False):
     ``None`` means "this rendition does not apply to this media type" (404 is
     the right answer); an empty key for an applicable rendition means the
     rendition was never produced — a different fault, reported as such.
+
+    Repair (2026-11-26) — the staff preview could not show an image at all
+    ---------------------------------------------------------------------
+    The admin page asked for ``display`` and then ``file`` for an image. The
+    ``display`` rendition is missing on every record stored before thumbnails
+    existed (or whose rendition file is gone), and ``file`` is not a rendition
+    an image has, so both requests failed and the panel said "Preview
+    unavailable - open the file" while the ORIGINAL upload was sitting in
+    storage, readable the whole time. ``original`` is now a real, staff-only
+    rendition: the public/TV routes still never serve an un-re-encoded upload.
     """
     if rendition == 'thumb' and item.kind in ('image', 'video'):
         return item.thumbnail_key, 'image/jpeg'
@@ -111,6 +122,13 @@ def _rendition_key(item, rendition, private=False):
         return item.display_key, 'video/mp4'
     if rendition == 'file' and (private or item.kind == 'audio'):
         mime = 'application/octet-stream' if item.kind in ('other', 'image') else item.content_type
+        return item.storage_key, mime
+    if rendition == 'original' and private:
+        # Staff-only, read-only view of the bytes exactly as they were uploaded.
+        # The content type was detected from the file's own magic bytes at
+        # upload time, never from the client's declaration, and every response
+        # carries nosniff + a sandbox CSP.
+        mime = item.content_type or 'application/octet-stream'
         return item.storage_key, mime
     return None, None
 
@@ -122,6 +140,75 @@ def _rendition_present(item, rendition):
         return False
     path, outcome = storage.resolve(key)
     return outcome == storage.FILE_OK and path is not None
+
+
+#: Renditions the staff preview can rebuild from an image's stored original.
+_REBUILDABLE = {'thumb': (640, 400, 80), 'display': (1920, 1080, 88)}
+_rebuild_locks = {}
+_rebuild_lock_guard = threading.Lock()
+
+
+def _rebuild_lock(item_id):
+    """One lock per media row so two preview requests cannot both encode it."""
+    with _rebuild_lock_guard:
+        lock = _rebuild_locks.get(item_id)
+        if lock is None:
+            lock = threading.Lock()
+            _rebuild_locks[item_id] = lock
+        return lock
+
+
+def _rebuild_image_rendition(item, rendition):
+    """Produce a missing thumb/display rendition from the stored original.
+
+    Repair (2026-11-26): every image uploaded before the thumbnail pipeline (or
+    whose rendition object was lost) had an empty ``thumbnail_key`` /
+    ``display_key``, so both the card thumbnail and the preview answered with a
+    storage fault. The ORIGINAL file was present and readable the whole time,
+    and re-deriving a bounded JPEG from it repairs the record without touching
+    the original: ``storage_key`` is never modified, renamed or overwritten, and
+    every previously stored object keeps its key, so no existing URL breaks.
+
+    Returns the new key, or ``''`` when the rendition cannot be rebuilt (which
+    leaves the honest storage-fault response in place).
+    """
+    from .thumbnails import make_thumbnail, ThumbnailError
+
+    spec = _REBUILDABLE.get(rendition)
+    if spec is None or item.kind != 'image':
+        return ''
+    path, outcome = storage.resolve(item.storage_key)
+    if outcome != storage.FILE_OK or path is None:
+        return ''
+    try:
+        data = path.read_bytes()
+        rendered = make_thumbnail(data, size=(spec[0], spec[1]), quality=spec[2],
+                                  max_bytes=max(getattr(settings, 'TV_GALLERY_MAX_IMAGE_BYTES', item.size), item.size),
+                                  max_pixels=int(getattr(settings, 'TV_GALLERY_MAX_IMAGE_PIXELS', 200_000_000)))
+    except (OSError, ThumbnailError, ValueError):
+        logger.exception('TV gallery media %s: could not rebuild %s rendition', item.pk, rendition)
+        return ''
+    try:
+        key, _size = storage.save_chunks([rendered], 16 * 1024 * 1024)
+    except (OSError, ImproperlyConfigured, ValueError):
+        logger.exception('TV gallery media %s: could not store rebuilt %s rendition', item.pk, rendition)
+        return ''
+    field = 'thumbnail_key' if rendition == 'thumb' else 'display_key'
+    # Only this item's rendition fields are written, under the row lock, and the
+    # old empty/stale key is recorded in the audit entry.
+    with transaction.atomic():
+        locked = GalleryMedia.objects.select_for_update().filter(pk=item.pk).first()
+        if locked is None:
+            return ''
+        previous = getattr(locked, field)
+        setattr(locked, field, key)
+        locked.save(update_fields=[field])
+    setattr(item, field, key)
+    log_action(actor=None, action='TV_GALLERY_RENDITION_REBUILT', instance=item,
+               metadata={'rendition': rendition, 'previous_key': previous, 'storage_key': item.storage_key},
+               summary='Rebuilt the %s rendition from the stored original for media %s' % (rendition, item.pk))
+    logger.info('TV gallery media %s: rebuilt %s rendition (was %r)', item.pk, rendition, previous)
+    return key
 
 
 def _storage_fault_response(request, item, rendition, outcome):
@@ -165,6 +252,14 @@ def _serve(request, item, rendition, private=False):
         # The rendition does not apply to this media type: a genuine 404.
         raise Http404
     path, outcome = storage.resolve(key) if key else (None, storage.FILE_MISSING)
+    if (outcome != storage.FILE_OK or path is None) and private and rendition in _REBUILDABLE:
+        # Staff preview of a legacy/partially processed image: derive the
+        # bounded rendition from the stored original instead of failing.
+        with _rebuild_lock(item.pk):
+            rebuilt = _rebuild_image_rendition(item, rendition)
+        if rebuilt:
+            key, mime = rebuilt, 'image/jpeg'
+            path, outcome = storage.resolve(key)
     if outcome != storage.FILE_OK or path is None:
         # A rendition that was never produced (empty key) or whose file has
         # gone is a processing/storage fault on an existing record, and the
@@ -219,7 +314,10 @@ def _serve(request, item, rendition, private=False):
     response['Content-Security-Policy'] = "default-src 'none'; sandbox"
     response['Cache-Control'] = 'private, no-store' if private else 'public, max-age=300'
     # Never let browsers render original uploaded files other than recognized AV.
-    response['Content-Disposition'] = 'attachment; filename="download"' if private and rendition == 'file' and item.kind in ('other', 'image') else 'inline'
+    download = private and rendition == 'file' and item.kind in ('other', 'image')
+    if private and rendition == 'original' and item.kind == 'other':
+        download = True
+    response['Content-Disposition'] = 'attachment; filename="download"' if download else 'inline'
     return response
 
 
@@ -238,7 +336,16 @@ class AdminView(APIView):
 def admin_media(item):
     return {'id': item.id, 'room_id': item.room_id, 'kind': item.kind, 'name': item.original_name,
             'size': item.size, 'active': item.active, 'is_cover': item.is_cover, 'order': item.display_order,
-            'processing_status': item.processing_status, 'processing_error': item.processing_error}
+            'processing_status': item.processing_status, 'processing_error': item.processing_error,
+            # Repair (2026-11-26): the page asked for a rendition and discovered it
+            # was missing only by failing. Reporting which renditions the record
+            # actually has (additive field) lets the preview choose a candidate
+            # that will answer, and tells the operator when a repair is possible.
+            'renditions': {
+                'thumb': bool(item.thumbnail_key),
+                'display': bool(item.display_key),
+                'original': bool(item.storage_key),
+            }}
 
 
 class AdminRooms(AdminView):
@@ -377,6 +484,45 @@ class MediaChange(serializers.Serializer):
     active = serializers.BooleanField(required=False)
     is_cover = serializers.BooleanField(required=False)
     order = serializers.IntegerField(required=False, min_value=0, max_value=1000000)
+
+
+class AdminRebuildRenditions(AdminView):
+    """Rebuild an image's thumbnail/display rendition from its stored original.
+
+    Repair (2026-11-26): the staff preview could report "Preview unavailable"
+    for an image whose ORIGINAL file was present and readable, because the
+    derived rendition had never been produced (media stored before the
+    thumbnail pipeline existed). The manager needs a supported way to repair
+    such a record without re-uploading it — re-uploading would change the media
+    id, the order, the cover flag and the TV URLs. This rebuilds only the
+    derived renditions; ``storage_key`` and every other stored object keep their
+    existing keys.
+    """
+
+    def post(self, request, pk):
+        item = get_object_or_404(GalleryMedia, pk=pk)
+        if item.kind != 'image':
+            raise ValidationError({'rendition': 'Only image renditions can be rebuilt.'})
+        built = {}
+        with _rebuild_lock(item.pk):
+            for rendition in ('thumb', 'display'):
+                produced = _rebuild_image_rendition(item, rendition)
+                built[rendition] = bool(produced)
+        log_action(actor=request.user, action='TV_GALLERY_RENDITIONS_REBUILT', instance=item,
+                   metadata={'rebuild_requested': True, 'result': built, 'storage_key': item.storage_key},
+                   request=request,
+                   summary='Rebuilt image renditions for media %s' % item.pk)
+        payload = admin_media(item)
+        payload['rebuilt'] = built
+        if not any(built.values()):
+            return Response({
+                'success': False,
+                'message': ('The original file could not be read, so its renditions were not rebuilt. '
+                            'Run `python manage.py check_gallery_storage` and restore the gallery volume '
+                            'from backup if the original is gone.'),
+                'data': payload,
+            }, status=status.HTTP_409_CONFLICT)
+        return Response(payload)
 
 
 class AdminMediaItem(AdminView):

@@ -187,32 +187,104 @@
         throw err;
       });
   }
+  /* ---- Preview ----------------------------------------------------------
+     Repair (2026-11-26) — the panel could show the WRONG file, or nothing at
+     all, for three separate reasons:
+
+     * every request had the same target element and no request identity, so a
+       slow response for the file clicked FIRST could land after the response
+       for the file clicked SECOND and replace the newer picture;
+     * the previous object URL was never revoked on a new preview, so a long
+       admin session leaked every preview it had opened;
+     * an image was requested as ``display`` and then ``file`` — ``file`` is not
+       a rendition an image has, so an image whose derived rendition was never
+       produced could not be previewed at all, even though the ORIGINAL upload
+       was readable.
+
+     The preview now belongs to exactly one media id, ignores any response that
+     is not the current request, revokes the URL it replaces, and falls back to
+     the staff-only ``original`` rendition. */
+  var previewSeq=0, previewUrl='', previewMediaId=null, previewName='';
+  function closePreview(silent){
+    previewSeq+=1;previewMediaId=null;
+    if(previewUrl){try{URL.revokeObjectURL(previewUrl);}catch(_){}previewUrl='';}
+    var area=$('preview');if(area)area.replaceChildren();
+    if(!silent&&$('message'))message('','');
+  }
+  function previewCandidates(item){
+    if(item.kind==='image')return ['display','thumb','original'];
+    if(item.kind==='video')return ['file','original'];
+    if(item.kind==='audio')return ['file','original'];
+    return ['original'];
+  }
   function preview(item){
-    var candidates=item.kind==='image'?['display','file']:['file'];
     var area=$('preview');if(!area)return;
+    var seq=++previewSeq;
+    previewMediaId=String(item.id);previewName=item.name;
+    if(previewUrl){try{URL.revokeObjectURL(previewUrl);}catch(_){}previewUrl='';}
     area.replaceChildren();
     var heading=document.createElement('p');heading.className='caption';
     heading.textContent='Loading '+item.name+'…';
     area.appendChild(heading);
     message('Loading “'+item.name+'”…','working');
-    return fetchRendition(item,candidates,0)
+    return fetchRendition(item,previewCandidates(item),0)
       .then(function(blob){
-        var url=URL.createObjectURL(blob);
+        if(seq!==previewSeq){return null;}          /* a newer preview owns the panel */
+        previewUrl=URL.createObjectURL(blob);
         area.replaceChildren();
+        var el;
         if(item.kind==='image'||item.kind==='video'||item.kind==='audio'){
-          var el=document.createElement(item.kind==='image'?'img':item.kind);
-          el.src=url;if(item.kind!=='image')el.controls=true;
+          el=document.createElement(item.kind==='image'?'img':item.kind);
+          el.src=previewUrl;
+          if(item.kind!=='image')el.controls=true;
           el.setAttribute('aria-label',item.name);
+          if(item.kind==='image'){el.loading='eager';el.decoding='async';el.alt=item.name;}
           area.appendChild(el);
         }else{
-          var a=document.createElement('a');a.href=url;a.download=item.name;a.textContent='Download '+item.name;area.appendChild(a);
+          /* An unrecognised upload is never rendered inline; it is offered as a
+             download, labelled with its real name. */
+          el=document.createElement('a');
+          el.href=previewUrl;el.download=item.name;el.textContent='Download '+item.name;
+          area.appendChild(el);
         }
-        var caption=document.createElement('p');caption.className='caption';caption.textContent=item.name;
-        var close=button('Close preview',function(){try{URL.revokeObjectURL(url);}catch(_){}area.replaceChildren();});
-        area.appendChild(caption);area.appendChild(close);
+        var caption=document.createElement('p');caption.className='caption';
+        caption.textContent=item.name+' · '+(item.kind==='video'?item.processing_status:item.kind);
+        var reload=button('Reload preview',function(){preview(item);});
+        var close=button('Close preview',function(){closePreview();});
+        area.appendChild(caption);area.appendChild(reload);area.appendChild(close);
         message('Showing “'+item.name+'”.','ok');
+        return null;
       })
-      .catch(function(e){area.replaceChildren();fail((e&&e.message)||'The preview could not be produced.');});
+      .catch(function(e){
+        if(seq!==previewSeq)return null;
+        area.replaceChildren();
+        var why=(e&&e.message)||'The preview could not be produced.';
+        var box=document.createElement('div');box.className='media-fallback';
+        box.textContent='Preview unavailable — '+why;
+        area.appendChild(box);
+        if(item.kind==='image'){
+          var repair=button('Repair this file\'s previews',function(){
+            return runAction(repair,'Rebuilding the image previews from the stored original…','Image previews rebuilt.',async function(){
+              await api('manage/media/'+item.id+'/rebuild-renditions/',{method:'POST'});
+              await load();
+              return preview(item);
+            });
+          });
+          area.appendChild(repair);
+        }
+        var download=document.createElement('button');download.type='button';
+        download.textContent='Open the original file';
+        download.addEventListener('click',function(){
+          return fetchRendition(item,['original'],0).then(function(blob){
+            var a=document.createElement('a');var u=URL.createObjectURL(blob);
+            a.href=u;a.download=item.name;a.textContent=item.name;
+            area.replaceChildren(a);
+          }).catch(function(err){fail((err&&err.message)||'The original file is not readable.');});
+        });
+        area.appendChild(download);
+        fail('“'+item.name+'”: '+why);
+        return null;
+      });
   }
   /* ---- Media gallery -----------------------------------------------------
      One card per uploaded file: a real thumbnail (or a labelled fallback), the
@@ -253,20 +325,40 @@
       try{video.src=await renditionBlob(item,'file');}catch(_){thumbFallback(thumb,item);}
       return;
     }
-    if(item.kind==='image'||(item.kind==='video'&&item.processing_status==='ready')){
+    if(item.kind==='image'){
       var img=document.createElement('img');
       img.alt='Thumbnail of '+item.name;img.loading='lazy';
       thumb.appendChild(img);
-      try{img.src=await renditionBlob(item,'thumb');}
-      catch(_){thumbFallback(thumb,item);}
+      /* A legacy image (or one whose derived rendition object was lost) has no
+         'thumb'. Asking for it and giving up is what produced the flat "Preview
+         unavailable - open the file" on records whose original was perfectly
+         readable, so fall back through the derived renditions to the original. */
+      var lastError=null;
+      var sources=['thumb','display','original'];
+      for(var i=0;i<sources.length;i++){
+        try{img.src=await renditionBlob(item,sources[i]);lastError=null;break;}
+        catch(err){lastError=err;}
+      }
+      if(lastError)thumbFallback(thumb,item,lastError);
+      return;
+    }
+    if(item.kind==='video'&&item.processing_status==='ready'){
+      var still=document.createElement('img');
+      still.alt='Thumbnail of '+item.name;still.loading='lazy';
+      thumb.appendChild(still);
+      try{still.src=await renditionBlob(item,'thumb');}
+      catch(err){thumbFallback(thumb,item,err);}
       return;
     }
     thumbFallback(thumb,item);
   }
-  function thumbFallback(thumb,item){
+  function thumbFallback(thumb,item,why){
     if(!thumb)return;
     var box=document.createElement('div');box.className='media-fallback';
-    box.textContent=item.kind==='image'?'Preview unavailable — open the file'
+    box.textContent=item.kind==='image'
+        ?('Preview unavailable — '+((why&&why.message)||(item.renditions&&item.renditions.original
+            ?'the stored file could not be read, press “Open file” to inspect it'
+            :'no readable copy of this file is stored')))
       :item.kind==='video'?(item.processing_status==='failed'?'Video processing failed':'Video still processing — no preview yet')
       :item.kind==='audio'?'Audio file':'No inline preview for this file';
     thumb.replaceChildren(box);
@@ -274,6 +366,18 @@
   function renderMedia(){
     var target=$('media-list');if(!target)return;
     releaseBlobs();
+    /* The panel must never keep showing a file that was just deleted or whose
+       rendition changed underneath it: it is closed for a removed file and
+       flagged as stale for a changed one. */
+    if(previewMediaId!==null){
+      var stillThere=media.filter(function(m){return String(m.id)===previewMediaId;})[0];
+      if(!stillThere)closePreview(true);
+      else if(stillThere.name!==previewName){
+        previewName=stillThere.name;
+        var area=$('preview');
+        if(area&&area.querySelector('img,video,audio,a'))message('“'+stillThere.name+'” changed on the server — press “Open file” to load it again.','warn');
+      }
+    }
     var empty=$('media-empty'),count=$('media-count');
     var rows=media.filter(function(m){return selectedRoom()?String(m.room_id)===selectedRoom():m.room_id===null;});
     /* Stable, meaningful order: the cover first, then the presentation order. */

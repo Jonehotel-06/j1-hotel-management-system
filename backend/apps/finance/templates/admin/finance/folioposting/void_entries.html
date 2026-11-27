@@ -1,0 +1,45 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>Void selected folio entries</h1>
+<p>
+  The entries below are <strong>not deleted and not edited</strong>. Each one is reversed by an
+  offsetting posted journal, so the guest's balance, the reconciliation and the audit trail all
+  stay correct. A reason is required and is stored on the reversal and in the audit log.
+</p>
+<table class="adminlist" style="width:100%;border-collapse:collapse;margin-bottom:1em">
+  <thead>
+    <tr>
+      <th style="text-align:left">Entry</th>
+      <th style="text-align:left">Guest</th>
+      <th style="text-align:left">Folio</th>
+      <th style="text-align:left">Kind</th>
+      <th style="text-align:left">Effect</th>
+      <th style="text-align:right">Amount</th>
+      <th style="text-align:left">Transaction</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for posting in postings %}
+    <tr>
+      <td>{{ posting.pk }}</td>
+      <td>{{ posting.folio.guest.full_name }}</td>
+      <td>{{ posting.folio.reference }}</td>
+      <td>{{ posting.get_kind_display }}</td>
+      <td>{{ posting.get_effect_display }}</td>
+      <td style="text-align:right">{{ posting.amount }} {{ posting.currency }}</td>
+      <td>{{ posting.transaction.reference }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<form method="post">
+  {% csrf_token %}
+  <table>
+    {{ form.as_table }}
+  </table>
+  <div class="submit-row">
+    <input type="submit" class="default" value="Void these entries with an approved reversal">
+    <a class="button cancel-link" href="{% url 'admin:finance_folioposting_changelist' %}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

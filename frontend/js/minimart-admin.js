@@ -142,6 +142,20 @@
     form.elements.is_active.value = "true";
     form.elements.base_unit.value = units[0] ? units[0].value : "";
     form.elements.opening_quantity.disabled = false;
+    if (form.elements.counted_quantity) form.elements.counted_quantity.value = "";
+    if (form.elements.stock_adjustment_reason) form.elements.stock_adjustment_reason.value = "";
+    showStockAdjustmentForm(false);   // opening stock covers a new product
+  }
+  function stockAdjustmentFields() {
+    return Array.prototype.slice.call(
+      document.querySelectorAll("[data-mart-admin-stock-adjustment]")
+    );
+  }
+  function showStockAdjustmentForm(show) {
+    stockAdjustmentFields().forEach(function (node) {
+      node.hidden = !show;
+      node.classList.toggle("hidden", !show);
+    });
   }
   function fillProductForm(row) {
     var form = $("[data-mart-admin-product-form]");
@@ -160,6 +174,17 @@
     form.elements.is_active.value = String(!!row.is_active);
     form.elements.opening_quantity.value = "";
     form.elements.opening_quantity.disabled = true;
+    /* Correcting the stock of an EXISTING product is a real, authorized need
+       (breakage, miscount, found stock). It is not the opening-stock field —
+       that would bypass the ledger — so it is a separate, reason-backed
+       correction that the server posts as an ADJUSTMENT movement. */
+    if (form.elements.counted_quantity) {
+      form.elements.counted_quantity.value = "";
+      form.elements.counted_quantity.max = "";
+      form.elements.counted_quantity.placeholder = String(row.stock_quantity || "0");
+    }
+    if (form.elements.stock_adjustment_reason) form.elements.stock_adjustment_reason.value = "";
+    showStockAdjustmentForm(!form.elements.location_id.disabled);
   }
   function compact(values) {
     Object.keys(values).forEach(function (name) {
@@ -300,13 +325,33 @@
       values.idempotency_key = key();
     }
     values = compact(values);
+    var counted = id && form.elements.counted_quantity
+      ? String(form.elements.counted_quantity.value || "").trim() : "";
+    var adjustmentReason = id && form.elements.stock_adjustment_reason
+      ? String(form.elements.stock_adjustment_reason.value || "").trim() : "";
     clearFieldErrors(form);
     var button = form.querySelector("[type=submit]");
     if (button && button.disabled) return;   // duplicate-submission guard
+    if (counted && adjustmentReason.length < 5) {
+      toast("Give the reason for the stock correction (at least 5 characters).", true);
+      if (form.elements.stock_adjustment_reason) form.elements.stock_adjustment_reason.focus();
+      return;
+    }
     if (button) button.disabled = true;
     try {
       if (id) await API.update("minimartAdminProducts", id, values);
       else await API.create("minimartAdminProducts", values);
+      if (counted) {
+        /* The quantity is never written directly: the server posts the
+           difference as an immutable stock adjustment with this reason. */
+        var adjusted = await API.post("/api/admin/inventory/minimart/products/" + encodeURIComponent(id) + "/stock-adjustment/", {
+          counted_quantity: counted,
+          reason: adjustmentReason
+        });
+        var result = adjusted && adjusted.data;
+        var after = result && result.product ? result.product.stock_quantity : "";
+        toast("Stock corrected and recorded in the ledger" + (after !== "" ? " — now " + after + " on hand." : "."));
+      }
       toast("Mini Mart product saved.");
       resetProductForm();
       setPanel("product", false);            // successful submit closes the form

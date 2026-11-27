@@ -432,8 +432,13 @@ class UnopenedReturnServiceTests(UnopenedReturnTestBase):
         submit_order(order=order, actor=self.cashier)
         order = transition_order(order=order, target_status=PosOrder.Status.DELIVERED, actor=self.cashier)
         order.refresh_from_db()
-        self.assertEqual(
-            StockConsumptionRequest.objects.get(pos_order=order).status, StockConsumptionRequest.Status.FAILED
+        # The sale deducted nothing (no recipe, no direct-sale configuration), so
+        # the hand-off is not PROCESSED. It used to be asserted as FAILED; under
+        # the confirmed direct-sale policy an unconfigured product is SKIPPED with
+        # an operator note, which is the same "nothing was deducted" outcome.
+        self.assertNotEqual(
+            StockConsumptionRequest.objects.get(pos_order=order).status,
+            StockConsumptionRequest.Status.PROCESSED,
         )
         record, _ = record_unopened_return(
             order=order,

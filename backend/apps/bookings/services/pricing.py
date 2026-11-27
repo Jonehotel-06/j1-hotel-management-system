@@ -5,7 +5,7 @@ Every Naira amount on a booking originates here. The frontend may display
 these numbers, but it can never supply them: totals are recomputed on the
 server for quote requests AND again at booking creation.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal
 
 from apps.core.exceptions import CapacityExceededError, InvalidDatesError, OfferNotApplicableError
@@ -187,3 +187,126 @@ def calculate_quote(*, room_type, check_in, check_out, rooms, adults, children,
         total=total,
         required_payment=required,
     )
+
+
+# ---------------------------------------------------------------------------
+# Carrying an existing discount onto a re-priced booking (repair 2026-11-26)
+#
+# A missed-booking reschedule re-prices the stay through ``calculate_quote``,
+# and that function grants a discount only if the guest/offer is eligible
+# TODAY: a personal discount that a manager approved for the original booking
+# (or a fixed-amount discount, or an offer whose window has since closed) came
+# back at zero and the guest was re-billed at full rate. The terms of the
+# discount that were already granted must travel with the booking; only the
+# arithmetic on the new stay is recalculated.
+# ---------------------------------------------------------------------------
+@dataclass
+class CarriedDiscount:
+    """Discount terms an existing booking is entitled to keep."""
+
+    discount_type: str            # "PERCENTAGE" | "FIXED_AMOUNT"
+    discount_value: Decimal
+    source: str                   # where the terms were read from
+    approved_by: object = None
+    reason: str = ""
+    original_amount: Decimal = Decimal("0.00")
+
+    def amount_for(self, subtotal) -> Decimal:
+        subtotal = q(subtotal)
+        if self.discount_type == "PERCENTAGE":
+            amount = q(subtotal * q(self.discount_value) / _HUNDRED)
+        else:
+            amount = q(self.discount_value)
+        # A discount may never exceed the stay it discounts.
+        return max(min(amount, subtotal), Decimal("0.00"))
+
+    def to_evidence(self) -> dict:
+        return {
+            "source": self.source,
+            "discount_type": self.discount_type,
+            "discount_value": money(self.discount_value),
+            "original_amount": money(self.original_amount),
+            "approved_by": getattr(self.approved_by, "email", None) or str(self.approved_by or ""),
+            "reason": self.reason,
+        }
+
+
+def carried_discount_for_booking(booking):
+    """Return the discount terms already granted to ``booking`` (or ``None``).
+
+    Precedence — most specific evidence first, never summed:
+
+    1. the immutable ``GuestDiscountApplication`` snapshot written when the
+       booking was created (type + value as applied, plus who approved it);
+    2. the public :class:`Offer` the booking was booked under;
+    3. a plain recorded ``discount_amount`` that has no application row
+       (older records and manually adjusted bookings) — treated as a fixed
+       amount so the money the guest was promised is not quietly withdrawn.
+
+    Nothing here re-reads a live ``GuestDiscount`` row for the *amount*; the
+    snapshot is the promise. The row is only used to name the source.
+    """
+    from apps.offers.models import GuestDiscountApplication
+
+    application = (
+        GuestDiscountApplication.objects.select_related("guest_discount__created_by")
+        .filter(booking=booking)
+        .first()
+    )
+    if application is not None:
+        discount = application.guest_discount
+        return CarriedDiscount(
+            discount_type=application.discount_type,
+            discount_value=q(application.discount_value),
+            source="GUEST_DISCOUNT_APPLICATION",
+            approved_by=(discount.created_by if discount is not None else None),
+            reason=application.reason or (discount.reason if discount is not None else ""),
+            original_amount=q(application.amount),
+        )
+    offer = booking.offer
+    if offer is not None:
+        return CarriedDiscount(
+            discount_type=offer.discount_type,
+            discount_value=q(offer.discount_value),
+            source="OFFER",
+            approved_by=None,
+            reason=offer.title,
+            original_amount=q(booking.discount_amount or 0),
+        )
+    recorded = q(booking.discount_amount or 0)
+    if recorded > 0:
+        return CarriedDiscount(
+            discount_type="FIXED_AMOUNT",
+            discount_value=recorded,
+            source="RECORDED_AMOUNT",
+            approved_by=None,
+            reason="Discount recorded on the original booking",
+            original_amount=recorded,
+        )
+    return None
+
+
+def apply_carried_discount(quote, carried):
+    """Recalculate ``quote`` with the carried discount terms applied once.
+
+    The new stay's subtotal is what changes; the *terms* do not. The larger of
+    (a) what the live pricing decision already granted and (b) the carried
+    amount is used, so a discount is never applied twice and a guest who is
+    still eligible is never charged more than they were quoted.
+    """
+    carried_amount = carried.amount_for(quote.subtotal)
+    discount = max(q(quote.discount or 0), carried_amount)
+    discount = max(min(discount, q(quote.subtotal)), Decimal("0.00"))
+    taxable = q(q(quote.subtotal) - discount + q(quote.extra_guest_fee))
+    total = q(taxable + q(quote.tax) + q(quote.service_fee))
+    from apps.hotel.models import HotelSettings
+
+    settings_obj = HotelSettings.get_settings()
+    required = q(total * (settings_obj.deposit_percent or _HUNDRED) / _HUNDRED)
+    return replace(
+        quote,
+        discount=discount,
+        total=total,
+        required_payment=required,
+        discount_source=quote.discount_source or carried.source,
+  )

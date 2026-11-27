@@ -371,6 +371,20 @@
     return true;
   }
 
+  /* A browser that signed in from an address-registered desk is handed the
+     workstation key once, and keeps it here (repair 2026-11-26). Storing it is
+     what makes the desk's identity survive an ISP address change: from the next
+     refresh onwards the machine is recognised by this hotel-issued, revocable
+     credential instead of by whichever public address it happens to have.
+     Absent for management, for browsers that already present a credential, and
+     for a workstation whose key is already in use elsewhere. */
+  function adoptDeskEnrolment(payload) {
+    const enrolment = payload && payload.desk_enrolment;
+    if (!enrolment) return null;
+    if (enrolment.desktop_key) setReceptionistDesktopKey(enrolment.desktop_key);
+    return enrolment;
+  }
+
   async function login(email, password, extra) {
     const subCtx = getSubdomainContext();
     const headers = desktopHeaders();
@@ -380,6 +394,7 @@
     if (subCtx && subCtx.subdomain && !body.department) body.department = subCtx.subdomain;
     const res = await window.API.login(body, opts);
     storeSession(res.data);
+    adoptDeskEnrolment(res.data);
     setAPITokenProvider();
     return res.data;
   }
@@ -393,6 +408,7 @@
     if (subCtx && subCtx.subdomain && !body.department) body.department = subCtx.subdomain;
     const res = await window.API.login(body, opts);
     storeSession(res.data);
+    adoptDeskEnrolment(res.data);
     setAPITokenProvider();
     return res.data;
   }

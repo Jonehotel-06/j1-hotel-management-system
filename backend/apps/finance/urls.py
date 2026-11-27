@@ -15,6 +15,11 @@ urlpatterns = [
     path("folios/", views.FolioListView.as_view(), name="folios"),
     path("folios/<str:reference>/", views.FolioDetailView.as_view(), name="folio-detail"),
     path("folios/<str:reference>/postings/", views.FolioPostingListView.as_view(), name="folio-postings"),
+    path(
+        "folios/<str:reference>/postings/<int:pk>/void/",
+        views.FolioPostingVoidView.as_view(),
+        name="folio-posting-void",
+    ),
     path("reports/summary/", views.FinancialSummaryReportView.as_view(), name="financial-summary-report"),
     path("reports/reconciliation/", views.FinancialReconciliationView.as_view(), name="financial-reconciliation"),
     path("reports/night-audit/", views.NightAuditView.as_view(), name="night-audit-report"),

@@ -217,3 +217,177 @@ def booking_outstanding_balance(*, booking, folio_charge_balance: Decimal | None
         folio_charge_balance = booking_folio_charge_balance(booking=booking)
     total = (stay_balance + Decimal(folio_charge_balance)).quantize(Decimal("0.01"))
     return max(total, Decimal("0.00"))
+
+
+# ---------------------------------------------------------------------------
+# Controlled correction of a posted folio entry (repair 2026-11-26)
+#
+# The hotel could not correct a folio entry at all: a mistyped charge stayed on
+# the guest's bill, because FolioPosting/FinancialTransaction are immutable and
+# nothing offered the approved reversal the immutability requires. Deleting or
+# editing the row is not an option (it would silently rewrite financial
+# history), so this service posts an offsetting VOID journal and an offsetting
+# statement item, keeps the original in place, and records who corrected what,
+# why, and when.
+# ---------------------------------------------------------------------------
+VOIDABLE_POSTING_KINDS = frozenset({
+    FolioPosting.Kind.CHARGE,
+    FolioPosting.Kind.DISCOUNT,
+    FolioPosting.Kind.ADJUSTMENT,
+})
+
+
+@transaction.atomic
+def void_folio_posting(*, posting, actor, reason, allow_closed_folio=False, request=None):
+    """Reverse one posted folio charge/credit with an approved void entry.
+
+    Returns ``(reversal_transaction, created)``.
+
+    Rules (all of them enforced here, not in the view):
+
+    * only a ``CHARGE``, ``DISCOUNT`` or ``ADJUSTMENT`` statement item may be
+      voided — payments and refunds have their own refund/void workflows and
+      must not be reversed by this shortcut;
+    * the folio must be OPEN, unless the caller has explicitly unlocked the
+      closed-folio path (a capability decision made by the caller);
+    * a reason of at least five characters is mandatory;
+    * the original transaction must belong to this one folio posting, so the
+      reversal cannot unbalance a journal shared with other postings;
+    * the reversal is idempotent on the posting, so a double click or a retried
+      request returns the reversal it already posted.
+
+    Nothing is deleted and no posted row is edited: the ledger keeps both the
+    original and its reversal, and ``folio_balance_queryset`` nets them.
+    """
+    from apps.audit.services import log_action
+    from apps.core.approvals import override_event_details, require_independent_approver
+
+    from ..models import FinancialEvent, FinancialLine
+    from .ledger_service import create_posted_transaction
+
+    reason = str(reason or "").strip()
+    if len(reason) < 5:
+        raise ValidationError({"reason": "Give the reason for voiding this entry (at least 5 characters)."})
+
+    posting = (
+        FolioPosting.objects.select_for_update()
+        .select_related("folio", "transaction", "line")
+        .get(pk=posting.pk)
+    )
+    if posting.reversal_of_id:
+        raise ValidationError({"posting": "This entry is already a reversal and cannot be voided."})
+    if posting.kind not in VOIDABLE_POSTING_KINDS:
+        raise ValidationError({
+            "posting": (
+                f"A {posting.get_kind_display().lower()} entry cannot be voided here. "
+                "Payments and refunds are corrected through their own refund/void workflow."
+            )
+        })
+    folio = Folio.objects.select_for_update().get(pk=posting.folio_id)
+    if folio.status != Folio.Status.OPEN and not allow_closed_folio:
+        raise ValidationError({
+            "folio": (
+                f"Folio {folio.reference} is {folio.get_status_display().lower()}. Reopen it, or have an "
+                "administrator perform the authorised correction."
+            )
+        })
+
+    source_key = f"folio-void:{posting.pk}"
+    existing = FinancialTransaction.objects.filter(source_key=source_key).first()
+    if existing is not None:
+        return existing, False
+
+    original = posting.transaction
+    if original.status != FinancialTransaction.Status.POSTED:
+        raise ValidationError({"posting": "Only a posted entry can be voided."})
+    siblings = list(FolioPosting.objects.filter(transaction=original).values_list("pk", flat=True))
+    if siblings != [posting.pk]:
+        raise ValidationError({
+            "posting": (
+                "This entry shares its journal with other folio entries. Use the source workflow "
+                "(for example the POS order void or the accommodation correction) so the whole entry is "
+                "reversed together and the journal stays balanced."
+            )
+        })
+
+    evidence = require_independent_approver(
+        requester=original.initiated_by, actor=actor, workflow="folio entry void",
+    )
+    if request is not None:
+        from apps.audit.services import log_action as _log  # noqa: F401  (kept for parity with callers)
+
+    lines = list(original.lines.order_by("pk"))
+    mirror = [
+        {
+            "account_code": line.account_code,
+            "direction": (
+                FinancialLine.Direction.CREDIT if line.direction == FinancialLine.Direction.DEBIT
+                else FinancialLine.Direction.DEBIT
+            ),
+            "amount": line.amount,
+            # The mirrored line keeps its folio so the reversal's statement item
+            # belongs to the same folio as its source line (the ledger refuses a
+            # posting whose folio disagrees with its line).
+            "folio": line.folio,
+            "description": f"Void of {original.reference}: {reason}"[:500],
+        }
+        for line in lines
+    ]
+    line_index = next(
+        (index for index, line in enumerate(lines) if line.pk == posting.line_id), 0,
+    )
+    reversal, created = create_posted_transaction(
+        transaction_type=FinancialTransaction.Type.VOID,
+        source_key=source_key,
+        idempotency_key=source_key,
+        actor=actor,
+        source_reference=folio.reference,
+        external_reference=original.reference,
+        narrative=f"Void of folio entry {posting.pk} ({posting.get_kind_display()}): {reason}"[:500],
+        currency=posting.currency or folio.currency,
+        reversal_of=original,
+        metadata=override_event_details({
+            "entry_kind": "FOLIO_POSTING_VOID",
+            "folio_reference": folio.reference,
+            "voided_posting_id": posting.pk,
+            "voided_transaction": original.reference,
+            "reason": reason,
+        }, evidence),
+        lines=mirror,
+        postings=[{
+            "line_index": line_index,
+            "folio": folio,
+            "kind": posting.kind,
+            "effect": (
+                FolioPosting.Effect.CREDIT if posting.effect == FolioPosting.Effect.DEBIT
+                else FolioPosting.Effect.DEBIT
+            ),
+            "amount": posting.amount,
+            "currency": posting.currency,
+            "description": f"Void of {posting.description or original.reference}: {reason}"[:500],
+            "source_reference": folio.reference,
+            "reversal_of": posting,
+        }],
+    )
+    if not created:
+        return reversal, False
+
+    FinancialEvent.objects.create(
+        transaction=original, type=FinancialEvent.Type.REVERSED, actor=actor,
+        details={
+            "reversal_reference": reversal.reference, "reason": reason,
+            "voided_posting_id": posting.pk, "folio_reference": folio.reference,
+        },
+    )
+    log_action(
+        actor=actor, action="FOLIO_POSTING_VOIDED", instance=folio, request=request,
+        changes={"posting": [str(posting.pk), f"reversed by {reversal.reference}"]},
+        metadata={
+            "folio_reference": folio.reference, "voided_posting_id": posting.pk,
+            "voided_transaction": original.reference, "reversal_transaction": reversal.reference,
+            "amount": str(posting.amount), "kind": posting.kind, "effect": posting.effect,
+            "reason": reason,
+        },
+        summary=f"Folio {folio.reference} entry {posting.pk} voided ({posting.kind} {posting.amount})",
+    )
+    return reversal, True

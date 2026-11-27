@@ -166,6 +166,47 @@ def _adopt_api_base(core: ReaderAgentCore, api: str | None) -> None:
 # --------------------------------------------------------------------------
 # Run loop
 # --------------------------------------------------------------------------
+#: Restart backoff for the supervised run loop. A crashed agent must come back
+#: on its own: the receptionist cannot be asked to start a program, and a dead
+#: agent is otherwise invisible until the next logon (repair 2026-11-26).
+RESTART_BACKOFF_START_SECONDS = 2.0
+RESTART_BACKOFF_MAX_SECONDS = 60.0
+
+
+def run_supervised(store: AgentStore, logger, *, once: bool = False) -> int:
+    """Run the agent forever, restarting the run loop if it ever crashes.
+
+    The installer starts the agent at logon and the ``jone-reader:`` scheme
+    starts it on demand, but neither of those recovers a process that dies while
+    the shift is running (an unexpected exception, a Windows session event, an
+    antivirus kill). Without this the desk silently loses fingerprint capture
+    until somebody logs in again — exactly the "it works, then it stops working,
+    nobody knows why" pattern this repair is about.
+
+    The single-instance mutex is deliberately held by the caller across
+    restarts, so a restarted loop cannot race a second copy of itself.
+    """
+    delay = RESTART_BACKOFF_START_SECONDS
+    while True:
+        try:
+            return run(store, logger, once=once)
+        except KeyboardInterrupt:  # pragma: no cover - interactive only
+            logger.info("J-ONE Reader Agent stopped by the operator.")
+            return 0
+        except Exception:  # noqa: BLE001 - the whole point is to survive anything
+            logger.exception(
+                "J-ONE Reader Agent crashed; restarting in %.0f s", delay,
+            )
+            try:
+                # Tell the API the agent is alive again as soon as it can, so the
+                # dashboard stops reporting "agent not running" after a restart.
+                make_core(store, logger).heartbeat()
+            except Exception:  # noqa: BLE001 - offline restarts are expected
+                pass
+            time.sleep(delay)
+            delay = min(delay * 2, RESTART_BACKOFF_MAX_SECONDS)
+
+
 def run(store: AgentStore, logger, *, once: bool = False) -> int:
     core = make_core(store, logger)
     last_heartbeat = 0.0
@@ -292,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("J-ONE Reader Agent is already running.")
             return 0
         try:
-            return run(store, logger, once=args.once)
+            return run_supervised(store, logger, once=args.once)
         finally:
             instance.release()
 

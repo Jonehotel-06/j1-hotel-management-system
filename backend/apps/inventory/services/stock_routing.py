@@ -89,3 +89,71 @@ def movement_workflow(movement):
     if meta.get("mode") == MANUAL_STOCK_OUT or movement.source_reference.startswith("MSO-"):
         return MANUAL_STOCK_OUT
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Service-area stores (Bar / Kitchen / Reception)
+#
+# A POS service area is served by ONE operational store. The hotel runs
+# Main Store -> Bar Store -> Bar POS, so a bar sale consumes the Bar Store; the
+# same holds for the kitchen. Resolution order:
+#
+#   1. the persisted ``operational_role`` once a location is explicitly
+#      classified with it (``BAR``/``KITCHEN``/``MAIN``);
+#   2. the legacy code/name aliases below, which cover the names the hotel
+#      already uses ("Bar Store", "Kitchen Store", ...);
+#   3. ``HotelSettings``-free settings override ``POS_<AREA>_STORE_CODE`` for a
+#      deployment whose store is named something else entirely.
+#
+# NOTHING here creates, renames or reclassifies a location. Resolution is
+# read-only; when no store matches, callers fall back to the configured
+# per-product store rather than guessing.
+# ---------------------------------------------------------------------------
+SERVICE_AREA_STORE_ALIASES = {
+    "BAR": ("BAR", "BAR STORE", "BAR-STORE", "BAR_STORE", "BARSTORE", "DRINKS STORE"),
+    "RESTAURANT": ("KITCHEN", "KITCHEN STORE", "KITCHEN-STORE", "KITCHEN_STORE", "KITCHENSTORE",
+                   "RESTAURANT", "RESTAURANT STORE"),
+    "RECEPTION": ("RECEPTION", "RECEPTION STORE", "RECEPTION-STORE", "RECEPTION_STORE", "FRONT DESK"),
+    "MINIMART": ("MINIMART", "MINI MART", "MINI-MART", "RECEPTION", "RECEPTION STORE"),
+}
+
+
+def _setting_store_code(area):
+    from django.conf import settings
+
+    return str(getattr(settings, f"POS_{area}_STORE_CODE", "") or "").strip()
+
+
+def service_area_store(area):
+    """The single active store that serves a POS service area, or ``None``.
+
+    Returns the first active ``StockLocation`` matching, in order: an explicit
+    settings override, the operational-role classification, then the legacy
+    code/name aliases. ``None`` means "this hotel has no dedicated store for
+    that area", in which case per-product stock configuration stays
+    authoritative (no deduction is ever redirected).
+    """
+    area = str(area or "").strip().upper()
+    if not area:
+        return None
+    aliases = SERVICE_AREA_STORE_ALIASES.get(area, ())
+    explicit = _setting_store_code(area)
+    if explicit:
+        row = StockLocation.objects.filter(code__iexact=explicit, is_active=True).order_by("pk").first()
+        if row is not None:
+            return row
+    role = area if area in StockLocation.OperationalRole.values else ""
+    if role:
+        row = StockLocation.objects.filter(operational_role=role, is_active=True).order_by("pk").first()
+        if row is not None:
+            return row
+    if area == "RECEPTION":
+        row = StockLocation.objects.filter(is_reception=True, is_active=True).order_by("pk").first()
+        if row is not None:
+            return row
+    if not aliases:
+        return None
+    query = Q()
+    for alias in aliases:
+        query |= Q(code__iexact=alias) | Q(name__iexact=alias)
+    return StockLocation.objects.filter(query, is_active=True).order_by("pk").first()

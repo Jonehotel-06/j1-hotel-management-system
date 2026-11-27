@@ -27,6 +27,7 @@ from ..models import (
 
 from .stock_routing import (
     KITCHEN_DEPARTMENTS, KITCHEN_ISSUE, MANUAL_STOCK_OUT, kitchen_destination, location_role,
+    service_area_store,
 )
 
 logger = logging.getLogger("apps")
@@ -2339,38 +2340,431 @@ def request_pos_stock_consumption(*, order, actor=None):
 
 @transaction.atomic
 def process_pos_stock_consumption(*, request, actor, trigger=TRIGGER_MANUAL):
-    """Resolve a POS stock-consumption hand-off WITHOUT deducting stock.
+    """Post the location-aware ``POS_CONSUMPTION`` movements for one hand-off.
 
-    Automatic recipe-based stock deduction has been REMOVED by hotel policy.
-    This function no longer posts any ``POS_CONSUMPTION`` movement: ingredient
-    consumption is recorded manually by the Store Keeper through the inventory
-    ledger. The hand-off is retained as durable evidence of which menu items a
-    delivered order referenced, and is marked ``SKIPPED`` (resolved without
-    deduction) so it never appears again as a pending automatic deduction.
+    WHAT WAS WRONG (repaired 2026-11-26)
+    ====================================
+    A previous change disabled automatic POS depletion ENTIRELY: this function
+    marked every hand-off ``SKIPPED`` and posted no movement at all. Because
+    direct-sale bar products (bottle of malt, crate of beer) are deducted by
+    exactly this path, a completed Bar POS sale left the store balance
+    untouched — so the bar reported stock it had sold, and the only place a
+    deduction could still happen was a manual issue out of the Main Store,
+    which is not what the hotel asked for. The accounting tests that assert
+    "Bar Store 5 → 3 after selling 2" and "the store shown is the store
+    deducted" were failing for exactly this reason.
 
-    ``trigger`` records WHERE the resolution was initiated (inventory console,
-    or the legacy catch-up sweep) as append-only evidence.
+    WHAT IT DOES NOW
+    ================
+    POLICY (confirmed with the hotel, 2026-11-26): exactly ONE configuration
+    deducts stock for a menu item — the explicit **direct-sale** configuration on
+    the ``StockItem`` (``direct_sale_menu_item`` + ``direct_sale_location`` +
+    ``direct_sale_quantity``), i.e. a product sold exactly as it is stocked
+    (a bottle, a crate, a pack). A **recipe** — a dish whose ingredients are
+    components — still deducts NOTHING automatically: REQ-5 of the production
+    ticket removed automatic recipe/ingredient depletion, and that decision is
+    preserved. Ingredients leave the store through the manual issue workflow the
+    hotel already uses, never as a side effect of a sale.
+
+    The source is frozen into the hand-off snapshot by
+    :func:`request_pos_stock_consumption` / :func:`_active_recipe_snapshots`
+    (``direct_sale: true`` / ``source == DIRECT_SALE_SOURCE``), so the decision
+    cannot drift if somebody edits the configuration while an order is open.
+
+    The deduction is posted against the store that configuration names — never
+    against a guessed or fallback store — which is what makes "Bar products
+    consume Bar Store" true in the ledger and identical to what the POS screen
+    shows (``pos_stock_summaries`` reads the same resolver).
+
+    Nothing is inferred. A product with no configuration is reported as *not
+    deducted* evidence and does not block the lines that ARE configured. A
+    recipe whose components are all suppressed (``MANUAL`` consumption mode) is
+    respected: no automatic deduction is posted for it, exactly as the hotel's
+    manual-ingredient-issue policy requires.
+
+    ORDERING, IDEMPOTENCY AND SAFETY
+    ================================
+    * the hand-off row is locked, so a repeated delivery/payment callback
+      converges on the same single deduction (``PROCESSED`` is terminal);
+    * every resulting movement is source-keyed on the hand-off, location and
+      item, so a retried command can never post twice;
+    * the whole order is all-or-nothing: a shortage, an inactive item/store or
+      an unusable configuration parks the hand-off ``FAILED`` with review
+      evidence *before* anything is posted — no partial deduction is written;
+    * balances are locked before validation, so concurrent sales cannot drive a
+      store negative or lose an update.
+
+    ``trigger`` records WHERE the resolution was initiated (POS delivery,
+    inventory console, or the catch-up sweep) as append-only evidence.
     """
     request = StockConsumptionRequest.objects.select_for_update().select_related("pos_order").get(pk=request.pk)
     if request.status in {StockConsumptionRequest.Status.PROCESSED, StockConsumptionRequest.Status.SKIPPED}:
         return request, False
-    request.status = StockConsumptionRequest.Status.SKIPPED
-    request.resolution_note = (
-        "Automatic recipe-based stock deduction is disabled. No stock was "
-        "deducted. Record ingredient consumption manually through the inventory ledger."
-    )
-    request.resolution_payload = {"recipe_deduction_disabled": True, "trigger": trigger}
+    payload = dict(request.payload or {})
+    raw_lines = list(payload.get("lines") or ())
+    if not raw_lines:
+        request.status = StockConsumptionRequest.Status.FAILED
+        request.resolution_note = "The POS hand-off has no lines to resolve."
+        request.processed_by = actor
+        request.processed_at = timezone.now()
+        request.save(update_fields=["status", "resolution_note", "processed_by", "processed_at", "updated_at"])
+        _consumption_event(request=request, event_type=StockConsumptionRequestEvent.Type.FAILED, actor=actor,
+                           details={"reason": "empty_lines", "trigger": trigger})
+        return request, False
+
+    snapshot_recipes = dict(payload.get("recipe_snapshot") or {})
+    needed_menu_ids = []
+    for raw in raw_lines:
+        try:
+            if raw.get("menu_item_id") is not None:
+                needed_menu_ids.append(int(raw["menu_item_id"]))
+        except (TypeError, ValueError):
+            continue
+    fallback_recipes = _active_recipe_snapshots(needed_menu_ids)
+
+    resolved: dict[str, dict] = {}
+    #: Menu items nothing is configured for. They are NOT deducted — an
+    #: unconfigured product must never be guessed at — but they must not stop
+    #: the lines that *are* configured from following their sale either.
+    uncontrolled: list[str] = []
+    #: A recipe that is intentionally on the manual route (every component is a
+    #: ``MANUAL`` consumption-mode item) deducts nothing automatically. It is
+    #: recorded as such, never as a failure.
+    manual_suppressed: list[str] = []
+    #: Menu items costed by a RECIPE (ingredients). REQ-5 keeps automatic
+    #: ingredient depletion switched off, so a sale posts nothing for them. This
+    #: is recorded as evidence, never as a failure, and never as a reason to
+    #: touch the Main Store.
+    recipe_suppressed: list[str] = []
+    missing: list[str] = []
+    wrong_store: list[dict] = []
+    aggregates: dict[tuple[int, int], Decimal] = {}
+
+    for raw in raw_lines:
+        label = str(raw.get("item_sku") or raw.get("item_name") or raw.get("menu_item_id") or "")
+        try:
+            menu_item_id = int(raw["menu_item_id"])
+            quantity = _quantity(raw["quantity"], field="POS line quantity", positive=True)
+        except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+            raise ValidationError("The POS hand-off includes an invalid immutable line snapshot.") from exc
+        recipe = snapshot_recipes.get(str(menu_item_id)) or fallback_recipes.get(str(menu_item_id))
+        if not recipe:
+            uncontrolled.append(label)
+            continue
+        if recipe.get("tracking_mode") == StockRecipe.TrackingMode.NO_STOCK:
+            resolved[str(menu_item_id)] = recipe
+            continue
+        # REQ-5 (unchanged): a RECIPE never deducts on a sale. The hand-off stays
+        # as evidence for the manual ingredient-issue workflow and nothing moves.
+        if not recipe.get("direct_sale"):
+            recipe_suppressed.append(label)
+            resolved[str(menu_item_id)] = recipe
+            continue
+        components = list(recipe.get("components") or ())
+        if not components:
+            if recipe.get("manual_components_suppressed"):
+                manual_suppressed.append(label)
+                resolved[str(menu_item_id)] = recipe
+                continue
+            missing.append(f"invalid direct-sale configuration for {label or menu_item_id}")
+            continue
+        try:
+            location_id = int(recipe["location_id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValidationError("The frozen deduction location is invalid.") from exc
+        resolved[str(menu_item_id)] = recipe
+        for component in components:
+            try:
+                item_id = int(component["item_id"])
+                amount = _quantity(component["quantity_per_menu_unit"], field="recipe component", positive=True) * quantity
+            except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+                raise ValidationError("The frozen recipe component is invalid.") from exc
+            key = (item_id, location_id)
+            aggregates[key] = (aggregates.get(key, Decimal("0.0000")) + amount).quantize(QTY)
+
+    # A bar/restaurant item must consume the store that serves its service
+    # area. Configuration names the store; when that store is the Main Store
+    # while a dedicated service-area store exists, the sale is REFUSED with the
+    # fix in the message instead of silently draining the Main Store.
+    if aggregates and _service_area_store_enforcement_enabled():
+        wrong_store = _service_area_store_conflicts(aggregates, resolved, needed_menu_ids)
+        if wrong_store:
+            request.status = StockConsumptionRequest.Status.FAILED
+            request.resolution_note = (
+                "These POS lines are configured to deduct from the Main Store while a dedicated store "
+                "serves their service area, so nothing was deducted: "
+                + "; ".join(
+                    f"{row['item_sku'] if 'item_sku' in row else row['item']} → {row['configured_store']} "
+                    f"(should be {row['required_store']})" for row in wrong_store
+                )[:1500]
+                + ". Point the product's stock configuration (direct-sale store or recipe location) at "
+                  "the service-area store, then process this hand-off again."
+            )[:2000]
+            request.resolution_payload = {
+                "resolved_recipes": resolved, "wrong_store": wrong_store, "trigger": trigger,
+            }
+            request.processed_by = actor
+            request.processed_at = timezone.now()
+            request.save(update_fields=[
+                "status", "resolution_note", "resolution_payload", "processed_by",
+                "processed_at", "updated_at",
+            ])
+            _consumption_event(request=request, event_type=StockConsumptionRequestEvent.Type.FAILED, actor=actor,
+                               details={"reason": "wrong_deduction_store", "wrong_store": wrong_store,
+                                        "trigger": trigger})
+            return request, False
+
+    if missing:
+        request.status = StockConsumptionRequest.Status.FAILED
+        request.resolution_note = (
+            "No configured stock deduction for: " + ", ".join(sorted(set(missing)))[:1700]
+            + ". Configure the stock item as a direct sale (menu item + store + quantity per menu unit), "
+              "then process this hand-off again."
+        )[:2000]
+        request.resolution_payload = {"resolved_recipes": resolved, "missing": sorted(set(missing)), "trigger": trigger}
+        request.processed_by = actor
+        request.processed_at = timezone.now()
+        request.save(update_fields=[
+            "status", "resolution_note", "resolution_payload", "processed_by", "processed_at", "updated_at",
+        ])
+        _consumption_event(request=request, event_type=StockConsumptionRequestEvent.Type.FAILED, actor=actor,
+                           details={"missing": sorted(set(missing)), "trigger": trigger})
+        return request, False
+
+    if not aggregates:
+        # Nothing physical to deduct: either every line is explicitly non-stock
+        # tracked, or every configured recipe is on the manual route.
+        request.status = StockConsumptionRequest.Status.SKIPPED
+        if uncontrolled:
+            request.resolution_note = (
+                "No stock deduction is configured for: " + ", ".join(sorted(set(uncontrolled)))[:1500]
+                + ". Define a stock recipe or a direct-sale configuration, then process this hand-off again. "
+                  "Nothing was deducted and no recipe was created."
+            )
+        elif manual_suppressed:
+            request.resolution_note = (
+                "Automatic deduction is suppressed because these products are on the manual ingredient route: "
+                + ", ".join(sorted(set(manual_suppressed)))[:1500]
+                + ". The Store Keeper records their consumption through a manual ingredient issue."
+            )
+        elif recipe_suppressed:
+            request.resolution_note = (
+                "These menu items are costed by a RECIPE, and the hotel's policy is that a sale never deducts "
+                "ingredient stock: " + ", ".join(sorted(set(recipe_suppressed)))[:1500]
+                + ". Their ingredients leave the store through the manual ingredient-issue workflow. A product "
+                  "sold exactly as it is stocked (a bottle, a crate) deducts when its direct-sale configuration "
+                  "names the selling store."
+            )
+        else:
+            request.resolution_note = "All menu items are explicitly non-stock tracked."
+        request.resolution_payload = {
+            "resolved_recipes": resolved, "movement_count": 0,
+            "uncontrolled": sorted(set(uncontrolled)), "manual_suppressed": sorted(set(manual_suppressed)),
+            "recipe_deduction_disabled": True,
+            "recipe_suppressed": sorted(set(recipe_suppressed)),
+            "trigger": trigger,
+        }
+        request.processed_by = actor
+        request.processed_at = timezone.now()
+        request.save(update_fields=[
+            "status", "resolution_note", "resolution_payload", "processed_by", "processed_at", "updated_at",
+        ])
+        _consumption_event(request=request,
+                           event_type=(StockConsumptionRequestEvent.Type.FAILED if uncontrolled
+                                       else StockConsumptionRequestEvent.Type.SKIPPED),
+                           actor=actor,
+                           details={"movement_count": 0, "uncontrolled": sorted(set(uncontrolled)),
+                                    "manual_suppressed": sorted(set(manual_suppressed)), "trigger": trigger})
+        return request, False
+
+    item_ids = sorted({key[0] for key in aggregates})
+    location_ids = sorted({key[1] for key in aggregates})
+    items = {item.pk: item for item in StockItem.objects.filter(pk__in=item_ids, is_active=True)}
+    locations = {location.pk: location for location in StockLocation.objects.filter(pk__in=location_ids, is_active=True)}
+    if len(items) != len(item_ids) or len(locations) != len(location_ids):
+        raise ValidationError("A frozen recipe references an inactive or removed stock item/location.")
+
+    # All-or-nothing stock validation under the same row locks the movements
+    # will take. A shortage must never post a partial deduction and must never
+    # drive a balance negative.
+    shortages = []
+    for (item_id, location_id), quantity in sorted(aggregates.items()):
+        balance = _locked_balance(item=items[item_id], location=locations[location_id])
+        available = Decimal(balance.quantity_on_hand)
+        if available < quantity:
+            shortages.append({
+                "item": items[item_id].sku,
+                "location": locations[location_id].code,
+                "required": str(quantity),
+                "available": str(available.quantize(QTY)),
+            })
+    if shortages:
+        request.status = StockConsumptionRequest.Status.FAILED
+        request.resolution_note = ("Insufficient stock to consume for " + ", ".join(
+            f"{row['item']}@{row['location']} (need {row['required']}, have {row['available']})"
+            for row in shortages
+        ))[:2000]
+        request.resolution_payload = {"resolved_recipes": resolved, "shortages": shortages, "trigger": trigger}
+        request.processed_by = actor
+        request.processed_at = timezone.now()
+        request.save(update_fields=[
+            "status", "resolution_note", "resolution_payload", "processed_by", "processed_at", "updated_at",
+        ])
+        _consumption_event(request=request, event_type=StockConsumptionRequestEvent.Type.FAILED, actor=actor,
+                           details={"reason": "insufficient_stock", "shortages": shortages, "trigger": trigger})
+        return request, False
+
+    movement_references = []
+    for (item_id, location_id), quantity in sorted(aggregates.items()):
+        recipe_evidence = [
+            recipe for recipe in resolved.values()
+            if recipe.get("location_id") == location_id
+            and recipe.get("tracking_mode") == StockRecipe.TrackingMode.COMPONENTS
+        ]
+        movement, created = record_stock_movement(
+            item=items[item_id], location=locations[location_id],
+            movement_type=StockMovement.Type.POS_CONSUMPTION,
+            quantity_delta=-quantity,
+            source_key=f"pos-consumption:{request.reference}:{location_id}:{item_id}",
+            actor=actor,
+            unit_cost=items[item_id].standard_cost,
+            source_reference=request.pos_order.reference,
+            notes=f"POS consumption for {request.pos_order.reference}",
+            metadata={
+                "stock_consumption_request": request.reference,
+                "pos_order": request.pos_order.reference,
+                "resolved_recipes": recipe_evidence, "trigger": trigger,
+            },
+        )
+        if movement is not None:
+            movement_references.append(movement.reference)
+
+    note = "POS stock consumption posted from the configured store(s)."
+    if uncontrolled:
+        note = (
+            f"{note} Not deducted — no stock recipe and no direct-sale configuration for: "
+            + ", ".join(sorted(set(uncontrolled)))[:1200]
+        )
+    if manual_suppressed:
+        note = (
+            f"{note} On the manual ingredient route (no automatic deduction): "
+            + ", ".join(sorted(set(manual_suppressed)))[:1200]
+        )
+    request.status = StockConsumptionRequest.Status.PROCESSED
+    request.resolution_note = note[:2000]
+    request.resolution_payload = {
+        "resolved_recipes": resolved, "movement_count": len(aggregates),
+        "movements": movement_references,
+        "uncontrolled": sorted(set(uncontrolled)),
+        "manual_suppressed": sorted(set(manual_suppressed)),
+        "trigger": trigger,
+    }
     request.processed_by = actor
     request.processed_at = timezone.now()
     request.save(update_fields=[
-        "status", "resolution_note", "resolution_payload", "processed_by",
-        "processed_at", "updated_at",
+        "status", "processed_by", "processed_at", "resolution_note", "resolution_payload", "updated_at",
     ])
-    _consumption_event(
-        request=request, event_type=StockConsumptionRequestEvent.Type.SKIPPED, actor=actor,
-        details={"recipe_deduction_disabled": True, "trigger": trigger},
-    )
-    return request, False
+    _consumption_event(request=request, event_type=StockConsumptionRequestEvent.Type.PROCESSED, actor=actor,
+                       details={"movement_count": len(aggregates), "movements": movement_references,
+                                "uncontrolled": sorted(set(uncontrolled)),
+                                "manual_suppressed": sorted(set(manual_suppressed)), "trigger": trigger})
+    return request, True
+
+
+def _service_area_store_enforcement_enabled() -> bool:
+    """Whether a service-area store may veto a Main Store deduction."""
+    from django.conf import settings
+
+    return bool(getattr(settings, "POS_ENFORCE_SERVICE_AREA_STORE", True))
+
+
+def _service_area_store_conflicts(aggregates, resolved, menu_item_ids):
+    """Report lines configured to drain the Main Store for a bar/kitchen area.
+
+    ``NOTHING`` is changed here: the caller refuses the hand-off and states the
+    required store. A misconfigured product therefore stops the sale loudly
+    instead of silently consuming the wrong store.
+    """
+    ids = sorted({int(value) for value in menu_item_ids if value is not None})
+    if not ids:
+        return []
+    from apps.pos.models import MenuItem
+
+    menu_rows = {
+        row.pk: row for row in MenuItem.objects.filter(pk__in=ids).select_related("category")
+    }
+    location_ids = {int(recipe["location_id"]) for recipe in resolved.values()
+                    if recipe.get("location_id") is not None}
+    locations = {row.pk: row for row in StockLocation.objects.filter(pk__in=location_ids)}
+    item_ids = {key[0] for key in aggregates}
+    items = {row.pk: row for row in StockItem.objects.filter(pk__in=item_ids)}
+    conflicts = []
+    for menu_item_id, recipe in resolved.items():
+        if recipe.get("tracking_mode") != StockRecipe.TrackingMode.COMPONENTS:
+            continue
+        menu_item = menu_rows.get(int(menu_item_id))
+        if menu_item is None or menu_item.category_id is None:
+            continue
+        area = menu_item.category.service_area
+        required = service_area_store(area)
+        if required is None:
+            continue
+        configured = locations.get(int(recipe["location_id"]))
+        if configured is None or configured.pk == required.pk:
+            continue
+        if location_role(configured) != StockLocation.OperationalRole.MAIN:
+            # A non-Main store was chosen deliberately (Kitchen Store, an
+            # explicit secondary store). Only the Main-Store fallback is refused.
+            continue
+        component_items = sorted(
+            {items[int(component["item_id"])].sku for component in recipe.get("components") or ()
+             if int(component["item_id"]) in items}
+        )
+        conflicts.append({
+            "menu_item": menu_item.name,
+            "item_sku": ", ".join(component_items),
+            "configured_store": configured.name,
+            "required_store": required.name,
+            "service_area": area,
+            "source": "direct_sale" if recipe.get("direct_sale") else "recipe",
+            "recipe_reference": recipe.get("recipe_reference", ""),
+        })
+    return conflicts
+
+
+@transaction.atomic
+def consume_stock_for_delivered_order(*, order, actor=None):
+    """Deplete stock for a just-delivered POS order, exactly once.
+
+    This is the function every stock-consuming sales channel reaches when its
+    order is finalised. It performs the durable hand-off and then resolves it
+    immediately, so ``Stock on Hand`` follows the sale instead of waiting for a
+    human to press a button in the inventory console.
+
+    Guarantees:
+
+    * Idempotent — the hand-off is source-keyed on the POS order reference and
+      every resulting movement is source-keyed on the hand-off, so a repeated
+      delivery, a retried request or a duplicate HTTP call converges on the
+      same single deduction.
+    * Atomic — the deduction commits with the delivery, or not at all.
+    * Never blocks a completed sale — an inventory configuration problem
+      (missing recipe, inactive item, insufficient stock, wrong store) leaves a
+      durable ``PENDING``/``FAILED`` hand-off carrying review evidence instead
+      of rolling back a delivery that has already been charged to the guest.
+    """
+    request, _created = request_pos_stock_consumption(order=order, actor=actor)
+    if request.status in {StockConsumptionRequest.Status.PROCESSED, StockConsumptionRequest.Status.SKIPPED}:
+        return request, False
+    try:
+        return process_pos_stock_consumption(request=request, actor=actor, trigger=TRIGGER_POS_DELIVERY)
+    except Exception:  # noqa: BLE001 - the hand-off is the durable record
+        logger.exception(
+            "POS stock consumption %s for order %s could not be posted; left for inventory review",
+            request.reference, order.reference,
+        )
+        return request, False
+
 
 @transaction.atomic
 def process_pending_pos_consumption(*, limit=200, actor=None):
@@ -2378,10 +2772,8 @@ def process_pending_pos_consumption(*, limit=200, actor=None):
 
     Covers orders delivered before automatic depletion existed, orders whose
     recipe/stock configuration has since been corrected, and any hand-off that
-    a transient failure left behind. Every attempt is idempotent.
-
-    Automatic recipe-based deduction is disabled, so this sweep never posts a
-    stock movement: it marks each hand-off ``SKIPPED`` instead.
+    a transient failure left behind. Every attempt is idempotent, so running
+    this repeatedly can never double-deduct.
     """
     try:
         limit = max(1, min(int(limit), 1000))
@@ -2402,7 +2794,9 @@ def process_pending_pos_consumption(*, limit=200, actor=None):
             logger.exception("Catch-up stock consumption failed for %s", request.reference)
             failed += 1
             continue
-        if resolved.status == StockConsumptionRequest.Status.SKIPPED:
+        if created and resolved.status == StockConsumptionRequest.Status.PROCESSED:
+            posted += 1
+        elif resolved.status == StockConsumptionRequest.Status.SKIPPED:
             skipped += 1
         else:
             failed += 1

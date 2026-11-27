@@ -37,6 +37,7 @@ from .serializers import (
     FinancialTransactionDetailSerializer,
     FinancialTransactionSerializer,
     FolioPostingSerializer,
+    FolioPostingVoidSerializer,
     FolioSerializer,
     PurchaseOrderPayableRaiseSerializer,
     ReconciliationCheckReviewReadSerializer,
@@ -59,6 +60,7 @@ from .services.expense_service import (
     settle_expense_payment,
     submit_expense,
 )
+from .services import folio_service
 from .services.folio_service import folio_balance_queryset
 from apps.core.utils import hotel_today
 
@@ -150,6 +152,50 @@ class FolioPostingListView(APIView):
             .order_by("-business_date", "-created_at", "-pk")
         )
         return _paginate(self, request, queryset, FolioPostingSerializer)
+
+
+@extend_schema(
+    tags=["Admin · Finance"],
+    request=FolioPostingVoidSerializer,
+    summary="Void one posted folio entry through an approved reversal",
+)
+class FolioPostingVoidView(APIView):
+    """Correct a posted folio entry without rewriting financial history.
+
+    The guest's statement keeps the original entry and gains its offsetting
+    reversal, so the balance, the audit trail and the reconciliation all agree.
+    Two people are required unless the actor is an authorised override account
+    (the same maker-checker rule every other sensitive money action uses), and
+    a reason is mandatory.
+    """
+
+    permission_classes = [HasCapability]
+    required_capability = "payment.refund.approve"
+
+    def post(self, request, reference, pk):
+        folio = Folio.objects.filter(reference=reference).first()
+        if folio is None:
+            raise NotFound("Folio not found.")
+        posting = FolioPosting.objects.filter(pk=pk, folio=folio).first()
+        if posting is None:
+            raise NotFound("That entry does not belong to this folio.")
+        serializer = FolioPostingVoidSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        reversal, created = folio_service.void_folio_posting(
+            posting=posting, actor=request.user, reason=serializer.validated_data["reason"],
+            allow_closed_folio=has_capability(request.user, "finance.controls.manage"),
+            request=request,
+        )
+        return success_response(
+            {
+                "reversal_reference": reversal.reference,
+                "created": created,
+                "voided_posting_id": posting.pk,
+                "folio_reference": folio.reference,
+            },
+            message="Folio entry voided; the reversal is on the guest's statement.",
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
 
 @extend_schema(tags=["Admin · Finance"], summary="List immutable financial transactions")

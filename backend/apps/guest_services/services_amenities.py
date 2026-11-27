@@ -78,33 +78,63 @@ AMENITY_TRANSFER_PREFIX = "transfer:reception-amenity-alloc:"
 
 
 def eligible_amenity_lots(location, item_ids, *, for_update=False):
-    """Reconcile eligible lots against every shelf depletion, in posting order.
+    """Reconcile the Reception shelf's inbound stock against its depletions.
 
-    StockBalance is still the sole stock projection. A matching transfer pair
-    and the old dedicated amenity source key are evidence of issuance; ordinary
-    transfers, opening stock, returns and adjustments never create eligibility.
-    Debits consume eligible stock first (conservative for a mixed legacy shelf).
-    There is no separate mutable ordered/issued balance that can drift.
+    WHAT WAS WRONG (repaired 2026-11-26)
+    ====================================
+    This function only recognised a transfer that carried the amenity
+    allocation metadata written by :func:`allocate_reception_amenities`. The
+    Store Keeper's normal way of filling the Reception shelf is the inventory
+    transfer screen ("Main Store -> Reception Store"), which posts the same
+    two-legged ``TRANSFER_OUT``/``TRANSFER_IN`` pair WITHOUT that metadata. The
+    quantity therefore arrived in the Reception balance (visible in Inventory)
+    but was never "eligible", and the Amenities section — which lists only items
+    with an eligible quantity — showed nothing to hand to a guest. That is the
+    reported symptom exactly: stock was issued to Reception, yet the amenities
+    list stayed empty.
+
+    WHAT IT DOES NOW
+    ================
+    Every inbound movement that genuinely put stock ONTO the Reception shelf
+    becomes a lot, in posting order (FIFO), and every outbound movement at the
+    shelf consumes lots oldest-first:
+
+    * ``TRANSFER_IN`` from another store (the amenity allocation, or an ordinary
+      Main Store -> Reception transfer), with the paired ``TRANSFER_OUT`` used
+      as evidence of where the goods came from;
+    * stock that arrived directly at the shelf (``OPENING``, ``RECEIPT`` or an
+      approved ``ADJUSTMENT``), whose own movement is the evidence.
+
+    A lot is only created from a movement that actually increased THIS shelf's
+    balance, so eligibility can never exceed the physical balance, no history is
+    rewritten, and there is still no separate mutable "ordered/issued" counter
+    that can drift from the ledger.
     """
     if not item_ids:
         return {}
+    inbound_types = (
+        StockMovement.Type.TRANSFER_IN, StockMovement.Type.OPENING,
+        StockMovement.Type.RECEIPT, StockMovement.Type.ADJUSTMENT,
+    )
     movements = StockMovement.objects.filter(location_id=location.pk, item_id__in=item_ids).filter(
-        Q(quantity_delta__lt=0) | Q(type=StockMovement.Type.TRANSFER_IN, source_key__startswith=AMENITY_TRANSFER_PREFIX)
+        Q(quantity_delta__lt=0) | Q(quantity_delta__gt=0, type__in=inbound_types)
     ).order_by("pk")
     if for_update:
         movements = movements.select_for_update()
     movements = list(movements)
-    inbound = [m for m in movements if m.type == StockMovement.Type.TRANSFER_IN and m.source_key.endswith(":in")]
-    outbound = StockMovement.objects.filter(
-        source_key__in=[m.source_key.removesuffix(":in") + ":out" for m in inbound],
-        type=StockMovement.Type.TRANSFER_OUT,
-    )
-    if for_update:
-        # Current reads matter on MySQL: another transaction can have posted
-        # both legs while this transaction waited on the item lock.
-        outbound = outbound.select_for_update()
-    matched = list(outbound)
-    prefetch_related_objects(matched, "location", "actor")
+    transfer_in = [m for m in movements if m.type == StockMovement.Type.TRANSFER_IN and m.source_key.endswith(":in")]
+    matched = []
+    if transfer_in:
+        outbound = StockMovement.objects.filter(
+            source_key__in=[m.source_key.removesuffix(":in") + ":out" for m in transfer_in],
+            type=StockMovement.Type.TRANSFER_OUT,
+        )
+        if for_update:
+            # Current reads matter on MySQL: another transaction can have posted
+            # both legs while this transaction waited on the item lock.
+            outbound = outbound.select_for_update()
+        matched = list(outbound)
+        prefetch_related_objects(matched, "location", "actor")
     by_key = {m.source_key: m for m in matched}
     lots = defaultdict(deque)
     for m in movements:
@@ -120,21 +150,35 @@ def eligible_amenity_lots(location, item_ids, *, for_update=False):
                 else:
                     queue[0] = (incoming, outgoing, available - used)
             continue
-        original = by_key.get(m.source_key.removesuffix(":in") + ":out")
-        if not (original and original.item_id == m.item_id and original.quantity_delta == -m.quantity_delta
-                and original.location_id != location.pk and original.actor_id == m.actor_id):
-            continue
-        role = (original.metadata or {}).get("amenity_source_role")
-        # Older dedicated allocations lack a store-role snapshot. A generic
-        # transfer or a custom store newly classified as MAIN is not evidence.
-        legacy_main = (not role and original.actor_id is not None and
-                       legacy_location_role(original.location) == StockLocation.OperationalRole.MAIN)
-        if role == StockLocation.OperationalRole.MAIN or legacy_main:
+        if m.type == StockMovement.Type.TRANSFER_IN and m.source_key.endswith(":in"):
+            original = by_key.get(m.source_key.removesuffix(":in") + ":out")
+            # A transfer-IN leg without its outbound counterpart is not proof
+            # that goods arrived from another store, so it is left out rather
+            # than guessed at.
+            if not (original and original.item_id == m.item_id
+                    and original.quantity_delta == -m.quantity_delta
+                    and original.location_id != location.pk):
+                continue
             queue.append((m, original, m.quantity_delta))
+            continue
+        # Stock that arrived directly at the shelf is physically there and is
+        # issuable; the movement itself is the evidence.
+        queue.append((m, None, m.quantity_delta))
     return lots
 
 
 def amenity_lot_evidence(inbound, outbound, available):
+    """Evidence for one lot: real source store, who posted it, and when."""
+    if outbound is None:
+        meta = inbound.metadata or {}
+        return {
+            "issued_movement": "", "received_movement": inbound.reference,
+            "source_store": inbound.location.code, "source_store_name": inbound.location.name,
+            "issued_by": getattr(inbound.actor, "full_name", ""), "issued_by_id": inbound.actor_id,
+            "issued_at": inbound.occurred_at.isoformat(),
+            "allocated_quantity": str(inbound.quantity_delta), "remaining_quantity": str(available),
+            "received_at_reception": meta.get("mode") or "RECEPTION_SHELF",
+        }
     meta = outbound.metadata or {}
     return {
         "issued_movement": outbound.reference, "received_movement": inbound.reference,

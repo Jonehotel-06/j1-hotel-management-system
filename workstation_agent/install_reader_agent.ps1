@@ -100,6 +100,22 @@ if (-not $NoAutoStart) {
     Write-Ok "Starts with Windows, no manual step"
 }
 
+# --------------------------------------------------------- startup folder ---
+# Repair (2026-11-26): the logon Run entry is the primary auto-start, but some
+# managed Windows images disable or clean HKCU Run entries, and then the reader
+# silently stops being available after a reboot with no error anywhere. The
+# Startup folder entry is the second, independent auto-start so a reboot can
+# never leave the desk without a reader. Both launch the same supervised loop.
+if (-not $NoAutoStart) {
+    Write-Step "Adding the Startup-folder auto-start (second, independent trigger)"
+    $startupDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
+    New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
+    $cmdPath = Join-Path $startupDir "JONE-Reader-Agent.cmd"
+    $cmdBody = '@echo off' + "`r`n" + '"' + $pythonw + '" "' + $entry + '" --run' + "`r`n"
+    Set-Content -Path $cmdPath -Value $cmdBody -Encoding ASCII
+    Write-Ok "Startup entry written: $cmdPath"
+}
+
 # ---------------------------------------------------------------- shortcut --
 Write-Step "Creating the Start Menu shortcut"
 $startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"

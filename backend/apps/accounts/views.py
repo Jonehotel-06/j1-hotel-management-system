@@ -32,11 +32,14 @@ from apps.core.serializers import EmptySerializer
 from .capabilities import capability_codes_for_user
 from .desktop_policy import (
     DESKTOP_BY_DEVICE,
+    desk_credential_survives_address_change,
     desktop_key_override_for_unusable_ip_pin,
     device_credential_overrides_unusable_ip_pin,
     front_desk_desktop_ip_allowed,
     front_desk_device_for_token,
     front_desk_workstation_missing,
+    configured_front_desk_desktop_ip,
+    desk_address_changed,
     presented_device_token,
     record_device_seen,
     request_client_ip,
@@ -177,6 +180,10 @@ class LoginView(TokenObtainPairView):
             raise
         payload = {"user": response.data.get("user"), "tokens": {
             "access": response.data.get("access"), "refresh": response.data.get("refresh")}}
+        # The workstation credential a desk browser was just enrolled with
+        # (additive field; absent for management and for enrolled browsers).
+        if response.data.get("desk_enrolment"):
+            payload["desk_enrolment"] = response.data["desk_enrolment"]
         return success_response(payload, message="Logged in successfully.")
 
 
@@ -259,9 +266,38 @@ def _refuse_staff_refresh_outside_desk(request):
                 raise StaffSignInRestrictedError(client_ip=request_client_ip(request))
             record_device_seen(device, request_client_ip(request))
             return None
-        if front_desk_desktop_ip_allowed(request) or desktop_key_override_for_unusable_ip_pin(
-            request, desktop_method
-        ) or device_credential_overrides_unusable_ip_pin(request, desktop_method):
+        pin_ok = (
+            front_desk_desktop_ip_allowed(request)
+            or desktop_key_override_for_unusable_ip_pin(request, desktop_method)
+            or device_credential_overrides_unusable_ip_pin(request, desktop_method)
+        )
+        # Repair (2026-11-26): the desk's public address moved (ISP lease, router
+        # restart, failover link). A browser that presents the workstation
+        # credential this hotel issued, which still resolves to an ACTIVE
+        # FRONT_DESK record, keeps its shift — the address change is recorded
+        # instead of ending the session. Sign-in itself stays pinned, so a
+        # stolen key still cannot START a session off-site.
+        credential_carries_session = desk_credential_survives_address_change(request, desktop_method)
+        if pin_ok or credential_carries_session:
+            if desk_address_changed(request, desktop):
+                logger.info(
+                    "Staff session continued after an address change: user_id=%s role=%s "
+                    "desktop=%s client_ip=%s method=%s",
+                    user.pk, user.role, desktop.reference, request_client_ip(request), desktop_method,
+                )
+                log_action(
+                    actor=user, action="STAFF_SESSION_ADDRESS_CHANGED", request=request,
+                    metadata={
+                        "reason": "desk_address_changed_session_continued",
+                        "role": user.role,
+                        "desktop_reference": desktop.reference,
+                        "desktop_method": desktop_method,
+                        "client_ip": request_client_ip(request),
+                        "registered_address": str(desktop.ip_address or ""),
+                        "configured_front_desk_desktop_ip": configured_front_desk_desktop_ip(),
+                    },
+                    summary="Staff session continued after the desk's public address changed",
+                )
             return None
         logger.warning("Staff session refresh refused: user_id=%s role=%s reason=front_desk_ip_mismatch", user.pk, user.role)
         log_action(

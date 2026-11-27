@@ -22,6 +22,7 @@ from apps.core.permissions import HasCapability
 from apps.core.responses import success_response
 from apps.inventory.models import StockBalance, StockItem, StockLocation, StockUnit
 from apps.inventory.services.inventory_service import (
+    adjust_stock_balance,
     assert_can_record_stock,
     canonical_unit,
     record_opening_stock,
@@ -154,6 +155,11 @@ def product_payload(product, balance=_BALANCE_UNRESOLVED):
     return {
         "id": product.pk,
         "stock_item_id": item.pk,
+        # The ledger row this product's quantity lives in. Exposed so the Mini
+        # Mart screen can send a counted quantity to the SAME controlled
+        # adjustment path the Inventory screen uses (never a direct balance
+        # write).
+        "balance_id": balance.pk if balance else None,
         "name": item.name,
         "sku": item.sku,
         "barcode": item.barcode or "",
@@ -367,3 +373,99 @@ class MiniMartProductDetailView(_CatalogueView):
         item.save()
         product.save()
         return success_response(product_payload(product), message="Mini Mart product updated.")
+
+
+class MiniMartStockAdjustmentSerializer(serializers.Serializer):
+    """Controlled stock correction for one Mini Mart product.
+
+    The quantity is the ACTUAL COUNTED figure in the product's own base unit.
+    It is not written to the balance: the difference is posted as an immutable
+    ``ADJUSTMENT`` movement by the inventory service, with the reason, the
+    previous quantity, the acting staff member and the timestamp kept as
+    append-only evidence. This is the existing inventory control path, reached
+    from the Mini Mart screen instead of a second, parallel one.
+    """
+
+    counted_quantity = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=Decimal("0.0000"))
+    reason = serializers.CharField(max_length=500, trim_whitespace=True)
+    idempotency_key = serializers.CharField(max_length=128, required=False, allow_blank=True, default="")
+
+    def validate_reason(self, value):
+        reason = str(value or "").strip()
+        if len(reason) < 5:
+            raise serializers.ValidationError("Give the reason for this correction (at least 5 characters).")
+        return reason
+
+
+class MiniMartProductStockAdjustmentView(_CatalogueView):
+    """PATCH /api/admin/inventory/minimart/products/<pk>/stock-adjustment/.
+
+    Authorized staff (``inventory.record`` — Store Keeper, Administrator,
+    General Manager, Inventory Clerk) record the quantity they actually
+    counted. The change is posted through ``adjust_stock_balance`` so the
+    ledger, the adjustment register and every report agree; a Mini Mart screen
+    never edits a balance row directly.
+    """
+
+    @transaction.atomic
+    def post(self, request, pk):
+        _require_stock_recording(request)
+        product = (
+            MiniMartProduct.objects.select_related("item", "location")
+            .filter(pk=pk).first()
+        )
+        if product is None:
+            raise NotFound("Mini Mart product not found.")
+        serializer = MiniMartStockAdjustmentSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        item = StockItem.objects.select_for_update().get(pk=product.item_id)
+        location = StockLocation.objects.select_for_update().get(pk=product.location_id)
+        if not item.is_active:
+            raise ValidationError({"product": "This product is inactive; activate it before correcting its stock."})
+        if not location.is_active:
+            raise ValidationError({"location_id": "The product's store is inactive; choose an active store first."})
+        balance = StockBalance.objects.select_for_update().filter(item=item, location=location).first()
+        reason = data["reason"]
+        if balance is None:
+            if data["counted_quantity"] <= Decimal("0.0000"):
+                raise ValidationError({
+                    "counted_quantity": "This product has no stock balance yet, so a counted quantity of zero records nothing. "
+                                        "Use inventory replenishment to receive stock."
+                })
+            # No balance exists yet: creating it with an OPENING movement is the
+            # same controlled, traceable path a first count uses.
+            movement, created = record_opening_stock(
+                item=item, location=location, quantity=data["counted_quantity"], actor=request.user,
+                unit_cost=item.standard_cost,
+                source_key=f"minimart-stock-adjustment:{item.pk}:{location.pk}:{data.get('idempotency_key') or secrets.token_hex(12)}",
+                notes=f"Mini Mart counted stock: {reason}"[:500],
+                metadata={"reason": reason, "source": "MINIMART_STOCK_ADJUSTMENT"},
+            )
+            adjustment_payload = {
+                "previous_quantity": "0.0000",
+                "new_quantity": str(data["counted_quantity"]),
+                "movement": movement.reference,
+                "created": created,
+            }
+        else:
+            adjustment, created = adjust_stock_balance(
+                balance=balance, new_quantity=data["counted_quantity"], reason=reason,
+                actor=request.user, notes=f"Mini Mart stock correction for {item.sku}"[:500],
+                idempotency_key=data.get("idempotency_key") or "",
+            )
+            adjustment_payload = {
+                "previous_quantity": str(adjustment.previous_quantity),
+                "new_quantity": str(adjustment.new_quantity),
+                "quantity_delta": str(adjustment.quantity_delta),
+                "unit": adjustment.base_unit,
+                "movement": adjustment.movement.reference if adjustment.movement_id else "",
+                "reason": adjustment.reason,
+                "created": created,
+            }
+        product.refresh_from_db()
+        balance = StockBalance.objects.filter(item=item, location=location).first()
+        return success_response(
+            {"product": product_payload(product, balance), "adjustment": adjustment_payload},
+            message="Stock corrected and recorded in the inventory ledger.",
+        )
