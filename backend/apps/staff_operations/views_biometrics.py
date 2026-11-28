@@ -386,12 +386,28 @@ class ReceptionAttendanceTerminalView(APIView):
                 session_active=True, revoked_at__isnull=True
             ).order_by("created_at")
         }
-        enrolled_count = FingerprintTemplate.objects.filter(
-            status=FingerprintTemplate.Status.ACTIVE, staff__is_active=True
-        ).count()
-        pending_count = FingerprintTemplate.objects.filter(
-            status=FingerprintTemplate.Status.PENDING, staff__is_active=True
-        ).count()
+        from .reader_agent_models import ReaderAgentTemplate
+
+        enrolled_staff_ids = set(
+            FingerprintTemplate.objects.filter(
+                status=FingerprintTemplate.Status.ACTIVE, staff__is_active=True
+            ).values_list("staff_id", flat=True)
+        ) | set(
+            ReaderAgentTemplate.objects.filter(
+                status=ReaderAgentTemplate.Status.ACTIVE, staff__is_active=True
+            ).values_list("staff_id", flat=True)
+        )
+        pending_staff_ids = set(
+            FingerprintTemplate.objects.filter(
+                status=FingerprintTemplate.Status.PENDING, staff__is_active=True
+            ).values_list("staff_id", flat=True)
+        ) | set(
+            ReaderAgentTemplate.objects.filter(
+                status=ReaderAgentTemplate.Status.PENDING, staff__is_active=True
+            ).values_list("staff_id", flat=True)
+        )
+        enrolled_count = len(enrolled_staff_ids)
+        pending_count = len(pending_staff_ids - enrolled_staff_ids)
         devices = [
             {
                 "id": d.pk,
@@ -523,8 +539,10 @@ class StaffFingerprintStatusEnrollView(APIView):
                 )
             elif action == "revoke":
                 from django.utils import timezone
+                from .reader_agent_models import ReaderAgentTemplate
 
                 now = timezone.now()
+                note = str(request.data.get("note") or "Revoked by management")[:200]
                 for tpl in FingerprintTemplate.objects.filter(
                     staff=staff, status__in=[FingerprintTemplate.Status.ACTIVE, FingerprintTemplate.Status.PENDING]
                 ):
@@ -532,8 +550,19 @@ class StaffFingerprintStatusEnrollView(APIView):
                     tpl.clear_minutiae()
                     tpl.decided_by = request.user
                     tpl.decided_at = now
-                    tpl.decision_note = str(request.data.get("note") or "Revoked by management")[:200]
+                    tpl.decision_note = note
                     tpl.save()
+                for agent_tpl in ReaderAgentTemplate.objects.filter(
+                    staff=staff, status__in=[ReaderAgentTemplate.Status.ACTIVE, ReaderAgentTemplate.Status.PENDING]
+                ):
+                    agent_tpl.status = ReaderAgentTemplate.Status.REVOKED
+                    agent_tpl.fmd = ""
+                    agent_tpl.decided_by = request.user
+                    agent_tpl.decided_at = now
+                    agent_tpl.decision_note = note
+                    agent_tpl.save(update_fields=[
+                        "status", "fmd", "decided_by", "decided_at", "decision_note", "updated_at"
+                    ])
                 fingerprint_service.revoke_workstation_credentials_on_clock_out(
                     staff=staff, reason="BIOMETRIC_REVOKED"
                 )

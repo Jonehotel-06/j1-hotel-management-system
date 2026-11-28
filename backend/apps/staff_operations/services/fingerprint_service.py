@@ -555,40 +555,80 @@ def revoke_workstation_credentials_on_clock_out(*, staff: User, reason: str = "C
 def get_staff_biometric_status(staff: User) -> dict:
     """Return comprehensive biometric & attendance summary for Staff Profile and Reception Terminal."""
     from ..models import AttendanceRecord
+    from ..reader_agent_models import ReaderAgentEvent, ReaderAgentTemplate
 
-    now = timezone.now()
     templates = list(
         FingerprintTemplate.objects.filter(staff=staff)
         .select_related("decided_by")
         .order_by("-requested_at", "-id")
     )
+    agent_templates = list(
+        ReaderAgentTemplate.objects.filter(staff=staff)
+        .select_related("decided_by", "enrolled_by_agent")
+        .order_by("-created_at", "-id")
+    )
     active_tmpl = next((t for t in templates if t.status == FingerprintTemplate.Status.ACTIVE), None)
     pending_tmpl = next((t for t in templates if t.status == FingerprintTemplate.Status.PENDING), None)
     revoked_tmpl = next((t for t in templates if t.status == FingerprintTemplate.Status.REVOKED), None)
 
-    if active_tmpl:
+    active_agent = next((t for t in agent_templates if t.status == ReaderAgentTemplate.Status.ACTIVE), None)
+    pending_agent = next((t for t in agent_templates if t.status == ReaderAgentTemplate.Status.PENDING), None)
+    revoked_agent = next((t for t in agent_templates if t.status == ReaderAgentTemplate.Status.REVOKED), None)
+
+    if active_tmpl or active_agent:
         enrollment_status = "ENROLLED"
-    elif pending_tmpl:
+    elif pending_tmpl or pending_agent:
         enrollment_status = "PENDING_APPROVAL"
-    elif revoked_tmpl:
+    elif revoked_tmpl or revoked_agent:
         enrollment_status = "REVOKED"
     else:
         enrollment_status = "NOT_ENROLLED"
 
-    attempts = list(
+    legacy_attempts = list(
         FingerprintVerificationAttempt.objects.filter(staff=staff).order_by("-created_at", "-id")[:25]
     )
-    last_verified = next(
-        (a for a in attempts if a.outcome in FingerprintOutcome.PASSING),
-        None,
+    agent_events = list(
+        ReaderAgentEvent.objects.filter(staff=staff, kind=ReaderAgentEvent.Kind.IDENTIFY)
+        .select_related("agent__workstation", "session")
+        .order_by("-created_at", "-id")[:25]
     )
+    combined_attempts = [
+        {
+            "id": a.pk,
+            "action": a.action,
+            "outcome": a.outcome,
+            "match_score": a.match_score,
+            "workstation_reference": a.workstation_reference,
+            "created_at": a.created_at,
+            "passing": a.outcome in FingerprintOutcome.PASSING,
+        }
+        for a in legacy_attempts
+    ] + [
+        {
+            "id": ev.pk,
+            "action": (ev.detail or {}).get("action") or (ev.session.action if ev.session_id else "IDENTIFY"),
+            "outcome": ev.outcome,
+            "match_score": ev.match_score,
+            "workstation_reference": (
+                ev.agent.workstation.reference if ev.agent_id and ev.agent.workstation_id else ""
+            ),
+            "created_at": ev.created_at,
+            "passing": ev.outcome == "VERIFIED",
+        }
+        for ev in agent_events
+    ]
+    combined_attempts.sort(key=lambda r: r["created_at"], reverse=True)
+
+    last_verified = next((a for a in combined_attempts if a["passing"]), None)
     failed_count = FingerprintVerificationAttempt.objects.filter(
         staff=staff
-    ).exclude(outcome__in=FingerprintOutcome.PASSING).count()
+    ).exclude(outcome__in=FingerprintOutcome.PASSING).count() + ReaderAgentEvent.objects.filter(
+        staff=staff, kind=ReaderAgentEvent.Kind.IDENTIFY
+    ).exclude(outcome="VERIFIED").count()
 
-    if attempts:
+    if combined_attempts:
         verification_status = (
-            "VERIFIED" if attempts[0].outcome in FingerprintOutcome.PASSING else "VERIFICATION_FAILED"
+            "VERIFIED" if combined_attempts[0]["passing"] else "VERIFICATION_FAILED"
         )
     else:
         verification_status = "NEVER_VERIFIED"
@@ -613,6 +653,7 @@ def get_staff_biometric_status(staff: User) -> dict:
             return None
         return {
             "id": t.pk,
+            "source": "legacy",
             "status": t.status,
             "finger_position": t.finger_position,
             "template_format": t.template_format,
@@ -624,28 +665,53 @@ def get_staff_biometric_status(staff: User) -> dict:
             "decision_note": t.decision_note,
         }
 
+    def _agent_tmpl_info(t: ReaderAgentTemplate | None):
+        if t is None:
+            return None
+        return {
+            "id": t.pk,
+            "source": "reader_agent",
+            "status": t.status,
+            "finger_position": t.finger_position,
+            "template_format": t.template_format,
+            "requested_at": t.created_at.isoformat() if t.created_at else None,
+            "decided_at": t.decided_at.isoformat() if t.decided_at else None,
+            "decided_by_id": t.decided_by_id,
+            "decided_by_name": t.decided_by.full_name if t.decided_by else "",
+            "expires_at": t.expires_at.isoformat() if t.expires_at else None,
+            "decision_note": t.decision_note,
+            "agent_reference": t.enrolled_by_agent.reference if t.enrolled_by_agent_id else "",
+        }
+
+    latest_legacy = _tmpl_info(templates[0] if templates else None)
+    latest_agent = _agent_tmpl_info(agent_templates[0] if agent_templates else None)
+    if latest_legacy and latest_agent:
+        latest_combined = latest_agent if (latest_agent["requested_at"] or "") >= (latest_legacy["requested_at"] or "") else latest_legacy
+    else:
+        latest_combined = latest_agent or latest_legacy
+
     return {
         "enrollment_status": enrollment_status,
         "verification_status": verification_status,
-        "enrolled": active_tmpl is not None,
-        "active_template": _tmpl_info(active_tmpl),
-        "pending_template": _tmpl_info(pending_tmpl),
-        "latest_template": _tmpl_info(templates[0] if templates else None),
-        "templates_count": len(templates),
-        "last_verified_at": last_verified.created_at.isoformat() if last_verified else None,
-        "last_match_score": last_verified.match_score if last_verified else None,
-        "last_verification_workstation": last_verified.workstation_reference if last_verified else "",
+        "enrolled": bool(active_tmpl or active_agent),
+        "active_template": _tmpl_info(active_tmpl) or _agent_tmpl_info(active_agent),
+        "pending_template": _tmpl_info(pending_tmpl) or _agent_tmpl_info(pending_agent),
+        "latest_template": latest_combined,
+        "templates_count": len(templates) + len(agent_templates),
+        "last_verified_at": last_verified["created_at"].isoformat() if last_verified and last_verified["created_at"] else None,
+        "last_match_score": last_verified["match_score"] if last_verified else None,
+        "last_verification_workstation": last_verified["workstation_reference"] if last_verified else "",
         "failed_attempts_count": failed_count,
         "recent_attempts": [
             {
-                "id": a.pk,
-                "action": a.action,
-                "outcome": a.outcome,
-                "match_score": a.match_score,
-                "workstation_reference": a.workstation_reference,
-                "created_at": a.created_at.isoformat() if a.created_at else None,
+                "id": a["id"],
+                "action": a["action"],
+                "outcome": a["outcome"],
+                "match_score": a["match_score"],
+                "workstation_reference": a["workstation_reference"],
+                "created_at": a["created_at"].isoformat() if a["created_at"] else None,
             }
-            for a in attempts[:10]
+            for a in combined_attempts[:10]
         ],
         "attendance_status": open_att.status if open_att else "NOT_CLOCKED_IN",
         "active_attendance_reference": open_att.reference if open_att else None,

@@ -6,7 +6,7 @@
 /* Pre-paint theme (anti-flash): apply the stored/system theme BEFORE any content paints. */
 (function(){try{var k="jone.theme";var s=window["local"+"Storage"];var raw=(s&&s.getItem(k))||null;var v=null;try{v=JSON.parse(raw);}catch(e){v=raw;}if(v!=="dark"&&v!=="light"){v=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}document.documentElement.setAttribute("data-theme",v);document.documentElement.style.colorScheme=v;}catch(e){}})();
 </script><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="robots" content="noindex, nofollow">
-  <title>Workstations | J-ONE Staff</title><meta name="theme-color" content="#373435"><link rel="icon" href="../favicon/favicon-32.png" sizes="32x32"><link rel="stylesheet" href="../css/main.css?v=1.1.37">
+  <title>Workstations | J-ONE Staff</title><meta name="theme-color" content="#373435"><link rel="icon" href="../favicon/favicon-32.png" sizes="32x32"><link rel="stylesheet" href="../css/main.css?v=1.1.38">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -98,6 +98,13 @@
         </table>
       </div>
     </div>
+    <div class="panel-body">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.35rem;">
+        <h3 style="font-size:var(--fs-md);margin:0;">Fingerprint Enrolment Queue</h3>
+        <button class="btn btn-sm btn-outline" type="button" id="rt-enroll-queue-refresh">Refresh queue</button>
+      </div>
+      <div id="rt-enroll-queue"></div>
+    </div>
   </section>
 
   <section class="panel"><div class="panel-head"><h2>Workstation registry</h2><div class="panel-actions"><button class="btn btn-sm btn-outline" type="button" data-terminal-clear>Clear this browser</button><button class="btn btn-sm btn-outline" type="button" data-terminal-refresh>Refresh</button><button class="btn btn-sm" type="button" data-terminal-new>Register workstation</button></div></div>
@@ -177,7 +184,7 @@
     </div>
   </section>
 </main></div></div>
-<script src="../js/runtime-config.js?v=1.1.37"></script><script src="../js/config.js?v=1.1.37"></script><script src="../js/utils.js?v=1.1.37"></script><script src="../js/icons.js?v=1.1.37"></script><script src="../js/api.js?v=1.1.37"></script><script src="../js/theme.js?v=1.1.37"></script><script src="../js/ui.js?v=1.1.37"></script><script src="../js/auth.js?v=1.1.37"></script><script src="../js/navigation.js?v=1.1.37"></script><script src="../js/dashboard.js?v=1.1.37"></script><script src="../js/table-fit.js?v=1.1.37"></script><script src="../js/operations.js?v=1.1.37"></script><script src="../js/reader-agent.js?v=1.1.37"></script>
+<script src="../js/runtime-config.js?v=1.1.38"></script><script src="../js/config.js?v=1.1.38"></script><script src="../js/utils.js?v=1.1.38"></script><script src="../js/icons.js?v=1.1.38"></script><script src="../js/api.js?v=1.1.38"></script><script src="../js/theme.js?v=1.1.38"></script><script src="../js/ui.js?v=1.1.38"></script><script src="../js/auth.js?v=1.1.38"></script><script src="../js/navigation.js?v=1.1.38"></script><script src="../js/dashboard.js?v=1.1.38"></script><script src="../js/table-fit.js?v=1.1.38"></script><script src="../js/operations.js?v=1.1.38"></script><script src="../js/reader-agent.js?v=1.1.38"></script>
 <script>
 /* The reader panel on this page is js/reader-agent.js, mounted from the
    reader-agent host element above. The bridge status panel that
@@ -300,6 +307,12 @@ async function loadReceptionTerminal(){
 
 var rtRefresh=document.getElementById("reception-terminal-refresh");
 if(rtRefresh)rtRefresh.addEventListener("click",function(){loadReceptionTerminal();});
+var rtQueueHost=document.getElementById("rt-enroll-queue");
+if(rtQueueHost&&window.JONE&&window.JONE.readerAgent&&window.JONE.readerAgent.mountQueue){
+  var rtQueueApi=window.JONE.readerAgent.mountQueue(rtQueueHost,{onChanged:function(){loadReceptionTerminal();}});
+  var rtQBtn=document.getElementById("rt-enroll-queue-refresh");
+  if(rtQBtn)rtQBtn.addEventListener("click",function(){rtQueueApi&&rtQueueApi.refresh();});
+}
 loadReceptionTerminal();
 })();
 
@@ -450,4 +463,4 @@ loadReceptionTerminal();
   });
   renderDevices();
 })();
-</script><script src="../js/pwa.js?v=1.1.37"></script><script src="../js/version.js?v=1.1.37"></script><script src="../js/update-checker.js?v=1.1.37"></script></body></html>
+</script><script src="../js/pwa.js?v=1.1.38"></script><script src="../js/version.js?v=1.1.38"></script><script src="../js/update-checker.js?v=1.1.38"></script></body></html>

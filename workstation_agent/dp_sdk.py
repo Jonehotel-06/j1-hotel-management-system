@@ -36,12 +36,29 @@ from __future__ import annotations
 import ctypes
 import os
 import platform
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
 
 IS_WINDOWS = platform.system() == "Windows"
+DIGITALPERSONA_VID = 0x05BA
+_VID_PID_RE = re.compile(r"VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})", re.IGNORECASE)
+
+FINGER_POSITIONS: dict[str, int] = {
+    "UNKNOWN": 0,
+    "RIGHT_THUMB": 1,
+    "RIGHT_INDEX": 2,
+    "RIGHT_MIDDLE": 3,
+    "RIGHT_RING": 4,
+    "RIGHT_LITTLE": 5,
+    "LEFT_THUMB": 6,
+    "LEFT_INDEX": 7,
+    "LEFT_MIDDLE": 8,
+    "LEFT_RING": 9,
+    "LEFT_LITTLE": 10,
+}
 
 # --------------------------------------------------------------------------
 # Return codes -- dpfpdd.h / dpfj.h (DPERROR(err) == err | (0x05BA << 16))
@@ -248,6 +265,10 @@ class SdkReport:
     usb_present: bool = False
     usb_instances: list[str] = field(default_factory=list)
     driver_mode: str = "UNKNOWN"
+    driver_service: str = ""
+    service_running: bool | None = None
+    service_name: str = ""
+    problem_code: int | None = None
     devices: list[DeviceInfo] = field(default_factory=list)
     detail: str = ""
 
@@ -260,6 +281,10 @@ class SdkReport:
             "usb_present": self.usb_present,
             "usb_instances": list(self.usb_instances),
             "driver_mode": self.driver_mode,
+            "driver_service": self.driver_service,
+            "service_running": self.service_running,
+            "service_name": self.service_name,
+            "problem_code": self.problem_code,
             "devices": [
                 {"name": d.name, "vendor": d.vendor, "product": d.product, "serial": d.serial,
                  "vendor_id": d.vendor_id, "product_id": d.product_id, "firmware": d.firmware}
@@ -281,14 +306,28 @@ def _candidate_dirs(explicit: str | None) -> list[Path]:
     if env:
         candidates.append(Path(env))
     here = Path(__file__).resolve().parent
-    candidates.extend([
-        here,
-        here / "lib",
-        Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32",
-        Path(r"C:\Program Files\DigitalPersona\U.are.U SDK\Windows\lib\x64"),
-        Path(r"C:\Program Files\DigitalPersona\U.are.U SDK\Windows\lib\win32"),
-        Path(r"C:\Program Files (x86)\DigitalPersona\U.are.U SDK\Windows\lib\win32"),
-    ])
+    is_64 = running_python_bits() == 64
+    arch_dirs = (
+        [
+            Path(r"C:\Program Files\DigitalPersona\U.are.U SDK\Windows\Lib\x64"),
+            Path(r"C:\Program Files\HID Global\DigitalPersona\U.are.U SDK\Windows\Lib\x64"),
+            Path(r"C:\Program Files\DigitalPersona\Bin"),
+            Path(r"C:\Program Files\HID Global\Authentication\Bin"),
+            Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32",
+            Path(r"C:\Program Files\DigitalPersona\U.are.U SDK\Windows\Lib\win32"),
+            Path(r"C:\Program Files (x86)\DigitalPersona\U.are.U SDK\Windows\Lib\win32"),
+            Path(r"C:\Program Files (x86)\DigitalPersona\Bin"),
+        ]
+        if is_64
+        else [
+            Path(r"C:\Program Files (x86)\DigitalPersona\U.are.U SDK\Windows\Lib\win32"),
+            Path(r"C:\Program Files\DigitalPersona\U.are.U SDK\Windows\Lib\win32"),
+            Path(r"C:\Program Files\HID Global\DigitalPersona\U.are.U SDK\Windows\Lib\win32"),
+            Path(r"C:\Program Files (x86)\DigitalPersona\Bin"),
+            Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32",
+        ]
+    )
+    candidates.extend([here, here / "lib", *arch_dirs])
     seen, unique = set(), []
     for path in candidates:
         key = str(path).lower()
@@ -305,6 +344,7 @@ class DpSdk:
         self.dll_dir = dll_dir
         self._dd = None
         self._fj = None
+        self._initialized = False
         self._dev = ctypes.c_void_p(0)
         self._dev_name = ""
         self._log = log or (lambda *_a, **_k: None)
@@ -319,36 +359,69 @@ class DpSdk:
             raise SdkError("SDK_UNAVAILABLE", report.detail, status="sdk_unavailable", retry=False)
 
         dirs = _candidate_dirs(self.dll_dir)
-        dd_path = _find_dll("dpfpdd.dll", dirs)
-        fj_path = _find_dll("dpfj.dll", dirs)
-        missing = [name for name, path in (("dpfpdd.dll", dd_path), ("dpfj.dll", fj_path)) if path is None]
+        dd, fj, sdk_dir, missing, load_error = _load_sdk_libraries(dirs)
         report.missing = missing
-        if dd_path is None or fj_path is None:
-            report.detail = (
-                "The DigitalPersona U.are.U SDK runtime was not found on this computer ("
-                + ", ".join(missing)
-                + "). The device driver alone is not enough: the SDK's libraries must be installed "
-                "(see reports/04_DRIVER_SDK_REQUIREMENTS_AND_INSTALL.md)."
-            )
+        if dd is None or fj is None:
+            if load_error:
+                report.detail = (
+                    f"The DigitalPersona SDK libraries could not be loaded ({load_error}). "
+                    f"Python is running in {running_python_bits()}-bit mode — ensure matching "
+                    "DigitalPersona U.are.U SDK runtime DLLs are installed."
+                )
+            else:
+                report.detail = (
+                    "The DigitalPersona U.are.U SDK runtime was not found on this computer ("
+                    + ", ".join(missing)
+                    + "). The device driver alone is not enough: the SDK's libraries must be installed "
+                    "(see reports/04_DRIVER_SDK_REQUIREMENTS_AND_INSTALL.md)."
+                )
             self.report = report
-            raise SdkError("SDK_UNAVAILABLE", report.detail, status="sdk_unavailable", retry=False)
+            raise SdkError("SDK_UNAVAILABLE", report.detail, status="sdk_unavailable", retry=False, detail=load_error)
 
-        report.sdk_dir = str(dd_path.parent)
-        try:
-            self._dd = _load_library(dd_path)
-            self._fj = _load_library(fj_path)
-        except OSError as exc:
-            report.detail = f"The DigitalPersona SDK libraries could not be loaded: {exc}"
-            self.report = report
-            raise SdkError("SDK_UNAVAILABLE", report.detail, status="sdk_unavailable", retry=False, detail=str(exc))
-
+        report.sdk_dir = sdk_dir
+        self._dd = dd
+        self._fj = fj
         self._declare_prototypes()
         report.sdk_version = self._version()
         report.sdk_available = True
-        usb_present, instances = usb_reader_present()
-        report.usb_present = usb_present
-        report.usb_instances = instances
-        report.devices = self.query_devices()
+        self.report = report
+        return self.refresh_status()
+
+    def refresh_status(self) -> SdkReport:
+        """Re-probe live USB presence, Windows driver/service status, and SDK devices."""
+        report = SdkReport(
+            sdk_available=bool(self._dd is not None and self._fj is not None),
+            sdk_version=self.report.sdk_version or (self._version() if self._dd is not None else ""),
+            sdk_dir=self.report.sdk_dir,
+            missing=list(self.report.missing),
+        )
+        usb_info = inspect_usb_and_services()
+        report.usb_present = bool(usb_info.get("usb_present"))
+        report.usb_instances = list(usb_info.get("instances") or [])
+        report.driver_service = str(usb_info.get("driver_service") or "")
+        report.service_running = usb_info.get("service_running")
+        report.service_name = str(usb_info.get("service_name") or "")
+        report.problem_code = usb_info.get("problem_code")
+
+        if self._dd is not None:
+            if not self._initialized:
+                try:
+                    rc = int(self._dd.dpfpdd_init()) & 0xFFFFFFFF
+                    self._initialized = (rc == DPFPDD_OK)
+                except Exception:
+                    self._initialized = False
+            report.devices = self.query_devices()
+            # If USB is present and dpfpdd_init succeeded earlier or just now,
+            # one more initialize() call covers a freshly-started DpHost service.
+            if not report.devices and report.usb_present:
+                try:
+                    rc = int(self._dd.dpfpdd_init()) & 0xFFFFFFFF
+                    if rc == DPFPDD_OK:
+                        self._initialized = True
+                        report.devices = self.query_devices()
+                except Exception:
+                    pass
+
         report.driver_mode = self._driver_mode(report)
         report.detail = self._report_detail(report)
         self.report = report
@@ -426,10 +499,14 @@ class DpSdk:
         if report.devices:
             return "LEGACY_SDK"
         if report.usb_present:
+            svc = (report.driver_service or "").lower()
+            if svc in {"wudfrd", "winusb", "wbiosrvc", "wudf"}:
+                return "WBF"
+            if report.service_running is False and report.service_name.lower().startswith("dphost"):
+                return "LEGACY_SDK"
             # The reader is on the USB bus but dpfpdd cannot see it: on the 4500
-            # that means the Windows Biometric Framework (Windows Hello) driver
-            # is bound, and HID documents WBF drivers as incompatible with the
-            # SDK. This is a driver-mode problem, not a missing reader.
+            # that normally means the Windows Biometric Framework (Windows Hello)
+            # driver is bound, which HID documents as incompatible with the SDK.
             return "WBF"
         return "UNKNOWN"
 
@@ -437,6 +514,17 @@ class DpSdk:
         if report.devices:
             device = report.devices[0]
             return f"{device.product or 'DigitalPersona reader'} ready (serial {device.serial or 'unknown'})."
+        if report.usb_present and report.problem_code:
+            return (
+                f"The reader is plugged in but Windows Device Manager reported problem code "
+                f"{report.problem_code}. Reinstall the DigitalPersona 4500 legacy driver (4.1.1.221) "
+                "and replug the USB cable."
+            )
+        if report.usb_present and report.service_running is False and report.service_name.lower().startswith("dphost"):
+            return (
+                f"The reader is plugged in and uses the legacy driver, but the Windows service "
+                f"'{report.service_name}' is stopped. Start that service in Services (services.msc) or reboot."
+            )
         if report.driver_mode == "WBF":
             return (
                 "The reader is plugged in but Windows has bound the Windows Biometric Framework "
@@ -486,12 +574,14 @@ class DpSdk:
         """dpfpdd_init + enumerate. Idempotent; safe to call on reconnect."""
         rc = int(self._dd.dpfpdd_init()) & 0xFFFFFFFF
         if rc != DPFPDD_OK:
+            self._initialized = False
             raise SdkError(
                 "SERVICE_UNAVAILABLE",
                 "The DigitalPersona device interface did not initialise (dpfpdd_init). "
                 "The reader driver service is not answering; replug the reader, then retry.",
                 status="service_unavailable",
             )
+        self._initialized = True
         return self.query_devices()
 
     def open(self, device: DeviceInfo) -> None:
@@ -663,44 +753,61 @@ class DpSdk:
             raise SdkError("COMPARE_FAILED", f"The fingerprints could not be compared (code 0x{rc:08X}).")
         return int(score.value)
 
-    def enrollment_fmd(self, fmds: Iterable[bytes]) -> bytes:
-        """Combine several impressions into one enrolment FMD."""
+    def start_enrollment(self) -> None:
         rc = int(self._fj.dpfj_start_enrollment(ctypes.c_uint(DPFJ_FMD_ISO_19794_2_2005))) & 0xFFFFFFFF
         if rc != DPFJ_SUCCESS:
             raise SdkError("ENROLL_FAILED", f"Enrolment could not start (code 0x{rc:08X}).")
+
+    def add_to_enrollment(self, fmd: bytes) -> str:
+        """Feed one scan FMD. Returns 'ready' when enough views exist, or 'more_data'."""
+        rc = int(self._fj.dpfj_add_to_enrollment(
+            ctypes.c_uint(DPFJ_FMD_ISO_19794_2_2005), fmd, ctypes.c_uint(len(fmd)), ctypes.c_uint(0),
+        )) & 0xFFFFFFFF
+        if rc == DPFJ_SUCCESS:
+            return "ready"
+        if rc == DPFJ_E_MORE_DATA:
+            return "more_data"
+        raise SdkError("ENROLL_FAILED", f"An enrolment impression was rejected (code 0x{rc:08X}).")
+
+    def create_enrollment_fmd(self) -> bytes:
+        size = ctypes.c_uint(MAX_FMD_SIZE)
+        buffer = ctypes.create_string_buffer(MAX_FMD_SIZE)
+        rc = int(self._fj.dpfj_create_enrollment_fmd(buffer, ctypes.byref(size))) & 0xFFFFFFFF
+        if rc == DPFJ_E_ENROLLMENT_NOT_READY:
+            raise SdkError("ENROLL_NOT_READY", "More fingerprint impressions are needed for enrolment.")
+        if rc != DPFJ_SUCCESS or int(size.value) == 0:
+            raise SdkError("ENROLL_FAILED", f"The enrolment template could not be created (code 0x{rc:08X}).")
+        return bytes(buffer.raw[: int(size.value)])
+
+    def finish_enrollment(self) -> None:
+        try:
+            if self._fj is not None:
+                self._fj.dpfj_finish_enrollment()
+        except Exception:  # pragma: no cover
+            pass
+
+    def enrollment_fmd(self, fmds: Iterable[bytes]) -> bytes:
+        """Combine several impressions into one enrolment FMD."""
+        self.start_enrollment()
         added = 0
         try:
             for fmd in fmds:
-                rc = int(self._fj.dpfj_add_to_enrollment(
-                    ctypes.c_uint(DPFJ_FMD_ISO_19794_2_2005), fmd, ctypes.c_uint(len(fmd)), ctypes.c_uint(0),
-                )) & 0xFFFFFFFF
-                if rc == DPFJ_SUCCESS:
-                    added += 1
-                    break
-                if rc != DPFJ_E_MORE_DATA:
-                    raise SdkError("ENROLL_FAILED", f"An enrolment impression was rejected (code 0x{rc:08X}).")
+                state = self.add_to_enrollment(fmd)
                 added += 1
+                if state == "ready":
+                    break
             if not added:
                 raise SdkError("ENROLL_FAILED", "No enrolment impression was accepted.")
-            size = ctypes.c_uint(MAX_FMD_SIZE)
-            buffer = ctypes.create_string_buffer(MAX_FMD_SIZE)
-            rc = int(self._fj.dpfj_create_enrollment_fmd(buffer, ctypes.byref(size))) & 0xFFFFFFFF
-            if rc == DPFJ_E_ENROLLMENT_NOT_READY:
-                raise SdkError("ENROLL_NOT_READY", "More fingerprint impressions are needed for enrolment.")
-            if rc != DPFJ_SUCCESS or int(size.value) == 0:
-                raise SdkError("ENROLL_FAILED", f"The enrolment template could not be created (code 0x{rc:08X}).")
-            return bytes(buffer.raw[: int(size.value)])
+            return self.create_enrollment_fmd()
         finally:
-            try:
-                self._fj.dpfj_finish_enrollment()
-            except Exception:  # pragma: no cover
-                pass
+            self.finish_enrollment()
 
     def shutdown(self) -> None:
         self.close()
         try:
             if self._dd is not None:
                 self._dd.dpfpdd_exit()
+            self._initialized = False
         except Exception:  # pragma: no cover
             pass
 
@@ -723,53 +830,287 @@ def _find_dll(name: str, dirs: Sequence[Path]) -> Path | None:
     return None
 
 
+def _find_all_dlls(name: str, dirs: Sequence[Path]) -> list[Path]:
+    found: list[Path] = []
+    for directory in dirs:
+        candidate = Path(directory) / name
+        try:
+            if candidate.is_file():
+                found.append(candidate)
+        except OSError:
+            continue
+    return found
+
+
+def _load_sdk_libraries(dirs: Sequence[Path]) -> tuple[object | None, object | None, str, list[str], str]:
+    """Locate and load matching-bitness dpfpdd.dll + dpfj.dll across candidate folders."""
+    dd_candidates = _find_all_dlls("dpfpdd.dll", dirs)
+    fj_candidates = _find_all_dlls("dpfj.dll", dirs)
+    missing = [
+        name
+        for name, items in (("dpfpdd.dll", dd_candidates), ("dpfj.dll", fj_candidates))
+        if not items
+    ]
+    if missing:
+        return None, None, "", missing, ""
+
+    # Prefer a directory that provides both DLLs together, falling back to first working pair.
+    fj_by_dir = {str(p.parent).lower(): p for p in fj_candidates}
+    ordered_pairs: list[tuple[Path, Path]] = []
+    for dd_path in dd_candidates:
+        paired_fj = fj_by_dir.get(str(dd_path.parent).lower())
+        if paired_fj is not None:
+            ordered_pairs.append((dd_path, paired_fj))
+    for dd_path in dd_candidates:
+        for fj_path in fj_candidates:
+            pair = (dd_path, fj_path)
+            if pair not in ordered_pairs:
+                ordered_pairs.append(pair)
+
+    last_error = ""
+    for dd_path, fj_path in ordered_pairs:
+        try:
+            if IS_WINDOWS and hasattr(os, "add_dll_directory"):
+                try:
+                    os.add_dll_directory(str(dd_path.parent))
+                    if fj_path.parent != dd_path.parent:
+                        os.add_dll_directory(str(fj_path.parent))
+                except OSError:
+                    pass
+            dd = _load_library(dd_path)
+            fj = _load_library(fj_path)
+            return dd, fj, str(dd_path.parent), [], ""
+        except OSError as exc:
+            last_error = str(exc)
+            continue
+    return None, None, "", [], last_error
+
+
 def _load_library(path: Path):
     if IS_WINDOWS and hasattr(ctypes, "WinDLL"):
         return ctypes.WinDLL(str(path))
     return ctypes.CDLL(str(path))  # pragma: no cover - Linux dev machines
 
 
-def usb_reader_present() -> tuple[bool, list[str]]:
-    """Is a DigitalPersona reader (USB VID 05BA) enumerated?
+def _query_windows_dp_service() -> tuple[bool | None, str]:
+    """Inspect Windows SCM for DigitalPersona / WBF host services."""
+    if not IS_WINDOWS:  # pragma: no cover
+        return None, ""
+    try:
+        from ctypes import wintypes
 
-    Read straight from the USB enumeration key so the agent can tell "the reader
-    is unplugged" apart from "the reader is plugged in but bound to a driver the
-    SDK cannot use" without spawning PowerShell. This is *detection only* -- it
-    is never treated as proof that a fingerprint was read.
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    except (OSError, AttributeError):
+        return None, ""
+
+    class _SERVICE_STATUS(ctypes.Structure):
+        _fields_ = [
+            ("dwServiceType", wintypes.DWORD),
+            ("dwCurrentState", wintypes.DWORD),
+            ("dwControlsAccepted", wintypes.DWORD),
+            ("dwWin32ExitCode", wintypes.DWORD),
+            ("dwServiceSpecificExitCode", wintypes.DWORD),
+            ("dwCheckPoint", wintypes.DWORD),
+            ("dwWaitHint", wintypes.DWORD),
+        ]
+
+    SC_MANAGER_CONNECT = 0x0001
+    SERVICE_QUERY_STATUS = 0x0004
+    SERVICE_RUNNING = 0x00000004
+
+    advapi32.OpenSCManagerW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
+    advapi32.OpenSCManagerW.restype = ctypes.c_void_p
+    advapi32.OpenServiceW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, wintypes.DWORD]
+    advapi32.OpenServiceW.restype = ctypes.c_void_p
+    advapi32.QueryServiceStatus.argtypes = [ctypes.c_void_p, ctypes.POINTER(_SERVICE_STATUS)]
+    advapi32.QueryServiceStatus.restype = wintypes.BOOL
+    advapi32.CloseServiceHandle.argtypes = [ctypes.c_void_p]
+    advapi32.CloseServiceHandle.restype = wintypes.BOOL
+
+    scm = advapi32.OpenSCManagerW(None, None, SC_MANAGER_CONNECT)
+    if not scm:
+        return None, ""
+    try:
+        candidates = (
+            "DpHost",
+            "DpHostW",
+            "DigitalPersona Authentication Service",
+            "WbioSrvc",
+        )
+        found_any = False
+        first_stopped = ""
+        for name in candidates:
+            svc = advapi32.OpenServiceW(scm, name, SERVICE_QUERY_STATUS)
+            if not svc:
+                continue
+            found_any = True
+            try:
+                st = _SERVICE_STATUS()
+                if advapi32.QueryServiceStatus(svc, ctypes.byref(st)):
+                    if st.dwCurrentState == SERVICE_RUNNING:
+                        return True, name
+                    if not first_stopped:
+                        first_stopped = name
+            finally:
+                advapi32.CloseServiceHandle(svc)
+        if found_any:
+            return False, first_stopped
+        return None, ""
+    finally:
+        advapi32.CloseServiceHandle(scm)
+
+
+def inspect_usb_and_services() -> dict:
+    """Detect *currently connected* DigitalPersona USB hardware via SetupAPI + CfgMgr32.
+
+    Unlike enumerating HKLM\\SYSTEM\\CurrentControlSet\\Enum\\USB (which retains
+    every USB device ever plugged into Windows across unplugs), SetupDiGetClassDevsW
+    with DIGCF_PRESENT reports only readers physically attached right now, along
+    with the bound kernel service (SPDRP_SERVICE) and Device Manager problem code.
     """
     if not IS_WINDOWS:  # pragma: no cover - Linux dev machines
-        return False, []
-    try:
-        import winreg
-    except ImportError:  # pragma: no cover
-        return False, []
+        return {
+            "usb_present": False,
+            "instances": [],
+            "driver_service": "",
+            "service_running": None,
+            "service_name": "",
+            "problem_code": None,
+        }
+
     instances: list[str] = []
+    driver_service = ""
+    first_problem: int | None = None
+    svc_running, svc_name = _query_windows_dp_service()
+
     try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Enum\USB") as usb_key:
-            index = 0
-            while True:
-                try:
-                    sub_name = winreg.EnumKey(usb_key, index)
-                except OSError:
-                    break
-                index += 1
-                if not sub_name.upper().startswith("VID_05BA"):
-                    continue
-                try:
-                    with winreg.OpenKey(usb_key, sub_name) as device_key:
-                        inner = 0
-                        while True:
-                            try:
-                                instance = winreg.EnumKey(device_key, inner)
-                            except OSError:
-                                break
-                            inner += 1
-                            instances.append(f"{sub_name}\\{instance}")
-                except OSError:
-                    continue
-    except OSError:  # pragma: no cover
-        return False, []
-    return bool(instances), instances
+        from ctypes import wintypes
+
+        setupapi = ctypes.WinDLL("setupapi", use_last_error=True)
+        cfgmgr32 = ctypes.WinDLL("cfgmgr32", use_last_error=True)
+    except (OSError, AttributeError):  # pragma: no cover
+        return {
+            "usb_present": False,
+            "instances": [],
+            "driver_service": "",
+            "service_running": svc_running,
+            "service_name": svc_name,
+            "problem_code": None,
+        }
+
+    DIGCF_PRESENT = 0x00000002
+    DIGCF_ALLCLASSES = 0x00000004
+    SPDRP_HARDWAREID = 0x00000001
+    SPDRP_SERVICE = 0x00000004
+    DN_HAS_PROBLEM = 0x00000400
+
+    class _SP_DEVINFO_DATA(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("ClassGuid", ctypes.c_ubyte * 16),
+            ("DevInst", wintypes.DWORD),
+            ("Reserved", ctypes.c_size_t),
+        ]
+
+    setupapi.SetupDiGetClassDevsW.argtypes = [
+        ctypes.c_void_p, wintypes.LPCWSTR, wintypes.HWND, wintypes.DWORD,
+    ]
+    setupapi.SetupDiGetClassDevsW.restype = ctypes.c_void_p
+    setupapi.SetupDiEnumDeviceInfo.argtypes = [
+        ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(_SP_DEVINFO_DATA),
+    ]
+    setupapi.SetupDiEnumDeviceInfo.restype = wintypes.BOOL
+    setupapi.SetupDiGetDeviceRegistryPropertyW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_SP_DEVINFO_DATA),
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    setupapi.SetupDiGetDeviceRegistryPropertyW.restype = wintypes.BOOL
+    setupapi.SetupDiDestroyDeviceInfoList.argtypes = [ctypes.c_void_p]
+    setupapi.SetupDiDestroyDeviceInfoList.restype = wintypes.BOOL
+
+    cfgmgr32.CM_Get_DevNode_Status.argtypes = [
+        ctypes.POINTER(wintypes.ULONG),
+        ctypes.POINTER(wintypes.ULONG),
+        wintypes.DWORD,
+        wintypes.ULONG,
+    ]
+    cfgmgr32.CM_Get_DevNode_Status.restype = wintypes.DWORD
+
+    invalid_handle = ctypes.c_void_p(-1).value
+    hdev = setupapi.SetupDiGetClassDevsW(
+        None, "USB", None, DIGCF_PRESENT | DIGCF_ALLCLASSES,
+    )
+    if not hdev or hdev == invalid_handle:
+        return {
+            "usb_present": False,
+            "instances": [],
+            "driver_service": "",
+            "service_running": svc_running,
+            "service_name": svc_name,
+            "problem_code": None,
+        }
+
+    def _get_prop(dev_info, prop_id: int) -> str:
+        buf = ctypes.create_unicode_buffer(1024)
+        req = wintypes.DWORD(0)
+        ok = setupapi.SetupDiGetDeviceRegistryPropertyW(
+            hdev, ctypes.byref(dev_info), prop_id, None,
+            buf, ctypes.sizeof(buf), ctypes.byref(req),
+        )
+        if not ok:
+            return ""
+        raw = ctypes.wstring_at(buf, max(0, (req.value // 2) - 1))
+        return raw.replace("\x00", " ").strip()
+
+    try:
+        idx = 0
+        dev_info = _SP_DEVINFO_DATA()
+        dev_info.cbSize = ctypes.sizeof(_SP_DEVINFO_DATA)
+        while setupapi.SetupDiEnumDeviceInfo(hdev, idx, ctypes.byref(dev_info)):
+            idx += 1
+            hw_id = _get_prop(dev_info, SPDRP_HARDWAREID)
+            if not hw_id:
+                continue
+            match = _VID_PID_RE.search(hw_id)
+            if not match or int(match.group(1), 16) != DIGITALPERSONA_VID:
+                continue
+            svc = _get_prop(dev_info, SPDRP_SERVICE)
+            if svc and not driver_service:
+                driver_service = svc
+            status_flags = wintypes.ULONG(0)
+            problem_num = wintypes.ULONG(0)
+            cm_rc = cfgmgr32.CM_Get_DevNode_Status(
+                ctypes.byref(status_flags),
+                ctypes.byref(problem_num),
+                dev_info.DevInst,
+                0,
+            )
+            if cm_rc == 0 and bool(status_flags.value & DN_HAS_PROBLEM) and first_problem is None:
+                first_problem = int(problem_num.value)
+            first_hwid = hw_id.split(" ")[0]
+            instances.append(f"{first_hwid} ({svc or 'no-driver'})")
+    finally:
+        setupapi.SetupDiDestroyDeviceInfoList(hdev)
+
+    return {
+        "usb_present": bool(instances),
+        "instances": instances,
+        "driver_service": driver_service,
+        "service_running": svc_running,
+        "service_name": svc_name,
+        "problem_code": first_problem,
+    }
+
+
+def usb_reader_present() -> tuple[bool, list[str]]:
+    """Is a DigitalPersona reader (USB VID 05BA) currently plugged in?"""
+    info = inspect_usb_and_services()
+    return bool(info.get("usb_present")), list(info.get("instances") or [])
 
 
 def running_python_bits() -> int:

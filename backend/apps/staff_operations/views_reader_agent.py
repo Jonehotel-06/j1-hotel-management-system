@@ -146,8 +146,30 @@ class AgentGalleryView(_AgentView):
         agent = _agent_of(request)
         payload = getattr(request, "reader_agent_payload", {}) or {}
         data = svc.gallery_for_agent(
-            agent=agent, nonce=payload.get("nonce") or request.headers.get(AGENT_HEADERS["nonce"], ""),
+            agent=agent,
+            nonce=payload.get("nonce") or request.headers.get(AGENT_HEADERS["nonce"], ""),
+            known_etag=str(payload.get("etag") or ""),
         )
+        return success_response(data)
+
+
+class AgentSessionFailView(_AgentView):
+    """POST /reader-agent/agent/session-fail/ — mark a PENDING session FAILED on hardware/capture error."""
+
+    def post(self, request):
+        agent = _agent_of(request)
+        payload = getattr(request, "reader_agent_payload", {}) or {}
+        try:
+            data = svc.fail_session_from_agent(
+                agent=agent,
+                nonce=payload.get("nonce") or request.headers.get(AGENT_HEADERS["nonce"], ""),
+                session_token=payload.get("session_token", ""),
+                error_code=payload.get("error_code", "AGENT_ERROR"),
+                error_message=payload.get("error_message", ""),
+                device_state=payload.get("device_state") or {},
+            )
+        except svc.AgentAuthError as exc:
+            return _failure(exc.code, exc.message, exc.http_status)
         return success_response(data)
 
 
@@ -224,14 +246,26 @@ class ReaderAgentSessionCreateView(APIView):
             if staff is None:
                 raise ValidationError({"staff_id": "Unknown staff member."})
 
+        workstation_reference = str(request.data.get("workstation_reference", "") or "").strip()
+        agent_reference = str(request.data.get("agent_reference", "") or "").strip()
+        if not workstation_reference and not agent_reference:
+            try:
+                from apps.accounts.desktop_policy import resolve_receptionist_desktop
+
+                desk, _method = resolve_receptionist_desktop(request)
+                if desk is not None:
+                    workstation_reference = desk.reference
+            except Exception:
+                pass
+
         try:
             session, token = svc.create_session(
                 actor=request.user,
                 action=action,
                 staff=staff,
-                workstation_reference=str(request.data.get("workstation_reference", "") or ""),
+                workstation_reference=workstation_reference,
                 finger_position=str(request.data.get("finger_position", "RIGHT_INDEX") or "RIGHT_INDEX"),
-                agent_reference=str(request.data.get("agent_reference", "") or ""),
+                agent_reference=agent_reference,
             )
         except DjangoPermissionDenied:
             raise
@@ -240,11 +274,21 @@ class ReaderAgentSessionCreateView(APIView):
 
         agent = session.agent
         base = request.build_absolute_uri("/").rstrip("/")
-        launch_uri = (
-            "jone-reader:capture?session={token}&api={api}&action={action}".format(
-                token=token, api=base, action=action,
+        if action == "ENROLL":
+            launch_uri = (
+                "jone-reader:enroll?session={token}&api={api}&staff_id={staff_id}&finger_position={pos}".format(
+                    token=token,
+                    api=base,
+                    staff_id=session.staff_id or "",
+                    pos=session.finger_position or "RIGHT_INDEX",
+                )
             )
-        )
+        else:
+            launch_uri = (
+                "jone-reader:capture?session={token}&api={api}&action={action}".format(
+                    token=token, api=base, action=action,
+                )
+            )
         return success_response({
             "session_token": token,
             "action": session.action,
@@ -288,8 +332,30 @@ class ReaderAgentListView(APIView):
             request.user, "attendance.manage"
         ):
             raise DjangoPermissionDenied("This user cannot view fingerprint readers.")
-        agents = ReaderAgent.objects.select_related("workstation").all()
-        return success_response([svc.agent_status(agent) for agent in agents])
+        qs = ReaderAgent.objects.select_related("workstation")
+        if str(request.query_params.get("include_revoked", "")).lower() not in {"1", "true", "yes"}:
+            qs = qs.filter(status=ReaderAgent.Status.ACTIVE)
+        return success_response([svc.agent_status(agent) for agent in qs.all()])
+
+
+class ReaderAgentRevokeView(APIView):
+    """POST /reader-agent/agents/<reference>/revoke/ — retire an obsolete/lost workstation agent."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, reference):
+        agent = ReaderAgent.objects.select_related("workstation").filter(reference=reference).first()
+        if agent is None:
+            return _failure("AGENT_UNKNOWN", "Unknown reader agent.", status.HTTP_404_NOT_FOUND)
+        try:
+            agent = svc.revoke_agent(
+                actor=request.user,
+                agent=agent,
+                reason=str(request.data.get("reason", "") or ""),
+            )
+        except DjangoPermissionDenied as exc:
+            raise DjangoPermissionDenied(str(exc))
+        return success_response(svc.agent_status(agent))
 
 
 def _workstation_for_request(request):
@@ -458,7 +524,7 @@ class ReaderAgentTemplatesView(APIView):
 
 
 class ReaderAgentTemplateActionView(APIView):
-    """POST /reader-agent/templates/<pk>/<action>/ where action is approve|reject."""
+    """POST /reader-agent/templates/<pk>/<action>/ where action is approve|reject|revoke."""
 
     permission_classes = [IsAuthenticated]
 
@@ -471,6 +537,12 @@ class ReaderAgentTemplateActionView(APIView):
                 template = svc.approve_template(template=template, approver=request.user)
             elif action == "reject":
                 template = svc.reject_template(template=template, approver=request.user)
+            elif action == "revoke":
+                template = svc.revoke_template(
+                    template=template,
+                    actor=request.user,
+                    reason=str(request.data.get("note") or request.data.get("reason") or ""),
+                )
             else:
                 return _failure("ACTION_UNKNOWN", "Unknown enrolment action.", status.HTTP_400_BAD_REQUEST)
         except DjangoPermissionDenied as exc:

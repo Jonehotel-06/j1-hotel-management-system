@@ -32,6 +32,7 @@ from typing import Any, Iterable
 from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import F
 from django.utils import timezone
 
 from apps.accounts.capabilities import has_capability
@@ -332,6 +333,27 @@ def rotate_agent_key(*, actor: User, agent: ReaderAgent) -> str:
     return key
 
 
+def revoke_agent(*, actor: User, agent: ReaderAgent, reason: str = "") -> ReaderAgent:
+    if PROVISION_CAPABILITY not in _capability_codes(actor):
+        raise PermissionDenied(
+            "Revoking a reader agent requires the “Manage attendance” permission "
+            f"({PROVISION_CAPABILITY})."
+        )
+    with transaction.atomic():
+        locked = ReaderAgent.objects.select_for_update().get(pk=agent.pk)
+        locked.status = ReaderAgent.Status.REVOKED
+        if reason:
+            locked.last_error = str(reason)[:255]
+        locked.save(update_fields=["status", "last_error", "updated_at"])
+    log_action(
+        actor=actor,
+        action="READER_AGENT_REVOKED",
+        instance=locked,
+        metadata={"reference": locked.reference, "reason": str(reason or "")[:200]},
+    )
+    return locked
+
+
 # --------------------------------------------------------------------------
 # Sessions (browser side, JWT authenticated)
 # --------------------------------------------------------------------------
@@ -367,7 +389,7 @@ def create_session(
         qs = ReaderAgent.objects.select_related("workstation").filter(status=ReaderAgent.Status.ACTIVE)
         if workstation_reference:
             qs = qs.filter(workstation__reference=workstation_reference)
-        agent = qs.order_by("created_at").first()
+        agent = qs.order_by(F("last_seen_at").desc(nulls_last=True), "-created_at").first()
 
     raw_token = secrets.token_urlsafe(32)
     session = ReaderAgentSession.objects.create(
@@ -428,14 +450,14 @@ def _consume_session(*, session: ReaderAgentSession, agent: ReaderAgent, action:
 # --------------------------------------------------------------------------
 # Agent side (device signed)
 # --------------------------------------------------------------------------
-def gallery_for_agent(*, agent: ReaderAgent, nonce: str) -> dict[str, Any]:
+def _active_gallery_rows() -> tuple[str, list[dict[str, Any]]]:
     templates = ReaderAgentTemplate.objects.select_related("staff").filter(
-        status=ReaderAgentTemplate.Status.ACTIVE
+        status=ReaderAgentTemplate.Status.ACTIVE, staff__is_active=True
     ).exclude(fmd="")
     rows = []
     for template in templates:
         staff = template.staff
-        if not staff.is_active:
+        if template.expires_at and template.expires_at <= timezone.now():
             continue
         rows.append({
             "staff_id": staff.pk,
@@ -447,8 +469,21 @@ def gallery_for_agent(*, agent: ReaderAgent, nonce: str) -> dict[str, Any]:
     etag = hashlib.sha256(
         "|".join(f"{t['template_id']}:{t['staff_id']}:{t['fmd'][:32]}" for t in sorted(rows, key=lambda r: r["template_id"])).encode()
     ).hexdigest()[:32]
+    return etag, rows
+
+
+def current_gallery_etag() -> str:
+    etag, _rows = _active_gallery_rows()
+    return etag
+
+
+def gallery_for_agent(*, agent: ReaderAgent, nonce: str, known_etag: str = "") -> dict[str, Any]:
+    etag, rows = _active_gallery_rows()
+    if known_etag and str(known_etag).strip() == etag:
+        _close_event(agent=agent, nonce=nonce, outcome="SERVED_CACHED", detail={"etag": etag, "templates": len(rows)})
+        return {"etag": etag, "unchanged": True}
     _close_event(agent=agent, nonce=nonce, outcome="SERVED", detail={"templates": len(rows)})
-    return {"etag": etag, "templates": rows}
+    return {"etag": etag, "unchanged": False, "templates": rows}
 
 
 def heartbeat(*, agent: ReaderAgent, nonce: str, state: dict[str, Any]) -> dict[str, Any]:
@@ -477,8 +512,60 @@ def heartbeat(*, agent: ReaderAgent, nonce: str, state: dict[str, Any]) -> dict[
         "last_seen_at", "last_heartbeat", "last_error", "updated_at",
     ])
     _close_event(agent=agent, nonce=nonce, outcome=status.upper()[:40], detail=agent.last_heartbeat)
-    return {"agent": agent.reference, "workstation": agent.workstation.reference if agent.workstation_id else "",
-            "match_threshold": match_threshold()}
+    return {
+        "agent": agent.reference,
+        "workstation": agent.workstation.reference if agent.workstation_id else "",
+        "match_threshold": match_threshold(),
+        "gallery_etag": current_gallery_etag(),
+    }
+
+
+def fail_session_from_agent(
+    *,
+    agent: ReaderAgent,
+    nonce: str,
+    session_token: str,
+    error_code: str,
+    error_message: str,
+    device_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Allow a signed workstation agent to mark a PENDING session FAILED immediately."""
+    session = session_by_token(session_token)
+    if session is None:
+        raise AgentAuthError("SESSION_UNKNOWN", "Unknown fingerprint request.", 404)
+
+    code = str(error_code or "AGENT_ERROR").strip().upper()[:40] or "AGENT_ERROR"
+    message = str(error_message or "The fingerprint reader could not complete this request.").strip()[:300]
+    now = timezone.now()
+
+    with transaction.atomic():
+        locked = ReaderAgentSession.objects.select_for_update().get(pk=session.pk)
+        if locked.agent_id and locked.agent_id != agent.pk:
+            raise AgentAuthError("SESSION_AGENT_MISMATCH", "This fingerprint request belongs to another reader agent.", 409)
+        if locked.workstation_reference and agent.workstation_id and locked.workstation_reference != agent.workstation.reference:
+            raise AgentAuthError("SESSION_WORKSTATION_MISMATCH", "This fingerprint request belongs to another workstation.", 409)
+        if locked.status == ReaderAgentSession.Status.PENDING:
+            if locked.expires_at <= now:
+                locked.status = ReaderAgentSession.Status.EXPIRED
+                locked.save(update_fields=["status", "updated_at"])
+            else:
+                locked.consumed_at = now
+                _fail_session(locked, code, message)
+                locked.save(update_fields=["consumed_at", "updated_at"])
+        final_status = locked.status
+
+    if isinstance(device_state, dict) and device_state:
+        dev_status = str(device_state.get("device_status", "") or "").strip()[:40]
+        driver_mode = str(device_state.get("driver_mode", "") or "").upper()
+        if driver_mode in ReaderAgent.DriverMode.values:
+            agent.driver_mode = driver_mode
+        agent.last_seen_at = now
+        if dev_status and dev_status not in {"ready", "connected"}:
+            agent.last_error = str(device_state.get("detail") or message)[:255]
+        agent.save(update_fields=["driver_mode", "last_seen_at", "last_error", "updated_at"])
+
+    _close_event(agent=agent, nonce=nonce, outcome=code, session=session, detail={"error": message})
+    return {"session_token": session_token, "status": final_status, "error_code": code}
 
 
 def _assert_staff_eligible(staff: User) -> None:
@@ -685,45 +772,60 @@ def process_enroll(
     if size < 100:
         raise AgentAuthError("FMD_INVALID", "The enrolment template is too small to be a fingerprint template.", 400)
 
+    refusal: tuple[str, str, int] | None = None
+    result: dict[str, Any] = {}
     with transaction.atomic():
         session = _consume_session(session=session, agent=agent, action=ReaderAgentSession.Action.ENROLL)
         staff = User.objects.filter(pk=staff_id).first()
         if staff is None:
-            raise AgentAuthError("STAFF_UNKNOWN", "Unknown staff member.", 404)
-        if session.staff_id and session.staff_id != staff.pk:
-            raise AgentAuthError("STAFF_MISMATCH", "This enrolment request is for another staff member.", 409)
-        _assert_staff_eligible(staff)
+            refusal = ("STAFF_UNKNOWN", "Unknown staff member.", 404)
+        elif session.staff_id and session.staff_id != staff.pk:
+            refusal = ("STAFF_MISMATCH", "This enrolment request is for another staff member.", 409)
+        else:
+            try:
+                _assert_staff_eligible(staff)
+            except (ValidationError, PermissionDenied) as exc:
+                refusal = ("STAFF_NOT_ELIGIBLE", _first_message(exc), 403)
 
-        active = ReaderAgentTemplate.objects.select_for_update().filter(
-            staff=staff, status__in=[ReaderAgentTemplate.Status.ACTIVE, ReaderAgentTemplate.Status.PENDING]
-        ).first()
-        if active is not None:
-            raise AgentAuthError(
-                "ALREADY_ENROLLED",
-                "This staff member already has an enrolled fingerprint awaiting approval or in use. "
-                "Revoke it first if the finger has changed.",
-                409,
+        if refusal is None:
+            active = ReaderAgentTemplate.objects.select_for_update().filter(
+                staff=staff, status__in=[ReaderAgentTemplate.Status.ACTIVE, ReaderAgentTemplate.Status.PENDING]
+            ).first()
+            if active is not None:
+                refusal = (
+                    "ALREADY_ENROLLED",
+                    "This staff member already has an enrolled fingerprint awaiting approval or in use. "
+                    "Revoke it first if the finger has changed.",
+                    409,
+                )
+
+        if refusal is not None:
+            _fail_session(session, refusal[0], refusal[1])
+            _close_event(agent=agent, nonce=nonce, outcome=refusal[0], staff=staff, session=session,
+                         detail={"error": refusal[1]})
+        else:
+            template = ReaderAgentTemplate.objects.create(
+                staff=staff,
+                finger_position=str(finger_position or "RIGHT_INDEX")[:20].upper(),
+                fmd=fmd_b64,
+                fmd_size=size,
+                views=int(views or 0),
+                enrolled_by_agent=agent,
+                requested_by=session.requested_by,
             )
+            result = {"template_id": template.pk, "staff_id": staff.pk, "staff_name": staff.full_name,
+                      "status": template.status}
+            session.status = ReaderAgentSession.Status.DONE
+            session.consumed_at = timezone.now()
+            session.result = result
+            session.save(update_fields=["status", "consumed_at", "result", "updated_at"])
+            _close_event(agent=agent, nonce=nonce, outcome="ENROLLED", staff=staff, session=session,
+                         detail={"template_id": template.pk})
+            log_action(actor=session.requested_by, action="READER_AGENT_ENROLLMENT_CAPTURED",
+                       instance=template, metadata={"agent": agent.reference, "staff_id": staff.pk})
 
-        template = ReaderAgentTemplate.objects.create(
-            staff=staff,
-            finger_position=str(finger_position or "RIGHT_INDEX")[:20].upper(),
-            fmd=fmd_b64,
-            fmd_size=size,
-            views=int(views or 0),
-            enrolled_by_agent=agent,
-            requested_by=session.requested_by,
-        )
-        result = {"template_id": template.pk, "staff_id": staff.pk, "staff_name": staff.full_name,
-                  "status": template.status}
-        session.status = ReaderAgentSession.Status.DONE
-        session.consumed_at = timezone.now()
-        session.result = result
-        session.save(update_fields=["status", "consumed_at", "result", "updated_at"])
-        _close_event(agent=agent, nonce=nonce, outcome="ENROLLED", staff=staff, session=session,
-                     detail={"template_id": template.pk})
-        log_action(actor=session.requested_by, action="READER_AGENT_ENROLLMENT_CAPTURED",
-                   instance=template, metadata={"agent": agent.reference, "staff_id": staff.pk})
+    if refusal is not None:
+        raise AgentAuthError(refusal[0], refusal[1], refusal[2])
     return result
 
 
@@ -779,6 +881,29 @@ def reject_template(*, template: ReaderAgentTemplate, approver: User) -> ReaderA
         locked.save(update_fields=["status", "fmd", "decided_by", "decided_at", "decision_note", "updated_at"])
     log_action(actor=approver, action="READER_AGENT_ENROLLMENT_REJECTED", instance=locked,
                metadata={"staff_id": locked.staff_id})
+    return locked
+
+
+def revoke_template(*, template: ReaderAgentTemplate, actor: User, reason: str = "") -> ReaderAgentTemplate:
+    if not (has_capability(actor, "attendance.manage") or has_capability(actor, "staff.manage")):
+        raise PermissionDenied("Revoking a fingerprint requires attendance or staff management rights.")
+    from . import fingerprint_service
+
+    with transaction.atomic():
+        locked = ReaderAgentTemplate.objects.select_for_update().select_related("staff").get(pk=template.pk)
+        if locked.status not in (ReaderAgentTemplate.Status.ACTIVE, ReaderAgentTemplate.Status.PENDING):
+            raise ValidationError({"status": "Only active or pending fingerprint enrolments can be revoked."})
+        locked.status = ReaderAgentTemplate.Status.REVOKED
+        locked.fmd = ""
+        locked.decided_by = actor
+        locked.decided_at = timezone.now()
+        locked.decision_note = str(reason or "Revoked by management")[:200]
+        locked.save(update_fields=["status", "fmd", "decided_by", "decided_at", "decision_note", "updated_at"])
+        fingerprint_service.revoke_workstation_credentials_on_clock_out(
+            staff=locked.staff, reason="BIOMETRIC_REVOKED",
+        )
+    log_action(actor=actor, action="READER_AGENT_ENROLLMENT_REVOKED", instance=locked,
+               metadata={"staff_id": locked.staff_id, "reason": locked.decision_note})
     return locked
 
 

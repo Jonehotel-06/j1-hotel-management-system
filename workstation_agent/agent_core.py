@@ -43,7 +43,23 @@ STATE_BUSY = "busy"
 STATE_ERROR = "error"
 
 CAPTURE_BUDGET_SECONDS = 20
-ENROLL_IMPRESSIONS = 3
+ENROLL_IMPRESSIONS = 4
+MAX_ENROLL_IMPRESSIONS = 6
+GALLERY_SYNC_TTL_SECONDS = 15
+
+FINGER_POSITIONS: dict[str, int] = {
+    "UNKNOWN": 0,
+    "RIGHT_THUMB": 1,
+    "RIGHT_INDEX": 2,
+    "RIGHT_MIDDLE": 3,
+    "RIGHT_RING": 4,
+    "RIGHT_LITTLE": 5,
+    "LEFT_THUMB": 6,
+    "LEFT_INDEX": 7,
+    "LEFT_MIDDLE": 8,
+    "LEFT_RING": 9,
+    "LEFT_LITTLE": 10,
+}
 
 
 class AgentError(Exception):
@@ -152,6 +168,9 @@ class ReaderAgentCore:
         self._detail = ""
         self._device = None
         self._cached_gallery: dict | None = None
+        self._gallery_synced_at: float = 0.0
+        self._server_gallery_etag: str = ""
+        self._server_match_threshold: int | None = None
 
     # -- configuration ------------------------------------------------------
     @property
@@ -170,6 +189,9 @@ class ReaderAgentCore:
             "workstation_reference": str(workstation_reference or ""),
         })
         self.store.save_config(config)
+        self._cached_gallery = None
+        self._gallery_synced_at = 0.0
+        self._server_gallery_etag = ""
         self.logger.info("Provisioned as %s for %s", config["reference"], config["api_base"])
         return config
 
@@ -197,21 +219,38 @@ class ReaderAgentCore:
         else:
             sdk = self._sdk_or_none()
             if sdk is not None:
+                if self._state != STATE_BUSY and hasattr(sdk, "refresh_status"):
+                    try:
+                        sdk.refresh_status()
+                    except Exception:
+                        pass
                 report = getattr(sdk, "report", None)
                 devices = getattr(report, "devices", []) if report is not None else []
                 if devices:
-                    if self._device is None:
+                    if self._device is None or getattr(self._device, "name", None) != getattr(devices[0], "name", None):
                         try:
                             self._device = devices[0]
                         except Exception:  # pragma: no cover
                             self._device = None
-                    self._set_state(STATE_READY, getattr(report, "detail", "") or "Reader ready.")
+                    if self._state != STATE_BUSY:
+                        self._set_state(STATE_READY, getattr(report, "detail", "") or "Reader ready.")
                 else:
+                    if self._device is not None:
+                        try:
+                            sdk.close()
+                        except Exception:
+                            pass
+                        self._device = None
                     mode = getattr(report, "driver_mode", "UNKNOWN") if report is not None else "UNKNOWN"
-                    if mode == "WBF" or getattr(report, "usb_present", False):
+                    if mode == "WBF" or (getattr(report, "usb_present", False) and not getattr(report, "service_running", True)):
                         self._set_state(
                             STATE_DRIVER_MODE_MISMATCH,
                             getattr(report, "detail", "") or "The reader is bound to a driver the SDK cannot use.",
+                        )
+                    elif getattr(report, "usb_present", False):
+                        self._set_state(
+                            STATE_DRIVER_MODE_MISMATCH,
+                            getattr(report, "detail", "") or "The reader is plugged in but the DigitalPersona driver did not expose it.",
                         )
                     else:
                         self._set_state(STATE_NOT_CONNECTED, getattr(report, "detail", "") or "Reader not connected.")
@@ -344,17 +383,52 @@ class ReaderAgentCore:
             "python": _python_version(),
             "hostname": _hostname(),
         })
-        return self.call("HEARTBEAT", "/api/admin/staff-operations/reader-agent/agent/heartbeat/", {"state": state})
+        data = self.call("HEARTBEAT", "/api/admin/staff-operations/reader-agent/agent/heartbeat/", {"state": state})
+        if isinstance(data, dict):
+            if data.get("gallery_etag"):
+                self._server_gallery_etag = str(data["gallery_etag"])
+            if data.get("match_threshold"):
+                try:
+                    self._server_match_threshold = int(data["match_threshold"])
+                except (TypeError, ValueError):
+                    pass
+        return data
+
+    def report_session_failure(self, *, session_token: str, code: str, message: str) -> dict | None:
+        """Best-effort signed report so the browser stops waiting immediately on local/hardware errors."""
+        if not session_token or not self.is_provisioned():
+            return None
+        payload = {
+            "session_token": str(session_token),
+            "error_code": str(code or "AGENT_ERROR")[:64],
+            "error_message": str(message or "Fingerprint action failed.")[:500],
+            "device_state": self.device_state(),
+        }
+        try:
+            return self.call("SESSION_FAIL", "/api/admin/staff-operations/reader-agent/agent/session-fail/", payload)
+        except Exception as exc:
+            self.logger.debug("Could not report session failure: %s", exc)
+            return None
 
     def sync_gallery(self, *, force: bool = False) -> dict:
         cached = self._cached_gallery or self.store.load_gallery()
-        if cached.get("templates") and not force:
+        now = self.clock()
+        etag_matches = (not self._server_gallery_etag) or (cached.get("etag") == self._server_gallery_etag)
+        if not force and cached.get("templates") and etag_matches and (now - self._gallery_synced_at) < GALLERY_SYNC_TTL_SECONDS:
             self._cached_gallery = cached
             return cached
-        data = self.call("GALLERY", "/api/admin/staff-operations/reader-agent/agent/gallery/", {})
+        payload = {"etag": cached.get("etag", "")} if cached.get("etag") and cached.get("templates") and not force else {}
+        data = self.call("GALLERY", "/api/admin/staff-operations/reader-agent/agent/gallery/", payload)
+        if data.get("unchanged") and cached.get("templates"):
+            self._gallery_synced_at = self.clock()
+            self._server_gallery_etag = str(data.get("etag") or cached.get("etag") or "")
+            self._cached_gallery = cached
+            return cached
         gallery = {"etag": data.get("etag", ""), "templates": data.get("templates", [])}
         self.store.save_gallery(gallery)
         self._cached_gallery = gallery
+        self._gallery_synced_at = self.clock()
+        self._server_gallery_etag = str(gallery["etag"] or "")
         self.logger.info("Gallery synced: %d enrolled template(s)", len(gallery["templates"]))
         return gallery
 
@@ -367,11 +441,14 @@ class ReaderAgentCore:
             try:
                 capture = sdk.capture(timeout_ms=int(min(8000, max(2000, (deadline - self.clock()) * 1000))))
                 return sdk.fmd_from_capture(capture, finger_position)
+            except AgentError:
+                raise
             except Exception as exc:
                 last_error = exc
-                if getattr(exc, "status", "") in {"capture_quality", "busy"}:
+                status = getattr(exc, "status", "")
+                if status in {"capture_quality", "busy"}:
                     continue
-                if getattr(exc, "status", "") == STATE_NOT_CONNECTED:
+                if status == STATE_NOT_CONNECTED:
                     self._device = None
                     self._sdk = None
                     raise AgentError(
@@ -379,12 +456,32 @@ class ReaderAgentCore:
                         "The fingerprint reader was disconnected during the read.",
                         status=STATE_NOT_CONNECTED,
                     )
-                raise
+                raise AgentError(
+                    getattr(exc, "code", "CAPTURE_FAILED"),
+                    getattr(exc, "message", str(exc)),
+                    status=status or STATE_ERROR,
+                    retry=bool(getattr(exc, "retry", True)),
+                )
         raise AgentError(
             "CAPTURE_TIMEOUT",
             getattr(last_error, "message", "") or "No usable fingerprint was read in time.",
             status="capture_quality",
         )
+
+    def _wait_for_finger_lift(self, sdk: SdkLike, *, max_wait: float = 2.5) -> None:
+        """Pause briefly between enrolment impressions so stationary fingers don't duplicate."""
+        status_fn = getattr(sdk, "status", None)
+        if not callable(status_fn):
+            return
+        deadline = self.clock() + max_wait
+        while self.clock() < deadline:
+            try:
+                st = status_fn()
+                if not isinstance(st, dict) or not st.get("finger_detected"):
+                    return
+            except Exception:
+                return
+            time.sleep(0.15)
 
     def identify(self, *, session_token: str, action: str) -> dict:
         """Capture a finger, match it locally with dpfj_identify, tell the API."""
@@ -392,19 +489,32 @@ class ReaderAgentCore:
         gallery = self.sync_gallery()
         templates = gallery.get("templates", [])
         if not templates:
+            self._set_state(STATE_READY, "Reader ready.")
             raise AgentError(
                 "NO_ENROLLED_STAFF",
                 "No staff member has an approved fingerprint on this system yet, so there is nothing to match.",
                 retry=False,
             )
         config = self.config
-        threshold = int(config.get("match_threshold") or 2_147_483)
+        threshold = int(self._server_match_threshold or config.get("match_threshold") or 2_147_483)
 
-        probe = self._capture_fmd(sdk)
-        self._set_state(STATE_BUSY, "Comparing fingerprint…")
-        rows = [(index, _b64decode(row.get("fmd", ""))) for index, row in enumerate(templates)]
-        rows = [(index, fmd) for index, fmd in rows if fmd]
-        matches = sdk.identify(probe, rows, threshold=threshold, max_candidates=5) if rows else []
+        try:
+            probe = self._capture_fmd(sdk)
+            self._set_state(STATE_BUSY, "Comparing fingerprint…")
+            rows = [(index, _b64decode(row.get("fmd", ""))) for index, row in enumerate(templates)]
+            rows = [(index, fmd) for index, fmd in rows if fmd]
+            matches = sdk.identify(probe, rows, threshold=threshold, max_candidates=5) if rows else []
+        except AgentError:
+            if self._sdk is not None:
+                self._set_state(STATE_READY, "Reader ready.")
+            raise
+        except Exception as exc:
+            self._set_state(STATE_READY, "Reader ready.")
+            raise AgentError(
+                getattr(exc, "code", "IDENTIFY_FAILED"),
+                getattr(exc, "message", str(exc)),
+                status=getattr(exc, "status", STATE_ERROR),
+            )
         candidates = [
             {
                 "staff_id": templates[index].get("staff_id"),
@@ -414,6 +524,7 @@ class ReaderAgentCore:
             for index, score in matches
         ]
         self.logger.info("Identify produced %d candidate(s)", len(candidates))
+        self._set_state(STATE_READY, "Reader ready.")
         payload = {
             "session_token": session_token,
             "candidates": candidates,
@@ -432,25 +543,75 @@ class ReaderAgentCore:
     def enroll(self, *, session_token: str, staff_id: int, finger_position: str = "RIGHT_INDEX",
                impressions: int = ENROLL_IMPRESSIONS) -> dict:
         sdk = self.ensure_ready()
-        position = {"RIGHT_INDEX": 2, "RIGHT_THUMB": 1, "LEFT_INDEX": 7, "LEFT_THUMB": 6}.get(
-            str(finger_position or "").upper(), 2
+        norm_pos = str(finger_position or "RIGHT_INDEX").upper()
+        position = FINGER_POSITIONS.get(norm_pos, 2)
+        incremental = (
+            hasattr(sdk, "start_enrollment")
+            and hasattr(sdk, "add_to_enrollment")
+            and hasattr(sdk, "create_enrollment_fmd")
+            and hasattr(sdk, "finish_enrollment")
         )
-        fmds = []
-        for index in range(impressions):
-            self.logger.info("Enrolment impression %d/%d", index + 1, impressions)
-            fmds.append(self._capture_fmd(sdk, finger_position=position))
-        self._set_state(STATE_BUSY, "Building enrolment template…")
-        enrollment = sdk.enrollment_fmd(fmds)
+        views = 0
+        try:
+            if incremental:
+                sdk.start_enrollment()
+                try:
+                    ready = False
+                    limit = max(int(impressions or ENROLL_IMPRESSIONS), MAX_ENROLL_IMPRESSIONS)
+                    for index in range(limit):
+                        if index > 0:
+                            self._wait_for_finger_lift(sdk)
+                        self.logger.info("Enrolment impression %d (max %d)", index + 1, limit)
+                        fmd = self._capture_fmd(sdk, finger_position=position)
+                        self._set_state(STATE_BUSY, "Building enrolment template…")
+                        state = sdk.add_to_enrollment(fmd)
+                        views += 1
+                        if state == "ready":
+                            ready = True
+                            break
+                    if not ready:
+                        raise AgentError(
+                            "ENROLL_NOT_READY",
+                            "More consistent scans of the same finger are needed for enrolment. Try again.",
+                        )
+                    enrollment = sdk.create_enrollment_fmd()
+                finally:
+                    sdk.finish_enrollment()
+            else:
+                fmds = []
+                for index in range(impressions):
+                    if index > 0:
+                        self._wait_for_finger_lift(sdk)
+                    self.logger.info("Enrolment impression %d/%d", index + 1, impressions)
+                    fmds.append(self._capture_fmd(sdk, finger_position=position))
+                self._set_state(STATE_BUSY, "Building enrolment template…")
+                enrollment = sdk.enrollment_fmd(fmds)
+                views = len(fmds)
+        except AgentError:
+            if self._sdk is not None:
+                self._set_state(STATE_READY, "Reader ready.")
+            raise
+        except Exception as exc:
+            self._set_state(STATE_READY, "Reader ready.")
+            raise AgentError(
+                getattr(exc, "code", "ENROLL_FAILED"),
+                getattr(exc, "message", str(exc)),
+                status=getattr(exc, "status", STATE_ERROR),
+            )
         payload = {
             "session_token": session_token,
             "staff_id": staff_id,
-            "finger_position": str(finger_position or "RIGHT_INDEX").upper(),
+            "finger_position": norm_pos,
             "fmd": _b64encode(enrollment),
-            "views": len(fmds),
+            "views": views,
         }
-        result = self.call("ENROLL", "/api/admin/staff-operations/reader-agent/agent/enroll/", payload)
-        self._set_state(STATE_READY, "Fingerprint captured for enrolment.")
-        return result
+        try:
+            result = self.call("ENROLL", "/api/admin/staff-operations/reader-agent/agent/enroll/", payload)
+            self._set_state(STATE_READY, "Fingerprint captured for enrolment.")
+            return result
+        except AgentError:
+            self._set_state(STATE_READY, "Enrolment could not be saved.")
+            raise
 
     def close(self) -> None:
         if self._sdk is not None:

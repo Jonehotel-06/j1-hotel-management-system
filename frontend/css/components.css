@@ -747,3 +747,30 @@ body.modal-open { overflow: hidden; }
   .site-header { padding-top: env(safe-area-inset-top); }
   body { padding-bottom: env(safe-area-inset-bottom); }
 }
+
+/* --------------------- Fingerprint Reader Agent panel ------------------- */
+.reader-agent-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  margin-bottom: 0.35rem;
+}
+.reader-agent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.6rem 0;
+}
+.reader-agent-finger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.35rem 0;
+}
+.reader-agent-code {
+  background: var(--color-surface-alt);
+}
+

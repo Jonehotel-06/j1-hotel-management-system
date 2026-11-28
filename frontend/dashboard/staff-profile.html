@@ -11,7 +11,7 @@
 <title>Staff Profile | J-ONE Staff</title>
 <meta name="theme-color" content="#373435">
 <link rel="icon" href="../favicon/favicon-32.png" sizes="32x32">
-<link rel="stylesheet" href="../css/main.css?v=1.1.37">
+<link rel="stylesheet" href="../css/main.css?v=1.1.38">
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <meta name="application-name" content="J-ONE Staff">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -153,6 +153,7 @@
              computer; no biometric data and no synthetic probe passes through
              the browser. -->
         <div class="panel-body" id="sp-reader-agent"></div>
+        <div class="panel-body" id="sp-reader-queue" style="padding-top:0;"></div>
         <div class="panel-body" id="sp-biometrics-summary"></div>
         <div class="panel-body no-pad">
           <div class="table-wrap"><table class="table">
@@ -251,18 +252,18 @@
     </main>
   </div>
 </div>
-<script src="../js/runtime-config.js?v=1.1.37"></script>
-<script src="../js/config.js?v=1.1.37"></script>
-<script src="../js/utils.js?v=1.1.37"></script>
-<script src="../js/icons.js?v=1.1.37"></script>
-<script src="../js/api.js?v=1.1.37"></script>
-<script src="../js/theme.js?v=1.1.37"></script>
-<script src="../js/ui.js?v=1.1.37"></script>
-<script src="../js/auth.js?v=1.1.37"></script>
-<script src="../js/navigation.js?v=1.1.37"></script>
-<script src="../js/dashboard.js?v=1.1.37"></script>
-<script src="../js/table-fit.js?v=1.1.37"></script>
-<script src="../js/reader-agent.js?v=1.1.37"></script>
+<script src="../js/runtime-config.js?v=1.1.38"></script>
+<script src="../js/config.js?v=1.1.38"></script>
+<script src="../js/utils.js?v=1.1.38"></script>
+<script src="../js/icons.js?v=1.1.38"></script>
+<script src="../js/api.js?v=1.1.38"></script>
+<script src="../js/theme.js?v=1.1.38"></script>
+<script src="../js/ui.js?v=1.1.38"></script>
+<script src="../js/auth.js?v=1.1.38"></script>
+<script src="../js/navigation.js?v=1.1.38"></script>
+<script src="../js/dashboard.js?v=1.1.38"></script>
+<script src="../js/table-fit.js?v=1.1.38"></script>
+<script src="../js/reader-agent.js?v=1.1.38"></script>
 <script>
 JONE.ui.initChrome();
 var __spAllowed = JONE.dashboard.boot(["admin", "general_manager", "procurement_officer"]);
@@ -642,6 +643,7 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
       await window.API.post(ep, { action: "revoke", note: "Revoked from Staff Profile" });
       JONE.ui.toast("Fingerprint template revoked.", "success");
       loadFullProfile();
+      document.dispatchEvent(new CustomEvent("jone:reader-queue-refresh"));
     } catch (err) {
       JONE.ui.toast((err && err.message) || "Could not revoke fingerprint.", "error");
     }
@@ -858,12 +860,14 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
     });
   });
 
+  window.JONE = window.JONE || {};
+  window.JONE.refreshStaffProfile = loadFullProfile;
   loadFullProfile();
 })();
 </script>
-<script src="../js/pwa.js?v=1.1.37"></script>
-<script src="../js/version.js?v=1.1.37"></script>
-<script src="../js/update-checker.js?v=1.1.37"></script>
+<script src="../js/pwa.js?v=1.1.38"></script>
+<script src="../js/version.js?v=1.1.38"></script>
+<script src="../js/update-checker.js?v=1.1.38"></script>
 <script>
 /* Mount the J-ONE Reader Agent panel for the staff member shown on this page.
    Enrolment is initiated here; the finger is read by the agent on this PC and
@@ -881,11 +885,29 @@ document.querySelector("[data-logout]") && document.querySelector("[data-logout]
     var user = state.user || state.profile || null;
     return user ? (user.id || user.user_id || null) : null;
   }
+  function refreshProfileSummary() {
+    if (window.JONE && typeof window.JONE.refreshStaffProfile === "function") {
+      window.JONE.refreshStaffProfile();
+    }
+  }
+  var queueHost = document.getElementById("sp-reader-queue");
+  var queueApi = (queueHost && window.JONE.readerAgent.mountQueue)
+    ? window.JONE.readerAgent.mountQueue(queueHost, {
+        staffId: staffId(),
+        onChanged: refreshProfileSummary
+      })
+    : null;
+  if (queueApi && queueApi.refresh) {
+    document.addEventListener("jone:reader-queue-refresh", function () { queueApi.refresh(); });
+  }
   window.JONE.readerAgent.mount(host, {
     actions: ["CLOCK_IN", "CLOCK_OUT"],
     allowEnroll: true,
     enrollStaffId: staffId,
-    fingerPosition: function () { return "RIGHT_INDEX"; }
+    onSuccess: function () {
+      if (queueApi && queueApi.refresh) queueApi.refresh();
+      refreshProfileSummary();
+    }
   });
 })();
 </script>

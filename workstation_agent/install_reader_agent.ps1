@@ -70,6 +70,12 @@ $pythonw = Join-Path (Split-Path -Parent $Python) "pythonw.exe"
 if (-not (Test-Path $pythonw)) { $pythonw = $Python }
 
 # ---------------------------------------------------------------- files -----
+Write-Step "Stopping any previous J-ONE Reader Agent process"
+Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*jone_reader_agent.py*" } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Milliseconds 300
+
 Write-Step "Installing agent files to $appDir"
 New-Item -ItemType Directory -Force -Path $appDir | Out-Null
 foreach ($file in @("jone_reader_agent.py", "agent_core.py", "agent_store.py", "dp_sdk.py")) {
@@ -137,6 +143,13 @@ if ($ProvisionPayload) {
 # ---------------------------------------------------------------- verify ----
 Write-Step "Checking the reader, the driver mode and the SDK"
 & $Python $entry --diagnose
+
+if (-not $NoAutoStart) {
+    Write-Step "Starting the background reader agent now"
+    Start-Process -FilePath $pythonw -ArgumentList ('"{0}" --run' -f $entry) -WorkingDirectory $appDir -WindowStyle Hidden
+    Write-Ok "Reader agent is running in the background"
+}
+
 Write-Host ""
 Write-Host "NEXT STEP (once):" -ForegroundColor Cyan
 Write-Host "  Open the J-ONE dashboard on this computer (Workforce > Fingerprint reader)"

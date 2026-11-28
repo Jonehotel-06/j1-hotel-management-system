@@ -20,6 +20,7 @@ Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" 
 Remove-Item -Path "HKCU:\Software\Classes\jone-reader" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "JONE-Reader-Agent" -ErrorAction SilentlyContinue
 Remove-Item -Path (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\J-ONE Fingerprint Reader.lnk") -Force -ErrorAction SilentlyContinue
+Remove-Item -Path (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\JONE-Reader-Agent.cmd") -Force -ErrorAction SilentlyContinue
 
 if (-not $KeepState) {
     Remove-Item -Path (Join-Path $env:LOCALAPPDATA "JONE\ReaderAgent") -Recurse -Force -ErrorAction SilentlyContinue

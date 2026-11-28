@@ -41,7 +41,7 @@
   /* Build stamp. It is rendered into the panel (data-jone-reader-agent-version)
      so "is the live page running this build?" is answerable from the screen
      itself, without devtools and without trusting a repository listing. */
-  var VERSION = "1.1.37";
+  var VERSION = "1.1.38";
 
   var ROUTES = {
     sessions: "/api/admin/staff-operations/reader-agent/sessions/",
@@ -50,6 +50,19 @@
     provision: "/api/admin/staff-operations/reader-agent/agents/provision/",
     templates: "/api/admin/staff-operations/reader-agent/templates/"
   };
+
+  var FINGER_POSITIONS = [
+    { value: "RIGHT_INDEX", label: "Right index finger" },
+    { value: "RIGHT_THUMB", label: "Right thumb" },
+    { value: "RIGHT_MIDDLE", label: "Right middle finger" },
+    { value: "RIGHT_RING", label: "Right ring finger" },
+    { value: "RIGHT_LITTLE", label: "Right little finger" },
+    { value: "LEFT_INDEX", label: "Left index finger" },
+    { value: "LEFT_THUMB", label: "Left thumb" },
+    { value: "LEFT_MIDDLE", label: "Left middle finger" },
+    { value: "LEFT_RING", label: "Left ring finger" },
+    { value: "LEFT_LITTLE", label: "Left little finger" }
+  ];
 
   var ACTIONS = {
     CLOCK_IN: { label: "Clock in with fingerprint", verb: "clock in" },
@@ -68,15 +81,19 @@
     },
     sdk_unavailable: {
       badge: "Reader software missing",
-      detail: "The DigitalPersona reader software (U.are.U SDK) is not installed on this computer. See the setup note in the fingerprint guide — this is a one-time installation, not a daily step."
+      detail: "The DigitalPersona reader software (U.are.U SDK) is not installed on this computer or does not match Python bitness. See the fingerprint setup guide."
     },
     driver_mode_mismatch: {
       badge: "Driver mode incompatible",
-      detail: "The reader is plugged in but Windows is using the Windows Hello (WBF) driver, which the reader software cannot use. Install the DigitalPersona 4500 legacy driver — one-time."
+      detail: "The reader is plugged in but Windows is using the Windows Hello (WBF) driver, which the reader software cannot use. Switch to the DigitalPersona 4500 legacy driver."
+    },
+    service_unavailable: {
+      badge: "Reader service stopped",
+      detail: "The DigitalPersona Authentication Service (DpHost) is not running on this computer. Start it from Windows Services (services.msc)."
     },
     not_connected: {
       badge: "Reader not connected",
-      detail: "No fingerprint reader is detected. Plug the DigitalPersona 4500 into this computer."
+      detail: "No fingerprint reader is detected. Plug the DigitalPersona 4500 firmly into a USB port on this computer."
     },
     initializing: {
       badge: "Starting reader",
@@ -92,7 +109,7 @@
     },
     agent_missing: {
       badge: "Reader agent not running",
-      detail: "The reader agent is not running on this computer. Press “Start reader agent” — Windows starts it automatically, there is nothing to type."
+      detail: "The reader agent is not running on this computer. Press “Start reader agent” — Windows starts it automatically."
     },
     offline: {
       badge: "No internet connection",
@@ -111,11 +128,25 @@
   var ERROR_TEXT = {
     NO_MATCH: "That fingerprint did not match any enrolled staff member. Try again, or ask a supervisor to check the enrolment.",
     STAFF_NOT_ELIGIBLE: "This staff member is not eligible to record attendance right now.",
+    STAFF_UNKNOWN: "This staff account could not be found.",
+    STAFF_MISMATCH: "The enrolment request was for a different staff member.",
     ATTENDANCE_REFUSED: "Attendance was refused by the attendance rules (for example, a clock-in already open).",
+    CODE_ISSUE_REFUSED: "A workstation code could not be issued for this staff member.",
     SESSION_EXPIRED: "No fingerprint was read in time. Press the button again.",
     SESSION_ALREADY_USED: "This request was already answered. Start the action again.",
-    NO_ENROLLED_STAFF: "No staff member has an approved fingerprint yet.",
-    ALREADY_ENROLLED: "This staff member already has an enrolled fingerprint.",
+    NO_ENROLLED_STAFF: "No staff member has an approved fingerprint yet. Enrol and approve a fingerprint first.",
+    ALREADY_ENROLLED: "This staff member already has an active or pending fingerprint. Revoke it first if replacing their finger.",
+    READER_NOT_CONNECTED: "No DigitalPersona 4500 reader was detected. Check the USB cable and try again.",
+    DRIVER_MODE_MISMATCH: "The reader is using the Windows Hello (WBF) driver instead of the DigitalPersona legacy driver.",
+    SDK_UNAVAILABLE: "The DigitalPersona U.are.U SDK is missing or does not match Python bitness on this PC.",
+    SERVICE_UNAVAILABLE: "The DigitalPersona Authentication Service (DpHost) is not running on this PC.",
+    CAPTURE_TIMEOUT: "Timed out waiting for a finger on the scanner. Try again.",
+    CAPTURE_QUALITY: "The fingerprint read was not clear enough. Wipe the glass gently and press the finger flat.",
+    READER_DISCONNECTED: "The reader was unplugged during the scan. Reconnect it and try again.",
+    READER_BUSY: "The reader is busy with another scan. Wait a moment and try again.",
+    ENROLL_NOT_READY: "The four scans did not combine cleanly. Keep the same finger flat on each prompt.",
+    ENROLL_FAILED: "The enrolment capture failed on the reader. Try again.",
+    AGENT_NOT_PROVISIONED: "This computer's reader agent is not set up yet. Press “Set up fingerprint reader on this computer”.",
     AGENT_UNKNOWN: "This computer's reader agent is not recognised by the server any more. Set it up again.",
     AGENT_SIGNATURE_INVALID: "This computer's reader agent key is not valid. Set it up again.",
     AGENT_TIMESTAMP_STALE: "This computer's clock is too far from the server time. Correct the Windows date/time and retry.",
@@ -223,22 +254,53 @@
     var pollTimer = null;
     var startedAt = 0;
     var setupStatus = null;   /* last /agents/setup-status/ answer for this account */
+    var currentAgent = null;  /* currently matched ReaderAgent row */
+    var lastAgents = [];      /* cached list from /agents/ for workstation-aware picking */
     var codeBox = null;       /* the issued 6-digit code, when one was issued */
+
+    var revokeButton = el("button", "btn btn-sm btn-outline", "Remove offline reader agent");
+    revokeButton.type = "button";
+    revokeButton.hidden = true;
+
+    var fingerSelect = null;
+    if (allowEnroll && !options.fingerPosition) {
+      fingerSelect = el("select", "select");
+      fingerSelect.style.maxWidth = "210px";
+      fingerSelect.setAttribute("aria-label", "Finger position for enrolment");
+      FINGER_POSITIONS.forEach(function (fp) {
+        var opt = doc.createElement("option");
+        opt.value = fp.value;
+        opt.textContent = fp.label;
+        fingerSelect.appendChild(opt);
+      });
+    }
 
     host.appendChild(head);
     host.appendChild(detail);
+    if (fingerSelect) {
+      var fingerRow = el("div", "reader-agent-finger");
+      fingerRow.style.marginBottom = "0.5rem";
+      var fingerLabel = el("label", "caption muted", "Finger to enrol: ");
+      fingerRow.appendChild(fingerLabel);
+      fingerRow.appendChild(fingerSelect);
+      host.appendChild(fingerRow);
+    }
     host.appendChild(actions);
     host.appendChild(setupButton);
     host.appendChild(startButton);
     host.appendChild(rekeyButton);
+    host.appendChild(revokeButton);
 
     function say(state, override) {
       var text = STATE_TEXT[state] || STATE_TEXT.not_connected;
       badge.textContent = (override && override.badge) || text.badge;
-      badge.className = "badge " + (state === "ready" ? "badge" :
-        state === "success" ? "badge" :
-        (state === "reading" || state === "waiting_finger" || state === "initializing") ? "badge badge-muted" :
-        "badge badge-warning");
+      var badgeTone = "badge-warning";
+      if (state === "ready" || state === "success") badgeTone = "badge-success";
+      else if (state === "reading" || state === "waiting_finger" || state === "initializing") badgeTone = "badge-info";
+      else if (state === "failed" || state === "offline" || state === "backend_unavailable" ||
+               state === "driver_mode_mismatch" || state === "sdk_unavailable" ||
+               state === "service_unavailable" || state === "agent_missing") badgeTone = "badge-danger";
+      badge.className = "badge " + badgeTone;
       detail.textContent = (override && override.detail) || text.detail;
       host.setAttribute("data-state", state);
     }
@@ -251,6 +313,38 @@
       });
       setupButton.disabled = disabled;
       startButton.disabled = disabled;
+      rekeyButton.disabled = disabled;
+      revokeButton.disabled = disabled;
+      if (fingerSelect) fingerSelect.disabled = disabled;
+    }
+
+    function preferredWorkstationRef() {
+      var client = api();
+      var fromBrowser = client && client.getWorkstationReference && client.getWorkstationReference();
+      if (fromBrowser) return String(fromBrowser).trim();
+      if (setupStatus && setupStatus.workstation_reference) return String(setupStatus.workstation_reference).trim();
+      if (currentAgent && currentAgent.workstation_reference) return String(currentAgent.workstation_reference).trim();
+      return "";
+    }
+
+    function pickAgent(agents) {
+      if (!Array.isArray(agents) || !agents.length) return null;
+      var targetRef = setupStatus && setupStatus.agent && setupStatus.agent.reference;
+      if (targetRef) {
+        var exact = agents.find(function (a) { return a && a.reference === targetRef; });
+        if (exact) return exact;
+      }
+      var client = api();
+      var wsRef = (client && client.getWorkstationReference && client.getWorkstationReference()) ||
+        (setupStatus && setupStatus.workstation_reference) || "";
+      if (wsRef) {
+        var byWsOnline = agents.find(function (a) { return a && a.workstation_reference === wsRef && a.online; });
+        if (byWsOnline) return byWsOnline;
+        var byWs = agents.find(function (a) { return a && a.workstation_reference === wsRef; });
+        if (byWs) return byWs;
+      }
+      var anyOnline = agents.find(function (a) { return a && a.online; });
+      return anyOnline || agents[0] || null;
     }
 
     function stopPolling() {
@@ -261,46 +355,59 @@
     }
 
     /* ---------------------------------------------------------- agent status */
-    async function refreshAgent() {
+    function renderAgentState(live) {
+      currentAgent = live || null;
+      if (!live) {
+        say("not_provisioned");
+        renderSetupAffordance();
+        startButton.hidden = true;
+        revokeButton.hidden = true;
+        return null;
+      }
+      if (!live.online) {
+        say("agent_missing");
+        renderSetupAffordance();
+        startButton.hidden = false;
+        revokeButton.hidden = !(setupStatus && setupStatus.can_provision && live.reference);
+        return live;
+      }
+      startButton.hidden = true;
+      revokeButton.hidden = true;
+      renderSetupAffordance();
+      var status = String(live.device_status || "").toLowerCase();
+      if (live.driver_mode === "WBF") {
+        say("driver_mode_mismatch", { badge: "Driver mode incompatible", detail: STATE_TEXT.driver_mode_mismatch.detail });
+      } else if (status === "ready" || status === "connected") {
+        say("ready", { badge: "Reader ready", detail: STATE_TEXT.ready.detail + (live.device_serial ? " (serial " + live.device_serial + ")" : "") });
+      } else if (status === "driver_mode_mismatch") {
+        say("driver_mode_mismatch");
+      } else if (status === "sdk_unavailable") {
+        say("sdk_unavailable", { badge: STATE_TEXT.sdk_unavailable.badge, detail: live.detail || STATE_TEXT.sdk_unavailable.detail });
+      } else if (status === "service_unavailable") {
+        say("service_unavailable", { badge: STATE_TEXT.service_unavailable.badge, detail: live.detail || STATE_TEXT.service_unavailable.detail });
+      } else if (status === "busy") {
+        say("busy");
+      } else if (status === "initializing") {
+        say("initializing");
+      } else {
+        say("not_connected", { badge: STATE_TEXT.not_connected.badge, detail: live.detail || STATE_TEXT.not_connected.detail });
+      }
+      return live;
+    }
+
+    async function refreshAgent(opts) {
+      opts = opts || {};
       var client = api();
       if (!client) return null;
       try {
         var response = await client.get(ROUTES.agents, { cache: "no-store" });
-        var agents = (response && response.data) || [];
-        var live = agents[0] || null;
-        if (!live) {
-          say("not_provisioned");
-          renderSetupAffordance();
-          startButton.hidden = true;
-          return null;
-        }
-        if (!live.online) {
-          say("agent_missing");
-          renderSetupAffordance();
-          startButton.hidden = false;
-          return live;
-        }
-        startButton.hidden = true;
-        renderSetupAffordance();
-        var status = String(live.device_status || "").toLowerCase();
-        if (live.driver_mode === "WBF") {
-          say("driver_mode_mismatch", { badge: "Driver mode incompatible", detail: STATE_TEXT.driver_mode_mismatch.detail });
-        } else if (status === "ready" || status === "connected") {
-          say("ready", { badge: "Reader ready", detail: STATE_TEXT.ready.detail + (live.device_serial ? " (serial " + live.device_serial + ")" : "") });
-        } else if (status === "driver_mode_mismatch") {
-          say("driver_mode_mismatch");
-        } else if (status === "sdk_unavailable") {
-          say("sdk_unavailable");
-        } else if (status === "busy") {
-          say("busy");
-        } else if (status === "initializing") {
-          say("initializing");
-        } else {
-          say("not_connected", { badge: STATE_TEXT.not_connected.badge, detail: live.detail || STATE_TEXT.not_connected.detail });
-        }
-        return live;
+        lastAgents = (response && response.data) || [];
+        var live = pickAgent(lastAgents);
+        currentAgent = live || null;
+        if (opts.silent) return live;
+        return renderAgentState(live);
       } catch (err) {
-        say("backend_unavailable");
+        if (!opts.silent) say("backend_unavailable");
         return null;
       }
     }
@@ -320,17 +427,27 @@
       } catch (err) {
         setupStatus = null;
       }
+      if (lastAgents.length) {
+        currentAgent = pickAgent(lastAgents);
+      }
       renderSetupAffordance();
       return setupStatus;
     }
 
     function renderSetupAffordance() {
+      if (!allowSetup) {
+        setupButton.hidden = true;
+        rekeyButton.hidden = true;
+        revokeButton.hidden = true;
+        return;
+      }
       /* No answer from the API yet: show the setup control and let the server
          refuse it. Claiming "a manager must do this" without evidence would be
          the same guess the old screen made. */
       if (!setupStatus || typeof setupStatus.can_provision !== "boolean") {
         setupButton.hidden = false;
         rekeyButton.hidden = true;
+        revokeButton.hidden = true;
         return;
       }
       var canProvision = !!setupStatus.can_provision;
@@ -340,9 +457,11 @@
            it. Re-keying is a deliberate act, only for a replaced machine. */
         setupButton.hidden = true;
         rekeyButton.hidden = !canProvision;
+        revokeButton.hidden = !(canProvision && currentAgent && !currentAgent.online && currentAgent.reference);
         return;
       }
       rekeyButton.hidden = true;
+      revokeButton.hidden = true;
       if (canProvision) {
         setupButton.hidden = false;
         setupButton.textContent = "Set up fingerprint reader on this computer";
@@ -361,28 +480,24 @@
     }
 
     /* ------------------------------------------------------------- polling */
-    async function poll(token, action) {
+    async function poll(token, action, wasOnline) {
       var client = api();
       var deadline = startedAt + 150000; /* the API session itself expires in 120 s */
       var ticks = 0;
+      var startupCheckTick = wasOnline === false ? 10 : 6;
       pollTimer = window.setInterval(async function () {
         if (!client) return;
         ticks += 1;
-        /* Repair (2026-11-26): a hand-off that never launched the agent used to
-           be indistinguishable from a slow finger, and the operator waited for
-           the full timeout to be told the wrong thing. The server knows whether
-           any agent has a live heartbeat, so ask it once, early, and say which
-           of the two situations this is. */
-        if (ticks === 3) {
-          var agent = await refreshAgent();
+        if (ticks === startupCheckTick) {
+          var agent = await refreshAgent({ silent: true });
           if (!agent || agent.online !== true) {
             stopPolling();
             setDisabled(false);
+            startButton.hidden = false;
             say("agent_missing", {
               badge: "Reader agent did not start",
-              detail: "Windows did not start the J-ONE reader agent on this computer, so no fingerprint could be read. " +
-                "Press “Start reader agent”; if that does not help, the agent has not been installed on this PC yet " +
-                "(one-time install — see the fingerprint setup guide). The request above has not been used."
+              detail: "Windows did not start the J-ONE reader agent on this computer in time, so no fingerprint could be read. " +
+                "Press “Start reader agent”; if it does not come online, install or re-run the reader agent installer on this PC once."
             });
             return;
           }
@@ -399,10 +514,12 @@
           var status = String(data.status || "").toUpperCase();
           if (status === "PENDING") {
             say("waiting_finger", {
-              badge: ticks < 3 ? "Waiting for fingerprint" : "Reading fingerprint",
-              detail: "Place the staff member's finger flat on the DigitalPersona 4500 sensor and hold it still."
+              badge: action === "ENROLL" ? "Enrolling fingerprint" : (ticks < 3 ? "Waiting for fingerprint" : "Reading fingerprint"),
+              detail: action === "ENROLL"
+                ? "Place the same finger flat on the sensor four times when prompted, lifting briefly between touches."
+                : "Place the staff member's finger flat on the DigitalPersona 4500 sensor and hold it still."
             });
-            if (ticks % 4 === 0) refreshAgent();
+            if (ticks % 10 === 0) refreshAgent({ silent: true });
             return;
           }
           stopPolling();
@@ -412,16 +529,21 @@
             var who = result.staff_name || data.staff_name || "staff member";
             var extra = result.attendance_reference ? " Attendance " + result.attendance_reference + " recorded." : "";
             if (result.access_code) showCode(result.access_code, result.code_expires_at);
+            var okDetail = action === "ENROLL"
+              ? (who + "'s fingerprint was captured and queued for a supervisor's approval.")
+              : (who + " verified for " + (ACTIONS[action] ? ACTIONS[action].verb : "attendance") + "." + extra);
             say("success", {
-              badge: "Fingerprint verified",
-              detail: who + " verified for " + (ACTIONS[action] ? ACTIONS[action].verb : "attendance") + "." + extra
+              badge: action === "ENROLL" ? "Enrolment captured" : "Fingerprint verified",
+              detail: okDetail
             });
+            refreshAgent({ silent: true });
             if (typeof options.onSuccess === "function") options.onSuccess(result, action);
           } else if (status === "FAILED") {
             say("failed", {
               badge: "Fingerprint not accepted",
               detail: ERROR_TEXT[data.error_code] || data.error_message || "The fingerprint was not accepted."
             });
+            refreshAgent({ silent: true });
             if (typeof options.onFailure === "function") options.onFailure(data);
           } else {
             say("failed", { badge: "Reader request expired", detail: ERROR_TEXT.SESSION_EXPIRED });
@@ -476,10 +598,14 @@
       setDisabled(true);
       say("initializing", { badge: "Starting", detail: "Preparing the fingerprint request…" });
       try {
-        var response = await client.post(ROUTES.sessions, {
+        var payload = {
           action: action,
-          workstation_reference: (client.getWorkstationReference && client.getWorkstationReference()) || ""
-        });
+          workstation_reference: preferredWorkstationRef()
+        };
+        if (currentAgent && currentAgent.reference) {
+          payload.agent_reference = currentAgent.reference;
+        }
+        var response = await client.post(ROUTES.sessions, payload);
         var data = (response && response.data) || {};
         sessionToken = data.session_token || "";
         startedAt = Date.now();
@@ -501,7 +627,7 @@
             detail: "Place the staff member's finger flat on the DigitalPersona 4500 sensor and hold it still."
           });
         }
-        poll(sessionToken, action);
+        poll(sessionToken, action, !!data.agent_online);
         return data;
       } catch (err) {
         setDisabled(false);
@@ -519,33 +645,71 @@
       if (busy || !staffId) return null;
       var client = api();
       if (!client) return null;
+      var chosenFinger = fingerPosition || (fingerSelect && fingerSelect.value) || "RIGHT_INDEX";
       setDisabled(true);
       say("initializing", { badge: "Starting enrolment", detail: "Preparing the enrolment request…" });
       try {
-        var response = await client.post(ROUTES.sessions, {
+        var payload = {
           action: "ENROLL",
           staff_id: staffId,
-          finger_position: fingerPosition || "RIGHT_INDEX",
-          workstation_reference: (client.getWorkstationReference && client.getWorkstationReference()) || ""
-        });
+          finger_position: chosenFinger,
+          workstation_reference: preferredWorkstationRef()
+        };
+        if (currentAgent && currentAgent.reference) {
+          payload.agent_reference = currentAgent.reference;
+        }
+        var response = await client.post(ROUTES.sessions, payload);
         var data = (response && response.data) || {};
-        var uri = (data.launch_uri || "") + "&staff_id=" + encodeURIComponent(staffId) +
-          "&finger_position=" + encodeURIComponent(fingerPosition || "RIGHT_INDEX");
-        /* The agent needs the enrolment verb, not the capture verb. */
-        uri = uri.replace("jone-reader:capture?", "jone-reader:enroll?");
+        if (!data.agent_reference) {
+          setDisabled(false);
+          say("not_provisioned");
+          renderSetupAffordance();
+          return null;
+        }
+        var uri = data.launch_uri || "";
+        if (!/jone-reader:enroll\?/.test(uri)) {
+          uri = uri.replace("jone-reader:capture?", "jone-reader:enroll?");
+          if (uri.indexOf("staff_id=") === -1) uri += "&staff_id=" + encodeURIComponent(staffId);
+          if (uri.indexOf("finger_position=") === -1) uri += "&finger_position=" + encodeURIComponent(chosenFinger);
+        }
         launch(uri);
         startedAt = Date.now();
         say("waiting_finger", {
           badge: "Enrolling fingerprint",
-          detail: "Place the same finger on the sensor three times when asked. The enrolment then waits for a supervisor's approval."
+          detail: "Place the same finger flat on the sensor four times when prompted, lifting briefly between touches. The enrolment then waits for a supervisor's approval."
         });
-        poll(data.session_token, "ENROLL");
+        poll(data.session_token, "ENROLL", !!data.agent_online);
         return data;
       } catch (err) {
         setDisabled(false);
         say("backend_unavailable", { badge: "Enrolment could not start", detail: (err && err.message) || "" });
         return null;
       }
+    }
+
+    function pollAgentReady(maxChecks) {
+      var remaining = maxChecks || 8;
+      var attempt = function () {
+        refreshAgent().then(function (live) {
+          if (live && live.online) {
+            setDisabled(false);
+            return;
+          }
+          remaining -= 1;
+          if (remaining > 0) {
+            window.setTimeout(attempt, 1000);
+          } else {
+            setDisabled(false);
+            if (!live || !live.online) {
+              say("agent_missing", {
+                badge: "Reader agent did not come online",
+                detail: "Windows did not respond to the reader-agent launch. Ensure the J-ONE Reader Agent installer (workstation_agent/install_reader_agent.bat) has been run once on this PC, then press “Start reader agent”."
+              });
+            }
+          }
+        });
+      };
+      window.setTimeout(attempt, 1200);
     }
 
     async function provision(options) {
@@ -557,41 +721,82 @@
       say("initializing", { badge: "Setting up", detail: "Connecting this computer to the fingerprint reader…" });
       try {
         var response = await client.post(ROUTES.provision, {
-          workstation_reference: (client.getWorkstationReference && client.getWorkstationReference()) || "",
+          workstation_reference: preferredWorkstationRef(),
           rotate: !!options.rotate
         });
         var data = (response && response.data) || {};
         if (data.already_provisioned) {
-          /* The server kept the existing key: this computer is already set up and
-             nothing was re-keyed. No install URI is launched. */
           JONE.ui && JONE.ui.toast && JONE.ui.toast(
             "This computer already has a valid reader agent; nothing was changed.", "info");
-        } else if (data.install_uri) {
+          await refreshSetupStatus();
+          await refreshAgent();
+          setDisabled(false);
+          return data;
+        }
+        if (data.install_uri) {
           launch(data.install_uri);
           JONE.ui && JONE.ui.toast && JONE.ui.toast(
-            "This computer is being connected to the fingerprint reader. The reader state appears here in a moment.",
+            "This computer is being connected to the fingerprint reader. Checking agent connection…",
             "success");
         }
         await refreshSetupStatus();
-        window.setTimeout(refreshAgent, 2500);
+        pollAgentReady(8);
         return data;
       } catch (err) {
-        /* The server's refusal names the capability and who can grant it, so it
-           is shown verbatim instead of being replaced by a generic sentence. */
+        setDisabled(false);
         var message = (err && err.message) || "The reader could not be set up on this computer.";
         say("setup_forbidden", { badge: "Setup refused", detail: message });
         JONE.ui && JONE.ui.toast && JONE.ui.toast(message, "error");
         return null;
-      } finally {
-        setDisabled(false);
       }
     }
 
     function startAgent() {
-      /* Windows starts the agent from the jone-reader: scheme; there is no
-         script, service or port for anybody to manage. */
-      launch("jone-reader:start");
-      window.setTimeout(refreshAgent, 2500);
+      if (busy) return;
+      var cfgBase = (window.APP_CONFIG && window.APP_CONFIG.API_BASE_URL || "").replace(/\/$/, "");
+      var origin = (window.location && window.location.origin && window.location.origin !== "null") ? window.location.origin : "";
+      var apiBase = cfgBase || origin;
+      var uri = apiBase ? ("jone-reader:start?api=" + encodeURIComponent(apiBase)) : "jone-reader:start";
+      setDisabled(true);
+      say("initializing", { badge: "Starting reader agent", detail: "Asking Windows to start the J-ONE reader agent…" });
+      launch(uri);
+      pollAgentReady(8);
+    }
+
+    async function revokeOfflineAgent() {
+      if (busy || !currentAgent || !currentAgent.reference) return;
+      var client = api();
+      if (!client) return;
+      var ref = currentAgent.reference;
+      var proceed = true;
+      if (JONE.ui && typeof JONE.ui.confirm === "function") {
+        proceed = false;
+        JONE.ui.confirm({
+          title: "Remove offline reader agent (" + ref + ")?",
+          message: "Retire this offline agent registration so you can re-register this workstation cleanly. Any PC still using " + ref + " will stop working until set up again.",
+          confirmText: "Remove agent",
+          danger: true
+        }).then(function (ok) { if (ok) doRevokeAgent(ref); });
+      }
+      if (proceed) doRevokeAgent(ref);
+    }
+
+    async function doRevokeAgent(ref) {
+      var client = api();
+      if (!client) return;
+      setDisabled(true);
+      try {
+        await client.post(ROUTES.agents + encodeURIComponent(ref) + "/revoke/", {
+          reason: "Retired from workstation panel"
+        });
+        JONE.ui && JONE.ui.toast && JONE.ui.toast("Offline reader agent removed. You can set up this computer again now.", "success");
+        await refreshSetupStatus();
+        await refreshAgent();
+      } catch (err) {
+        JONE.ui && JONE.ui.toast && JONE.ui.toast((err && err.message) || "Could not remove reader agent.", "error");
+      } finally {
+        setDisabled(false);
+      }
     }
 
     /* ---------------------------------------------------------------- wiring */
@@ -613,13 +818,15 @@
           JONE.ui && JONE.ui.toast && JONE.ui.toast("Choose the staff member first.", "warning");
           return;
         }
-        enroll(staffId, options.fingerPosition ? options.fingerPosition() : "RIGHT_INDEX");
+        var pos = options.fingerPosition ? options.fingerPosition() : (fingerSelect ? fingerSelect.value : "RIGHT_INDEX");
+        enroll(staffId, pos);
       });
       actions.appendChild(enrollButton);
     }
 
     setupButton.addEventListener("click", function () { provision(); });
     startButton.addEventListener("click", startAgent);
+    revokeButton.addEventListener("click", revokeOfflineAgent);
     rekeyButton.addEventListener("click", function () {
       var proceed = true;
       if (JONE.ui && typeof JONE.ui.confirm === "function") {
@@ -649,6 +856,111 @@
       isBusy: function () { return busy; },
       host: host
     };
+  }
+
+  /* ------------------------------------------------------------------------
+     Enrolment approval & revocation queue (ReaderAgentTemplate).
+     Allows supervisors / managers to inspect pending or active fingerprint
+     enrolments and Approve, Reject, or Revoke them directly in the UI.
+  ------------------------------------------------------------------------- */
+  function clearNode(node) {
+    while (node && node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function mountQueue(host, options) {
+    if (!host) return null;
+    options = options || {};
+    var statusFilter = options.status || "";
+    var staffFilterId = options.staffId ? String(options.staffId) : "";
+    clearNode(host);
+
+    var statusLine = el("p", "caption muted", "Loading fingerprint enrolments…");
+    var list = el("div", "reader-agent-queue-list");
+    host.appendChild(statusLine);
+    host.appendChild(list);
+
+    async function refreshQueue() {
+      var client = api();
+      if (!client) return [];
+      try {
+        var url = ROUTES.templates + (statusFilter ? ("?status=" + encodeURIComponent(statusFilter)) : "");
+        var resp = await client.get(url, { cache: "no-store" });
+        var rows = (resp && resp.data) || [];
+        if (staffFilterId) {
+          rows = rows.filter(function (r) { return String(r.staff_id) === staffFilterId; });
+        }
+        clearNode(list);
+        if (!rows.length) {
+          statusLine.textContent = "No fingerprint enrolments found in this queue.";
+          return rows;
+        }
+        statusLine.textContent = rows.length + " enrolment" + (rows.length === 1 ? "" : "s") + " listed.";
+        rows.forEach(function (row) {
+          var item = el("div", "card card-pad");
+          item.style.marginTop = "0.5rem";
+          item.style.display = "flex";
+          item.style.flexWrap = "wrap";
+          item.style.alignItems = "center";
+          item.style.justifyContent = "space-between";
+          item.style.gap = "0.65rem";
+
+          var meta = el("div");
+          var tone = row.status === "ACTIVE" ? "badge-success" : row.status === "PENDING" ? "badge-warning" : "badge-muted";
+          var b = el("span", "badge " + tone, row.status);
+          var name = el("strong", "", " " + (row.staff_name || ("Staff #" + row.staff_id)));
+          var sub = el("div", "caption muted",
+            String(row.finger_position || "RIGHT_INDEX").replace(/_/g, " ") +
+            (row.views ? (" · " + row.views + " scans") : "") +
+            (row.created_at ? (" · " + row.created_at) : ""));
+          meta.appendChild(b);
+          meta.appendChild(name);
+          meta.appendChild(sub);
+
+          var btns = el("div", "row-actions");
+          if (row.status === "PENDING") {
+            var approveBtn = el("button", "btn btn-sm", "Approve");
+            approveBtn.type = "button";
+            approveBtn.setAttribute("data-template-action", "approve");
+            approveBtn.addEventListener("click", function () { actOnTemplate(row.id, "approve"); });
+            var rejectBtn = el("button", "btn btn-sm btn-outline", "Reject");
+            rejectBtn.type = "button";
+            rejectBtn.setAttribute("data-template-action", "reject");
+            rejectBtn.addEventListener("click", function () { actOnTemplate(row.id, "reject"); });
+            btns.appendChild(approveBtn);
+            btns.appendChild(rejectBtn);
+          } else if (row.status === "ACTIVE") {
+            var revokeBtn = el("button", "btn btn-sm btn-danger", "Revoke");
+            revokeBtn.type = "button";
+            revokeBtn.setAttribute("data-template-action", "revoke");
+            revokeBtn.addEventListener("click", function () { actOnTemplate(row.id, "revoke"); });
+            btns.appendChild(revokeBtn);
+          }
+          item.appendChild(meta);
+          item.appendChild(btns);
+          list.appendChild(item);
+        });
+        return rows;
+      } catch (err) {
+        statusLine.textContent = (err && err.message) || "Could not load fingerprint enrolments.";
+        return [];
+      }
+    }
+
+    async function actOnTemplate(id, act) {
+      var client = api();
+      if (!client) return;
+      try {
+        await client.post(ROUTES.templates + encodeURIComponent(id) + "/" + act + "/", {});
+        JONE.ui && JONE.ui.toast && JONE.ui.toast("Fingerprint enrolment " + act + (act === "revoke" ? "d" : "ed") + ".", "success");
+        await refreshQueue();
+        if (typeof options.onChanged === "function") options.onChanged(act, id);
+      } catch (err) {
+        JONE.ui && JONE.ui.toast && JONE.ui.toast((err && err.message) || ("Could not " + act + " fingerprint enrolment."), "error");
+      }
+    }
+
+    refreshQueue();
+    return { refresh: refreshQueue, host: host };
   }
 
   /* Mount every panel on the page, and expose the API for pages that want to
@@ -733,8 +1045,10 @@
   window.JONE = window.JONE || {};
   window.JONE.readerAgent = {
     VERSION: VERSION,
+    FINGER_POSITIONS: FINGER_POSITIONS,
     terminal: terminal,
     mount: mount,
+    mountQueue: mountQueue,
     autoMount: autoMount,
     launch: launch,
     ROUTES: ROUTES,

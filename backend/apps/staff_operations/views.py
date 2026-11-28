@@ -51,6 +51,7 @@ def _profile_queryset():
     queryset.
     """
     from .biometric_models import FingerprintTemplate
+    from .reader_agent_models import ReaderAgentTemplate
 
     return (
         StaffProfile.objects.select_related(
@@ -61,6 +62,11 @@ def _profile_queryset():
                 "user__fingerprint_templates",
                 queryset=FingerprintTemplate.objects.only("staff_id", "status"),
                 to_attr="_jone_fingerprint_templates",
+            ),
+            Prefetch(
+                "user__reader_agent_templates",
+                queryset=ReaderAgentTemplate.objects.only("staff_id", "status"),
+                to_attr="_jone_reader_agent_templates",
             ),
             Prefetch(
                 "user__attendance_records",
@@ -153,15 +159,23 @@ class StaffProfileListCreateView(APIView):
             elif att_upper == "NOT_CLOCKED_IN":
                 queryset = queryset.exclude(user_id__in=open_staff_ids)
         if fp_status := request.query_params.get("fingerprint_status"):
+            from .reader_agent_models import ReaderAgentTemplate
+
             fp_upper = fp_status.upper()
             active_fp_ids = set(
                 FingerprintTemplate.objects.filter(status=FingerprintTemplate.Status.ACTIVE).values_list("staff_id", flat=True)
+            ) | set(
+                ReaderAgentTemplate.objects.filter(status=ReaderAgentTemplate.Status.ACTIVE).values_list("staff_id", flat=True)
             )
             pending_fp_ids = set(
                 FingerprintTemplate.objects.filter(status=FingerprintTemplate.Status.PENDING).values_list("staff_id", flat=True)
+            ) | set(
+                ReaderAgentTemplate.objects.filter(status=ReaderAgentTemplate.Status.PENDING).values_list("staff_id", flat=True)
             )
             revoked_fp_ids = set(
                 FingerprintTemplate.objects.filter(status=FingerprintTemplate.Status.REVOKED).values_list("staff_id", flat=True)
+            ) | set(
+                ReaderAgentTemplate.objects.filter(status=ReaderAgentTemplate.Status.REVOKED).values_list("staff_id", flat=True)
             )
             if fp_upper == "ENROLLED":
                 queryset = queryset.filter(user_id__in=active_fp_ids)

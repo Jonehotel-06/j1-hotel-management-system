@@ -167,7 +167,7 @@ class TransportAndStorageInvariantTests(unittest.TestCase):
 
     def test_the_agent_never_writes_a_raw_fingerprint_image_to_disk(self):
         source = self.read("agent_core.py")
-        for banned in ("\.save(", "write_bytes", "open(\"wb\")", "open('wb')"):
+        for banned in (r"\.save(", "write_bytes", "open(\"wb\")", "open('wb')"):
             self.assertNotIn(banned, source, f"raw capture writes are forbidden ({banned})")
         # Only the FMD (template) travels, and only as JSON inside the signed body.
         self.assertIn("dpfj_create_fmd_from_raw", self.read("dp_sdk.py"))
@@ -179,6 +179,237 @@ class TransportAndStorageInvariantTests(unittest.TestCase):
                        "X-JONE-Agent-Timestamp", "X-JONE-Agent-Kind", "X-JONE-Agent-Signature"):
             self.assertIn(header, source)
         self.assertIn("jone-reader-agent-v1", source)
+
+
+class AgentCoreReliabilityTests(unittest.TestCase):
+    """Verify live hardware refresh, gallery sync, session-fail reporting, and cold-start supervision."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="jone-agent-core-")
+        self.addCleanup(self.tmp.cleanup)
+        os.environ["JONE_AGENT_ALLOW_PLAIN_STATE"] = "1"
+        self.addCleanup(os.environ.pop, "JONE_AGENT_ALLOW_PLAIN_STATE", None)
+        self.paths = AgentPaths(Path(self.tmp.name)).ensure()
+        self.store = AgentStore(self.paths)
+        self.logger = logging.getLogger("jone.reader.agent.core-test")
+        self.logger.addHandler(logging.NullHandler())
+
+    def test_mutex_uses_local_namespace_for_standard_windows_users(self):
+        self.assertTrue(self.paths.mutex_name.startswith("Local\\"))
+
+    def test_device_state_refreshes_live_on_usb_unplug_and_replug(self):
+        from agent_core import ReaderAgentCore, STATE_NOT_CONNECTED, STATE_READY
+
+        class FakeDevice:
+            name = "dev-0"
+            product = "U.are.U 4500"
+            serial = "SER-4500"
+            firmware = "1.0.0"
+
+        class FakeReport:
+            def __init__(self, connected):
+                self.sdk_available = True
+                self.sdk_version = "3.0"
+                self.usb_present = connected
+                self.devices = [FakeDevice()] if connected else []
+                self.driver_mode = "LEGACY_SDK" if connected else "UNKNOWN"
+                self.service_running = True
+                self.detail = "Ready" if connected else "Unplugged"
+
+            def as_dict(self):
+                return {"sdk_available": True, "sdk_version": self.sdk_version, "driver_mode": self.driver_mode}
+
+        class FakeSdk:
+            def __init__(self):
+                self.connected = True
+                self.closed = False
+                self.report = FakeReport(True)
+
+            def load(self):
+                return self.report
+
+            def refresh_status(self):
+                self.report = FakeReport(self.connected)
+                return self.report
+
+            def close(self):
+                self.closed = True
+
+        sdk = FakeSdk()
+        core = ReaderAgentCore(store=self.store, sdk_factory=lambda: sdk, logger=self.logger)
+        core.provision(reference="RAG-1", signing_key="ab" * 32, api_base="https://api.test")
+
+        first = core.device_state()
+        self.assertEqual(first["device_status"], STATE_READY)
+        self.assertEqual(first["device_serial"], "SER-4500")
+
+        sdk.connected = False
+        second = core.device_state()
+        self.assertEqual(second["device_status"], STATE_NOT_CONNECTED)
+        self.assertTrue(sdk.closed)
+
+        sdk.connected = True
+        third = core.device_state()
+        self.assertEqual(third["device_status"], STATE_READY)
+
+    def test_gallery_refreshes_when_ttl_expires_or_etag_changes(self):
+        from agent_core import ReaderAgentCore
+
+        now = [1000.0]
+        http_calls = []
+
+        class FakeHttp:
+            def __init__(self, base):
+                self.base = base
+
+            def post_json(self, path, body, headers):
+                http_calls.append((path, json.loads(body.decode("utf-8"))))
+                if path.endswith("/heartbeat/"):
+                    return 200, {"success": True, "data": {"gallery_etag": "etag-v2", "match_threshold": 2147483}}
+                if len([c for c in http_calls if c[0].endswith("/gallery/")]) == 1:
+                    return 200, {"success": True, "data": {
+                        "etag": "etag-v1",
+                        "templates": [{"staff_id": 1, "template_id": 10, "fmd": "AQID"}],
+                    }}
+                return 200, {"success": True, "data": {
+                    "etag": "etag-v2",
+                    "templates": [
+                        {"staff_id": 1, "template_id": 10, "fmd": "AQID"},
+                        {"staff_id": 2, "template_id": 11, "fmd": "BAUG"},
+                    ],
+                }}
+
+        core = ReaderAgentCore(
+            store=self.store,
+            sdk_factory=lambda: None,
+            http_factory=FakeHttp,
+            logger=self.logger,
+            clock=lambda: now[0],
+        )
+        core.provision(reference="RAG-1", signing_key="ab" * 32, api_base="https://api.test")
+
+        g1 = core.sync_gallery()
+        self.assertEqual(len(g1["templates"]), 1)
+
+        # Within TTL with matching etag -> served from cache without HTTP
+        now[0] += 5.0
+        g1_cached = core.sync_gallery()
+        self.assertEqual(len(g1_cached["templates"]), 1)
+        self.assertEqual(len([c for c in http_calls if c[0].endswith("/gallery/")]), 1)
+
+        # Heartbeat reveals new gallery_etag -> sync_gallery fetches updated templates immediately
+        core.heartbeat()
+        g2 = core.sync_gallery()
+        self.assertEqual(len(g2["templates"]), 2)
+        self.assertEqual(g2["etag"], "etag-v2")
+
+    def test_failed_capture_reports_session_fail_to_backend(self):
+        from agent_core import AgentError, ReaderAgentCore
+
+        calls = []
+
+        class FakeHttp:
+            def __init__(self, base):
+                pass
+
+            def post_json(self, path, body, headers):
+                calls.append((path, headers.get("X-JONE-Agent-Kind"), json.loads(body.decode("utf-8"))))
+                return 200, {"success": True, "data": {"status": "FAILED"}}
+
+        core = ReaderAgentCore(store=self.store, sdk_factory=lambda: None, http_factory=FakeHttp, logger=self.logger)
+        core.provision(reference="RAG-1", signing_key="ab" * 32, api_base="https://api.test")
+
+        agent._report_request_failure(
+            core,
+            {"kind": "capture", "session": "TOK-1"},
+            AgentError("NO_ENROLLED_STAFF", "No staff member has an approved fingerprint yet."),
+            self.logger,
+        )
+        fail_call = next((c for c in calls if c[1] == "SESSION_FAIL"), None)
+        self.assertIsNotNone(fail_call)
+        self.assertEqual(fail_call[2]["session_token"], "TOK-1")
+        self.assertEqual(fail_call[2]["error_code"], "NO_ENROLLED_STAFF")
+
+    def test_incremental_enrollment_stops_when_sdk_reports_ready(self):
+        from agent_core import ReaderAgentCore
+
+        class FakeDevice:
+            name = "dev-0"
+            product = "U.are.U 4500"
+            serial = "SER-1"
+            firmware = "1.0"
+
+        class FakeSdk:
+            def __init__(self):
+                self.captures = 0
+                self.added = 0
+                self.finished = False
+                self.report = type("R", (), {
+                    "devices": [FakeDevice()], "sdk_available": True, "sdk_version": "3",
+                    "driver_mode": "LEGACY_SDK", "usb_present": True, "detail": "ok",
+                    "as_dict": lambda s: {"sdk_available": True, "driver_mode": "LEGACY_SDK"},
+                })()
+
+            def load(self): return self.report
+            def refresh_status(self): return self.report
+            def query_devices(self): return [FakeDevice()]
+            def open(self, d): pass
+            def close(self): pass
+            def status(self): return {"finger_detected": False}
+            def capture(self, timeout_ms=15000):
+                self.captures += 1
+                return b"raw"
+            def fmd_from_capture(self, cap, finger_position=2):
+                return b"fmd-" + bytes([self.captures])
+            def start_enrollment(self): pass
+            def add_to_enrollment(self, fmd):
+                self.added += 1
+                return "ready" if self.added >= 4 else "more_data"
+            def create_enrollment_fmd(self):
+                return b"E" * 200
+            def finish_enrollment(self):
+                self.finished = True
+
+        sent = []
+
+        class FakeHttp:
+            def __init__(self, base): pass
+            def post_json(self, path, body, headers):
+                sent.append((path, json.loads(body.decode("utf-8"))))
+                return 200, {"success": True, "data": {"template_id": 9, "status": "PENDING"}}
+
+        sdk = FakeSdk()
+        core = ReaderAgentCore(store=self.store, sdk_factory=lambda: sdk, http_factory=FakeHttp, logger=self.logger)
+        core.provision(reference="RAG-1", signing_key="ab" * 32, api_base="https://api.test")
+        res = core.enroll(session_token="S-1", staff_id=42, finger_position="LEFT_RING")
+        self.assertEqual(res["template_id"], 9)
+        self.assertEqual(sdk.added, 4)
+        self.assertTrue(sdk.finished)
+        self.assertEqual(sent[0][1]["views"], 4)
+        self.assertEqual(sent[0][1]["finger_position"], "LEFT_RING")
+
+    def test_cold_start_uri_enters_supervised_run_loop_unless_once(self):
+        entered = {"supervised": 0, "executed": 0}
+        orig_make_core = agent.make_core
+        orig_exec = agent.execute_request
+        orig_sup = agent.run_supervised
+        agent.make_core = lambda store, logger: object()
+        agent.execute_request = lambda core, req, logger: entered.__setitem__("executed", entered["executed"] + 1) or {}
+        agent.run_supervised = lambda store, logger, *, once=False: entered.__setitem__("supervised", entered["supervised"] + 1) or 0
+        try:
+            rc = agent.main(["--state-dir", str(self.paths.root), "--uri", "jone-reader:start?api=https://api.test"])
+            self.assertEqual(rc, 0)
+            self.assertEqual(entered["executed"], 1)
+            self.assertEqual(entered["supervised"], 1)
+
+            rc_once = agent.main(["--state-dir", str(self.paths.root), "--uri", "jone-reader:start?api=https://api.test", "--once"])
+            self.assertEqual(rc_once, 0)
+            self.assertEqual(entered["executed"], 2)
+            self.assertEqual(entered["supervised"], 1)
+        finally:
+            agent.make_core = orig_make_core
+            agent.execute_request = orig_exec
+            agent.run_supervised = orig_sup
 
 
 if __name__ == "__main__":

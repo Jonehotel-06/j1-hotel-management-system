@@ -18,6 +18,7 @@ test can never silently produce an unprotected production state file.
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import itertools
 import json
 import logging
@@ -56,7 +57,18 @@ class AgentPaths:
         self.requests = self.root / "requests"
         self.logs = self.root / "logs"
         self.log_file = self.logs / "agent.log"
-        self.mutex_name = "Global\\JONE-Reader-Agent"
+        # Use Local\ so a standard non-elevated Windows 11 account can create
+        # the mutex without SeCreateGlobalPrivilege (Global\ fails with
+        # ERROR_ACCESS_DENIED on standard user logins and caused duplicate runs).
+        try:
+            is_default = self.root.resolve() == default_root().resolve()
+        except OSError:
+            is_default = False
+        if is_default:
+            self.mutex_name = "Local\\JONE-Reader-Agent"
+        else:
+            suffix = hashlib.sha256(str(self.root).encode("utf-8")).hexdigest()[:8]
+            self.mutex_name = f"Local\\JONE-Reader-Agent-{suffix}"
 
     def ensure(self) -> "AgentPaths":
         self.root.mkdir(parents=True, exist_ok=True)
@@ -72,9 +84,10 @@ class _DataBlob(ctypes.Structure):
     _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_char))]
 
 
-def _blob(data: bytes) -> _DataBlob:
+def _blob(data: bytes) -> tuple[_DataBlob, ctypes.Array[ctypes.c_char]]:
     buffer = ctypes.create_string_buffer(data, len(data))
-    return _DataBlob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
+    blob = _DataBlob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
+    return blob, buffer
 
 
 def _blob_bytes(blob: _DataBlob) -> bytes:
@@ -92,7 +105,8 @@ def protect(data: bytes, *, scope: str = "user") -> bytes:
         )
     crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    in_blob, out_blob = _blob(data), _DataBlob()
+    in_blob, _keep_buf = _blob(data)
+    out_blob = _DataBlob()
     flags = 0x1 if scope == "machine" else 0x0  # CRYPTPROTECT_LOCAL_MACHINE
     ok = crypt32.CryptProtectData(
         ctypes.byref(in_blob), "JONE Reader Agent", None, None, None, flags, ctypes.byref(out_blob)
@@ -112,7 +126,8 @@ def unprotect(data: bytes) -> bytes:
         raise RuntimeError("This agent state was protected on Windows and cannot be read here.")
     crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    in_blob, out_blob = _blob(data), _DataBlob()
+    in_blob, _keep_buf = _blob(data)
+    out_blob = _DataBlob()
     ok = crypt32.CryptUnprotectData(
         ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob)
     )
@@ -264,34 +279,42 @@ def configure_logging(paths: AgentPaths, *, verbose: bool = False) -> logging.Lo
 
 
 class SingleInstance:
-    """Windows named mutex; a no-op lock file elsewhere (tests, Linux CI)."""
+    """Windows named mutex with lock-file fallback; flock elsewhere."""
 
     def __init__(self, name: str):
         self.name = name
         self._handle = None
         self._file = None
 
+    def _lock_path(self) -> Path:
+        safe = hashlib.sha256(str(self.name).encode("utf-8")).hexdigest()[:12]
+        return Path(tempfile.gettempdir()) / f"jone-reader-agent-{safe}.lock"
+
     def acquire(self) -> bool:
         if IS_WINDOWS:
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
             kernel32.CreateMutexW.restype = ctypes.c_void_p
             handle = kernel32.CreateMutexW(None, False, self.name)
-            if not handle:
-                return True  # cannot tell; behave as if we own it
-            self._handle = handle
-            ERROR_ALREADY_EXISTS = 183
-            return ctypes.get_last_error() != ERROR_ALREADY_EXISTS
-        lock_path = Path(tempfile.gettempdir()) / "jone-reader-agent.lock"
-        try:
-            self._file = open(lock_path, "w")
-            if os.name == "nt":  # pragma: no cover
+            if handle:
+                self._handle = handle
+                ERROR_ALREADY_EXISTS = 183
+                return ctypes.get_last_error() != ERROR_ALREADY_EXISTS
+            # Fallback if mutex creation returned NULL (e.g. policy restriction)
+            try:
                 import msvcrt
 
+                self._file = open(self._lock_path(), "w")
                 msvcrt.locking(self._file.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
+                return True
+            except OSError:
+                return False
+        lock_path = self._lock_path()
+        try:
+            self._file = open(lock_path, "w")
+            import fcntl
 
-                fcntl.flock(self._file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(self._file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             return True
         except OSError:
             return False
@@ -300,10 +323,12 @@ class SingleInstance:
         try:
             if self._handle:
                 ctypes.WinDLL("kernel32").CloseHandle(ctypes.c_void_p(self._handle))
+                self._handle = None
         except Exception:  # pragma: no cover
             pass
         try:
             if self._file:
                 self._file.close()
+                self._file = None
         except Exception:  # pragma: no cover
             pass

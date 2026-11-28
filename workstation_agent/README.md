@@ -69,7 +69,7 @@ the log contains no images and no templates.
 ## Tests
 
 ```
-python -m unittest discover -s tests/agent -v      # 18 logic tests, no hardware
+python -m unittest discover -s tests -v            # 20 unit tests, no hardware
 ```
 
 Hardware acceptance: `tests/HARDWARE_ACCEPTANCE.md` in this delivery.

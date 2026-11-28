@@ -107,9 +107,15 @@ class ReaderAgentTestBase(BaseAPITestCase):
 
 
 def _kind_of(path: str) -> str:
-    for kind in ("heartbeat", "gallery", "identify", "enroll"):
+    for kind, header_kind in (
+        ("heartbeat", "HEARTBEAT"),
+        ("gallery", "GALLERY"),
+        ("identify", "IDENTIFY"),
+        ("enroll", "ENROLL"),
+        ("session-fail", "SESSION_FAIL"),
+    ):
         if f"/{kind}/" in path:
-            return kind.upper()
+            return header_kind
     return "HEARTBEAT"
 
 
@@ -566,3 +572,122 @@ class BrowserEndpointTests(ReaderAgentTestBase):
         self.assertEqual(row["reference"], self.agent.reference)
         self.assertFalse(row["online"])
         self.assertIn("driver_mode", row)
+
+    def test_agent_session_fail_marks_pending_session_failed_without_overwriting_done(self):
+        _session, token = self.new_session(action="CLOCK_IN")
+        fail_res = self.signed_post(f"{BASE}/agent/session-fail/", {
+            "session_token": token,
+            "error_code": "READER_NOT_CONNECTED",
+            "error_message": "Plug in the DigitalPersona reader.",
+            "device_state": {"device_status": "not_connected", "detail": "USB unplugged"},
+        })
+        self.assertEqual(fail_res.status_code, 200, fail_res.content)
+        self.assertEqual(svc.session_by_token(token).status, ReaderAgentSession.Status.FAILED)
+        self.assertEqual(svc.session_by_token(token).error_code, "READER_NOT_CONNECTED")
+
+        # Already-DONE sessions remain untouched by a late session-fail call.
+        _done_sess, done_token = self.new_session(action="VERIFY")
+        self.assertEqual(self.identify(done_token).status_code, 200)
+        late = self.signed_post(f"{BASE}/agent/session-fail/", {
+            "session_token": done_token,
+            "error_code": "CAPTURE_TIMEOUT",
+            "error_message": "Late error",
+        })
+        self.assertEqual(late.status_code, 200)
+        self.assertEqual(svc.session_by_token(done_token).status, ReaderAgentSession.Status.DONE)
+
+    def test_enroll_refusal_persists_session_failed_status_for_browser_polling(self):
+        ReaderAgentTemplate.objects.create(
+            staff=self.worker2, status=ReaderAgentTemplate.Status.ACTIVE, fmd=FMD2, fmd_size=694,
+        )
+        _session, token = self.new_session(action="ENROLL", staff=self.worker2)
+        response = self.signed_post(f"{BASE}/agent/enroll/", {
+            "session_token": token, "staff_id": self.worker2.pk, "fmd": FMD2, "views": 4,
+        })
+        self.assertEqual(response.status_code, 409)
+        session = svc.session_by_token(token)
+        self.assertEqual(session.status, ReaderAgentSession.Status.FAILED)
+        self.assertEqual(session.error_code, "ALREADY_ENROLLED")
+
+    def test_enroll_session_launch_uri_targets_enroll_verb(self):
+        self.auth(self.supervisor)
+        response = self.client.post(f"{BASE}/sessions/", {
+            "action": "ENROLL",
+            "staff_id": self.worker2.pk,
+            "finger_position": "LEFT_THUMB",
+            "workstation_reference": self.workstation.reference,
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        uri = response.json()["data"]["launch_uri"]
+        self.assertTrue(uri.startswith("jone-reader:enroll?"))
+        self.assertIn(f"staff_id={self.worker2.pk}", uri)
+        self.assertIn("finger_position=LEFT_THUMB", uri)
+
+    def test_heartbeat_returns_gallery_etag_and_conditional_gallery_respects_it(self):
+        hb = self.signed_post(f"{BASE}/agent/heartbeat/", {"state": {"device_status": "ready"}})
+        self.assertEqual(hb.status_code, 200)
+        etag = hb.json()["data"]["gallery_etag"]
+        self.assertTrue(etag)
+
+        cached = self.signed_post(f"{BASE}/agent/gallery/", {"etag": etag})
+        self.assertEqual(cached.status_code, 200)
+        self.assertTrue(cached.json()["data"]["unchanged"])
+        self.assertNotIn("templates", cached.json()["data"])
+
+    def test_template_revoke_clears_fmd_and_updates_staff_biometric_status(self):
+        from apps.staff_operations.services import fingerprint_service
+
+        self.auth(self.supervisor)
+        status_before = self.client.get(
+            f"/api/admin/staff-operations/fingerprint/staff/{self.worker.pk}/"
+        )
+        self.assertEqual(status_before.status_code, 200, status_before.content)
+        self.assertEqual(status_before.json()["data"]["enrollment_status"], "ENROLLED")
+        self.assertTrue(status_before.json()["data"]["enrolled"])
+
+        rev = self.client.post(f"{BASE}/templates/{self.template.pk}/revoke/", {"note": "Re-enroll"}, format="json")
+        self.assertEqual(rev.status_code, 200, rev.content)
+        self.template.refresh_from_db()
+        self.assertEqual(self.template.status, ReaderAgentTemplate.Status.REVOKED)
+        self.assertEqual(self.template.fmd, "")
+        self.assertEqual(fingerprint_service.get_staff_biometric_status(self.worker)["enrollment_status"], "REVOKED")
+
+    def test_admin_can_revoke_stale_agent_and_hide_it_from_active_list(self):
+        self.auth(self.supervisor)
+        resp = self.client.post(f"{BASE}/agents/{self.agent.reference}/revoke/", {"reason": "PC replaced"}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json()["data"]["status"], ReaderAgent.Status.REVOKED)
+        listed = self.client.get(f"{BASE}/agents/").json()["data"]
+        self.assertEqual(listed, [])
+        self.unauth()
+        hb = self.signed_post(f"{BASE}/agent/heartbeat/", {"state": {"device_status": "ready"}})
+        self.assertEqual(hb.status_code, 401)
+
+    def test_staff_profile_list_and_terminal_kpis_reflect_reader_agent_templates(self):
+        StaffProfile.objects.create(
+            user=self.worker, employee_code="EMP-AGENT-W1", department=Workstation.Department.HOUSEKEEPING,
+            job_title="Room Attendant", employment_status="ACTIVE",
+        )
+        ReaderAgentTemplate.objects.create(
+            staff=self.worker2, status=ReaderAgentTemplate.Status.PENDING, fmd=FMD2, fmd_size=694,
+        )
+        self.auth(self.supervisor)
+        payload = self.client.get("/api/admin/staff-operations/profiles/?fingerprint_status=ENROLLED").json()
+        profiles = payload["data"] if isinstance(payload["data"], list) else payload["data"]["results"]
+        self.assertEqual([p["user"] for p in profiles], [self.worker.pk])
+        self.assertEqual(profiles[0]["fingerprint_status"], "ENROLLED")
+
+        from apps.accounts.desktop_policy import issue_desktop_key
+
+        ws_key = issue_desktop_key(self.workstation)
+        self.workstation.save(update_fields=["sign_in_key_hash"])
+        self.unauth()
+        summary = self.client.get(
+            "/api/admin/staff-operations/biometrics/reception-terminal/",
+            HTTP_X_JONE_DESKTOP_KEY=ws_key,
+        )
+        self.assertEqual(summary.status_code, 200, summary.content)
+        kpi = summary.json()["data"]["summary"]
+        self.assertEqual(kpi["enrolled_staff_count"], 1)
+        self.assertEqual(kpi["pending_enrollments_count"], 1)
+

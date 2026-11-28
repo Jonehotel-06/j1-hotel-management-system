@@ -60,6 +60,7 @@ urlpatterns = [
     path("reader-agent/agents/", views_reader_agent.ReaderAgentListView.as_view(), name="reader-agent-list"),
     path("reader-agent/agents/setup-status/", views_reader_agent.ReaderAgentSetupStatusView.as_view(), name="reader-agent-setup-status"),
     path("reader-agent/agents/provision/", views_reader_agent.ReaderAgentProvisionView.as_view(), name="reader-agent-provision"),
+    path("reader-agent/agents/<str:reference>/revoke/", views_reader_agent.ReaderAgentRevokeView.as_view(), name="reader-agent-revoke"),
     path("reader-agent/templates/", views_reader_agent.ReaderAgentTemplatesView.as_view(), name="reader-agent-templates"),
     path("reader-agent/templates/<int:pk>/<str:action>/", views_reader_agent.ReaderAgentTemplateActionView.as_view(), name="reader-agent-template-action"),
     # Agent surface (HMAC-signed requests from the provisioned workstation agent).
@@ -67,6 +68,7 @@ urlpatterns = [
     path("reader-agent/agent/gallery/", views_reader_agent.AgentGalleryView.as_view(), name="reader-agent-gallery"),
     path("reader-agent/agent/identify/", views_reader_agent.AgentIdentifyView.as_view(), name="reader-agent-identify"),
     path("reader-agent/agent/enroll/", views_reader_agent.AgentEnrollView.as_view(), name="reader-agent-enroll"),
+    path("reader-agent/agent/session-fail/", views_reader_agent.AgentSessionFailView.as_view(), name="reader-agent-session-fail"),
     path("leave-requests/", views.LeaveRequestListCreateView.as_view(), name="leave-requests"),
     path("leave-requests/<str:reference>/", views.LeaveRequestDetailView.as_view(), name="leave-detail"),
     path("leave-requests/<str:reference>/review/", views.LeaveReviewView.as_view(), name="leave-review"),

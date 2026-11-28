@@ -183,6 +183,8 @@ class StaffProfileSerializer(serializers.ModelSerializer):
 
     def get_fingerprint_status(self, obj):
         from .biometric_models import FingerprintTemplate
+        from .reader_agent_models import ReaderAgentTemplate
+
         active = False
         pending = False
         revoked = False
@@ -190,12 +192,21 @@ class StaffProfileSerializer(serializers.ModelSerializer):
         # caller without that prefetch keeps the original per-row query.
         statuses = getattr(obj.user, "_jone_fingerprint_templates", None)
         if statuses is None:
-            statuses = list(
+            legacy_statuses = list(
                 FingerprintTemplate.objects.filter(staff_id=obj.user_id).values_list("status", flat=True)
             )
         else:
-            statuses = [t.status for t in statuses]
-        for t in statuses:
+            legacy_statuses = [t.status for t in statuses]
+
+        agent_statuses = getattr(obj.user, "_jone_reader_agent_templates", None)
+        if agent_statuses is None:
+            agent_status_vals = list(
+                ReaderAgentTemplate.objects.filter(staff_id=obj.user_id).values_list("status", flat=True)
+            )
+        else:
+            agent_status_vals = [t.status for t in agent_statuses]
+
+        for t in legacy_statuses + agent_status_vals:
             if t == FingerprintTemplate.Status.ACTIVE:
                 active = True
             elif t == FingerprintTemplate.Status.PENDING:

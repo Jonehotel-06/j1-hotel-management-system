@@ -419,6 +419,127 @@ test("a mounted panel marks its host, so the deployment check works on every pag
   await flush();
   assert.equal(app.host.getAttribute("data-jone-reader-agent-host"), "explicit",
     "an explicitly mounted host must still be identifiable");
-  assert.equal(app.host.getAttribute("data-jone-reader-agent-version"), "1.1.37");
+  assert.equal(app.host.getAttribute("data-jone-reader-agent-version"), "1.1.38");
   assert.equal(app.host.getAttribute("data-jone-reader-agent"), "mounted");
 });
+
+test("multi-workstation pickAgent selects the browser workstation's live agent over an offline agents[0]", async () => {
+  const app = boot({
+    get: (route) => {
+      if (route.includes("setup-status")) {
+        return {
+          data: {
+            can_provision: true,
+            workstation_reference: "WS-FD-1",
+            agent: { reference: "RAG-2", status: "ACTIVE" },
+          },
+        };
+      }
+      return {
+        data: [
+          { reference: "RAG-OLD", workstation_reference: "WS-OTHER", online: false, device_status: "ready" },
+          { reference: "RAG-2", workstation_reference: "WS-FD-1", online: true, driver_mode: "LEGACY_SDK", device_status: "ready", device_serial: "SER-FD-2" },
+        ],
+      };
+    },
+  });
+  await flush();
+  await flush();
+  assert.equal(app.state(), "ready");
+  assert.match(app.text(), /SER-FD-2/);
+});
+
+test("cold-start handoff tolerates startup ticks beyond tick 3 without false agent_missing failure", async () => {
+  let agentChecks = 0;
+  let sessionReads = 0;
+  const app = boot({
+    get: (route) => {
+      if (route.includes("/sessions/")) {
+        sessionReads += 1;
+        if (sessionReads >= 5) {
+          return { data: { status: "DONE", result: { staff_id: 7, staff_name: "Ada Obi", attendance_reference: "ATT-2" } } };
+        }
+        return { data: { status: "PENDING" } };
+      }
+      agentChecks += 1;
+      return {
+        data: [{
+          reference: "RAG-1",
+          online: agentChecks >= 2,
+          driver_mode: "LEGACY_SDK",
+          device_status: "ready",
+        }],
+      };
+    },
+    post: () => ({
+      data: {
+        session_token: "T-COLD",
+        agent_reference: "RAG-1",
+        agent_online: false,
+        launch_uri: "jone-reader:capture?session=T-COLD&api=https://api.test&action=CLOCK_IN",
+      },
+    }),
+  });
+  await flush();
+  await app.actionButton("CLOCK_IN").click();
+  await flush();
+  for (let i = 0; i < 4; i += 1) await app.tick();
+  assert.equal(app.state(), "waiting_finger", "ticks 1-4 stay waiting_finger during cold start");
+  await app.tick();
+  assert.equal(app.state(), "success");
+  assert.equal(app.successes.length, 1);
+});
+
+test("startAgent appends ?api= when launching jone-reader:start", async () => {
+  const app = boot({
+    get: () => ({ data: [{ reference: "RAG-1", online: false, driver_mode: "LEGACY_SDK", device_status: "ready" }] }),
+  });
+  app.context.window.APP_CONFIG = { API_BASE_URL: "https://api.jonehotels.com" };
+  await flush();
+  const startBtn = app.host.children.find(
+    (child) => child.tagName === "BUTTON" && /Start reader agent/.test(child.textContent || "")
+  );
+  assert.ok(startBtn);
+  await startBtn.click();
+  await flush();
+  const handoff = app.handoffs().pop();
+  assert.ok(handoff);
+  assert.equal(handoff.href, "jone-reader:start?api=https%3A%2F%2Fapi.jonehotels.com");
+});
+
+test("mountQueue renders Approve, Reject, and Revoke controls for ReaderAgentTemplate rows", async () => {
+  const app = boot({ get: () => READY_AGENT });
+  const posted = [];
+  app.context.API.get = async (route) => {
+    if (route.includes("/templates/")) {
+      return {
+        data: [
+          { id: 11, staff_id: 2, staff_name: "Pending Staff", status: "PENDING", finger_position: "RIGHT_INDEX", views: 4 },
+          { id: 12, staff_id: 3, staff_name: "Active Staff", status: "ACTIVE", finger_position: "LEFT_THUMB", views: 5 },
+        ],
+      };
+    }
+    return READY_AGENT;
+  };
+  app.context.API.post = async (route, body) => {
+    posted.push({ route, body });
+    return { data: {} };
+  };
+  const qHost = makeElement("div");
+  qHost.replaceChildren = function replaceChildren() { this.children.length = 0; };
+  app.context.JONE.readerAgent.mountQueue(qHost);
+  await flush();
+  const buttons = qHost.children
+    .flatMap((c) => c.children || [])
+    .flatMap((c) => c.children || [])
+    .flatMap((c) => c.children || [])
+    .filter((c) => c.tagName === "BUTTON");
+  assert.equal(buttons.length, 3);
+  await buttons[0].click();
+  await flush();
+  assert.equal(posted[0].route, "/api/admin/staff-operations/reader-agent/templates/11/approve/");
+  await buttons[2].click();
+  await flush();
+  assert.equal(posted[1].route, "/api/admin/staff-operations/reader-agent/templates/12/revoke/");
+});
+

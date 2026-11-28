@@ -40,7 +40,19 @@ from agent_store import AgentPaths, AgentStore, SingleInstance, configure_loggin
 
 AGENT_VERSION = "1.0.0"
 HEARTBEAT_INTERVAL_SECONDS = 30
-SPOOL_POLL_SECONDS = 0.5
+SPOOL_POLL_SECONDS = 0.25
+
+_SERVER_TERMINAL_CODES = frozenset({
+    "NO_MATCH",
+    "STAFF_NOT_ELIGIBLE",
+    "ATTENDANCE_REFUSED",
+    "CODE_ISSUE_REFUSED",
+    "ALREADY_ENROLLED",
+    "SESSION_ALREADY_USED",
+    "SESSION_EXPIRED",
+    "SESSION_ACTION_MISMATCH",
+    "SESSION_UNKNOWN",
+})
 
 
 def make_core(store: AgentStore, logger) -> ReaderAgentCore:
@@ -207,6 +219,29 @@ def run_supervised(store: AgentStore, logger, *, once: bool = False) -> int:
             delay = min(delay * 2, RESTART_BACKOFF_MAX_SECONDS)
 
 
+def _report_request_failure(core: ReaderAgentCore, request: dict, exc: AgentError, logger) -> None:
+    """Tell the API why a capture/enroll request failed locally so the browser stops waiting."""
+    kind = request.get("kind")
+    session = str(request.get("session") or "").strip()
+    if kind in {"capture", "enroll"} and session and exc.code not in _SERVER_TERMINAL_CODES:
+        core.report_session_failure(session_token=session, code=exc.code, message=exc.message)
+    try:
+        core.heartbeat()
+    except Exception:
+        pass
+
+
+def _maybe_refresh_gallery_from_heartbeat(core: ReaderAgentCore, hb_result: dict | None, logger) -> None:
+    if not isinstance(hb_result, dict) or not hb_result.get("gallery_etag") or not core.is_provisioned():
+        return
+    try:
+        cached = core._cached_gallery or core.store.load_gallery()
+        if cached.get("etag") != hb_result.get("gallery_etag"):
+            core.sync_gallery(force=True)
+    except Exception as exc:
+        logger.debug("Background gallery refresh skipped: %s", exc)
+
+
 def run(store: AgentStore, logger, *, once: bool = False) -> int:
     core = make_core(store, logger)
     last_heartbeat = 0.0
@@ -224,20 +259,15 @@ def run(store: AgentStore, logger, *, once: bool = False) -> int:
                 logger.info("Request finished: %s", json.dumps(result, default=str)[:400])
             except AgentError as exc:
                 logger.warning("Request failed: %s %s", exc.code, exc.message)
-                # Report the local reason (reader unplugged, driver mode, SDK
-                # missing) so the dashboard panel can show the real cause
-                # instead of only "no fingerprint was read in time".
-                try:
-                    core.heartbeat()
-                except Exception:
-                    pass
+                _report_request_failure(core, request, exc, logger)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("Unexpected agent failure: %s", exc)
         now = time.time()
         if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
             last_heartbeat = now
             try:
-                core.heartbeat()
+                hb = core.heartbeat()
+                _maybe_refresh_gallery_from_heartbeat(core, hb, logger)
             except AgentError as exc:
                 logger.debug("Heartbeat skipped: %s", exc.message)
             except Exception as exc:  # pragma: no cover
@@ -305,8 +335,16 @@ def main(argv: list[str] | None = None) -> int:
         core = make_core(store, logger)
         result = execute_request(core, {"kind": "provision", **_decode_provision(args.provision)}, logger)
         print(json.dumps(result, indent=2, default=str))
-        # A provisioned agent should also start looking after the reader now.
-        return run(store, logger) if args.run else 0
+        if args.run:
+            instance = SingleInstance(paths.mutex_name)
+            if not instance.acquire():
+                logger.info("J-ONE Reader Agent is already running.")
+                return 0
+            try:
+                return run_supervised(store, logger, once=args.once)
+            finally:
+                instance.release()
+        return 0
 
     if args.uri:
         request = request_from_uri(args.uri)
@@ -321,8 +359,9 @@ def main(argv: list[str] | None = None) -> int:
                 execute_request(core, request, logger)
             except AgentError as exc:
                 logger.warning("Request failed: %s %s", exc.code, exc.message)
-            if request.get("kind") == "provision" or args.run:
-                return run(store, logger)
+                _report_request_failure(core, request, exc, logger)
+            if not args.once:
+                return run_supervised(store, logger)
             return 0
         finally:
             instance.release()
